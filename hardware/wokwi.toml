@@ -1,0 +1,13 @@
+# Wokwi Simulator Configuration for MX5-Telemetry
+# This file configures the Wokwi simulator integration with PlatformIO
+# Location: hardware/wokwi.toml
+
+[wokwi]
+version = 1
+firmware = "../.pio/build/wokwi_sim/firmware.hex"
+elf = "../.pio/build/wokwi_sim/firmware.elf"
+
+# Serial monitor
+[[wokwi.serialMonitor]]
+port = "Serial"
+baud = 115200

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "author": "MX5-Telemetry Project",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-arduino-nano",
+      "id": "nano",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led-ring",
+      "id": "leds",
+      "top": -100,
+      "left": 200,
+      "attrs": {
+        "leds": "30"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 50,
+      "left": 150,
+      "attrs": {
+        "value": "470"
+      }
+    },
+    {
+      "type": "wokwi-slide-potentiometer",
+      "id": "rpm_sim",
+      "top": 200,
+      "left": 300,
+      "attrs": {
+        "value": "0"
+      }
+    }
+  ],
+  "connections": [
+    ["nano:GND.1", "leds:GND", "black", ["v0"]],
+    ["nano:5V", "leds:VCC", "red", ["v0"]],
+    ["nano:6", "r1:1", "green", ["v0"]],
+    ["r1:2", "leds:DI", "green", ["v0"]],
+    ["rpm_sim:SIG", "nano:A0", "blue", ["v0"]],
+    ["rpm_sim:GND", "nano:GND.2", "black", ["v0"]],
+    ["rpm_sim:VCC", "nano:5V", "red", ["v0"]]
+  ],
+  "dependencies": {}
+}
