@@ -123,21 +123,81 @@ Connect to ground rail:
 4. **Test continuity** with multimeter
 5. **Connect SPI pins** to Arduino using Dupont wires
 
-## 💾 SD Card Module
+## 💾 SD Card Module (WWZMDIB MicroSD Reader)
 
-| SD Module Pin | Arduino Pin | Wire Color |
-|---------------|-------------|------------|
-| VCC           | 5V          | Red        |
-| GND           | GND         | Black      |
-| MISO          | D12         | Blue       |
-| MOSI          | D11         | Green      |
-| SCK           | D13         | Yellow     |
-| CS            | D4          | Purple     |
+### WWZMDIB Module Overview
 
-**Important**: 
-- SD module shares SPI bus with CAN (D11, D12, D13)
-- Only CS pin is unique (D4)
-- Ensure SD module is 5V tolerant OR use level shifters
+The WWZMDIB is a popular MicroSD card reader module that uses SPI communication. It typically includes:
+- Built-in voltage regulator (can accept 3.3V or 5V)
+- Level shifters for SD card protection
+- Card detection pin (optional)
+- Compact design with 6-pin header
+
+### Pin Configuration
+
+| WWZMDIB Pin | Arduino Nano Pin | Wire Color (suggested) | Description |
+|-------------|------------------|------------------------|-------------|
+| GND         | GND              | Black                  | Ground      |
+| VCC         | 5V               | Red                    | Power (5V)  |
+| MISO        | D12              | Blue                   | Master In Slave Out |
+| MOSI        | D11              | Green                  | Master Out Slave In |
+| SCK         | D13              | Yellow                 | SPI Clock   |
+| CS          | D4               | Purple                 | Chip Select |
+
+**Note**: Some WWZMDIB modules may have additional pins (CD for card detect) - these are optional and not required for basic operation.
+
+### Module Identification
+
+The WWZMDIB module typically has:
+- Blue PCB with white silkscreen labeling
+- MicroSD card slot on top
+- 6 pins on one side (or 8 pins with CD/GND duplicates)
+- Small size (~15mm x 20mm)
+
+### Connection Steps
+
+1. **Orient the module**: SD card slot should face up, pins facing toward you
+2. **Identify pin 1 (GND)**: Usually marked on silkscreen, typically leftmost pin
+3. **Connect power**:
+   - GND → Arduino GND (black wire)
+   - VCC → Arduino 5V (red wire)
+4. **Connect SPI pins** (shared with CAN module):
+   - MISO → Arduino D12 (blue wire)
+   - MOSI → Arduino D11 (green wire)
+   - SCK → Arduino D13 (yellow wire)
+5. **Connect chip select**:
+   - CS → Arduino D4 (purple wire)
+
+### Wiring Diagram
+
+```
+WWZMDIB MicroSD Reader          Arduino Nano
+┌─────────────────┐             ┌──────────────┐
+│   [SD SLOT]     │             │              │
+│                 │             │              │
+│  GND ○──────────┼─────────────┤ GND          │
+│  VCC ○──────────┼─────────────┤ 5V           │
+│ MISO ○──────────┼─────────────┤ D12 (MISO)   │
+│ MOSI ○──────────┼─────────────┤ D11 (MOSI)   │
+│  SCK ○──────────┼─────────────┤ D13 (SCK)    │
+│   CS ○──────────┼─────────────┤ D4           │
+└─────────────────┘             └──────────────┘
+```
+
+### Important Notes
+
+- **Shared SPI Bus**: SD module shares SPI bus with CAN module (D11, D12, D13)
+- **Unique CS Pin**: Only CS pin (D4) is unique to SD module
+- **5V Safe**: WWZMDIB has built-in voltage regulation and level shifters
+- **Card Format**: Use FAT32 formatted MicroSD card (32GB or smaller recommended)
+- **Card Speed**: Class 10 or UHS-I recommended for fast logging
+
+### MicroSD Card Preparation
+
+1. **Format card**: Use SD Card Formatter tool (FAT32)
+2. **Card size**: 8GB to 32GB recommended (larger cards may be slower)
+3. **Insert card**: Push until it clicks, label facing up
+4. **Test detection**: Card should be detected on Arduino startup
 
 ## 💡 WS2812B LED Strip
 
@@ -327,8 +387,12 @@ Arduino D5 ───┬───┤ Gate         │
 
 - Verify CS pin connection (D4)
 - Check shared SPI pins (D11, D12, D13)
-- Ensure SD module is 5V tolerant
-- Try different SD card
+- Ensure MicroSD card is fully inserted (should click)
+- Format card as FAT32 (use SD Card Formatter tool)
+- Try different SD card (Class 10 recommended)
+- Check for bent pins on WWZMDIB module
+- Verify VCC receives stable 5V
+- Test with a known-good SD card first
 
 ### LED Strip Issues
 
