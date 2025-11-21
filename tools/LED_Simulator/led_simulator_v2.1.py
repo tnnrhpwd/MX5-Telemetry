@@ -751,7 +751,7 @@ class LEDSimulator:
     def __init__(self, root):
         self.root = root
         self.root.title("MX5-Telemetry LED Simulator v2.1 - Three-State System")
-        self.root.geometry("1000x820")
+        self.root.geometry("1200x820")
         self.root.configure(bg='#1a1a1a')
         self.root.resizable(False, False)
         
@@ -786,6 +786,10 @@ class LEDSimulator:
         self.use_mph = True  # Speed unit toggle (False = km/h, True = mph)
         self.stalling = False  # Currently in stall animation
         self.stall_animation_frames = 0  # Frames remaining in stall animation
+        self.engine_starting = False  # Engine start animation
+        self.engine_start_frames = 0  # Frames remaining in start animation
+        self.engine_stopping = False  # Engine stop animation
+        self.engine_stop_frames = 0  # Frames remaining in stop animation
         
         # LED animation state (for mirrored progress bar system)
         self.start_time_ms = 0  # Simulation start time in milliseconds
@@ -913,25 +917,21 @@ class LEDSimulator:
             tk.Label(controls_frame, text=control, font=("Courier", 9), 
                     fg="#ffffff", bg="#2a2a2a").pack(pady=2)
         
-        # LED Strip visualization - Using grid layout for absolute control
-        led_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.RIDGE, bd=2)
-        led_frame.pack(pady=5, padx=20, fill=tk.X, expand=False)
+        # LED Strip visualization - Modern design with glow effects
+        led_frame = tk.Frame(self.root, bg="#1a1a1a", relief=tk.FLAT, bd=0)
+        led_frame.pack(pady=10, padx=20, fill=tk.X, expand=False)
         
         tk.Label(led_frame, text="LED STRIP (WS2812B Simulation)", 
-                font=("Arial", 11, "bold"), fg="#00ffff", bg="#2a2a2a").grid(row=0, column=0, pady=3, sticky='ew')
+                font=("Arial", 11, "bold"), fg="#00d4ff", bg="#1a1a1a").pack(pady=3)
         
-        # Create canvas with grid - ABSOLUTE positioning
-        self.led_canvas = tk.Canvas(led_frame, bg="#ff0000", 
-                                   highlightthickness=3, highlightbackground="#00ff00")
-        self.led_canvas.config(width=980, height=60)
-        self.led_canvas.grid(row=1, column=0, pady=5, padx=10)
+        # Create canvas with modern flat design - sized to fit all 30 LEDs
+        canvas_frame = tk.Frame(led_frame, bg="#0d0d0d", relief=tk.FLAT, bd=0)
+        canvas_frame.pack(pady=5, padx=10, fill=tk.X)
         
-        # Draw immediate test pattern
-        self.led_canvas.create_rectangle(50, 10, 200, 50, fill="#ffff00", outline="#0000ff", width=3)
-        self.led_canvas.create_text(125, 30, text="CANVAS TEST", fill="#000000", font=("Arial", 14, "bold"))
-        
-        # Force immediate update
-        self.led_canvas.update_idletasks()
+        self.led_canvas = tk.Canvas(canvas_frame, bg="#0d0d0d", 
+                                   highlightthickness=0, bd=0)
+        self.led_canvas.config(width=1160, height=75)
+        self.led_canvas.pack(padx=5, pady=5)
         
         # Gauges frame
         gauges_frame = tk.Frame(self.root, bg="#1a1a1a")
@@ -1005,7 +1005,7 @@ class LEDSimulator:
                               f"Successfully loaded:\n{self.car_config.name}")
     
     def toggle_engine(self):
-        """Toggle engine on/off (requires brake if in gear)."""
+        """Toggle engine on/off with realistic animations (requires brake if in gear)."""
         if self.engine_stalled:
             # Need to restart after stall
             self.engine_stalled = False
@@ -1013,7 +1013,7 @@ class LEDSimulator:
             self.check_engine_light = False
             self.cel_label.config(text="")
         
-        if not self.engine_running:
+        if not self.engine_running and not self.engine_starting:
             # Starting engine
             # Default to neutral UNLESS last shutdown was in neutral during this session
             if not self.session_started or self.last_shutdown_gear != 0:
@@ -1040,26 +1040,42 @@ class LEDSimulator:
                 # Must hold brake to start (safety feature)
                 return
             
-            # Successful start - stay in neutral
-            self.engine_running = True
-            self.session_started = True
-            self.rpm = self.car_config.idle_rpm
-            # Keep gear as-is (neutral unless last shutdown was in gear)
-            self.engine_btn.config(text="🟢 STOP ENGINE", bg="#00aa00")
-            gear_text = "N" if self.gear == 0 else str(self.gear)
-            self.gear_label.config(text=gear_text, fg="#00ff00")
-            self.audio_engine.start(self.car_config.idle_rpm)
-        else:
-            # Stopping engine - remember what gear we're in
-            self.last_shutdown_gear = self.gear
-            self.engine_running = False
+            # Begin engine start animation
+            self.engine_starting = True
+            self.engine_start_frames = 90  # ~1.5 seconds of start animation
             self.rpm = 0
-            self.speed = 0.0
+            self.engine_btn.config(text="⏳ STARTING...", bg="#ff8800")
+            gear_text = "N" if self.gear == 0 else str(self.gear)
+            self.gear_label.config(text=gear_text, fg="#ffaa00")
+        elif self.engine_running and not self.engine_stopping:
+            # Begin engine stop animation
+            self.engine_stopping = True
+            self.engine_stop_frames = 60  # ~1 second of stop animation
+            self.last_shutdown_gear = self.gear
             self.throttle = False
             self.brake = False
-            self.engine_btn.config(text="🔴 START ENGINE", bg="#cc0000")
-            self.gear_label.config(text="N", fg="#666666")
-            self.audio_engine.stop()
+            self.engine_btn.config(text="⏳ STOPPING...", bg="#ff8800")
+    
+    def complete_engine_start(self):
+        """Complete the engine start sequence."""
+        self.engine_starting = False
+        self.engine_running = True
+        self.session_started = True
+        self.rpm = self.car_config.idle_rpm
+        self.engine_btn.config(text="🟢 STOP ENGINE", bg="#00aa00")
+        gear_text = "N" if self.gear == 0 else str(self.gear)
+        self.gear_label.config(text=gear_text, fg="#00ff00")
+        self.audio_engine.start(self.car_config.idle_rpm)
+    
+    def complete_engine_stop(self):
+        """Complete the engine stop sequence."""
+        self.engine_stopping = False
+        self.engine_running = False
+        self.rpm = 0
+        self.speed = 0.0
+        self.engine_btn.config(text="🔴 START ENGINE", bg="#cc0000")
+        self.gear_label.config(text="N", fg="#666666")
+        self.audio_engine.stop()
     
     def on_volume_change(self, value):
         """Handle volume slider changes."""
@@ -1199,17 +1215,33 @@ class LEDSimulator:
                           fill=color, font=("Arial", 14, "bold"))
     
     def draw_leds(self):
-        """Draw the LED strip using three-state system."""
+        """Draw the LED strip using three-state system with modern visual effects."""
         self.led_canvas.delete("all")
         
+        # LED dimensions and spacing for modern look - optimized to fit 30 LEDs
+        led_width = 32
+        led_height = 55
+        led_spacing = 5
+        start_x = 20
+        start_y = 10
+        
         if not self.engine_running:
-            # All LEDs off when engine is off
+            # All LEDs off when engine is off - subtle gray with minimal border
             for i in range(LED_COUNT):
-                x = 10 + i * 32
-                self.led_canvas.create_rectangle(x, 5, x + 30, 55,
-                                                fill="#0a0a0a", outline="#333333", width=1)
-                self.led_canvas.create_text(x + 15, 30, text=str(i+1), 
-                                           fill="#222222", font=("Arial", 8))
+                x = start_x + i * (led_width + led_spacing)
+                
+                # Outer glow (very subtle when off)
+                self.led_canvas.create_oval(x - 2, start_y - 2, 
+                                            x + led_width + 2, start_y + led_height + 2,
+                                            fill="#0d0d0d", outline="")
+                
+                # LED body (rounded rectangle effect)
+                self.led_canvas.create_rectangle(x, start_y, x + led_width, start_y + led_height,
+                                                fill="#1a1a1a", outline="#2a2a2a", width=1)
+                
+                # LED number (subtle)
+                self.led_canvas.create_text(x + led_width // 2, start_y + led_height // 2, 
+                                           text=str(i+1), fill="#333333", font=("Arial", 7))
             return
         
         # Determine which state we're in and get the pattern
@@ -1243,15 +1275,6 @@ class LEDSimulator:
             led_pattern = [(0, 0, 0)] * LED_COUNT
             active_state = "Off"
         
-        # Debug: Print first time we detect a state (only once per second to avoid spam)
-        if hasattr(self, '_last_debug_time'):
-            if self.current_time_ms - self._last_debug_time > 1000:
-                lit_count = sum(1 for rgb in led_pattern if sum(rgb) > 0)
-                print(f"[DEBUG] RPM:{self.rpm} Speed:{self.speed:.1f} State:{active_state} Pepper:{self.pepper_position} LEDs lit:{lit_count}/30")
-                self._last_debug_time = self.current_time_ms
-        else:
-            self._last_debug_time = self.current_time_ms
-        
         # Update state indicators at top
         state_colors = ["#666666"] * 6  # Default: all gray
         if active_state == "State 0 (Idle)":
@@ -1270,31 +1293,93 @@ class LEDSimulator:
         for i, label in enumerate(self.state_labels):
             label.config(fg=state_colors[i])
         
-        # Draw all LEDs
+        # Draw all LEDs with modern visual effects
         for i in range(LED_COUNT):
-            x = 10 + i * 32
+            x = start_x + i * (led_width + led_spacing)
             rgb = led_pattern[i]
             
-            # FORCE first LED to be BRIGHT MAGENTA for testing
-            if i == 0:
-                color = '#ff00ff'
-            else:
+            # Calculate brightness (0-1)
+            brightness = sum(rgb) / (255 * 3)
+            is_lit = sum(rgb) > 10
+            
+            if is_lit:
+                # LED is lit - create glow effect
                 color = f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
-            
-            # Draw LED
-            self.led_canvas.create_rectangle(x, 5, x + 30, 55,
-                                            fill=color, outline="#00ff00", width=2)
-            
-            # LED number - adjust text color based on background
-            if sum(rgb) > 400:
-                text_color = "#000000"  # Dark text on bright background
-            elif sum(rgb) > 0:
-                text_color = "#ffffff"  # White text on dim background
+                
+                # Create multiple glow layers for depth with improved visual effect
+                # Outer glow (largest, creates diffusion effect)
+                if brightness > 0.2:
+                    glow_color = f'#{min(255, rgb[0] + 40):02x}{min(255, rgb[1] + 40):02x}{min(255, rgb[2] + 40):02x}'
+                    dim_glow = f'#{int(rgb[0] * 0.3):02x}{int(rgb[1] * 0.3):02x}{int(rgb[2] * 0.3):02x}'
+                    
+                    # Multiple glow layers for realistic diffusion
+                    for layer in range(4, 0, -1):
+                        offset = int(layer * 2.5 * brightness)
+                        stipple_pattern = ["gray75", "gray50", "gray25", ""][4 - layer]
+                        
+                        self.led_canvas.create_oval(
+                            x - offset, start_y - offset,
+                            x + led_width + offset, start_y + led_height + offset,
+                            fill=dim_glow if layer > 2 else glow_color, 
+                            outline="", 
+                            stipple=stipple_pattern if stipple_pattern else ""
+                        )
+                
+                # Create smooth gradient effect with multiple bands
+                gradient_steps = 5
+                for step in range(gradient_steps):
+                    y_start = start_y + int((led_height / gradient_steps) * step)
+                    y_end = start_y + int((led_height / gradient_steps) * (step + 1))
+                    
+                    # Brightness decreases from top to bottom
+                    brightness_factor = 1.5 - (step * 0.15)
+                    gradient_rgb = tuple(min(255, int(c * brightness_factor)) for c in rgb)
+                    gradient_color = f'#{gradient_rgb[0]:02x}{gradient_rgb[1]:02x}{gradient_rgb[2]:02x}'
+                    
+                    self.led_canvas.create_rectangle(
+                        x, y_start, x + led_width, y_end,
+                        fill=gradient_color, outline=""
+                    )
+                
+                # Subtle border for definition
+                border_color = f'#{min(255, rgb[0] + 50):02x}{min(255, rgb[1] + 50):02x}{min(255, rgb[2] + 50):02x}'
+                self.led_canvas.create_rectangle(
+                    x, start_y, x + led_width, start_y + led_height,
+                    fill="", outline=border_color, width=1
+                )
+                
+                # LED number - adaptive color for readability
+                if sum(rgb) > 400:
+                    text_color = "#000000"  # Dark text on bright background
+                    shadow_color = "#ffffff"  # Light shadow on dark text
+                else:
+                    text_color = "#ffffff"  # White text on dim/medium background
+                    shadow_color = "#000000"  # Dark shadow on light text
+                
+                # Add text shadow for better readability (no alpha support in Tkinter)
+                shadow_offset = 1
+                self.led_canvas.create_text(
+                    x + led_width // 2 + shadow_offset, 
+                    start_y + led_height // 2 + shadow_offset,
+                    text=str(i+1), fill=shadow_color, font=("Arial", 7, "bold")
+                )
+                
+                self.led_canvas.create_text(
+                    x + led_width // 2, start_y + led_height // 2,
+                    text=str(i+1), fill=text_color, font=("Arial", 7, "bold")
+                )
             else:
-                text_color = "#444444"  # Gray text on black
-            
-            self.led_canvas.create_text(x + 15, 30, text=str(i+1), 
-                                       fill=text_color, font=("Arial", 8))
+                # LED is off - subtle gray
+                self.led_canvas.create_rectangle(
+                    x, start_y, x + led_width, start_y + led_height,
+                    fill="#1a1a1a", outline="#2a2a2a", width=1
+                )
+                
+                # LED number (subtle when off)
+                self.led_canvas.create_text(
+                    x + led_width // 2, start_y + led_height // 2,
+                    text=str(i+1), fill="#333333", font=("Arial", 7)
+                )
     
     def update_simulation(self):
         """Main simulation loop."""
@@ -1304,6 +1389,68 @@ class LEDSimulator:
         if self.start_time_ms == 0:
             self.start_time_ms = int(time.time() * 1000)
         self.current_time_ms = int(time.time() * 1000) - self.start_time_ms
+        
+        # Handle engine start animation
+        if self.engine_starting and self.engine_start_frames > 0:
+            self.engine_start_frames -= 1
+            
+            # Realistic starter motor cranking (0-30 frames)
+            if self.engine_start_frames > 60:
+                # Initial cranking - RPM fluctuates as starter engages
+                crank_progress = (90 - self.engine_start_frames) / 30.0
+                self.rpm = int(150 + (crank_progress * 250) + (30 * math.sin(crank_progress * 10)))
+            # Engine catches and revs up (30-60 frames)
+            elif self.engine_start_frames > 30:
+                catch_progress = (60 - self.engine_start_frames) / 30.0
+                # RPM jumps up as engine fires, then settles
+                target_rpm = 1800 - (catch_progress * 800)  # 1800 -> 1000
+                self.rpm = int(target_rpm + (50 * math.sin(catch_progress * 15)))
+            # Settling to idle (0-30 frames)
+            else:
+                settle_progress = (30 - self.engine_start_frames) / 30.0
+                # Smooth descent to idle RPM
+                self.rpm = int(1000 + (1000 - self.car_config.idle_rpm) * (1 - settle_progress))
+            
+            # Update audio during start
+            if self.engine_start_frames == 60:
+                self.audio_engine.start(self.rpm)
+            else:
+                self.audio_engine.update_rpm(self.rpm)
+            
+            # Complete start when animation finishes
+            if self.engine_start_frames <= 0:
+                self.complete_engine_start()
+            
+            self.draw_gauges_and_ui()
+            self.root.after(16, self.update_simulation)
+            return
+        
+        # Handle engine stop animation
+        if self.engine_stopping and self.engine_stop_frames > 0:
+            self.engine_stop_frames -= 1
+            
+            # Realistic engine shutdown - RPM drops with slight fluctuation
+            stop_progress = (60 - self.engine_stop_frames) / 60.0
+            
+            # Exponential decay with slight roughness
+            base_rpm = self.car_config.idle_rpm * (1 - stop_progress) ** 1.5
+            roughness = 20 * math.sin(stop_progress * 20) * (1 - stop_progress)
+            self.rpm = max(0, int(base_rpm + roughness))
+            
+            # Speed coasts down from rolling resistance
+            if self.speed > 0:
+                self.speed = max(0, self.speed - (self.car_config.rolling_resistance * 2))
+            
+            # Update audio during stop
+            self.audio_engine.update_rpm(self.rpm)
+            
+            # Complete stop when animation finishes
+            if self.engine_stop_frames <= 0:
+                self.complete_engine_stop()
+            
+            self.draw_gauges_and_ui()
+            self.root.after(16, self.update_simulation)
+            return
         
         # Update animations based on state
         if self.engine_running and not self.engine_stalled:
@@ -1638,8 +1785,6 @@ def main():
     print("="*70 + "\n")
     
     root = tk.Tk()
-    root.geometry("1200x1100")  # Make window even taller so LED strip canvas is visible
-    root.resizable(True, True)   # Allow resizing
     app = LEDSimulator(root)
     root.mainloop()
 
