@@ -120,32 +120,6 @@ void test_led_count_at_max_rpm() {
 }
 
 // ============================================================================
-// GoPro Control Logic Tests
-// ============================================================================
-
-void test_gopro_turns_on_with_rpm() {
-    uint16_t rpm = 1000;
-    bool shouldBeOn = (rpm > 0);
-    TEST_ASSERT_TRUE(shouldBeOn);
-}
-
-void test_gopro_stays_off_with_zero_rpm() {
-    uint16_t rpm = 0;
-    unsigned long timeSinceZero = 15000; // 15 seconds
-    unsigned long delayThreshold = 10000; // 10 seconds
-    bool shouldBeOff = (rpm == 0 && timeSinceZero >= delayThreshold);
-    TEST_ASSERT_TRUE(shouldBeOff);
-}
-
-void test_gopro_waits_before_turning_off() {
-    uint16_t rpm = 0;
-    unsigned long timeSinceZero = 5000; // 5 seconds
-    unsigned long delayThreshold = 10000; // 10 seconds
-    bool shouldStayOn = (timeSinceZero < delayThreshold);
-    TEST_ASSERT_TRUE(shouldStayOn);
-}
-
-// ============================================================================
 // Data Logging Format Tests
 // ============================================================================
 
@@ -203,10 +177,6 @@ void setup() {
     RUN_TEST(test_led_count_at_mid_rpm);
     RUN_TEST(test_led_count_at_max_rpm);
     
-    // GoPro Control Tests
-    RUN_TEST(test_gopro_turns_on_with_rpm);
-    RUN_TEST(test_gopro_stays_off_with_zero_rpm);
-    RUN_TEST(test_gopro_waits_before_turning_off);
     
     // Data Format Tests
     RUN_TEST(test_csv_data_format);

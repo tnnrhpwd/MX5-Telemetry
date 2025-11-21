@@ -16,6 +16,12 @@ Complete documentation for the MX5-Telemetry system.
 - **[LIBRARY_INSTALL_GUIDE.md](LIBRARY_INSTALL_GUIDE.md)** - Arduino IDE library installation troubleshooting
 - **[libraries_needed.txt](libraries_needed.txt)** - Quick reference list of required libraries
 
+### LED System
+
+- **[LED_STATE_SYSTEM.md](LED_STATE_SYSTEM.md)** - Complete documentation of mirrored progress bar LED states
+- **[LED_QUICKREF.md](LED_QUICKREF.md)** - Quick reference for LED state modifications
+- **[LED_AUTO_SYNC.md](LED_AUTO_SYNC.md)** - Automatic synchronization between Arduino and Python simulator
+
 ### Data & Analysis
 
 - **[DATA_ANALYSIS.md](DATA_ANALYSIS.md)** - Python scripts for CSV data visualization and track analysis
@@ -24,10 +30,20 @@ Complete documentation for the MX5-Telemetry system.
 
 ```
 MX5-Telemetry/
-├── MX5_Telemetry.ino          # Main Arduino firmware
 ├── platformio.ini              # PlatformIO configuration
 ├── README.md                   # Main project documentation
 ├── LICENSE                     # MIT license
+│
+├── src/                        # Main application code
+│   ├── main.cpp                # Application entry point
+│   └── config.h                # Configuration
+│
+├── lib/                        # Custom libraries (modular)
+│   ├── CANHandler/             # CAN bus module
+│   ├── LEDController/          # LED control module
+│   ├── GPSHandler/             # GPS module
+│   ├── DataLogger/             # SD logging module
+│   └── PowerManager/           # Power management module
 │
 ├── docs/                       # All documentation (you are here)
 │   ├── README.md               # Documentation index

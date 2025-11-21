@@ -1,4 +1,4 @@
-# 🚗 MX5-Telemetry System
+ the# 🚗 MX5-Telemetry System
 
 A comprehensive embedded telemetry and data logging system for the 2008 Mazda Miata NC (MX-5). This system reads real-time engine data from the vehicle's CAN bus, provides visual RPM feedback via an LED strip, logs GPS-enhanced telemetry data, and automatically controls external camera recording.
 
@@ -12,7 +12,6 @@ A comprehensive embedded telemetry and data logging system for the 2008 Mazda Mi
 - **Visual RPM Indicator**: WS2812B LED strip displays RPM with color gradient and shift light
 - **GPS Data Logging**: Records position, speed, altitude, and timestamps
 - **CSV Data Export**: Logs all telemetry data to MicroSD card for easy analysis
-- **Automatic GoPro Control**: Powers camera ON/OFF based on engine state
 - **Error Handling**: Graceful recovery from communication failures
 - **Low-Power Standby**: Reduces power consumption when vehicle is off
 
@@ -35,9 +34,26 @@ A comprehensive embedded telemetry and data logging system for the 2008 Mazda Mi
 
 ```
 MX5-Telemetry/
-├── MX5_Telemetry.ino          # Main firmware (upload this)
 ├── platformio.ini              # PlatformIO configuration
 ├── README.md                   # This file
+│
+├── src/                        # 🎯 Main application code
+│   ├── main.cpp                # Main application entry point
+│   └── config.h                # Central configuration
+│
+├── lib/                        # 📦 Custom libraries (modular architecture)
+│   ├── CANHandler/             # CAN bus communication
+│   │   ├── CANHandler.h
+│   │   └── CANHandler.cpp
+│   ├── LEDController/          # LED strip visual feedback
+│   │   ├── LEDController.h
+│   │   └── LEDController.cpp
+│   ├── GPSHandler/             # GPS data acquisition
+│   │   ├── GPSHandler.h
+│   │   └── GPSHandler.cpp
+│   ├── DataLogger/             # SD card CSV logging
+│   │   ├── DataLogger.h
+│   │   └── DataLogger.cpp
 │
 ├── docs/                       # 📚 All documentation
 │   ├── QUICK_START.md          # 30-min setup guide
@@ -45,13 +61,21 @@ MX5-Telemetry/
 │   ├── PARTS_LIST.md           # Bill of materials
 │   ├── PLATFORMIO_GUIDE.md     # Development setup
 │   ├── LIBRARY_INSTALL_GUIDE.md # Library troubleshooting
-│   └── DATA_ANALYSIS.md        # Data visualization
+│   ├── DATA_ANALYSIS.md        # Data visualization
+│   └── REQUIREMENTS_COMPLIANCE.md # ✅ Requirements verification
 │
 ├── scripts/                    # 🔧 Helper scripts
 │   ├── pio_quick_start.bat     # PlatformIO menu (Windows)
 │   ├── pio_quick_start.sh      # PlatformIO menu (Linux/Mac)
+│   ├── verify_build.bat        # Build verification (Windows)
+│   ├── verify_build.sh         # Build verification (Linux/Mac)
 │   ├── install_libraries.bat   # Arduino library installer
 │   └── install_libraries.sh    # Arduino library installer
+│
+├── tools/                      # 🎮 Development tools
+│   ├── led_simulator.py        # Interactive LED simulator (GUI)
+│   ├── run_simulator.bat       # Simulator launcher (Windows)
+│   └── README.md               # Tool documentation
 │
 ├── hardware/                   # 🔌 Hardware files
 │   ├── diagram.json            # Wokwi circuit diagram
@@ -75,7 +99,6 @@ MX5-Telemetry/
 | LED Strip | WS2812B | Single-wire | 30 LEDs recommended |
 | GPS Module | Neo-6M | Software Serial | UART, 9600 baud |
 | SD Card Module | MicroSD | SPI | Shares SPI bus with CAN |
-| Power MOSFET | IRF540N or similar | GPIO | Controls 5V GoPro power |
 | Buck Converter | LM2596 | - | 12V automotive → 5V regulated |
 
 ### Wiring Connections
@@ -87,7 +110,6 @@ Digital Pins:
   D2  → GPS Module TX (via SoftwareSerial RX)
   D3  → GPS Module RX (via SoftwareSerial TX)
   D4  → SD Card CS (Chip Select)
-  D5  → MOSFET Gate (GoPro Power Control)
   D6  → WS2812B Data In
   D10 → MCP2515 CS (Chip Select)
   D11 → MOSI (shared SPI)
@@ -103,8 +125,8 @@ Power:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        Vehicle 12V System                            │
-│                        (OBD-II Port Pin 16)                          │
+│                        Vehicle 12V System                           │
+│                        (OBD-II Port Pin 16)                         │
 └────────────────────────────┬────────────────────────────────────────┘
                              │
                         ┌────▼────┐
@@ -118,10 +140,9 @@ Power:
          │ Arduino │    │ WS2812B │   │  Neo-6M │
          │  Nano   │    │ LED(30) │   │   GPS   │
          │         │    └─────────┘   └────┬────┘
-         │   D2◄───┼────────────────────────┘ TX
+         │   D2◄───┼───────────────────────┘ TX
          │   D3►───┼──────────────────────────► RX
          │   D4───►┼────► SD Card (CS)
-         │   D5───►┼────► MOSFET Gate
          │   D6───►┼────► WS2812B Data
          │   D10──►┼────► MCP2515 (CS)
          │   D11──►┼────► MOSI (shared)
@@ -141,20 +162,6 @@ Power:
     │  CAN-L (Pin 14)   │
     │  GND   (Pin 5)    │
     └───────────────────┘
-
-    ┌──────────────────┐
-    │  MOSFET Circuit  │
-    │                  │
-    │  D5 ──┬─[10kΩ]─┐│
-    │       │         ││
-    │     [Gate]      ││
-    │       │         ││ IRF540N
-    │    [Drain]◄─────┼┤ (or similar)
-    │       │         ││
-    │    [Source]     ││
-    │       │         │└─► GoPro USB 5V+
-    │      GND        │
-    └──────────────────┘
 ```
 
 ## 📚 Software Dependencies
@@ -226,7 +233,6 @@ arduino-cli lib install "TinyGPSPlus"
    - GND → Pin 5
 4. **Connect all modules** according to the wiring diagram above
 5. **Mount the LED strip** in your desired location (dashboard, windshield, etc.)
-6. **Route the GoPro power cable** through the MOSFET circuit
 
 ### 2. Software Setup
 
@@ -285,7 +291,6 @@ Edit these constants in `MX5_Telemetry.ino` to customize behavior:
 #define CAN_READ_INTERVAL    20    // CAN polling rate (ms)
 #define GPS_READ_INTERVAL    100   // GPS update rate (ms)
 #define LOG_INTERVAL         200   // Data logging rate (ms)
-#define GOPRO_OFF_DELAY      10000 // GoPro shutdown delay (ms)
 
 // Pin Configuration (if you need different pins)
 #define CAN_CS_PIN      10
@@ -293,7 +298,6 @@ Edit these constants in `MX5_Telemetry.ino` to customize behavior:
 #define LED_DATA_PIN    6
 #define GPS_RX_PIN      2
 #define GPS_TX_PIN      3
-#define GOPRO_PIN       5
 ```
 
 ### CAN Bus Configuration
@@ -321,29 +325,124 @@ If your vehicle uses different CAN IDs, modify the `readCANData()` function.
    - 🟠 **Orange** → High RPM (5000-6500)
    - 🔴 **Red Flash** → Shift light (6500+)
 
-3. **GoPro automatically powers ON** when engine starts (RPM > 0)
-4. **Data logs continuously** to SD card in CSV format
-5. **GoPro powers OFF** 10 seconds after engine stops
+3. **Data logs continuously** to SD card in CSV format
 
-### LED Patterns
+### LED Patterns - Mirrored Progress Bar System
 
+The LED strip uses a sophisticated mirrored progress bar that grows from both edges toward the center, with different states for various driving conditions:
+
+#### ⚪ State 0: Idle/Neutral (Speed = 0)
+**Visual:** White LEDs sequentially pepper **inward** from edges to center  
+**Pattern:** `⚪ → ⚪ ⚪ → ⚪ ⚪ ⚪ → ... → full strip (hold 2s) → reset`  
+**Purpose:** Indicates vehicle is stationary (neutral/clutch engaged)  
+**Animation:** 150ms delay between LEDs, holds 2000ms at full brightness before repeating
+
+#### 🟢 State 1: Gas Efficiency Zone (2000-2500 RPM)
+**Visual:** Gentle green glow on outermost 2 LEDs per side  
+**Pattern (16 LEDs):** `🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢`  
+**Purpose:** Quiet confirmation of optimal cruising range
+
+#### 🟠 State 2: Stall Danger (750-1999 RPM)
+**Visual:** Orange bars pulse **outward** from center to edges  
+**Pattern:** `⚫ ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ ⚫ → 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠`  
+**Purpose:** Warn of potential engine stall (below torque range)  
+**Animation:** 600ms pulse period, brightness 20-200
+
+#### 🟡 State 3: Normal Driving / Power Band (2501-4500 RPM)
+**Visual:** Solid yellow bars grow **inward** from edges toward center  
+**Pattern (at ~4000 RPM):** `🟡 🟡 🟡 🟡 🟡 ⚫ ⚫ ⚫ ⚫ 🟡 🟡 🟡 🟡 🟡`  
+**Purpose:** Mirrored progress bar showing current RPM percentage
+
+#### 🔴 State 4: High RPM / Shift Danger (4501-7199 RPM)
+**Visual:** Filled segments turn **solid red**, unfilled center gap **flashes violently**  
+**Pattern (at ~6000 RPM):** `🟥 🟥 🟥 🟥 🟥 🟥 ✨ ✨ ✨ ✨ 🟥 🟥 🟥 🟥 🟥 🟥`  
+*(✨ = rapid red/white/cyan flashing)*  
+**Purpose:** Urgent shift signal - gauge nearly full, flash speed 150ms→40ms  
+**Behavior:** Bar continues growing inward while gap flashes faster as RPM rises
+
+#### 🛑 State 5: Rev Limit Cut (7200+ RPM)
+**Visual:** Bars meet completely, entire strip **solid red**  
+**Pattern (Full Strip):** `🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥`  
+**Purpose:** Maximum limit reached (fuel cut), immediate action required
+
+#### ❌ Error State: CAN Bus Read Error
+**Visual:** Red LEDs sequentially pepper **inward** from edges to center  
+**Pattern:** `🔴 → 🔴 🔴 → 🔴 🔴 🔴 → ... → center`  
+**Purpose:** Indicates communication failure with vehicle CAN bus  
+**Animation:** 80ms delay between LEDs, holds 300ms at center, brightness 200
+
+---
+
+**Startup Patterns:**
 | Pattern | Meaning |
-|---------|---------|
+|---------|------|
 | Rainbow chase | System starting up |
 | Green fill | Initialization successful |
 | Red flash (3x) | Error detected |
-| Gradient bar | Current RPM display |
-| Fast red flash | Shift light active |
-| All off | Vehicle off / standby mode |
 
 ### Data Retrieval
+
+You have **two options** for retrieving logged data:
+
+#### Option A: Direct SD Card Access (Traditional)
 
 1. **Power off the vehicle**
 2. **Remove the MicroSD card**
 3. **Insert into computer**
 4. **Open CSV file** in Excel, Google Sheets, or data analysis software
 
-File naming format: `LOG_YYMMDD_HHMM.CSV` (based on GPS time) or `LOG_0.CSV` (counter-based)
+#### Option B: USB Serial Data Dump (No Card Removal)
+
+This method allows data retrieval without removing the SD card:
+
+**Prerequisites:**
+- USB-C extension cable accessible from cabin
+- Terminal program (PuTTY, Tera Term, or Arduino Serial Monitor)
+
+**Step-by-Step Procedure:**
+
+1. **Park and Turn OFF**: Turn the key to OFF position
+   - This isolates USB data lines for direct computer access
+3. **Connect Laptop**: Plug laptop into USB-C extension port
+
+4. **Choose Your Method**:
+
+   **Method 1 - Built-in Commands (Main Firmware):**
+   - Main firmware includes data dump commands
+   - Open Serial Monitor at 115200 baud
+   - Type commands:
+     - `LIST` - Show all files on SD card
+     - `DUMP` - Dump current log file
+     - `DUMP filename` - Dump specific file (e.g., `DUMP LOG_251120_1430.CSV`)
+     - `HELP` - Show available commands
+   
+   **Method 2 - Dedicated Dump Sketch (Most Reliable):**
+   - Upload the standalone `examples/DataDump/DataDump.ino` sketch
+   - Open Serial Monitor at 115200 baud
+   - Use same commands as above
+   - This sketch is optimized ONLY for data retrieval
+
+5. **Capture Serial Data**:
+   - **IMPORTANT**: Configure your terminal to LOG all incoming data to a file
+   - **PuTTY**: Session → Logging → "All session output" → Select file
+   - **Tera Term**: File → Log → Choose filename
+   - **Arduino IDE**: Copy from Serial Monitor (not ideal for large files)
+   
+6. **Execute Dump**:
+   - Start logging in terminal
+   - Send `DUMP` command
+   - Wait for "=== END FILE DUMP ===" message
+   - Stop logging
+
+7. **Convert to CSV**:
+   - Rename captured `.txt` file to `.csv`
+   - Open in Excel or data analysis software
+
+8. **Finalize**:
+   - Disconnect laptop
+   - If you uploaded DataDump sketch, re-upload main firmware
+
+**File Naming:** `LOG_YYMMDD_HHMM.CSV` (GPS-based) or `LOG_0.CSV` (counter-based)
 
 ## 📊 Data Format
 
@@ -421,17 +520,6 @@ Timestamp,Date,Time,Latitude,Longitude,Altitude,Satellites,RPM,Speed,Throttle,Co
 3. Verify `LED_COUNT` matches your actual LED count
 4. Add a 470Ω resistor between D6 and LED data line (reduces signal noise)
 5. Add a 1000µF capacitor across LED power supply
-
-#### ❌ GoPro Not Powering
-
-**Symptoms**: GoPro doesn't turn on when engine starts
-
-**Solutions**:
-1. Check MOSFET gate connection to D5
-2. Verify MOSFET can handle current (minimum 2A)
-3. Ensure GoPro USB cable is connected through MOSFET drain
-4. Test MOSFET with multimeter (should switch when D5 goes HIGH)
-5. Check for proper ground connection
 
 ### Debug Mode
 
@@ -535,6 +623,90 @@ case 0x11:  // Throttle Position
   break;
 ```
 
+## 🎮 LED Simulator Tool v2.0
+
+Before uploading code to your Arduino, you can test LED logic changes using the interactive simulator!
+
+### ✨ What's New in v2.0
+
+- **🚗 Car Configuration Files** - Load custom vehicle specs from JSON files
+- **🔑 Engine Start/Stop** - Toggle engine with button control
+- **📂 Multiple Car Support** - Switch between different vehicles on the fly
+- **📊 Realistic Physics** - Each car uses its own gear ratios and performance data
+
+### Setup (First Time)
+
+**Create Python virtual environment:**
+```powershell
+# In project root
+py -m venv venv
+```
+
+This creates an isolated Python environment in the `venv/` folder (already excluded in `.gitignore`).
+
+### Quick Start
+
+**Windows (with virtual environment):**
+```powershell
+.\venv\Scripts\Activate.ps1
+python tools\LED_Simulator\led_simulator_v2.1.py
+```
+
+**Windows (batch launcher):**
+```batch
+tools\LED_Simulator\run_simulator.bat
+```
+
+**All Platforms:**
+```bash
+python tools/LED_Simulator/led_simulator_v2.1.py
+```
+
+### Features
+
+- 🎨 **Real-time LED visualization** - See your LED strip in action
+- 🏎️ **Realistic physics** - Accurate transmission simulation per vehicle
+- ⌨️ **Keyboard controls** - Gas, brake, clutch, shifting
+- 📊 **Dual gauges** - RPM and speed displays
+- ⚙️ **Gear indicator** - Current gear selection (N when engine off)
+- 🔴 **Shift light testing** - Test your RPM thresholds
+- 📁 **Custom car files** - Load any vehicle configuration from JSON
+
+### Controls
+
+- **START ENGINE Button**: Turn engine on/off
+- **Load Car File Button**: Switch vehicle configurations
+- ↑ **Up Arrow**: Gas pedal (increase RPM)
+- ↓ **Down Arrow**: Brake (decrease RPM)
+- → **Right Arrow**: Shift up
+- ← **Left Arrow**: Shift down
+- **Shift Key**: Clutch (hold while shifting)
+- **ESC**: Quit
+
+### Car Configuration Files
+
+Create custom car profiles in `tools/cars/` directory:
+
+**Included Cars:**
+- `2008_miata_nc.json` - 2008 Mazda MX-5 NC (default)
+- `example_sports_car.json` - Generic performance car
+
+**Create Your Own:**
+1. Copy an existing car file
+2. Modify specs (gear ratios, RPM limits, top speed, etc.)
+3. Load in simulator using "Load Car File" button
+
+See `tools/cars/README.md` for complete file format documentation.
+
+**Perfect for:**
+- Testing LED color changes before upload
+- Adjusting RPM thresholds visually
+- Experimenting with shift light behavior
+- Testing different vehicle configurations
+- Demonstrating the system to others
+
+See [tools/README.md](tools/README.md) for detailed usage and customization guide.
+
 ## 📚 Documentation
 
 Complete documentation is available in the `docs/` folder:
@@ -545,6 +717,7 @@ Complete documentation is available in the `docs/` folder:
 - **[PlatformIO Guide](docs/PLATFORMIO_GUIDE.md)** - Development environment setup and testing
 - **[Library Install Guide](docs/LIBRARY_INSTALL_GUIDE.md)** - Troubleshooting library installation
 - **[Data Analysis](docs/DATA_ANALYSIS.md)** - Python scripts for track data visualization
+- **[Requirements Compliance](docs/REQUIREMENTS_COMPLIANCE.md)** - ✅ Verification of all project requirements
 
 See [docs/README.md](docs/README.md) for a complete documentation index.
 
