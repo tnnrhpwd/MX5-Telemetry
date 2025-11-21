@@ -53,7 +53,6 @@
 // ============================================================================
 #define CMD_START       "START"      // Start logging and LED display
 #define CMD_PAUSE       "PAUSE"      // Pause logging and LED display
-#define CMD_RESUME      "RESUME"     // Resume logging and LED display
 #define CMD_DUMP        "DUMP"       // Dump log data to laptop
 #define CMD_STATUS      "STATUS"     // Print diagnostic information
 #define CMD_LIVE        "LIVE"       // Show live data stream

@@ -35,7 +35,6 @@ void CommandHandler::processCommand(const String& cmd) {
     
     if (command == CMD_START) handleStart();
     else if (command == CMD_PAUSE) handlePause();
-    else if (command == CMD_RESUME) handleResume();
     else if (command == CMD_LIVE) handleLive();
     else if (command == CMD_STOP) handleStop();
     else if (command == CMD_HELP) handleHelp();
@@ -48,7 +47,7 @@ void CommandHandler::processCommand(const String& cmd) {
 }
 
 void CommandHandler::handleStart() {
-    if (currentState == STATE_IDLE || currentState == STATE_PAUSED) {
+    if (currentState == STATE_IDLE || currentState == STATE_PAUSED || currentState == STATE_DUMPING) {
         setState(STATE_RUNNING);
         Serial.println(F("OK"));
     }
@@ -58,15 +57,6 @@ void CommandHandler::handlePause() {
     if (currentState == STATE_RUNNING || currentState == STATE_LIVE_MONITOR) {
         setState(STATE_PAUSED);
         Serial.println(F("OK"));
-    }
-}
-
-void CommandHandler::handleResume() {
-    if (currentState == STATE_PAUSED || currentState == STATE_DUMPING) {
-        setState(STATE_RUNNING);
-        Serial.println(F("OK"));
-    } else if (currentState == STATE_IDLE) {
-        handleStart();
     }
 }
 
@@ -83,7 +73,7 @@ void CommandHandler::handleStop() {
 }
 
 void CommandHandler::handleHelp() {
-    Serial.println(F("START|PAUSE|RESUME|LIVE|STOP|DUMP|LIST|STATUS"));
+    Serial.println(F("START|PAUSE|LIVE|STOP|DUMP|LIST|STATUS"));
 }
 
 
