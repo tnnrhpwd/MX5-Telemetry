@@ -1438,6 +1438,9 @@ class LEDSimulator:
         
         if not self.engine_running:
             # All LEDs off when engine is off - subtle gray with minimal border
+            # BUT STILL update the pattern for Arduino sync!
+            self.current_led_pattern = [(0, 0, 0)] * LED_COUNT
+            
             for i in range(LED_COUNT):
                 x = start_x + i * (led_width + led_spacing)
                 
