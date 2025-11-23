@@ -175,6 +175,10 @@ void setup() {
     #endif
     
     #if ENABLE_LED_STRIP
+        cmdHandler.setLEDController(&ledStrip);
+    #endif
+    
+    #if ENABLE_LED_STRIP
         // Skip animations for faster startup - they block for ~12 seconds total!
         // ledStrip.readyAnimation();
         ledStrip.clear();

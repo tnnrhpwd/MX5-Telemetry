@@ -26,7 +26,7 @@
 // ============================================================================
 // HARDWARE CONFIGURATION
 // ============================================================================
-#define LED_COUNT       144   // Number of LEDs in the strip (144 LEDs/M, 1M strip)
+#define LED_COUNT       40    // Number of LEDs used (first 40 of physical strip)
 #define CAN_SPEED       CAN_500KBPS  // Miata NC CAN bus speed
 #define SERIAL_BAUD     115200       // Serial monitor baud rate
 #define GPS_BAUD        9600         // GPS module baud rate

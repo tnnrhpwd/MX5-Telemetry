@@ -1,12 +1,13 @@
 #include "CommandHandler.h"
 #include "DataLogger.h"
+#include "LEDController.h"
 
 // ============================================================================
 // Command Handler Implementation
 // ============================================================================
 
 CommandHandler::CommandHandler()
-    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr) {
+    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), ledController(nullptr) {
     inputBuffer[0] = '\0';
 }
 
@@ -29,7 +30,7 @@ void CommandHandler::update() {
                 bufferIndex = 0;
                 inputBuffer[0] = '\0';
             }
-        } else if (c >= 32 && c <= 126 && bufferIndex < 31) {  // Printable ASCII, prevent overflow
+        } else if (c >= 32 && c <= 126 && bufferIndex < 255) {  // Printable ASCII, prevent overflow
             inputBuffer[bufferIndex++] = c;
         }
         // Immediately read next character without any delays
@@ -37,8 +38,20 @@ void CommandHandler::update() {
 }
 
 void CommandHandler::processCommand(const char* cmd) {
-    // Convert to uppercase for comparison
-    char command[32];
+    // Fast path for LED commands (don't convert to uppercase - it's expensive for 244 chars)
+    if (strncmp(cmd, "LED:", 4) == 0 || strncmp(cmd, "led:", 4) == 0) {
+        handleLED(cmd);
+        return;
+    }
+    
+    // Fast path for RPM commands (also skip uppercase conversion)
+    if (strncmp(cmd, "RPM:", 4) == 0 || strncmp(cmd, "rpm:", 4) == 0) {
+        handleRPM(cmd);
+        return;
+    }
+    
+    // Convert to uppercase for comparison (only for short commands)
+    char command[32];  // Short buffer for non-LED/RPM commands
     uint8_t i = 0;
     while (cmd[i] && i < 31) {
         command[i] = toupper(cmd[i]);
@@ -194,6 +207,76 @@ void CommandHandler::handleDump(const String& command) {
     
     setState(STATE_IDLE);
 }
+
+void CommandHandler::handleRPM(const char* command) {
+    // Parse RPM value from command (format: RPM:xxxx)
+    int rpm = 0;
+    
+    // Skip "RPM:" prefix (4 characters)
+    const char* rpmStr = command + 4;
+    
+    // Convert string to integer
+    while (*rpmStr >= '0' && *rpmStr <= '9') {
+        rpm = rpm * 10 + (*rpmStr - '0');
+        rpmStr++;
+    }
+    
+    // Update LED display based on RPM
+    // This directly updates the LED strip to match the simulator
+    if (ledController) {
+        ledController->setRPM(rpm);
+        ledController->update();
+    }
+}
+
+void CommandHandler::handleLED(const char* command) {
+    // Parse LED color data from command (format: LED:RRGGBBRRGGBB...)
+    // Each LED is 6 hex characters: RRGGBB
+    
+    if (!ledController) {
+        return;
+    }
+    
+    // Skip "LED:" prefix (4 characters)
+    const char* hexData = command + 4;
+    
+    // Helper function to convert hex char to int
+    auto hexToInt = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        return 0;
+    };
+    
+    // Parse each LED color (40 LEDs * 6 chars = 240 chars expected)
+    int ledIndex = 0;
+    while (*hexData && ledIndex < 40) {
+        // Parse R (2 hex chars)
+        if (!hexData[0] || !hexData[1]) break;
+        uint8_t r = (hexToInt(hexData[0]) << 4) | hexToInt(hexData[1]);
+        hexData += 2;
+        
+        // Parse G (2 hex chars)
+        if (!hexData[0] || !hexData[1]) break;
+        uint8_t g = (hexToInt(hexData[0]) << 4) | hexToInt(hexData[1]);
+        hexData += 2;
+        
+        // Parse B (2 hex chars)
+        if (!hexData[0] || !hexData[1]) break;
+        uint8_t b = (hexToInt(hexData[0]) << 4) | hexToInt(hexData[1]);
+        hexData += 2;
+        
+        // Set LED color directly
+        ledController->setPixelColor(ledIndex, r, g, b);
+        ledIndex++;
+    }
+    
+    // Update the strip to show changes
+    ledController->update();
+}
+
+
+
 
 
 

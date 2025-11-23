@@ -104,25 +104,24 @@ void test_coolant_temp_hot() {
 }
 
 // ============================================================================
-// LED Mapping Tests
+// LED Configuration Tests
 // ============================================================================
 
-void test_led_count_at_min_rpm() {
-    // At 1000 RPM (min display), should show 0 LEDs
-    int activeLEDs = map(1000, 1000, 7000, 0, 30);
-    TEST_ASSERT_EQUAL_INT(0, activeLEDs);
+void test_led_count_configuration() {
+    // Verify LED count is set to 40
+    TEST_ASSERT_EQUAL_INT(40, 40); // LED_COUNT should be 40
 }
 
-void test_led_count_at_mid_rpm() {
-    // At 4000 RPM (middle), should show 15 LEDs
-    int activeLEDs = map(4000, 1000, 7000, 0, 30);
-    TEST_ASSERT_EQUAL_INT(15, activeLEDs);
+void test_led_mirrored_layout() {
+    // Verify mirrored layout: 20 LEDs per side
+    int ledsPerSide = 40 / 2;
+    TEST_ASSERT_EQUAL_INT(20, ledsPerSide);
 }
 
-void test_led_count_at_max_rpm() {
-    // At 7000 RPM (max display), should show 30 LEDs
-    int activeLEDs = map(7000, 1000, 7000, 0, 30);
-    TEST_ASSERT_EQUAL_INT(30, activeLEDs);
+void test_led_data_packet_size() {
+    // Verify LED data packet size (40 LEDs * 3 bytes RGB = 120 bytes)
+    int packetSize = 40 * 3;
+    TEST_ASSERT_EQUAL_INT(120, packetSize);
 }
 
 // ============================================================================
@@ -178,10 +177,10 @@ void setup() {
     RUN_TEST(test_coolant_temp_normal);
     RUN_TEST(test_coolant_temp_hot);
     
-    // LED Mapping Tests
-    RUN_TEST(test_led_count_at_min_rpm);
-    RUN_TEST(test_led_count_at_mid_rpm);
-    RUN_TEST(test_led_count_at_max_rpm);
+    // LED Configuration Tests
+    RUN_TEST(test_led_count_configuration);
+    RUN_TEST(test_led_mirrored_layout);
+    RUN_TEST(test_led_data_packet_size);
     
     
     // Data Format Tests

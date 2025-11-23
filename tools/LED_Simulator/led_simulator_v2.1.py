@@ -33,9 +33,10 @@ The LED logic mirrors the Arduino implementation in LEDController.cpp.
 """
 
 import tkinter as tk
-from tkinter import messagebox, filedialog, ttk
+from tkinter import messagebox, filedialog, ttk, scrolledtext
 import json
 import os
+from datetime import datetime
 import math
 import wave
 import struct
@@ -47,11 +48,19 @@ except ImportError:
     AUDIO_AVAILABLE = False
     print("Note: pyaudio not available. Install with 'pip install pyaudio' for engine sounds.")
 
+try:
+    import serial
+    import serial.tools.list_ports
+    SERIAL_AVAILABLE = True
+except ImportError:
+    SERIAL_AVAILABLE = False
+    print("Note: pyserial not available. Install with 'pip install pyserial' for Arduino connection.")
+
 # ============================================================================
 # LED Configuration - DEFAULT VALUES (can be overridden from Arduino)
 # ============================================================================
 # These defaults ensure the simulator works even if Arduino config can't be loaded
-LED_COUNT = 30  # Fixed hardware constant
+LED_COUNT = 40  # Fixed hardware constant - matches first 40 LEDs of physical strip
 
 # State 0: Idle/Neutral (White Pepper Inward)
 STATE_0_SPEED_THRESHOLD = 1
@@ -751,9 +760,22 @@ class LEDSimulator:
     def __init__(self, root):
         self.root = root
         self.root.title("MX5-Telemetry LED Simulator v2.1 - Three-State System")
-        self.root.geometry("1200x820")
+        
+        # Set dynamic window size based on screen
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Use 70% of screen width and 85% of screen height
+        window_width = int(screen_width * 0.7)
+        window_height = int(screen_height * 0.85)
+        
+        # Calculate position to center window
+        position_x = (screen_width - window_width) // 2
+        position_y = (screen_height - window_height) // 2
+        
+        self.root.geometry(f"{window_width}x{window_height}+{position_x}+{position_y}")
         self.root.configure(bg='#1a1a1a')
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
         
         # Load default car configuration
         default_car_path = os.path.join(os.path.dirname(__file__), 'cars', '2008_miata_nc.json')
@@ -797,6 +819,13 @@ class LEDSimulator:
         self.pepper_position = 3  # Position for inward pepper animations - start at 3 for visibility
         self.flash_state = False  # Flash state for State 4 gap flashing
         self.last_animation_update = 0  # Last time animation was updated
+        
+        # Arduino connection
+        self.arduino_connected = False
+        self.arduino_port = None
+        self.last_rpm_sent = -1  # Track last RPM sent to avoid flooding
+        self.last_led_send_time = 0  # Track last LED data send time (throttle to 20 Hz)
+        self.current_led_pattern = [(0, 0, 0)] * LED_COUNT  # Store current LED colors for Arduino sync
         
         # Create UI
         self.create_ui()
@@ -866,6 +895,41 @@ class LEDSimulator:
                                     width=18, height=1)
         self.engine_btn.pack(padx=5)
         
+        # Arduino connection controls (only show if pyserial is available)
+        if SERIAL_AVAILABLE:
+            arduino_frame = tk.Frame(control_frame, bg="#2a2a2a")
+            arduino_frame.pack(side=tk.RIGHT, padx=10, pady=5)
+            
+            tk.Label(arduino_frame, text="Arduino:", font=("Arial", 9, "bold"), 
+                    fg="#00d4ff", bg="#2a2a2a").pack(anchor=tk.W)
+            
+            port_frame = tk.Frame(arduino_frame, bg="#2a2a2a")
+            port_frame.pack(pady=2)
+            
+            self.port_var = tk.StringVar()
+            self.port_dropdown = tk.OptionMenu(port_frame, self.port_var, "")
+            self.port_dropdown.config(bg="#444444", fg="#ffffff", font=("Arial", 8), width=12)
+            self.port_dropdown.pack(side=tk.LEFT, padx=2)
+            
+            self.refresh_ports_btn = tk.Button(port_frame, text="🔄", 
+                                              command=self.refresh_ports,
+                                              bg="#444444", fg="#ffffff", 
+                                              font=("Arial", 8), width=2)
+            self.refresh_ports_btn.pack(side=tk.LEFT, padx=2)
+            
+            self.connect_btn = tk.Button(arduino_frame, text="Connect", 
+                                        command=self.toggle_arduino_connection,
+                                        bg="#006600", fg="#ffffff", 
+                                        font=("Arial", 9, "bold"), width=12)
+            self.connect_btn.pack(pady=2)
+            
+            self.connection_status_label = tk.Label(arduino_frame, text="⚪ Not Connected", 
+                                                   font=("Arial", 8), fg="#888888", bg="#2a2a2a")
+            self.connection_status_label.pack()
+            
+            # Initialize port list
+            self.refresh_ports()
+        
         # Audio status and volume control
         audio_frame = tk.Frame(control_frame, bg="#2a2a2a")
         audio_frame.pack(pady=5)
@@ -924,13 +988,13 @@ class LEDSimulator:
         tk.Label(led_frame, text="LED STRIP (WS2812B Simulation)", 
                 font=("Arial", 11, "bold"), fg="#00d4ff", bg="#1a1a1a").pack(pady=3)
         
-        # Create canvas with modern flat design - sized to fit all 30 LEDs
+        # Create canvas with modern flat design - sized to fit all 40 LEDs
         canvas_frame = tk.Frame(led_frame, bg="#0d0d0d", relief=tk.FLAT, bd=0)
         canvas_frame.pack(pady=5, padx=10, fill=tk.X)
         
         self.led_canvas = tk.Canvas(canvas_frame, bg="#0d0d0d", 
                                    highlightthickness=0, bd=0)
-        self.led_canvas.config(width=1160, height=75)
+        self.led_canvas.config(width=1520, height=75)
         self.led_canvas.pack(padx=5, pady=5)
         
         # Gauges frame
@@ -977,6 +1041,34 @@ class LEDSimulator:
         self.status_label = tk.Label(self.root, text="Engine OFF | Press START ENGINE to begin", 
                                     font=("Arial", 10), fg="#ff6600", bg="#1a1a1a")
         self.status_label.pack(pady=5)
+        
+        # Debug Console
+        console_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.RIDGE, bd=2)
+        console_frame.pack(pady=5, padx=20, fill=tk.BOTH, expand=True)
+        
+        tk.Label(console_frame, text="DEBUG CONSOLE", font=("Arial", 10, "bold"), 
+                fg="#00d4ff", bg="#2a2a2a").pack(pady=3)
+        
+        self.console = scrolledtext.ScrolledText(console_frame, height=8, 
+                                                bg="#0d0d0d", fg="#00ff00",
+                                                font=("Consolas", 9), wrap=tk.WORD,
+                                                state=tk.DISABLED, relief=tk.FLAT, bd=0,
+                                                highlightthickness=1, highlightbackground="#3a3a3a")
+        self.console.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        
+        # Console control buttons
+        console_btn_frame = tk.Frame(console_frame, bg="#2a2a2a")
+        console_btn_frame.pack(pady=3)
+        
+        clear_console_btn = tk.Button(console_btn_frame, text="🗑 Clear Console", 
+                                     command=self.clear_console,
+                                     bg="#444444", fg="#ffffff", font=("Arial", 9),
+                                     activebackground="#555555", cursor="hand2")
+        clear_console_btn.pack(side=tk.LEFT, padx=3)
+        
+        # Log simulator start
+        self.log_console("LED Simulator v2.1 started")
+        self.log_console(f"Car loaded: {self.car_config.name}")
     
     def load_car_file(self):
         """Open file dialog to load a car configuration."""
@@ -1044,6 +1136,7 @@ class LEDSimulator:
             self.engine_starting = True
             self.engine_start_frames = 90  # ~1.5 seconds of start animation
             self.rpm = 0
+            self.log_console(f"Starting engine (gear: {self.gear}, clutch: {self.clutch}, brake: {self.brake})")
             self.engine_btn.config(text="⏳ STARTING...", bg="#ff8800")
             gear_text = "N" if self.gear == 0 else str(self.gear)
             self.gear_label.config(text=gear_text, fg="#ffaa00")
@@ -1054,6 +1147,7 @@ class LEDSimulator:
             self.last_shutdown_gear = self.gear
             self.throttle = False
             self.brake = False
+            self.log_console(f"Stopping engine (RPM: {self.rpm}, gear: {self.gear}, speed: {self.speed:.1f})")
             self.engine_btn.config(text="⏳ STOPPING...", bg="#ff8800")
     
     def complete_engine_start(self):
@@ -1062,6 +1156,7 @@ class LEDSimulator:
         self.engine_running = True
         self.session_started = True
         self.rpm = self.car_config.idle_rpm
+        self.log_console(f"✓ Engine started (idle RPM: {self.rpm})")
         self.engine_btn.config(text="🟢 STOP ENGINE", bg="#00aa00")
         gear_text = "N" if self.gear == 0 else str(self.gear)
         self.gear_label.config(text=gear_text, fg="#00ff00")
@@ -1073,6 +1168,7 @@ class LEDSimulator:
         self.engine_running = False
         self.rpm = 0
         self.speed = 0.0
+        self.log_console("✓ Engine stopped")
         self.engine_btn.config(text="🔴 START ENGINE", bg="#cc0000")
         self.gear_label.config(text="N", fg="#666666")
         self.audio_engine.stop()
@@ -1085,6 +1181,119 @@ class LEDSimulator:
     def toggle_speed_unit(self):
         """Toggle between km/h and mph."""
         self.use_mph = not self.use_mph
+    
+    def refresh_ports(self):
+        """Refresh the list of available serial ports."""
+        if not SERIAL_AVAILABLE:
+            return
+        
+        try:
+            ports = serial.tools.list_ports.comports()
+            port_list = [port.device for port in ports]
+            
+            if not port_list:
+                port_list = ["No ports found"]
+            
+            # Update dropdown menu
+            menu = self.port_dropdown["menu"]
+            menu.delete(0, "end")
+            
+            for port in port_list:
+                menu.add_command(label=port, 
+                               command=lambda value=port: self.port_var.set(value))
+            
+            # Set first port as default
+            if port_list and port_list[0] != "No ports found":
+                self.port_var.set(port_list[0])
+            else:
+                self.port_var.set("")
+        except Exception as e:
+            print(f"Error refreshing ports: {e}")
+    
+    def toggle_arduino_connection(self):
+        """Connect or disconnect from Arduino."""
+        if not SERIAL_AVAILABLE:
+            return
+        
+        if self.arduino_connected:
+            # Disconnect
+            try:
+                if self.arduino_port:
+                    self.arduino_port.close()
+                    self.arduino_port = None
+                self.arduino_connected = False
+                self.connect_btn.config(text="Connect", bg="#006600")
+                self.connection_status_label.config(text="⚪ Not Connected", fg="#888888")
+                self.log_console("Arduino disconnected")
+                print("Disconnected from Arduino")
+            except Exception as e:
+                print(f"Error disconnecting: {e}")
+        else:
+            # Connect
+            port_name = self.port_var.get()
+            if not port_name or port_name == "No ports found":
+                self.connection_status_label.config(text="⚠️ Select a port", fg="#ff6600")
+                return
+            
+            try:
+                # Open serial connection
+                self.arduino_port = serial.Serial(
+                    port=port_name,
+                    baudrate=115200,
+                    timeout=1,
+                    write_timeout=1,
+                    rtscts=False,  # Disable hardware flow control
+                    dsrdtr=False,  # Disable hardware flow control
+                    xonxoff=False  # Disable software flow control
+                )
+                
+                # Wait for Arduino to initialize
+                import time
+                time.sleep(2)
+                
+                # Flush any startup messages
+                self.arduino_port.reset_input_buffer()
+                self.arduino_port.reset_output_buffer()
+                
+                self.arduino_connected = True
+                self.last_rpm_sent = -1  # Reset
+                self.connect_btn.config(text="Disconnect", bg="#aa0000")
+                self.connection_status_label.config(text="🟢 Connected", fg="#00ff00")
+                self.log_console(f"✓ Arduino connected on {port_name}")
+                print(f"Connected to Arduino on {port_name}")
+            except Exception as e:
+                self.connection_status_label.config(text=f"❌ Error: {str(e)[:20]}", fg="#ff0000")
+                self.log_console(f"❌ Arduino connection failed: {e}")
+                print(f"Connection error: {e}")
+    
+    def send_leds_to_arduino(self, led_pattern):
+        """Send LED color data to Arduino to control real LEDs."""
+        if not self.arduino_connected or not self.arduino_port:
+            return
+        
+        # Rate limit to 20 Hz (50ms between updates) to avoid overwhelming Arduino's serial buffer
+        import time
+        current_time = time.time() * 1000  # milliseconds
+        if current_time - self.last_led_send_time < 50:
+            return  # Skip this update
+        
+        self.last_led_send_time = current_time
+        
+        try:
+            # Send LED data in compact format: LED:RRGGBBRRGGBB...\n
+            # Convert LED pattern to hex string (2 chars per color channel)
+            hex_data = ''.join(f'{r:02X}{g:02X}{b:02X}' for r, g, b in led_pattern)
+            command = f"LED:{hex_data}\n"
+            self.arduino_port.write(command.encode('utf-8'))
+            self.arduino_port.flush()
+        except Exception as e:
+            self.log_console(f"⚠️ Error sending LED data to Arduino: {e}")
+            print(f"Error sending LED data to Arduino: {e}")
+            # Disconnect on error
+            self.arduino_connected = False
+            self.connect_btn.config(text="Connect", bg="#006600")
+            self.connection_status_label.config(text="❌ Connection Lost", fg="#ff0000")
+            self.log_console("❌ Arduino connection lost")
         if self.use_mph:
             self.unit_toggle_btn.config(text="mph", bg="#0066cc")
         else:
@@ -1118,6 +1327,7 @@ class LEDSimulator:
             self.stalling = True
             self.stall_animation_frames = 45  # ~0.75 seconds of stall animation
             self.check_engine_light = True
+            self.log_console(f"⚠️ ENGINE STALLING (gear: {self.gear}, speed: {self.speed:.1f}, RPM: {self.rpm})")
             self.cel_label.config(text="⚠️ CHECK ENGINE - Engine stalling!", fg="#ff6600")
     
     def complete_stall(self):
@@ -1127,6 +1337,7 @@ class LEDSimulator:
         self.stalling = False
         self.rpm = 0
         self.speed = 0.0
+        self.log_console("❌ ENGINE STALLED - Press Shift+Down+Space to restart")
         self.throttle = False
         self.brake = False
         self.last_shutdown_gear = self.gear
@@ -1218,7 +1429,7 @@ class LEDSimulator:
         """Draw the LED strip using three-state system with modern visual effects."""
         self.led_canvas.delete("all")
         
-        # LED dimensions and spacing for modern look - optimized to fit 30 LEDs
+        # LED dimensions and spacing for modern look - optimized to fit 40 LEDs
         led_width = 32
         led_height = 55
         led_spacing = 5
@@ -1274,6 +1485,9 @@ class LEDSimulator:
             # Below minimum RPM - all off
             led_pattern = [(0, 0, 0)] * LED_COUNT
             active_state = "Off"
+        
+        # Store LED pattern for Arduino sync
+        self.current_led_pattern = led_pattern
         
         # Update state indicators at top
         state_colors = ["#666666"] * 6  # Default: all gray
@@ -1383,7 +1597,6 @@ class LEDSimulator:
     
     def update_simulation(self):
         """Main simulation loop."""
-        
         # Update simulation time (milliseconds) - using frame count * 16ms
         import time
         if self.start_time_ms == 0:
@@ -1392,38 +1605,45 @@ class LEDSimulator:
         
         # Handle engine start animation
         if self.engine_starting and self.engine_start_frames > 0:
-            self.engine_start_frames -= 1
+                self.engine_start_frames -= 1
+                
+                # Realistic starter motor cranking (0-30 frames)
+                if self.engine_start_frames > 60:
+                    # Initial cranking - RPM fluctuates as starter engages
+                    crank_progress = (90 - self.engine_start_frames) / 30.0
+                    self.rpm = int(150 + (crank_progress * 250) + (30 * math.sin(crank_progress * 10)))
+                # Engine catches and revs up (30-60 frames)
+                elif self.engine_start_frames > 30:
+                    catch_progress = (60 - self.engine_start_frames) / 30.0
+                    # RPM jumps up as engine fires, then settles
+                    target_rpm = 1800 - (catch_progress * 800)  # 1800 -> 1000
+                    self.rpm = int(target_rpm + (50 * math.sin(catch_progress * 15)))
+                # Settling to idle (0-30 frames)
+                else:
+                    settle_progress = (30 - self.engine_start_frames) / 30.0
+                    # Smooth descent to idle RPM
+                    self.rpm = int(1000 + (1000 - self.car_config.idle_rpm) * (1 - settle_progress))
+                
+                # Update audio during start
+                if self.engine_start_frames == 60:
+                    self.audio_engine.start(self.rpm)
+                else:
+                    self.audio_engine.update_rpm(self.rpm)
+                
+                # Complete start when animation finishes
+                if self.engine_start_frames <= 0:
+                    self.complete_engine_start()
             
-            # Realistic starter motor cranking (0-30 frames)
-            if self.engine_start_frames > 60:
-                # Initial cranking - RPM fluctuates as starter engages
-                crank_progress = (90 - self.engine_start_frames) / 30.0
-                self.rpm = int(150 + (crank_progress * 250) + (30 * math.sin(crank_progress * 10)))
-            # Engine catches and revs up (30-60 frames)
-            elif self.engine_start_frames > 30:
-                catch_progress = (60 - self.engine_start_frames) / 30.0
-                # RPM jumps up as engine fires, then settles
-                target_rpm = 1800 - (catch_progress * 800)  # 1800 -> 1000
-                self.rpm = int(target_rpm + (50 * math.sin(catch_progress * 15)))
-            # Settling to idle (0-30 frames)
-            else:
-                settle_progress = (30 - self.engine_start_frames) / 30.0
-                # Smooth descent to idle RPM
-                self.rpm = int(1000 + (1000 - self.car_config.idle_rpm) * (1 - settle_progress))
-            
-            # Update audio during start
-            if self.engine_start_frames == 60:
-                self.audio_engine.start(self.rpm)
-            else:
-                self.audio_engine.update_rpm(self.rpm)
-            
-            # Complete start when animation finishes
-            if self.engine_start_frames <= 0:
-                self.complete_engine_start()
-            
-            self.draw_gauges_and_ui()
-            self.root.after(16, self.update_simulation)
-            return
+                # Send LED data to Arduino if connected
+                if SERIAL_AVAILABLE and self.arduino_connected:
+                    try:
+                        self.send_leds_to_arduino(self.current_led_pattern)
+                    except Exception as e:
+                        self.log_console(f"⚠️ LED send error: {e}")
+                
+                self.draw_gauges_and_ui()
+                self.root.after(16, self.update_simulation)
+                return
         
         # Handle engine stop animation
         if self.engine_stopping and self.engine_stop_frames > 0:
@@ -1447,6 +1667,13 @@ class LEDSimulator:
             # Complete stop when animation finishes
             if self.engine_stop_frames <= 0:
                 self.complete_engine_stop()
+            
+            # Send LED data to Arduino if connected
+            if SERIAL_AVAILABLE and self.arduino_connected:
+                try:
+                    self.send_leds_to_arduino(self.current_led_pattern)
+                except Exception as e:
+                    self.log_console(f"⚠️ LED send error: {e}")
             
             self.draw_gauges_and_ui()
             self.root.after(16, self.update_simulation)
@@ -1500,6 +1727,14 @@ class LEDSimulator:
             
             # Skip normal simulation during stall animation
             self.shift_light_flash = not self.shift_light_flash
+            
+            # Send LED data to Arduino if connected
+            if SERIAL_AVAILABLE and self.arduino_connected:
+                try:
+                    self.send_leds_to_arduino(self.current_led_pattern)
+                except Exception as e:
+                    self.log_console(f"⚠️ LED send error: {e}")
+            
             self.draw_gauges_and_ui()
             self.root.after(16, self.update_simulation)
             return
@@ -1628,8 +1863,20 @@ class LEDSimulator:
             # Shift light flash effect
             self.shift_light_flash = not self.shift_light_flash
         
+        # Send LED data to Arduino if connected
+        if SERIAL_AVAILABLE and self.arduino_connected:
+            try:
+                self.send_leds_to_arduino(self.current_led_pattern)
+            except Exception as e:
+                self.log_console(f"⚠️ LED send error: {e}")
+        
         # Draw gauges and UI
-        self.draw_gauges_and_ui()
+        try:
+            self.draw_gauges_and_ui()
+        except Exception as e:
+            self.log_console(f"❌ Draw error: {e}")
+            import traceback
+            print(f"Draw error: {e}\n{traceback.format_exc()}")
         
         # Schedule next frame (60 FPS)
         self.root.after(16, self.update_simulation)
@@ -1733,6 +1980,10 @@ class LEDSimulator:
             elif self.gear < self.car_config.gears:
                 self.gear += 1
             
+            # Log gear change
+            if old_gear != self.gear:
+                self.log_console(f"Gear shift: {old_gear} → {self.gear} (speed: {self.speed:.1f}, RPM: {self.rpm})")
+            
             # Trigger clutch slip on upshift to simulate RPM drop
             if old_gear != self.gear and self.gear > 0 and old_gear > 0:
                 ideal_rpm = calculate_rpm_from_speed(self.speed, self.gear, self.car_config)
@@ -1746,8 +1997,10 @@ class LEDSimulator:
                     self.clutch_slip_counter = min(self.clutch_slip_counter, 30)  # Cap at 0.5 seconds
         elif event.keysym == 'Left':
             # Shift down
+            old_gear = self.gear
             if self.gear > 0:
                 self.gear -= 1  # Can go to neutral (0)
+                self.log_console(f"Gear shift: {old_gear} → {self.gear} (speed: {self.speed:.1f}, RPM: {self.rpm})")
     
     def on_key_release(self, event):
         """Handle key release events."""
@@ -1768,8 +2021,35 @@ class LEDSimulator:
         if result:
             self.on_close()
     
+    def log_console(self, message):
+        """Add message to debug console with timestamp."""
+        try:
+            self.console.config(state=tk.NORMAL)
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # Include milliseconds
+            self.console.insert(tk.END, f"[{timestamp}] {message}\n")
+            self.console.see(tk.END)
+            self.console.config(state=tk.DISABLED)
+        except Exception as e:
+            print(f"Console log error: {e}")
+    
+    def clear_console(self):
+        """Clear console output."""
+        self.console.config(state=tk.NORMAL)
+        self.console.delete(1.0, tk.END)
+        self.console.config(state=tk.DISABLED)
+        self.log_console("Console cleared")
+    
     def on_close(self):
         """Clean up and close the simulator."""
+        self.log_console("Shutting down simulator...")
+        # Disconnect Arduino if connected
+        if self.arduino_connected and self.arduino_port:
+            try:
+                self.log_console("Disconnecting Arduino...")
+                self.arduino_port.close()
+                self.log_console("Arduino disconnected")
+            except Exception as e:
+                self.log_console(f"Error disconnecting Arduino: {e}")
         self.audio_engine.cleanup()
         self.root.destroy()
 

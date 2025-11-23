@@ -21,6 +21,7 @@ enum SystemState {
 
 // Forward declarations
 class DataLogger;
+class LEDController;
 
 class CommandHandler {
 public:
@@ -31,6 +32,7 @@ public:
     
     // Set references to other components
     void setDataLogger(DataLogger* logger) { dataLogger = logger; }
+    void setLEDController(LEDController* controller) { ledController = controller; }
     
     // Command processing
     void update();  // Check for and process incoming commands
@@ -49,9 +51,10 @@ public:
     
 private:
     SystemState currentState;
-    char inputBuffer[32];
+    char inputBuffer[256];  // Large buffer for LED commands (244 chars for 40 LEDs)
     uint8_t bufferIndex;
     DataLogger* dataLogger;
+    LEDController* ledController;
     
     // Command processors
     void processCommand(const char* command);
@@ -64,6 +67,8 @@ private:
     void handleStatus();
     void handleList();
     void handleDump(const String& command);
+    void handleRPM(const char* command);
+    void handleLED(const char* command);
 };
 
 #endif // COMMAND_HANDLER_H

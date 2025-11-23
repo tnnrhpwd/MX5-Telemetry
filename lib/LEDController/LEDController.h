@@ -35,6 +35,17 @@ public:
     // Update display for CAN error state
     void updateRPMError();
     
+    // Set RPM and update display immediately (for simulator control)
+    void setRPM(uint16_t rpm) { updateRPM(rpm); }
+    
+    // Direct pixel control (for LED data from simulator)
+    void setPixelColor(uint16_t n, uint8_t r, uint8_t g, uint8_t b) {
+        strip.setPixelColor(n, strip.Color(r, g, b));
+    }
+    
+    // Force display update (call after setRPM or setPixelColor)
+    void update() { strip.show(); }
+    
     // Animations
     void startupAnimation();
     void readyAnimation();

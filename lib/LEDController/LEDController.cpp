@@ -119,7 +119,7 @@ void LEDController::gasEfficiencyState() {
 // ============================================================================
 // State 2: Stall Danger - Orange Pulse Outward
 // ============================================================================
-void LEDController::stallDangerState(uint16_t rpm) {
+void LEDController::stallDangerState(uint16_t /* rpm */) {
     uint8_t brightness = getPulseBrightness(STATE_2_PULSE_PERIOD, 
                                             STATE_2_MIN_BRIGHTNESS, 
                                             STATE_2_MAX_BRIGHTNESS);
@@ -145,7 +145,7 @@ void LEDController::normalDrivingState(uint16_t rpm) {
     
     // Calculate how many LEDs per side should be lit
     uint8_t ledsPerSide = (uint8_t)(position * (LED_COUNT / 2));
-    ledsPerSide = constrain(ledsPerSide, 0, LED_COUNT / 2);
+    if (ledsPerSide > LED_COUNT / 2) ledsPerSide = LED_COUNT / 2;
     
     // Draw mirrored bar (yellow growing inward from edges)
     drawMirroredBar(ledsPerSide, STATE_3_COLOR_R, STATE_3_COLOR_G, STATE_3_COLOR_B);
@@ -172,7 +172,7 @@ void LEDController::highRPMShiftState(uint16_t rpm) {
     
     // Calculate how many LEDs per side should be lit (red bars)
     uint8_t ledsPerSide = (uint8_t)(position * (LED_COUNT / 2));
-    ledsPerSide = constrain(ledsPerSide, 0, LED_COUNT / 2);
+    if (ledsPerSide > LED_COUNT / 2) ledsPerSide = LED_COUNT / 2;
     
     // Draw all LEDs
     for (int i = 0; i < LED_COUNT; i++) {
