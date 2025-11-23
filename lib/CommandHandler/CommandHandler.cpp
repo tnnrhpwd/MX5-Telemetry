@@ -18,6 +18,7 @@ void CommandHandler::begin() {
 
 void CommandHandler::update() {
     // Non-blocking serial read with char buffer
+    // Read characters as quickly as possible to minimize corruption from GPS
     while (Serial.available() > 0) {
         char c = Serial.read();
         
@@ -31,6 +32,7 @@ void CommandHandler::update() {
         } else if (c >= 32 && c <= 126 && bufferIndex < 31) {  // Printable ASCII, prevent overflow
             inputBuffer[bufferIndex++] = c;
         }
+        // Immediately read next character without any delays
     }
 }
 

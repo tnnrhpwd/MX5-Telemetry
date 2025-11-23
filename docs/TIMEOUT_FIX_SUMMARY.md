@@ -6,16 +6,46 @@ The Arduino Actions tool was experiencing timeout errors when sending commands t
 - `START` command: timeout after 5.8s
 - Arduino would connect successfully but not respond to commands
 
-## Root Cause
-The Arduino firmware was **sending responses** via `Serial.println()`, but the data was sitting in the **serial output buffer** and not being transmitted immediately. The Python tool was timing out waiting for responses that were never sent over the wire.
+## Root Cause (UPDATED)
+After extensive debugging, the actual root causes were:
 
-### Technical Details
-- Arduino's serial output uses a buffer to batch writes for efficiency
-- `Serial.println()` writes to this buffer but doesn't guarantee immediate transmission
-- Without explicit flushing, data may remain buffered for an indeterminate period
-- The 5+ second timeouts show the buffer wasn't flushing until it was full or a significant delay occurred
+### 1. Arduino String Class Corruption (PRIMARY ISSUE)
+- Arduino's `String` class was corrupting command data during processing
+- String concatenation with `+=` operator caused buffer corruption
+- When commands were converted from char buffer to String, they became empty
+- Commands like "STATUS" would arrive as single characters "S" or become completely empty
+
+### 2. Blocking LED Animations
+- `startupAnimation()`: ~7 seconds of blocking delays
+- `readyAnimation()`: ~4.8 seconds of blocking delays
+- Total: ~12 seconds before Arduino could process any commands
+- These animations delayed all serial communication during startup
+
+### 3. GPS SoftwareSerial Interference
+- GPS module on pins 2/3 using SoftwareSerial with bit-banging interrupts
+- Continuous GPS updates every loop iteration caused interrupt flooding
+- SoftwareSerial interrupts interfered with hardware Serial (USB) reception
+- Commands were truncated or corrupted during GPS data transmission
 
 ## Solution
+Multiple fixes were implemented to resolve all three issues:
+
+### Fix 1: Replace String with C-style char arrays
+- Changed `inputBuffer` from `String` to `char[32]` array
+- Replaced String concatenation with direct char buffer manipulation
+- Used `strcmp()` and `toupper()` for command comparison instead of String methods
+- This eliminated all String corruption issues
+
+### Fix 2: Disable blocking animations
+- Commented out `startupAnimation()` and `readyAnimation()` calls
+- Arduino now boots and responds to commands within 2 seconds
+
+### Fix 3: Reduce GPS update frequency
+- Moved GPS update from continuous (every loop) to timed intervals (10Hz)
+- Call `gps.update()` 10 times per interval to catch buffered data
+- Drastically reduced SoftwareSerial interrupt overhead
+
+### Fix 4: Add Serial.flush() for reliability
 Added `Serial.flush()` calls after **every** command response to ensure immediate transmission:
 
 ### Files Modified

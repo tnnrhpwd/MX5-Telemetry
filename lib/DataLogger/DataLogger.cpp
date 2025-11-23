@@ -21,11 +21,17 @@ DataLogger::DataLogger(uint8_t cs)
 }
 
 bool DataLogger::begin() {
-    if (!SD.begin(csPin)) {
-        return false;
+    // Try to initialize SD card with retries (quick attempts to minimize boot delay)
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (SD.begin(csPin)) {
+            initialized = true;
+            return true;
+        }
+        delay(50);  // Short delay before retry
     }
-    initialized = true;
-    return true;
+    // Failed after retries
+    initialized = false;
+    return false;
 }
 
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {

@@ -14,8 +14,8 @@
 #define CAN_CS_PIN      10    // MCP2515 Chip Select (SPI)
 #define SD_CS_PIN       4     // SD Card Chip Select (SPI)
 #define LED_DATA_PIN    5     // WS2812B Data Pin (D5 per wiring diagram)
-#define GPS_RX_PIN      2     // GPS Module RX (connect to GPS TX)
-#define GPS_TX_PIN      3     // GPS Module TX (connect to GPS RX)
+#define GPS_RX_PIN      8     // GPS Module RX (connect to GPS TX) - CHANGED FROM PIN 2
+#define GPS_TX_PIN      9     // GPS Module TX (connect to GPS RX) - CHANGED FROM PIN 3
 #define WIDEBAND_PIN    A0    // Wideband A/F sensor analog input
 
 // SPI Pins (shared between CAN and SD):

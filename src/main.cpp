@@ -158,7 +158,11 @@ void setup() {
     #endif
     
     #if ENABLE_LOGGING
-        dataLogger.begin();
+        if (dataLogger.begin()) {
+            Serial.println(F("SD: OK"));
+        } else {
+            Serial.println(F("SD: FAIL (No card/Bad format)"));
+        }
     #else
         Serial.println(F("LOG: Disabled"));
     #endif
@@ -188,9 +192,15 @@ void loop() {
     unsigned long currentMillis = millis();
     
     // ========================================================================
-    // COMMAND PROCESSING (Always Active)
+    // COMMAND PROCESSING (Always Active - HIGHEST PRIORITY)
+    // Process commands immediately and repeatedly to prevent GPS interference
     // ========================================================================
     cmdHandler.update();
+    
+    // Call again to catch any data that arrived during first call
+    if (Serial.available() > 0) {
+        cmdHandler.update();
+    }
     
     // ========================================================================
     // HIGH-FREQUENCY CAN BUS READING (50Hz - only if enabled)
@@ -204,14 +214,17 @@ void loop() {
     
     // ========================================================================
     // GPS DATA ACQUISITION (10Hz - only if enabled)
-    // Feed GPS data during timed intervals to reduce interrupt overhead
+    // Only update GPS when NOT processing serial commands to prevent interference
     // ========================================================================
     #if ENABLE_GPS
         if (currentMillis - lastGPSRead >= GPS_READ_INTERVAL) {
             lastGPSRead = currentMillis;
-            // Call update multiple times to catch up on buffered data
-            for (int i = 0; i < 10; i++) {
-                gps.update();
+            // Only update GPS if no serial data is incoming
+            if (Serial.available() == 0) {
+                // Call update multiple times to catch up on buffered data
+                for (int i = 0; i < 10; i++) {
+                    gps.update();
+                }
             }
         }
     #endif
