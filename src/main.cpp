@@ -86,21 +86,37 @@ void printSystemStatus() {
     else if (cmdHandler.isLiveMonitoring()) Serial.print('L');
     else Serial.print('I');
     
-    Serial.print(F(" CAN:"));
-    Serial.print(canBus.isInitialized() ? 'Y' : 'N');
-    Serial.print(F(" RPM:"));
-    Serial.print(canBus.getRPM());
+    #if ENABLE_CAN_BUS
+        Serial.print(F(" CAN:"));
+        Serial.print(canBus.isInitialized() ? 'Y' : 'N');
+        Serial.print(F(" RPM:"));
+        Serial.print(canBus.getRPM());
+    #else
+        Serial.print(F(" CAN:Off"));
+    #endif
     
-    Serial.print(F(" GPS:"));
-    Serial.print(gps.isValid() ? 'Y' : 'N');
-    Serial.print(F(" Sat:"));
-    Serial.print(gps.getSatellites());
+    #if ENABLE_GPS
+        Serial.print(F(" GPS:"));
+        Serial.print(gps.isValid() ? 'Y' : 'N');
+        Serial.print(F(" Sat:"));
+        Serial.print(gps.getSatellites());
+    #else
+        Serial.print(F(" GPS:Off"));
+    #endif
     
-    Serial.print(F(" SD:"));
-    Serial.print(dataLogger.isInitialized() ? 'Y' : 'N');
+    #if ENABLE_LOGGING
+        Serial.print(F(" SD:"));
+        Serial.print(dataLogger.isInitialized() ? 'Y' : 'N');
+    #else
+        Serial.print(F(" SD:Off"));
+    #endif
     
-    Serial.print(F(" LED:"));
-    Serial.println(cmdHandler.shouldUpdateLEDs() ? 'Y' : 'N');
+    #if ENABLE_LED_STRIP
+        Serial.print(F(" LED:"));
+        Serial.println(cmdHandler.shouldUpdateLEDs() ? 'Y' : 'N');
+    #else
+        Serial.println(F(" LED:Off"));
+    #endif
 }
 
 // ============================================================================
@@ -110,6 +126,8 @@ void printSystemStatus() {
 void setup() {
     // Initialize Serial first for diagnostics
     Serial.begin(SERIAL_BAUD);
+    Serial.setTimeout(100); // Set 100ms timeout for Serial operations
+    
     while (!Serial && millis() < 3000) {
         ; // Wait up to 3 seconds for serial connection
     }
@@ -117,15 +135,46 @@ void setup() {
     delay(500);
     
     Serial.println(F("MX5v3"));
-    canBus.begin();
-    ledStrip.begin();
-    ledStrip.startupAnimation();
-    gps.begin();
-    dataLogger.begin();
+    
+    // Initialize only enabled modules
+    #if ENABLE_CAN_BUS
+        canBus.begin();
+    #else
+        Serial.println(F("CAN: Disabled"));
+    #endif
+    
+    #if ENABLE_LED_STRIP
+        ledStrip.begin();
+        ledStrip.startupAnimation();
+    #else
+        Serial.println(F("LED: Disabled"));
+    #endif
+    
+    #if ENABLE_GPS
+        gps.begin();
+    #else
+        Serial.println(F("GPS: Disabled"));
+    #endif
+    
+    #if ENABLE_LOGGING
+        dataLogger.begin();
+    #else
+        Serial.println(F("LOG: Disabled"));
+    #endif
+    
     cmdHandler.begin();
-    ledStrip.readyAnimation();
+    
+    // Connect components
+    #if ENABLE_LOGGING
+        cmdHandler.setDataLogger(&dataLogger);
+    #endif
+    
+    #if ENABLE_LED_STRIP
+        ledStrip.readyAnimation();
+        ledStrip.clear();
+    #endif
+    
     Serial.println(F("OK"));
-    ledStrip.clear();
 }
 
 // ============================================================================
@@ -141,92 +190,121 @@ void loop() {
     cmdHandler.update();
     
     // ========================================================================
-    // HIGH-FREQUENCY CAN BUS READING (50Hz - always read for status)
+    // HIGH-FREQUENCY CAN BUS READING (50Hz - only if enabled)
     // ========================================================================
-    if (currentMillis - lastCANRead >= CAN_READ_INTERVAL) {
-        lastCANRead = currentMillis;
-        canBus.update();
-    }
-    
-    // ========================================================================
-    // GPS DATA ACQUISITION (10Hz - always read for status)
-    // ========================================================================
-    if (currentMillis - lastGPSRead >= GPS_READ_INTERVAL) {
-        lastGPSRead = currentMillis;
-        gps.update();
-    }
-    
-    // ========================================================================
-    // LED VISUAL FEEDBACK (State-dependent)
-    // ========================================================================
-    if (cmdHandler.shouldUpdateLEDs()) {
-        ledStrip.updateRPM(canBus.getRPM());
-    } else if (cmdHandler.isPaused()) {
-        ledStrip.clear();
-    }
-    
-    // ========================================================================
-    // DATA LOGGING (5Hz - Only in RUNNING state)
-    // ========================================================================
-    if (cmdHandler.shouldLog() && currentMillis - lastLogWrite >= LOG_INTERVAL) {
-        lastLogWrite = currentMillis;
-        
-        // Create log file if first run
-        if (dataLogger.getLogFileName().length() == 0) {
-            dataLogger.createLogFile(gps.getDate(), gps.getTime());
+    #if ENABLE_CAN_BUS
+        if (currentMillis - lastCANRead >= CAN_READ_INTERVAL) {
+            lastCANRead = currentMillis;
+            canBus.update();
         }
-        
-        dataLogger.logData(
-            currentMillis,
-            gps,
-            canBus,
-            true,  // Log status: actively logging
-            canBus.getErrorCount()
-        );
-    }
+    #endif
     
     // ========================================================================
-    // LIVE DATA STREAMING (5Hz - Only in LIVE_MONITOR state)
+    // GPS DATA ACQUISITION (10Hz - only if enabled)
     // ========================================================================
-    if (cmdHandler.isLiveMonitoring() && currentMillis - lastLogWrite >= LOG_INTERVAL) {
-        lastLogWrite = currentMillis;
-        dataLogger.streamData(
-            currentMillis,
-            gps,
-            canBus,
-            false,  // Log status: streaming only, not logging to SD
-            canBus.getErrorCount()
-        );
-    }
+    #if ENABLE_GPS
+        if (currentMillis - lastGPSRead >= GPS_READ_INTERVAL) {
+            lastGPSRead = currentMillis;
+            gps.update();
+        }
+    #endif
     
     // ========================================================================
-    // STATUS COMMAND HANDLING
+    // LED VISUAL FEEDBACK (State-dependent, only if enabled)
     // ========================================================================
-    if (Serial.available() > 0) {
-        String peek = Serial.readStringUntil('\n');
-        peek.trim();
-        peek.toUpperCase();
-        
-        if (peek == CMD_STATUS) {
-            printSystemStatus();
+    #if ENABLE_LED_STRIP
+        if (cmdHandler.shouldUpdateLEDs()) {
+            #if ENABLE_CAN_BUS
+                ledStrip.updateRPM(canBus.getRPM());
+            #else
+                ledStrip.updateRPM(800);  // Show idle state when CAN disabled
+            #endif
+        } else if (cmdHandler.isPaused()) {
+            ledStrip.clear();
         }
-        else if (peek == CMD_LIST) {
-            dataLogger.listFiles();
-        }
-        else if (peek.startsWith(CMD_DUMP)) {
-            cmdHandler.setState(STATE_DUMPING);
-            if (peek.length() > 5) {
-                String filename = peek.substring(5);
-                filename.trim();
-                dataLogger.dumpFile(filename);
-            } else {
-                dataLogger.dumpCurrentLog();
+    #endif
+    
+    // ========================================================================
+    // DATA LOGGING (5Hz - Only in RUNNING state and if enabled)
+    // ========================================================================
+    #if ENABLE_LOGGING
+        if (cmdHandler.shouldLog() && currentMillis - lastLogWrite >= LOG_INTERVAL) {
+            lastLogWrite = currentMillis;
+            
+            // Create log file if first run
+            if (dataLogger.getLogFileName().length() == 0) {
+                #if ENABLE_GPS
+                    dataLogger.createLogFile(gps.getDate(), gps.getTime());
+                #else
+                    dataLogger.createLogFile(0, 0);  // Use timestamp-based filename
+                #endif
             }
+            
+            dataLogger.logData(
+                currentMillis,
+                #if ENABLE_GPS
+                    gps,
+                #else
+                    gps,  // Pass anyway, DataLogger will handle missing data
+                #endif
+                #if ENABLE_CAN_BUS
+                    canBus,
+                #else
+                    canBus,  // Pass anyway, DataLogger will handle missing data
+                #endif
+                true,  // Log status: actively logging
+                #if ENABLE_CAN_BUS
+                    canBus.getErrorCount()
+                #else
+                    0
+                #endif
+            );
+        }
+    #endif
+    
+    // ========================================================================
+    // LIVE DATA STREAMING (5Hz - Only in LIVE_MONITOR state and if enabled)
+    // ========================================================================
+    #if ENABLE_LOGGING
+        if (cmdHandler.isLiveMonitoring() && currentMillis - lastLogWrite >= LOG_INTERVAL) {
+            lastLogWrite = currentMillis;
+            dataLogger.streamData(
+                currentMillis,
+                #if ENABLE_GPS
+                    gps,
+                #else
+                    gps,
+                #endif
+                #if ENABLE_CAN_BUS
+                    canBus,
+                #else
+                    canBus,
+                #endif
+                false,  // Log status: streaming only, not logging to SD
+                #if ENABLE_CAN_BUS
+                    canBus.getErrorCount()
+                #else
+                    0
+                #endif
+            );
+        }
+    #endif
+    
+    // ========================================================================
+    // PERIODIC STATUS PRINTING (only in specific states)
+    // ========================================================================
+    if (currentMillis - lastStatusPrint >= STATUS_INTERVAL) {
+        lastStatusPrint = currentMillis;
+        // Auto-print status periodically if in certain states
+        if (cmdHandler.isRunning() || cmdHandler.isLiveMonitoring()) {
+            // Status already being sent via data stream
         }
     }
     
     // ========================================================================
-    // CONTINUOUS GPS FEEDING (for best parsing performance)
+    // CONTINUOUS GPS FEEDING (for best parsing performance, only if enabled)
     // ========================================================================
-    gps.update();
+    #if ENABLE_GPS
+        gps.update();
+    #endif
 }

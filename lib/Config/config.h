@@ -13,7 +13,7 @@
 // ============================================================================
 #define CAN_CS_PIN      10    // MCP2515 Chip Select (SPI)
 #define SD_CS_PIN       4     // SD Card Chip Select (SPI)
-#define LED_DATA_PIN    6     // WS2812B Data Pin
+#define LED_DATA_PIN    5     // WS2812B Data Pin (D5 per wiring diagram)
 #define GPS_RX_PIN      2     // GPS Module RX (connect to GPS TX)
 #define GPS_TX_PIN      3     // GPS Module TX (connect to GPS RX)
 #define WIDEBAND_PIN    A0    // Wideband A/F sensor analog input
@@ -26,7 +26,7 @@
 // ============================================================================
 // HARDWARE CONFIGURATION
 // ============================================================================
-#define LED_COUNT       30    // Number of LEDs in the strip
+#define LED_COUNT       144   // Number of LEDs in the strip (144 LEDs/M, 1M strip)
 #define CAN_SPEED       CAN_500KBPS  // Miata NC CAN bus speed
 #define SERIAL_BAUD     115200       // Serial monitor baud rate
 #define GPS_BAUD        9600         // GPS module baud rate
@@ -39,6 +39,15 @@
 #define RPM_MAX_DISPLAY 7000         // Maximum RPM for gradient
 #define RPM_SHIFT_LIGHT 6500         // RPM to activate shift light
 #define RPM_REDLINE     7200         // Absolute redline
+
+// ============================================================================
+// FEATURE ENABLE/DISABLE FLAGS
+// ============================================================================
+// Enable/disable hardware modules (set to false to disable unused components)
+#define ENABLE_CAN_BUS      false    // MCP2515 CAN controller (set true when connected to OBD-II)
+#define ENABLE_GPS          true     // Neo-6M GPS module (ENABLED - wired per diagram)
+#define ENABLE_LED_STRIP    true     // WS2812B LED strip (ENABLED - wired per diagram)
+#define ENABLE_LOGGING      true     // SD card data logging (requires SD card)
 
 // ============================================================================
 // TIMING CONFIGURATION (optimized for >20Hz RPM polling)

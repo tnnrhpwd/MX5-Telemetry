@@ -5,6 +5,8 @@
 // ============================================================================
 
 #include <unity.h>
+#include <Arduino.h>
+#include <stdio.h>
 
 // Mock Arduino functions for native testing
 #ifdef NATIVE_SIM
@@ -12,6 +14,10 @@ unsigned long millis() { return 1000; }
 void pinMode(int pin, int mode) {}
 void digitalWrite(int pin, int value) {}
 int digitalRead(int pin) { return 0; }
+void delay(unsigned long ms) {}
+long map(long x, long in_min, long in_max, long out_min, long out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
 #endif
 
 // ============================================================================

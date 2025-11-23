@@ -113,8 +113,16 @@ class ArduinoConnection:
             return False
         
         try:
+            # Clear any pending input before sending command
+            if self.serial_port.in_waiting > 0:
+                self.serial_port.reset_input_buffer()
+            
+            # Send command with newline
             self.serial_port.write(f"{command}\n".encode())
             self.serial_port.flush()
+            
+            # Small delay to prevent command flooding
+            time.sleep(0.1)
             return True
         except Exception as e:
             print(f"Error sending command: {e}")
@@ -165,7 +173,7 @@ class ArduinoActionsApp:
         self.root.title("MX5-Telemetry Arduino Actions - USB Command Interface")
         self.root.geometry("1000x750")
         self.root.configure(bg='#1a1a1a')
-        self.root.resizable(True, False)
+        self.root.resizable(True, True)
         
         # Arduino connection
         self.arduino = ArduinoConnection()
@@ -178,7 +186,19 @@ class ArduinoActionsApp:
         self.current_state = "IDLE"
         self.dump_mode = False
         self.dump_buffer = []
+        self.dump_save_path = None
+        self.dump_timeout = None
         self.log_files = []
+        self.last_command_time = 0
+        self.command_cooldown = 0.5  # 500ms between commands
+        
+        # Command tracking for timeout detection
+        self.pending_command = None
+        self.pending_command_time = None
+        self.command_timeout = 5.0  # 5 seconds
+        self.last_data_time = time.time()
+        self.error_count = 0
+        self.consecutive_timeouts = 0
         
         # Create UI
         self.create_ui()
@@ -188,6 +208,9 @@ class ArduinoActionsApp:
         
         # Auto-refresh port list periodically
         self.refresh_ports_periodically()
+        
+        # Start watchdog for command timeouts
+        self.check_command_timeout()
     
     def create_ui(self):
         """Create the user interface."""
@@ -214,7 +237,7 @@ class ArduinoActionsApp:
         style = ttk.Style()
         style.theme_use('clam')
         style.configure('TCombobox', fieldbackground='#3a3a3a', background='#3a3a3a', 
-                       foreground='#ffffff', borderwidth=0)
+                       foreground="#2600ff", borderwidth=0)
         
         self.port_combo = ttk.Combobox(port_frame, width=42, state='readonly', style='TCombobox')
         self.port_combo.pack(side=tk.LEFT, padx=5)
@@ -372,14 +395,25 @@ class ArduinoActionsApp:
                                                 highlightthickness=1, highlightbackground="#3a3a3a")
         self.console.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
         
-        # Clear console button
-        clear_btn = tk.Button(console_frame, text="🗑 Clear Console", 
+        # Console control buttons
+        console_btn_frame = tk.Frame(console_frame, bg="#2a2a2a")
+        console_btn_frame.pack(pady=5)
+        
+        clear_btn = tk.Button(console_btn_frame, text="🗑 Clear Console", 
                             command=self.clear_console,
                             bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 9),
                             relief=tk.FLAT, bd=0, padx=15, pady=5,
                             activebackground="#4a4a4a", activeforeground="#ffffff",
                             cursor="hand2")
-        clear_btn.pack(pady=5)
+        clear_btn.pack(side=tk.LEFT, padx=5)
+        
+        diag_btn = tk.Button(console_btn_frame, text="🔍 Diagnostics", 
+                           command=self.show_diagnostics,
+                           bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 9),
+                           relief=tk.FLAT, bd=0, padx=15, pady=5,
+                           activebackground="#4a4a4a", activeforeground="#ffffff",
+                           cursor="hand2")
+        diag_btn.pack(side=tk.LEFT, padx=5)
         
         # System state indicator
         self.state_label = tk.Label(self.root, text="System State: IDLE", 
@@ -454,16 +488,28 @@ class ArduinoActionsApp:
         self.dump_btn.config(state=tk.DISABLED)
         self.dump_selected_btn.config(state=tk.DISABLED)
         
+        # Reset tracking
+        self.pending_command = None
+        self.pending_command_time = None
+        self.consecutive_timeouts = 0
+        
         self.log_console("⚫ Disconnected from Arduino")
     
     def send_command(self, command):
         """Send command to Arduino."""
         if self.arduino.send_command(command):
             self.log_console(f"→ {command}")
+            # Track pending command for timeout detection
+            self.pending_command = command
+            self.pending_command_time = time.time()
+        else:
+            self.log_console(f"⚠️ Failed to send: {command}")
+            self.error_count += 1
     
     def list_files(self):
         """List files on SD card."""
         self.file_listbox.delete(0, tk.END)
+        self.file_listbox.insert(tk.END, "Requesting file list...")
         self.send_command("LIST")
     
     def dump_current_log(self):
@@ -472,7 +518,10 @@ class ArduinoActionsApp:
         if save_path:
             self.dump_buffer = []
             self.dump_mode = True
+            self.dump_save_path = save_path
             self.log_console("📥 Starting dump of current log...")
+            # Set timeout for dump operation
+            self.dump_timeout = time.time() + 30  # 30 second timeout
             self.send_command("DUMP")
     
     def dump_selected_file(self):
@@ -483,11 +532,18 @@ class ArduinoActionsApp:
             return
         
         filename = self.file_listbox.get(selection[0])
+        
+        # Skip if it's the placeholder text
+        if filename == "(No files on SD card)" or filename == "Requesting file list...":
+            return
+            
         save_path = filedialog.askdirectory(title="Select folder to save log")
         
         if save_path:
             self.dump_buffer = []
             self.dump_mode = True
+            self.dump_save_path = save_path
+            self.dump_timeout = time.time() + 30  # 30 second timeout
             self.log_console(f"📥 Starting dump of {filename}...")
             self.send_command(f"DUMP {filename}")
     
@@ -498,20 +554,47 @@ class ArduinoActionsApp:
     
     def _process_data(self, data):
         """Process received data (runs in main thread)."""
+        # Update last data time and clear pending command
+        self.last_data_time = time.time()
+        if self.pending_command:
+            self.pending_command = None
+            self.pending_command_time = None
+            self.consecutive_timeouts = 0
+        
         if self.dump_mode:
+            # Check timeout
+            if self.dump_timeout and time.time() > self.dump_timeout:
+                self.dump_mode = False
+                self.log_console("⚠️ Dump timeout - no data received")
+                self.dump_buffer = []
+                self.dump_save_path = None
+                return
+            
             # Collecting dump data
             if data.startswith("END_DUMP"):
                 self.dump_mode = False
                 self.save_dump_data()
+            elif data.startswith("BEGIN_DUMP"):
+                self.log_console("📥 Receiving data...")
+                # Start collecting, don't add BEGIN_DUMP to buffer
             else:
                 self.dump_buffer.append(data)
-        elif data.startswith("FILES:"):
-            # File list response
-            files = data[6:].strip().split(',')
+        elif data.startswith("FILES:") or data.startswith("Files:") or data.startswith("DEBUG:"):
+            # File list response or debug messages
+            if data.startswith("DEBUG:"):
+                self.log_console(f"🔍 {data}")
+                return
+                
+            files_str = data.split(':', 1)[1].strip()
             self.file_listbox.delete(0, tk.END)
-            for f in files:
-                if f.strip():
-                    self.file_listbox.insert(tk.END, f.strip())
+            
+            if files_str == "0" or not files_str:
+                self.file_listbox.insert(tk.END, "(No files on SD card)")
+            else:
+                files = files_str.split(',')
+                for f in files:
+                    if f.strip():
+                        self.file_listbox.insert(tk.END, f.strip())
         else:
             # Regular console output
             self.log_console(data)
@@ -540,9 +623,14 @@ class ArduinoActionsApp:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"arduino_dump_{timestamp}.csv"
         
-        save_dir = filedialog.askdirectory(title="Select folder to save dump")
-        if not save_dir:
-            return
+        # Use previously selected directory or prompt
+        if self.dump_save_path:
+            save_dir = self.dump_save_path
+            self.dump_save_path = None
+        else:
+            save_dir = filedialog.askdirectory(title="Select folder to save dump")
+            if not save_dir:
+                return
         
         filepath = os.path.join(save_dir, filename)
         
@@ -552,7 +640,6 @@ class ArduinoActionsApp:
                     f.write(line + '\n')
             
             self.log_console(f"✓ Saved {len(self.dump_buffer)} lines to {filepath}")
-            messagebox.showinfo("Dump Complete", f"Successfully saved to:\n{filepath}")
         except Exception as e:
             self.log_console(f"❌ Error saving file: {e}")
             messagebox.showerror("Save Error", f"Failed to save file:\n{str(e)}")
@@ -572,6 +659,53 @@ class ArduinoActionsApp:
         self.console.config(state=tk.NORMAL)
         self.console.delete(1.0, tk.END)
         self.console.config(state=tk.DISABLED)
+    
+    def check_command_timeout(self):
+        """Check if a command has timed out without response."""
+        if self.arduino.is_connected:
+            current_time = time.time()
+            
+            # Check if we have a pending command that's timed out
+            if self.pending_command and self.pending_command_time:
+                elapsed = current_time - self.pending_command_time
+                if elapsed > self.command_timeout:
+                    self.consecutive_timeouts += 1
+                    self.log_console(f"⚠️ TIMEOUT: '{self.pending_command}' no response after {elapsed:.1f}s")
+                    
+                    if self.consecutive_timeouts >= 3:
+                        self.log_console(f"❌ ERROR: Arduino not responding after {self.consecutive_timeouts} timeouts")
+                        self.log_console("💡 Try: Disconnect and reconnect, or reset Arduino")
+                    
+                    self.pending_command = None
+                    self.pending_command_time = None
+                    self.error_count += 1
+            
+            # Check if we haven't received any data for a while (Arduino might be frozen)
+            time_since_data = current_time - self.last_data_time
+            if time_since_data > 30 and self.pending_command is None:
+                self.log_console(f"⚠️ WARNING: No data received for {time_since_data:.0f}s - Arduino may be frozen")
+                self.last_data_time = current_time  # Reset to avoid spam
+        
+        # Schedule next check
+        self.root.after(1000, self.check_command_timeout)
+    
+    def show_diagnostics(self):
+        """Show diagnostic information."""
+        self.log_console("\n" + "="*50)
+        self.log_console("DIAGNOSTICS:")
+        self.log_console(f"  Connection: {'Connected' if self.arduino.is_connected else 'Disconnected'}")
+        if self.arduino.is_connected:
+            self.log_console(f"  Port: {self.arduino.port_name}")
+        self.log_console(f"  System State: {self.current_state}")
+        self.log_console(f"  Pending Command: {self.pending_command or 'None'}")
+        if self.pending_command_time:
+            elapsed = time.time() - self.pending_command_time
+            self.log_console(f"  Waiting for: {elapsed:.1f}s")
+        self.log_console(f"  Error Count: {self.error_count}")
+        self.log_console(f"  Consecutive Timeouts: {self.consecutive_timeouts}")
+        time_since = time.time() - self.last_data_time
+        self.log_console(f"  Last Data: {time_since:.1f}s ago")
+        self.log_console("="*50 + "\n")
     
     def on_close(self):
         """Handle window close."""

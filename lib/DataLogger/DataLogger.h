@@ -29,6 +29,7 @@ public:
     bool isInitialized() const { return initialized; }
     uint16_t getErrorCount() const { return errorCount; }
     String getLogFileName() const { return logFileName; }
+    void getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fileCount);
     
     // Data Retrieval (Serial Dump)
     void listFiles();

@@ -19,12 +19,18 @@ enum SystemState {
     STATE_DUMPING        // Transferring log files to laptop
 };
 
+// Forward declarations
+class DataLogger;
+
 class CommandHandler {
 public:
     CommandHandler();
     
     // Initialization
     void begin();
+    
+    // Set references to other components
+    void setDataLogger(DataLogger* logger) { dataLogger = logger; }
     
     // Command processing
     void update();  // Check for and process incoming commands
@@ -44,6 +50,7 @@ public:
 private:
     SystemState currentState;
     String inputBuffer;
+    DataLogger* dataLogger;
     
     // Command processors
     void processCommand(const String& command);
@@ -53,6 +60,9 @@ private:
     void handleLive();
     void handleStop();
     void handleHelp();
+    void handleStatus();
+    void handleList();
+    void handleDump(const String& command);
 };
 
 #endif // COMMAND_HANDLER_H

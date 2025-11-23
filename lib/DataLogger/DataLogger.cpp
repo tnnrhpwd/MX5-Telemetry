@@ -5,6 +5,17 @@
 // Data Logger Implementation
 // ============================================================================
 
+// Helper function to format milliseconds as HH:MM:SS.mmm
+static void formatElapsedTime(uint32_t millis, char* buffer) {
+    uint32_t totalSeconds = millis / 1000;
+    uint16_t millisPart = millis % 1000;
+    uint8_t hours = totalSeconds / 3600;
+    uint8_t minutes = (totalSeconds % 3600) / 60;
+    uint8_t seconds = totalSeconds % 60;
+    
+    sprintf(buffer, "%02u:%02u:%02u.%03u", hours, minutes, seconds, millisPart);
+}
+
 DataLogger::DataLogger(uint8_t cs)
     : csPin(cs), initialized(false), errorCount(0), logFileName("") {
 }
@@ -47,7 +58,7 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     logFile = SD.open(logFileName, FILE_WRITE);
     if (logFile) {
         // Write CSV header - using single F() for memory efficiency
-        logFile.print(F("Timestamp,Date,Time,Lat,Lon,Alt,GPS_Spd,Sats,"));
+        logFile.print(F("Elapsed_Time,Date,Time,Lat,Lon,Alt,GPS_Spd,Sats,"));
         logFile.print(F("RPM,ECU_Spd,Thr,Load,"));
         logFile.print(F("Coolant,Intake,Baro,"));
         logFile.print(F("Timing,MAF,STFT,LTFT,"));
@@ -66,9 +77,13 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     // Open file for appending (FILE_WRITE mode)
     logFile = SD.open(logFileName, FILE_WRITE);
     if (logFile) {
-        // Timestamp, date, time
-        logFile.print(timestamp);
+        // Elapsed time in HH:MM:SS.mmm format
+        char timeBuffer[16];
+        formatElapsedTime(timestamp, timeBuffer);
+        logFile.print(timeBuffer);
         logFile.write(',');
+        
+        // GPS date and time
         logFile.print(gps.getDate());
         logFile.write(',');
         logFile.print(gps.getTime());
@@ -150,49 +165,160 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
 // ============================================================================
 
 void DataLogger::listFiles() {
+    Serial.println(F("DEBUG:listFiles_start"));
+    
+    if (!initialized) {
+        Serial.println(F("ERR:SD_NOT_INIT"));
+        Serial.println(F("Files:0"));
+        return;
+    }
+    
+    Serial.println(F("DEBUG:SD_initialized"));
+    
+    // Open root directory
+    File root = SD.open("/");
+    if (!root) {
+        Serial.println(F("ERR:CANT_OPEN_ROOT"));
+        Serial.println(F("Files:0"));
+        return;
+    }
+    
+    // Count files first (with timeout protection)
+    uint8_t fileCount = 0;
+    unsigned long startTime = millis();
+    const unsigned long SCAN_TIMEOUT = 5000; // 5 second timeout
+    
+    while (true) {
+        if (millis() - startTime > SCAN_TIMEOUT) {
+            Serial.println(F("ERR:SCAN_TIMEOUT"));
+            break;
+        }
+        
+        File entry = root.openNextFile();
+        if (!entry) break; // No more files
+        
+        if (!entry.isDirectory()) {
+            String filename = entry.name();
+            if (filename.endsWith(".CSV") || filename.endsWith(".csv")) {
+                fileCount++;
+            }
+        }
+        entry.close();
+    }
+    
+    // Report count
+    Serial.print(F("Files:"));
+    Serial.println(fileCount);
+    
+    // Rewind and list filenames
+    root.rewindDirectory();
+    startTime = millis();
+    
+    while (true) {
+        if (millis() - startTime > SCAN_TIMEOUT) {
+            Serial.println(F("ERR:SCAN_TIMEOUT"));
+            break;
+        }
+        
+        File entry = root.openNextFile();
+        if (!entry) break; // No more files
+        
+        if (!entry.isDirectory()) {
+            String filename = entry.name();
+            if (filename.endsWith(".CSV") || filename.endsWith(".csv")) {
+                Serial.println(filename);
+            }
+        }
+        entry.close();
+    }
+    
+    root.close();
+    Serial.println(F("DEBUG:listFiles_done"));
+}
+
+void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fileCount) {
+    totalKB = 0;
+    usedKB = 0;
+    fileCount = 0;
+    
     if (!initialized) return;
+    
+    // Get volume information
+    // Note: SD library doesn't provide direct size access on Arduino
+    // We'll count files and estimate usage
     
     File root = SD.open("/");
     if (!root) return;
     
-    int fileCount = 0;
+    unsigned long totalBytes = 0;
+    unsigned long startTime = millis();
+    const unsigned long SCAN_TIMEOUT = 3000; // 3 second timeout
+    
     while (true) {
+        if (millis() - startTime > SCAN_TIMEOUT) break;
+        
         File entry = root.openNextFile();
         if (!entry) break;
         
         if (!entry.isDirectory()) {
-            fileCount++;
-            Serial.print(entry.name());
-            Serial.print(' ');
-            Serial.println(entry.size());
+            String filename = entry.name();
+            if (filename.endsWith(".CSV") || filename.endsWith(".csv")) {
+                fileCount++;
+                totalBytes += entry.size();
+            }
         }
         entry.close();
     }
+    
     root.close();
-    Serial.print(F("Files:"));
-    Serial.println(fileCount);
+    
+    usedKB = totalBytes / 1024;
+    // Assume SD card capacity based on typical sizes (estimate)
+    // Most SD cards are at least 1GB, but we can't directly query this
+    totalKB = 0; // Set to 0 to indicate "unknown" - will display as "??"
 }
 
 void DataLogger::dumpFile(const String& filename) {
-    if (!initialized) return;
+    if (!initialized) {
+        Serial.println(F("ERR:NO_SD"));
+        return;
+    }
     
     File file = SD.open(filename, FILE_READ);
-    if (!file) return;
+    if (!file) {
+        Serial.println(F("ERR:FILE_NOT_FOUND"));
+        return;
+    }
     
-    Serial.println(F("---BEGIN---"));
+    Serial.println(F("BEGIN_DUMP"));
+    
+    // Stream file with timeout protection
+    unsigned long startTime = millis();
+    const unsigned long DUMP_TIMEOUT = 30000; // 30 second timeout
     
     while (file.available()) {
+        // Prevent infinite loop
+        if (millis() - startTime > DUMP_TIMEOUT) {
+            Serial.println(F("ERR:TIMEOUT"));
+            break;
+        }
+        
         String line = file.readStringUntil('\n');
         Serial.println(line);
+        
+        // Small delay to prevent serial buffer overflow
+        delay(5);
     }
     
     file.close();
-    Serial.println(F("---END---"));
+    Serial.println(F("END_DUMP"));
 }
 
 void DataLogger::dumpCurrentLog() {
     if (logFileName.length() > 0) {
         dumpFile(logFileName);
+    } else {
+        Serial.println(F("ERR:NO_ACTIVE_LOG"));
     }
 }
 
@@ -203,7 +329,9 @@ void DataLogger::dumpCurrentLog() {
 void DataLogger::streamData(uint32_t timestamp, const GPSHandler& gps, const CANHandler& can,
                             bool logStatus, uint16_t canErrorCount) {
     // Stream in CSV format - optimized for memory
-    Serial.print(timestamp);
+    char timeBuffer[16];
+    formatElapsedTime(timestamp, timeBuffer);
+    Serial.print(timeBuffer);
     Serial.write(',');
     Serial.print(gps.getDate());
     Serial.write(',');
