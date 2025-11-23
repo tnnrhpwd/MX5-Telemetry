@@ -145,7 +145,8 @@ void setup() {
     
     #if ENABLE_LED_STRIP
         ledStrip.begin();
-        ledStrip.startupAnimation();
+        // Skip startup animation - blocks for ~7 seconds!
+        // ledStrip.startupAnimation();
     #else
         Serial.println(F("LED: Disabled"));
     #endif
@@ -170,11 +171,13 @@ void setup() {
     #endif
     
     #if ENABLE_LED_STRIP
-        ledStrip.readyAnimation();
+        // Skip animations for faster startup - they block for ~12 seconds total!
+        // ledStrip.readyAnimation();
         ledStrip.clear();
     #endif
     
     Serial.println(F("OK"));
+    Serial.flush();
 }
 
 // ============================================================================
@@ -201,11 +204,15 @@ void loop() {
     
     // ========================================================================
     // GPS DATA ACQUISITION (10Hz - only if enabled)
+    // Feed GPS data during timed intervals to reduce interrupt overhead
     // ========================================================================
     #if ENABLE_GPS
         if (currentMillis - lastGPSRead >= GPS_READ_INTERVAL) {
             lastGPSRead = currentMillis;
-            gps.update();
+            // Call update multiple times to catch up on buffered data
+            for (int i = 0; i < 10; i++) {
+                gps.update();
+            }
         }
     #endif
     
@@ -301,10 +308,6 @@ void loop() {
         }
     }
     
-    // ========================================================================
-    // CONTINUOUS GPS FEEDING (for best parsing performance, only if enabled)
-    // ========================================================================
-    #if ENABLE_GPS
-        gps.update();
-    #endif
+    // GPS is now updated during timed intervals only (see above)
+    // This reduces SoftwareSerial interrupt overhead that interferes with USB Serial
 }

@@ -45,7 +45,7 @@
 // ============================================================================
 // Enable/disable hardware modules (set to false to disable unused components)
 #define ENABLE_CAN_BUS      false    // MCP2515 CAN controller (set true when connected to OBD-II)
-#define ENABLE_GPS          true     // Neo-6M GPS module (ENABLED - wired per diagram)
+#define ENABLE_GPS          true     // Neo-6M GPS module (RE-ENABLED - testing if commands still work)
 #define ENABLE_LED_STRIP    true     // WS2812B LED strip (ENABLED - wired per diagram)
 #define ENABLE_LOGGING      true     // SD card data logging (requires SD card)
 

@@ -6,45 +6,66 @@
 // ============================================================================
 
 CommandHandler::CommandHandler()
-    : currentState(STATE_IDLE), inputBuffer(""), dataLogger(nullptr) {
+    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr) {
+    inputBuffer[0] = '\0';
 }
 
 void CommandHandler::begin() {
     currentState = STATE_IDLE;
+    bufferIndex = 0;
+    inputBuffer[0] = '\0';
 }
 
 void CommandHandler::update() {
-    // Non-blocking serial read
+    // Non-blocking serial read with char buffer
     while (Serial.available() > 0) {
         char c = Serial.read();
         
         if (c == '\n' || c == '\r') {
-            if (inputBuffer.length() > 0) {
+            if (bufferIndex > 0) {
+                inputBuffer[bufferIndex] = '\0';  // Null terminate
                 processCommand(inputBuffer);
-                inputBuffer = "";
+                bufferIndex = 0;
+                inputBuffer[0] = '\0';
             }
-        } else {
-            inputBuffer += c;
+        } else if (c >= 32 && c <= 126 && bufferIndex < 31) {  // Printable ASCII, prevent overflow
+            inputBuffer[bufferIndex++] = c;
         }
     }
 }
 
-void CommandHandler::processCommand(const String& cmd) {
-    String command = cmd;
-    command.trim();
-    command.toUpperCase();
+void CommandHandler::processCommand(const char* cmd) {
+    // Convert to uppercase for comparison
+    char command[32];
+    uint8_t i = 0;
+    while (cmd[i] && i < 31) {
+        command[i] = toupper(cmd[i]);
+        i++;
+    }
+    command[i] = '\0';
     
-    if (command == CMD_START) handleStart();
-    else if (command == CMD_PAUSE) handlePause();
-    else if (command == CMD_LIVE) handleLive();
-    else if (command == CMD_STOP) handleStop();
-    else if (command == CMD_HELP) handleHelp();
-    else if (command == CMD_STATUS) handleStatus();
-    else if (command == CMD_LIST) handleList();
-    else if (command.startsWith(CMD_DUMP)) handleDump(command);
-    else if (command.length() > 0) {
+    if (strcmp(command, "START") == 0) {
+        handleStart();
+    }
+    else if (strcmp(command, "PAUSE") == 0) handlePause();
+    else if (strcmp(command, "LIVE") == 0) handleLive();
+    else if (strcmp(command, "STOP") == 0) {
+        handleStop();
+    }
+    else if (strcmp(command, "HELP") == 0) handleHelp();
+    else if (strcmp(command, "STATUS") == 0) {
+        handleStatus();
+    }
+    else if (strcmp(command, "LIST") == 0) {
+        handleList();
+    }
+    else if (strncmp(command, "DUMP", 4) == 0) {
+        handleDump(String(command));
+    }
+    else if (command[0] != '\0') {
         Serial.print(F("? "));
         Serial.println(command);
+        Serial.flush();
     }
 }
 
@@ -52,6 +73,13 @@ void CommandHandler::handleStart() {
     if (currentState == STATE_IDLE || currentState == STATE_PAUSED || currentState == STATE_DUMPING) {
         setState(STATE_RUNNING);
         Serial.println(F("OK"));
+        Serial.flush();
+    } else if (currentState == STATE_RUNNING) {
+        Serial.println(F("ALREADY_RUNNING"));
+        Serial.flush();
+    } else if (currentState == STATE_LIVE_MONITOR) {
+        Serial.println(F("ERR:IN_LIVE_MODE"));
+        Serial.flush();
     }
 }
 
@@ -59,6 +87,13 @@ void CommandHandler::handlePause() {
     if (currentState == STATE_RUNNING || currentState == STATE_LIVE_MONITOR) {
         setState(STATE_PAUSED);
         Serial.println(F("OK"));
+        Serial.flush();
+    } else if (currentState == STATE_PAUSED || currentState == STATE_IDLE) {
+        Serial.println(F("ALREADY_PAUSED"));
+        Serial.flush();
+    } else {
+        Serial.println(F("ERR:INVALID_STATE"));
+        Serial.flush();
     }
 }
 
@@ -66,16 +101,25 @@ void CommandHandler::handleLive() {
     if (currentState == STATE_PAUSED || currentState == STATE_IDLE || currentState == STATE_RUNNING) {
         setState(STATE_LIVE_MONITOR);
         Serial.println(F("LIVE"));
+        Serial.flush();
+    } else if (currentState == STATE_LIVE_MONITOR) {
+        Serial.println(F("ALREADY_LIVE"));
+        Serial.flush();
+    } else {
+        Serial.println(F("ERR:INVALID_STATE"));
+        Serial.flush();
     }
 }
 
 void CommandHandler::handleStop() {
     setState(STATE_PAUSED);
     Serial.println(F("OK"));
+    Serial.flush();
 }
 
 void CommandHandler::handleHelp() {
     Serial.println(F("START|PAUSE|LIVE|STOP|DUMP|LIST|STATUS"));
+    Serial.flush();
 }
 
 void CommandHandler::handleStatus() {
@@ -111,22 +155,26 @@ void CommandHandler::handleStatus() {
     }
     
     Serial.println(F(" OK"));
+    Serial.flush();
 }
 
 void CommandHandler::handleList() {
     // Call DataLogger to list files
     if (dataLogger) {
         Serial.println(F("DEBUG:Calling listFiles"));
+        Serial.flush();
         dataLogger->listFiles();
     } else {
         Serial.println(F("ERR:NO_LOGGER"));
         Serial.println(F("Files:0"));
+        Serial.flush();
     }
 }
 
 void CommandHandler::handleDump(const String& command) {
     if (!dataLogger) {
         Serial.println(F("ERR:NO_LOGGER"));
+        Serial.flush();
         return;
     }
     

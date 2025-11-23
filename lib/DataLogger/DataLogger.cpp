@@ -166,20 +166,24 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
 
 void DataLogger::listFiles() {
     Serial.println(F("DEBUG:listFiles_start"));
+    Serial.flush();
     
     if (!initialized) {
         Serial.println(F("ERR:SD_NOT_INIT"));
         Serial.println(F("Files:0"));
+        Serial.flush();
         return;
     }
     
     Serial.println(F("DEBUG:SD_initialized"));
+    Serial.flush();
     
     // Open root directory
     File root = SD.open("/");
     if (!root) {
         Serial.println(F("ERR:CANT_OPEN_ROOT"));
         Serial.println(F("Files:0"));
+        Serial.flush();
         return;
     }
     
@@ -209,6 +213,7 @@ void DataLogger::listFiles() {
     // Report count
     Serial.print(F("Files:"));
     Serial.println(fileCount);
+    Serial.flush();
     
     // Rewind and list filenames
     root.rewindDirectory();
@@ -217,6 +222,7 @@ void DataLogger::listFiles() {
     while (true) {
         if (millis() - startTime > SCAN_TIMEOUT) {
             Serial.println(F("ERR:SCAN_TIMEOUT"));
+            Serial.flush();
             break;
         }
         
@@ -227,6 +233,7 @@ void DataLogger::listFiles() {
             String filename = entry.name();
             if (filename.endsWith(".CSV") || filename.endsWith(".csv")) {
                 Serial.println(filename);
+                Serial.flush();
             }
         }
         entry.close();
@@ -234,6 +241,7 @@ void DataLogger::listFiles() {
     
     root.close();
     Serial.println(F("DEBUG:listFiles_done"));
+    Serial.flush();
 }
 
 void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fileCount) {
@@ -281,16 +289,19 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
 void DataLogger::dumpFile(const String& filename) {
     if (!initialized) {
         Serial.println(F("ERR:NO_SD"));
+        Serial.flush();
         return;
     }
     
     File file = SD.open(filename, FILE_READ);
     if (!file) {
         Serial.println(F("ERR:FILE_NOT_FOUND"));
+        Serial.flush();
         return;
     }
     
     Serial.println(F("BEGIN_DUMP"));
+    Serial.flush();
     
     // Stream file with timeout protection
     unsigned long startTime = millis();
@@ -300,6 +311,7 @@ void DataLogger::dumpFile(const String& filename) {
         // Prevent infinite loop
         if (millis() - startTime > DUMP_TIMEOUT) {
             Serial.println(F("ERR:TIMEOUT"));
+            Serial.flush();
             break;
         }
         
@@ -312,6 +324,7 @@ void DataLogger::dumpFile(const String& filename) {
     
     file.close();
     Serial.println(F("END_DUMP"));
+    Serial.flush();
 }
 
 void DataLogger::dumpCurrentLog() {
@@ -319,6 +332,7 @@ void DataLogger::dumpCurrentLog() {
         dumpFile(logFileName);
     } else {
         Serial.println(F("ERR:NO_ACTIVE_LOG"));
+        Serial.flush();
     }
 }
 

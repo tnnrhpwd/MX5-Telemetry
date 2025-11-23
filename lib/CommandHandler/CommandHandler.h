@@ -49,11 +49,12 @@ public:
     
 private:
     SystemState currentState;
-    String inputBuffer;
+    char inputBuffer[32];
+    uint8_t bufferIndex;
     DataLogger* dataLogger;
     
     // Command processors
-    void processCommand(const String& command);
+    void processCommand(const char* command);
     void handleStart();
     void handlePause();
     void handleResume();

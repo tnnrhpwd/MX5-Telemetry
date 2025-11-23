@@ -74,7 +74,23 @@ class ArduinoConnection:
     def connect(self, port_name, baud_rate=115200):
         """Connect to Arduino on specified port."""
         try:
-            self.serial_port = serial.Serial(port_name, baud_rate, timeout=1)
+            self.serial_port = serial.Serial(
+                port=port_name,
+                baudrate=baud_rate,
+                timeout=1,
+                write_timeout=1,
+                inter_byte_timeout=0.1,
+                # Disable flow control
+                rtscts=False,
+                dsrdtr=False,
+                xonxoff=False
+            )
+            # Force buffers to minimum for low latency
+            self.serial_port.set_buffer_size(rx_size=4096, tx_size=4096)
+            # Clear any stale data
+            self.serial_port.reset_input_buffer()
+            self.serial_port.reset_output_buffer()
+            
             time.sleep(2)  # Wait for Arduino to reset after connection
             self.port_name = port_name
             self.is_connected = True
