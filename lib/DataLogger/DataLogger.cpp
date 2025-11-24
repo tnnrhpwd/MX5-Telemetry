@@ -187,24 +187,53 @@ void DataLogger::listFiles() {
     // Open root directory
     File root = SD.open("/");
     if (!root) {
-        Serial.println(F("ERR:CANT_OPEN_ROOT"));
-        Serial.println(F("Files:0"));
+        // Try re-initializing the SD card
+        Serial.println(F("DEBUG:Retrying SD init"));
         Serial.flush();
-        return;
+        
+        initialized = begin();
+        if (initialized) {
+            root = SD.open("/");
+        }
+        
+        if (!root) {
+            Serial.println(F("ERR:CANT_OPEN_ROOT"));
+            Serial.println(F("Files:0"));
+            Serial.flush();
+            return;
+        }
     }
     
-    // Count files first (with timeout protection)
+    Serial.println(F("DEBUG:Scanning files"));
+    Serial.flush();
+    
+    // Count files first (with aggressive timeout protection)
     uint8_t fileCount = 0;
     unsigned long startTime = millis();
-    const unsigned long SCAN_TIMEOUT = 5000; // 5 second timeout
+    const unsigned long SCAN_TIMEOUT = 2000; // 2 second timeout (reduced for faster failure)
+    const unsigned long PER_FILE_TIMEOUT = 500; // 500ms per file operation
     
-    while (true) {
+    int maxFiles = 50; // Safety limit to prevent infinite loops
+    for (int i = 0; i < maxFiles; i++) {
+        // Check overall timeout
         if (millis() - startTime > SCAN_TIMEOUT) {
             Serial.println(F("ERR:SCAN_TIMEOUT"));
+            Serial.flush();
             break;
         }
         
+        // Add per-operation timeout
+        unsigned long opStart = millis();
         File entry = root.openNextFile();
+        
+        // Check if openNextFile took too long
+        if (millis() - opStart > PER_FILE_TIMEOUT) {
+            Serial.println(F("ERR:FILE_TIMEOUT"));
+            Serial.flush();
+            if (entry) entry.close();
+            break;
+        }
+        
         if (!entry) break; // No more files
         
         if (!entry.isDirectory()) {
@@ -214,7 +243,13 @@ void DataLogger::listFiles() {
             }
         }
         entry.close();
+        
+        // Yield to prevent watchdog issues
+        delay(1);
     }
+    
+    Serial.println(F("DEBUG:Count complete"));
+    Serial.flush();
     
     // Report count
     Serial.print(F("Files:"));
@@ -225,14 +260,26 @@ void DataLogger::listFiles() {
     root.rewindDirectory();
     startTime = millis();
     
-    while (true) {
+    Serial.println(F("DEBUG:Listing names"));
+    Serial.flush();
+    
+    for (int i = 0; i < maxFiles; i++) {
         if (millis() - startTime > SCAN_TIMEOUT) {
             Serial.println(F("ERR:SCAN_TIMEOUT"));
             Serial.flush();
             break;
         }
         
+        unsigned long opStart = millis();
         File entry = root.openNextFile();
+        
+        if (millis() - opStart > PER_FILE_TIMEOUT) {
+            Serial.println(F("ERR:FILE_TIMEOUT"));
+            Serial.flush();
+            if (entry) entry.close();
+            break;
+        }
+        
         if (!entry) break; // No more files
         
         if (!entry.isDirectory()) {
@@ -243,6 +290,8 @@ void DataLogger::listFiles() {
             }
         }
         entry.close();
+        
+        delay(1); // Small yield
     }
     
     root.close();
@@ -262,17 +311,35 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
     // We'll count files and estimate usage
     
     File root = SD.open("/");
-    if (!root) return;
+    if (!root) {
+        // Try to reinit if root won't open
+        initialized = begin();
+        if (initialized) {
+            root = SD.open("/");
+        }
+        if (!root) return;
+    }
     
     unsigned long totalBytes = 0;
     unsigned long startTime = millis();
-    const unsigned long SCAN_TIMEOUT = 3000; // 3 second timeout
+    const unsigned long SCAN_TIMEOUT = 1500; // 1.5 second timeout for STATUS command
+    const unsigned long PER_FILE_TIMEOUT = 300; // 300ms per file
     
-    while (true) {
+    int maxFiles = 50;
+    for (int i = 0; i < maxFiles; i++) {
+        // Check timeout first
         if (millis() - startTime > SCAN_TIMEOUT) break;
         
+        unsigned long opStart = millis();
         File entry = root.openNextFile();
-        if (!entry) break;
+        
+        // Check if operation took too long
+        if (millis() - opStart > PER_FILE_TIMEOUT) {
+            if (entry) entry.close();
+            break;
+        }
+        
+        if (!entry) break; // No more files
         
         if (!entry.isDirectory()) {
             String filename = entry.name();
@@ -282,6 +349,14 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
             }
         }
         entry.close();
+        
+        delay(1); // Small yield
+        
+        // Early exit if we've found files and spent reasonable time
+        if (fileCount > 0 && (millis() - startTime > 800)) {
+            // Found files, no need to scan entire card
+            break;
+        }
     }
     
     root.close();

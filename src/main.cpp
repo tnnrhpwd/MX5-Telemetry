@@ -219,12 +219,20 @@ void loop() {
     // ========================================================================
     // GPS DATA ACQUISITION (10Hz - only if enabled)
     // Only update GPS when NOT processing serial commands to prevent interference
+    // SoftwareSerial interrupts conflict with hardware Serial causing command corruption
     // ========================================================================
     #if ENABLE_GPS
         if (currentMillis - lastGPSRead >= GPS_READ_INTERVAL) {
             lastGPSRead = currentMillis;
-            // Only update GPS if no serial data is incoming
-            if (Serial.available() == 0) {
+            // Only update GPS if no serial data has been received recently
+            // This prevents SoftwareSerial interrupts from corrupting USB Serial
+            static unsigned long lastSerialActivity = 0;
+            if (Serial.available() > 0) {
+                lastSerialActivity = currentMillis;
+            }
+            
+            // Wait at least 200ms after last serial activity before updating GPS
+            if (currentMillis - lastSerialActivity > 200) {
                 // Call update multiple times to catch up on buffered data
                 for (int i = 0; i < 10; i++) {
                     gps.update();

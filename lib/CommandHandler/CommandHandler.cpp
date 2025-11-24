@@ -77,6 +77,9 @@ void CommandHandler::processCommand(const char* cmd) {
     else if (strncmp(command, "DUMP", 4) == 0) {
         handleDump(String(command));
     }
+    else if (strcmp(command, "TEST") == 0) {
+        handleTest();
+    }
     else if (command[0] != '\0') {
         Serial.print(F("? "));
         Serial.println(command);
@@ -133,7 +136,7 @@ void CommandHandler::handleStop() {
 }
 
 void CommandHandler::handleHelp() {
-    Serial.println(F("START|PAUSE|LIVE|STOP|DUMP|LIST|STATUS"));
+    Serial.println(F("START|PAUSE|LIVE|STOP|DUMP|LIST|STATUS|TEST"));
     Serial.flush();
 }
 
@@ -151,6 +154,10 @@ void CommandHandler::handleStatus() {
         uint32_t totalKB = 0;
         uint32_t usedKB = 0;
         uint8_t fileCount = 0;
+        
+        // Flush before SD operations to prevent corruption
+        Serial.flush();
+        
         dataLogger->getSDCardInfo(totalKB, usedKB, fileCount);
         
         Serial.print(F(" SD:"));
@@ -226,6 +233,31 @@ void CommandHandler::handleRPM(const char* command) {
     if (ledController) {
         ledController->setRPM(rpm);
         ledController->update();
+    }
+}
+
+void CommandHandler::handleTest() {
+    if (!dataLogger) {
+        Serial.println(F("ERR:NO_LOGGER"));
+        Serial.flush();
+        return;
+    }
+    
+    Serial.println(F("Creating test file..."));
+    Serial.flush();
+    
+    File testFile = SD.open("TEST.TXT", FILE_WRITE);
+    if (testFile) {
+        testFile.println("Arduino SD Test");
+        testFile.println("MX5 Telemetry System");
+        testFile.print("Timestamp: ");
+        testFile.println(millis());
+        testFile.close();
+        Serial.println(F("✓ TEST.TXT created"));
+        Serial.flush();
+    } else {
+        Serial.println(F("ERR:CANT_CREATE_FILE"));
+        Serial.flush();
     }
 }
 

@@ -69,6 +69,7 @@ private:
     void handleDump(const String& command);
     void handleRPM(const char* command);
     void handleLED(const char* command);
+    void handleTest();
 };
 
 #endif // COMMAND_HANDLER_H
