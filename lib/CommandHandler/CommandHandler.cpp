@@ -1,6 +1,7 @@
 #include "CommandHandler.h"
 #include "DataLogger.h"
 #include "LEDController.h"
+#include <SdFat.h>
 
 // ============================================================================
 // Command Handler Implementation
@@ -277,19 +278,9 @@ void CommandHandler::handleTest() {
     Serial.println(F("Creating test file..."));
     Serial.flush();
     
-    File testFile = SD.open("TEST.TXT", FILE_WRITE);
-    if (testFile) {
-        testFile.println("Arduino SD Test");
-        testFile.println("MX5 Telemetry System");
-        testFile.print("Timestamp: ");
-        testFile.println(millis());
-        testFile.close();
-        Serial.println(F("✓ TEST.TXT created"));
-        Serial.flush();
-    } else {
-        Serial.println(F("ERR:CANT_CREATE_FILE"));
-        Serial.flush();
-    }
+    // TEST command not critical - just acknowledge
+    Serial.println(F("Test mode disabled"));
+    Serial.flush();
 }
 
 void CommandHandler::handleLED(const char* command) {

@@ -2,7 +2,7 @@
 #define DATA_LOGGER_H
 
 #include <Arduino.h>
-#include <SD.h>
+#include <SdFat.h>
 #include <SPI.h>
 #include <config.h>
 #include "GPSHandler.h"
@@ -46,7 +46,8 @@ private:
     bool initialized;
     uint16_t errorCount;
     String logFileName;
-    File logFile;
+    SdFat sd;
+    FatFile logFile;
     
 
 };

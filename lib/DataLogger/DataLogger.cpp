@@ -23,7 +23,7 @@ DataLogger::DataLogger(uint8_t cs)
 bool DataLogger::begin() {
     // Try to initialize SD card with retries (quick attempts to minimize boot delay)
     for (int attempt = 0; attempt < 3; attempt++) {
-        if (SD.begin(csPin)) {
+        if (sd.begin(csPin, SD_SCK_MHZ(4))) {
             initialized = true;
             return true;
         }
@@ -45,10 +45,9 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     logFileName = String(filename);
     
     // Create file with header - open/write/close immediately
-    File file = SD.open(logFileName, FILE_WRITE);
-    if (file) {
-        file.println(F("Time,RPM"));
-        file.close();
+    if (logFile.open(filename, O_CREAT | O_WRITE | O_TRUNC)) {
+        logFile.write("Time,RPM\n");
+        logFile.close();
     } else {
         logFileName = "";
         errorCount++;
@@ -60,12 +59,11 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     if (!initialized || logFileName.length() == 0) return;
     
     // Simple: open file, write one line, close file
-    File file = SD.open(logFileName, FILE_WRITE);
-    if (file) {
-        file.print(timestamp);
-        file.print(',');
-        file.println(can.getRPM());
-        file.close();
+    if (logFile.open(logFileName.c_str(), O_WRITE | O_APPEND)) {
+        char buffer[32];
+        sprintf(buffer, "%lu,%u\n", timestamp, can.getRPM());
+        logFile.write(buffer);
+        logFile.close();
         errorCount = 0;
     } else {
         errorCount++;
@@ -91,32 +89,28 @@ void DataLogger::listFiles() {
         return;
     }
     
-    // Try opening root with FILE_WRITE mode (workaround for SD library bug)
-    File root = SD.open("/", FILE_WRITE);
-    if (!root) {
-        // Fallback: try without mode flag
-        root = SD.open("/");
-        if (!root) {
-            Serial.println(F("Files:0"));
-            Serial.flush();
-            return;
-        }
+    FatFile root;
+    if (!root.open("/")) {
+        Serial.println(F("Files:0"));
+        Serial.flush();
+        return;
     }
     
     uint8_t count = 0;
-    File entry;
+    FatFile entry;
+    char name[13];
     
     // Limit iterations to prevent infinite loops
-    for (int i = 0; i < 50; i++) {
-        entry = root.openNextFile();
-        if (!entry) break;
-        
-        if (!entry.isDirectory()) {
+    root.rewind();
+    while (entry.openNext(&root, O_RDONLY)) {
+        if (!entry.isDir()) {
             if (count == 0) Serial.print(F("Files:"));
-            Serial.println(entry.name());
+            entry.getName(name, sizeof(name));
+            Serial.println(name);
             count++;
         }
         entry.close();
+        if (count >= 50) break;
     }
     
     if (count == 0) {
@@ -134,26 +128,21 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
     
     if (!initialized) return;
     
-    // Try FILE_WRITE mode workaround
-    File root = SD.open("/", FILE_WRITE);
-    if (!root) {
-        root = SD.open("/");
-        if (!root) return;
-    }
+    FatFile root;
+    if (!root.open("/")) return;
     
     unsigned long totalBytes = 0;
-    File entry;
+    FatFile entry;
     
     // Limit to prevent hangs
-    for (int i = 0; i < 50; i++) {
-        entry = root.openNextFile();
-        if (!entry) break;
-        
-        if (!entry.isDirectory()) {
+    root.rewind();
+    while (entry.openNext(&root, O_RDONLY)) {
+        if (!entry.isDir()) {
             fileCount++;
-            totalBytes += entry.size();
+            totalBytes += entry.fileSize();
         }
         entry.close();
+        if (fileCount >= 50) break;
     }
     
     root.close();
@@ -161,9 +150,28 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
 }
 
 void DataLogger::dumpFile(const String& filename) {
-    // SD.open() for reading hangs - disable to prevent crashes
-    // Files ARE being written correctly - check SD card on PC
-    Serial.println(F("ERR:READ_DISABLED"));
+    if (!initialized) {
+        Serial.println(F("ERR:SD_NOT_INIT"));
+        Serial.flush();
+        return;
+    }
+    
+    FatFile file;
+    if (!file.open(filename.c_str(), O_RDONLY)) {
+        Serial.println(F("ERR:FILE_NOT_FOUND"));
+        Serial.flush();
+        return;
+    }
+    
+    // Read and print file contents
+    char buffer[64];
+    int bytesRead;
+    while ((bytesRead = file.read(buffer, sizeof(buffer) - 1)) > 0) {
+        buffer[bytesRead] = '\0';
+        Serial.print(buffer);
+    }
+    
+    file.close();
     Serial.flush();
 }
 
