@@ -38,15 +38,33 @@ bool DataLogger::begin() {
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     if (!initialized) return;
     
-    // Simple filename: LOG_XXXX.CSV where XXXX is seconds since boot
-    uint16_t fileNum = (millis() / 1000) % 10000;
-    sprintf(logFileName, "LOG_%04u.CSV", fileNum);
+    // Find next available filename to avoid overwriting
+    static uint16_t fileCounter = 0;
+    uint16_t fileNum;
+    bool fileExists;
+    
+    // Try up to 100 filenames to find an unused one
+    for (int attempt = 0; attempt < 100; attempt++) {
+        fileNum = (millis() / 1000 + fileCounter) % 10000;
+        sprintf(logFileName, "LOG_%04u.CSV", fileNum);
+        
+        // Check if file already exists
+        fileExists = logFile.open(&sd, logFileName, O_RDONLY);
+        if (fileExists) {
+            logFile.close();
+            fileCounter++;  // Try next number
+        } else {
+            break;  // Found unused filename
+        }
+    }
+    
     isLogging = true;
     
     // Create file with header - open/write/close immediately
     if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
-        logFile.write("Time,RPM\n");
+        logFile.write("Time,Date,GPSTime,RPM\n");
         logFile.close();
+        // Note: Don't print to Serial here - it interferes with command responses
     } else {
         logFileName[0] = '\0';
         isLogging = false;
@@ -60,8 +78,12 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     
     // Simple: open file, write one line, close file
     if (logFile.open(&sd, logFileName, O_WRITE | O_APPEND)) {
-        char buffer[32];
-        sprintf(buffer, "%lu,%u\n", timestamp, can.getRPM());
+        char buffer[48];
+        sprintf(buffer, "%lu,%lu,%lu,%u\n", 
+                timestamp, 
+                gps.getDate(), 
+                gps.getTime(), 
+                can.getRPM());
         logFile.write(buffer);
         logFile.close();
         errorCount = 0;

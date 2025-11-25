@@ -6,6 +6,7 @@
 
 GPSHandler::GPSHandler(uint8_t rxPin, uint8_t txPin)
     : gpsSerial(rxPin, txPin),
+      enabled(false),
       latitude(0.0),
       longitude(0.0),
       altitude(0.0),
@@ -18,9 +19,37 @@ GPSHandler::GPSHandler(uint8_t rxPin, uint8_t txPin)
 
 void GPSHandler::begin() {
     gpsSerial.begin(GPS_BAUD);
+    enabled = false;  // Start disabled, will be enabled on START command
+}
+
+void GPSHandler::enable() {
+    if (!enabled) {
+        enabled = true;
+        // Clear any stale data in serial buffer
+        while (gpsSerial.available() > 0) {
+            gpsSerial.read();
+        }
+    }
+}
+
+void GPSHandler::disable() {
+    if (enabled) {
+        enabled = false;
+        // Clear serial buffer to prevent interference with USB Serial
+        while (gpsSerial.available() > 0) {
+            gpsSerial.read();
+        }
+        // Optionally invalidate GPS data
+        gpsValid = false;
+    }
 }
 
 void GPSHandler::update() {
+    // Only process GPS data if enabled
+    if (!enabled) {
+        return;
+    }
+    
     // Feed GPS data into parser
     while (gpsSerial.available() > 0) {
         gps.encode(gpsSerial.read());

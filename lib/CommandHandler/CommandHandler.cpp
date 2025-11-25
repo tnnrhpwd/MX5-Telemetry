@@ -1,6 +1,7 @@
 #include "CommandHandler.h"
 #include "DataLogger.h"
 #include "LEDController.h"
+#include "GPSHandler.h"
 #include <SdFat.h>
 
 // ============================================================================
@@ -8,7 +9,7 @@
 // ============================================================================
 
 CommandHandler::CommandHandler()
-    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), ledController(nullptr) {
+    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), ledController(nullptr), gpsHandler(nullptr) {
     inputBuffer[0] = '\0';
 }
 
@@ -79,6 +80,23 @@ void CommandHandler::processCommand(const char* cmd) {
         return;
     }
     
+    // PRIORITY: Single-letter commands (most corruption-resistant)
+    // Process first character only for speed and reliability
+    char firstChar = toupper(cmd[0]);
+    
+    // Single letter commands take priority
+    if (cmd[1] == '\0' || cmd[1] == '\r' || cmd[1] == '\n') {
+        switch (firstChar) {
+            case 'S': handleStart(); return;      // S = START
+            case 'P': handlePause(); return;       // P = PAUSE
+            case 'X': handleStop(); return;        // X = STOP (eXit)
+            case 'L': handleLive(); return;        // L = LIVE
+            case '?': handleHelp(); return;        // ? = HELP
+            case 'I': handleList(); return;        // I = LIST (lIst)
+            case 'T': handleTest(); return;        // T = TEST
+        }
+    }
+    
     // Convert to uppercase for comparison (only for short commands)
     char command[32];  // Short buffer for non-LED/RPM commands
     uint8_t i = 0;
@@ -88,25 +106,26 @@ void CommandHandler::processCommand(const char* cmd) {
     }
     command[i] = '\0';
     
-    if (strcmp(command, "START") == 0) {
+    // Full word commands (backward compatibility)
+    if (strcmp(command, "START") == 0 || strcmp(command, "S") == 0) {
         handleStart();
     }
-    else if (strcmp(command, "PAUSE") == 0) handlePause();
-    else if (strcmp(command, "LIVE") == 0) handleLive();
-    else if (strcmp(command, "STOP") == 0) {
+    else if (strcmp(command, "PAUSE") == 0 || strcmp(command, "P") == 0) handlePause();
+    else if (strcmp(command, "LIVE") == 0 || strcmp(command, "L") == 0) handleLive();
+    else if (strcmp(command, "STOP") == 0 || strcmp(command, "X") == 0) {
         handleStop();
     }
-    else if (strcmp(command, "HELP") == 0) handleHelp();
+    else if (strcmp(command, "HELP") == 0 || strcmp(command, "?") == 0) handleHelp();
     else if (strcmp(command, "STATUS") == 0) {
         handleStatus();
     }
-    else if (strcmp(command, "LIST") == 0) {
+    else if (strcmp(command, "LIST") == 0 || strcmp(command, "I") == 0) {
         handleList();
     }
-    else if (strncmp(command, "DUMP", 4) == 0) {
+    else if (strncmp(command, "DUMP", 4) == 0 || firstChar == 'D') {
         handleDump(cmd);  // Use original cmd, not uppercase command
     }
-    else if (strcmp(command, "TEST") == 0) {
+    else if (strcmp(command, "TEST") == 0 || strcmp(command, "T") == 0) {
         handleTest();
     }
     else if (command[0] != '\0') {
@@ -119,6 +138,27 @@ void CommandHandler::processCommand(const char* cmd) {
 void CommandHandler::handleStart() {
     if (currentState == STATE_IDLE || currentState == STATE_PAUSED || currentState == STATE_DUMPING) {
         setState(STATE_RUNNING);
+        
+        // Enable GPS if feature is enabled in config
+        #if ENABLE_GPS
+        if (gpsHandler) {
+            gpsHandler->enable();  // Enable GPS for logging
+        }
+        #endif
+        
+        // Create log file immediately on START
+        if (dataLogger) {
+            #if ENABLE_GPS
+            if (gpsHandler) {
+                dataLogger->createLogFile(gpsHandler->getDate(), gpsHandler->getTime());
+            } else {
+                dataLogger->createLogFile(0, 0);
+            }
+            #else
+            dataLogger->createLogFile(0, 0);  // GPS disabled in config
+            #endif
+        }
+        
         Serial.println(F("OK"));
         Serial.flush();
     } else if (currentState == STATE_RUNNING) {
@@ -132,6 +172,12 @@ void CommandHandler::handleStart() {
 
 void CommandHandler::handlePause() {
     if (currentState == STATE_RUNNING || currentState == STATE_LIVE_MONITOR) {
+        // Disable GPS to restore clean USB communication
+        #if ENABLE_GPS
+        if (gpsHandler) {
+            gpsHandler->disable();
+        }
+        #endif
         setState(STATE_PAUSED);
         Serial.println(F("OK"));
         Serial.flush();
@@ -146,6 +192,12 @@ void CommandHandler::handlePause() {
 
 void CommandHandler::handleLive() {
     if (currentState == STATE_PAUSED || currentState == STATE_IDLE || currentState == STATE_RUNNING) {
+        // Disable GPS for clean USB streaming
+        #if ENABLE_GPS
+        if (gpsHandler) {
+            gpsHandler->disable();
+        }
+        #endif
         setState(STATE_LIVE_MONITOR);
         Serial.println(F("LIVE"));
         Serial.flush();
@@ -159,7 +211,16 @@ void CommandHandler::handleLive() {
 }
 
 void CommandHandler::handleStop() {
-    // Stop all operations immediately
+    // Disable GPS first to prevent serial interference (only if GPS enabled in config)
+    #if ENABLE_GPS
+    if (gpsHandler) {
+        gpsHandler->disable();
+        // Brief delay to ensure GPS serial buffer is cleared
+        delay(20);
+    }
+    #endif
+    
+    // Stop all operations
     setState(STATE_PAUSED);
     
     // Signal stop request - cleanup happens in logData
@@ -167,12 +228,17 @@ void CommandHandler::handleStop() {
         dataLogger->finishLogging();
     }
     
+    // Clear any remaining serial garbage before responding
+    while (Serial.available() > 0) {
+        Serial.read();
+    }
+    
     Serial.println(F("OK"));
     Serial.flush();
 }
 
 void CommandHandler::handleHelp() {
-    Serial.println(F("START|PAUSE|LIVE|STOP|DUMP|LIST|STATUS|TEST"));
+    Serial.println(F("S=START P=PAUSE X=STOP L=LIVE D=DUMP I=LIST ?=HELP T=TEST"));
     Serial.flush();
 }
 
@@ -236,7 +302,7 @@ void CommandHandler::handleDump(const char* command) {
     setState(STATE_DUMPING);
     
     // Parse filename from command without using String objects
-    // Format: "DUMP filename" or just "DUMP"
+    // Format: "DUMP filename", "D filename", or just "DUMP"/"D"
     const char* spacePtr = strchr(command, ' ');
     
     if (spacePtr != nullptr && *(spacePtr + 1) != '\0') {

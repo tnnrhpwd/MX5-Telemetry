@@ -19,6 +19,11 @@ public:
     // Initialization
     void begin();
     
+    // Dynamic enable/disable
+    void enable();   // Start GPS serial communication
+    void disable();  // Stop GPS serial communication and clear buffers
+    bool isEnabled() const { return enabled; }
+    
     // Update (call frequently to feed GPS data)
     void update();
     
@@ -35,6 +40,7 @@ public:
 private:
     TinyGPSPlus gps;
     SoftwareSerial gpsSerial;
+    bool enabled;
     
     // GPS data
     double latitude;

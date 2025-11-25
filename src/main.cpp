@@ -97,6 +97,8 @@ void printSystemStatus() {
     
     #if ENABLE_GPS
         Serial.print(F(" GPS:"));
+        Serial.print(gps.isEnabled() ? 'E' : 'D');  // E=Enabled, D=Disabled
+        Serial.print(F(" Fix:"));
         Serial.print(gps.isValid() ? 'Y' : 'N');
         Serial.print(F(" Sat:"));
         Serial.print(gps.getSatellites());
@@ -162,7 +164,7 @@ void setup() {
     
     #if ENABLE_GPS
         gps.begin();
-        Serial.println(F("GPS: Waiting for fix..."));
+        Serial.println(F("GPS: Ready (disabled until START)"));
     #else
         Serial.println(F("GPS: Disabled"));
     #endif
@@ -186,6 +188,10 @@ void setup() {
     
     #if ENABLE_LED_STRIP
         cmdHandler.setLEDController(&ledStrip);
+    #endif
+    
+    #if ENABLE_GPS
+        cmdHandler.setGPSHandler(&gps);
     #endif
     
     #if ENABLE_LED_STRIP
@@ -229,13 +235,13 @@ void loop() {
     
     // ========================================================================
     // GPS DATA ACQUISITION (10Hz - only if enabled)
-    // CRITICAL: GPS completely disabled - SoftwareSerial and hardware Serial
-    // cannot coexist reliably on Arduino Nano. The interrupt conflicts cause
-    // USB command corruption. GPS can be re-enabled for in-car logging but
-    // must be disabled for USB command interface to work properly.
+    // GPS is dynamically enabled/disabled based on system state to prevent
+    // SoftwareSerial/hardware Serial conflicts:
+    // - ENABLED: During RUNNING state (logging) - GPS data needed
+    // - DISABLED: During IDLE/PAUSED/LIVE/DUMPING - Clean USB communication
     // ========================================================================
-    #if ENABLE_GPS && false  // Force disabled regardless of config
-        if (currentMillis - lastGPSRead >= GPS_READ_INTERVAL) {
+    #if ENABLE_GPS
+        if (gps.isEnabled() && currentMillis - lastGPSRead >= GPS_READ_INTERVAL) {
             lastGPSRead = currentMillis;
             gps.update();
         }

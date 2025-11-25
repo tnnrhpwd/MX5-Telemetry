@@ -22,6 +22,7 @@ enum SystemState {
 // Forward declarations
 class DataLogger;
 class LEDController;
+class GPSHandler;
 
 class CommandHandler {
 public:
@@ -33,6 +34,7 @@ public:
     // Set references to other components
     void setDataLogger(DataLogger* logger) { dataLogger = logger; }
     void setLEDController(LEDController* controller) { ledController = controller; }
+    void setGPSHandler(GPSHandler* handler) { gpsHandler = handler; }
     
     // Command processing
     void update();  // Check for and process incoming commands
@@ -55,6 +57,7 @@ private:
     uint8_t bufferIndex;
     DataLogger* dataLogger;
     LEDController* ledController;
+    GPSHandler* gpsHandler;
     
     // Command processors
     void processCommand(const char* command);

@@ -45,7 +45,9 @@
 // ============================================================================
 // Enable/disable hardware modules (set to false to disable unused components)
 #define ENABLE_CAN_BUS      true     // MCP2515 CAN controller for OBD-II
-#define ENABLE_GPS          false    // GPS disabled - causes serial interference on Nano
+#define ENABLE_GPS          true    // GPS with dynamic enable/disable during logging
+                                     // true = GPS enabled during RUNNING, disabled during USB commands
+                                     // false = GPS completely disabled (no serial interference)
 #define ENABLE_LED_STRIP    false    // LED strip disabled to conserve memory
 #define ENABLE_LOGGING      true     // SD card data logging
 
@@ -60,14 +62,17 @@
 // ============================================================================
 // USB COMMAND INTERFACE
 // ============================================================================
-#define CMD_START       "START"      // Start logging and LED display
-#define CMD_PAUSE       "PAUSE"      // Pause logging and LED display
-#define CMD_DUMP        "DUMP"       // Dump log data to laptop
+// Single-letter commands (corruption-resistant): S P X L D I ? T
+// Full word commands (backward compatible): START PAUSE STOP LIVE DUMP LIST HELP TEST
+#define CMD_START       "S"          // Start logging (or START)
+#define CMD_PAUSE       "P"          // Pause logging (or PAUSE)
+#define CMD_STOP        "X"          // Stop/exit (or STOP)
+#define CMD_LIVE        "L"          // Live data stream (or LIVE)
+#define CMD_DUMP        "D"          // Dump log file (or DUMP filename)
+#define CMD_LIST        "I"          // List files (or LIST)
+#define CMD_HELP        "?"          // Show commands (or HELP)
 #define CMD_STATUS      "STATUS"     // Print diagnostic information
-#define CMD_LIVE        "LIVE"       // Show live data stream
-#define CMD_STOP        "STOP"       // Stop live data stream (same as PAUSE)
-#define CMD_LIST        "LIST"       // List all files on SD card
-#define CMD_HELP        "HELP"       // Show available commands
+#define CMD_TEST        "T"          // Test mode (or TEST)
 
 // ============================================================================
 // OBD-II PROTOCOL CONSTANTS - Complete Parameter Set
