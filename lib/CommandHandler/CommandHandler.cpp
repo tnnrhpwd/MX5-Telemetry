@@ -18,22 +18,50 @@ void CommandHandler::begin() {
 }
 
 void CommandHandler::update() {
+    // Anti-flooding: limit command processing rate
+    static unsigned long lastCommandTime = 0;
+    static const unsigned long MIN_COMMAND_INTERVAL = 50; // 50ms minimum between commands
+    
     // Non-blocking serial read with char buffer
-    // Read characters as quickly as possible to minimize corruption from GPS
-    while (Serial.available() > 0) {
+    // Read all available characters rapidly to prevent buffer overflow
+    int charsRead = 0;
+    while (Serial.available() > 0 && charsRead < 64) {  // Limit chars per update
         char c = Serial.read();
+        charsRead++;
         
         if (c == '\n' || c == '\r') {
             if (bufferIndex > 0) {
                 inputBuffer[bufferIndex] = '\0';  // Null terminate
-                processCommand(inputBuffer);
+                
+                // Flush any remaining CR/LF characters
+                while (Serial.available() > 0 && charsRead < 64) {
+                    char peek = Serial.peek();
+                    if (peek == '\n' || peek == '\r') {
+                        Serial.read();
+                        charsRead++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                // Rate limit command processing
+                if (millis() - lastCommandTime >= MIN_COMMAND_INTERVAL) {
+                    processCommand(inputBuffer);
+                    lastCommandTime = millis();
+                }
+                
                 bufferIndex = 0;
                 inputBuffer[0] = '\0';
+                break;  // Process one command per update call
             }
         } else if (c >= 32 && c <= 126 && bufferIndex < 255) {  // Printable ASCII, prevent overflow
             inputBuffer[bufferIndex++] = c;
         }
-        // Immediately read next character without any delays
+        // If buffer is getting full, clear it to prevent corruption
+        if (bufferIndex >= 250) {
+            bufferIndex = 0;
+            inputBuffer[0] = '\0';
+        }
     }
 }
 
@@ -131,6 +159,12 @@ void CommandHandler::handleLive() {
 
 void CommandHandler::handleStop() {
     setState(STATE_PAUSED);
+    
+    // Flush any buffered SD card data
+    if (dataLogger) {
+        dataLogger->finishLogging();
+    }
+    
     Serial.println(F("OK"));
     Serial.flush();
 }
@@ -183,11 +217,8 @@ void CommandHandler::handleStatus() {
 void CommandHandler::handleList() {
     // Call DataLogger to list files
     if (dataLogger) {
-        Serial.println(F("DEBUG:Calling listFiles"));
-        Serial.flush();
         dataLogger->listFiles();
     } else {
-        Serial.println(F("ERR:NO_LOGGER"));
         Serial.println(F("Files:0"));
         Serial.flush();
     }

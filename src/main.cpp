@@ -134,6 +134,11 @@ void setup() {
     
     delay(500);
     
+    // Clear any garbage in the serial buffer after connection
+    while (Serial.available() > 0) {
+        Serial.read();
+    }
+    
     Serial.println(F("MX5v3"));
     
     // Initialize only enabled modules
@@ -218,26 +223,15 @@ void loop() {
     
     // ========================================================================
     // GPS DATA ACQUISITION (10Hz - only if enabled)
-    // Only update GPS when NOT processing serial commands to prevent interference
-    // SoftwareSerial interrupts conflict with hardware Serial causing command corruption
+    // CRITICAL: GPS completely disabled - SoftwareSerial and hardware Serial
+    // cannot coexist reliably on Arduino Nano. The interrupt conflicts cause
+    // USB command corruption. GPS can be re-enabled for in-car logging but
+    // must be disabled for USB command interface to work properly.
     // ========================================================================
-    #if ENABLE_GPS
+    #if ENABLE_GPS && false  // Force disabled regardless of config
         if (currentMillis - lastGPSRead >= GPS_READ_INTERVAL) {
             lastGPSRead = currentMillis;
-            // Only update GPS if no serial data has been received recently
-            // This prevents SoftwareSerial interrupts from corrupting USB Serial
-            static unsigned long lastSerialActivity = 0;
-            if (Serial.available() > 0) {
-                lastSerialActivity = currentMillis;
-            }
-            
-            // Wait at least 200ms after last serial activity before updating GPS
-            if (currentMillis - lastSerialActivity > 200) {
-                // Call update multiple times to catch up on buffered data
-                for (int i = 0; i < 10; i++) {
-                    gps.update();
-                }
-            }
+            gps.update();
         }
     #endif
     

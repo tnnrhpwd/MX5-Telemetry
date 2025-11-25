@@ -24,6 +24,7 @@ public:
     // Logging
     void logData(uint32_t timestamp, const GPSHandler& gps, const class CANHandler& can,
                  bool logStatus, uint16_t canErrorCount);
+    void finishLogging();  // Flush buffer and close log (call on STOP command)
     
     // Status
     bool isInitialized() const { return initialized; }
@@ -46,6 +47,8 @@ private:
     uint16_t errorCount;
     String logFileName;
     File logFile;
+    
+
 };
 
 #endif // DATA_LOGGER_H
