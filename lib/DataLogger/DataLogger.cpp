@@ -75,36 +75,22 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
         return;
     }
     
-    // Use compact buffer - write entire line at once
-    char buffer[96];
+    // Build entire line in buffer before writing (more reliable)
+    char buf[80];
+    char lat[12], lon[12], spd[8], alt[8];
     
-    // Format entire CSV line (more efficient than multiple writes)
-    // Time,Date,Time,Lat,Lon,Speed,Alt,Sat,RPM
-    sprintf(buffer, "%lu,%lu,%lu,", 
-            timestamp, 
-            gps.getDate(), 
-            gps.getTime());
-    logFile.write(buffer);
+    // Convert floats to strings
+    dtostrf(gps.getLatitude(), 1, 6, lat);
+    dtostrf(gps.getLongitude(), 1, 6, lon);
+    dtostrf(gps.getSpeed(), 1, 2, spd);
+    dtostrf(gps.getAltitude(), 1, 1, alt);
     
-    // GPS coordinates (use dtostrf for floats)
-    dtostrf(gps.getLatitude(), 1, 6, buffer);
-    logFile.write(buffer);
-    logFile.write(',');
+    // Write line (split into two writes to avoid buffer overflow)
+    sprintf(buf, "%lu,%lu,%lu,%s,%s,", timestamp, gps.getDate(), gps.getTime(), lat, lon);
+    logFile.write(buf);
     
-    dtostrf(gps.getLongitude(), 1, 6, buffer);
-    logFile.write(buffer);
-    logFile.write(',');
-    
-    dtostrf(gps.getSpeed(), 1, 2, buffer);
-    logFile.write(buffer);
-    logFile.write(',');
-    
-    dtostrf(gps.getAltitude(), 1, 1, buffer);
-    logFile.write(buffer);
-    
-    // Satellites and RPM
-    sprintf(buffer, ",%u,%u\n", gps.getSatellites(), can.getRPM());
-    logFile.write(buffer);
+    sprintf(buf, "%s,%s,%u,%u\n", spd, alt, gps.getSatellites(), can.getRPM());
+    logFile.write(buf);
     
     // Close file
     logFile.close();

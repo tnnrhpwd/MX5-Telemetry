@@ -90,7 +90,7 @@ class ArduinoConnection:
             self.serial_port.reset_input_buffer()
             self.serial_port.reset_output_buffer()
             
-            time.sleep(2)  # Wait for Arduino to reset after connection
+            time.sleep(2)
             self.port_name = port_name
             self.is_connected = True
             self.running = True
@@ -146,6 +146,8 @@ class ArduinoConnection:
     def _read_loop(self):
         """Background thread for reading serial data."""
         buffer = ""
+        # Skip boot messages
+        skip_patterns = ['MX5v3', 'Entering Configuration', 'Setting Baudrate', 'CAN:', 'LED:', 'GPS:', 'SD:']
         while self.running and self.is_connected:
             try:
                 if self.serial_port and self.serial_port.in_waiting > 0:
@@ -158,6 +160,11 @@ class ArduinoConnection:
                         line = line.strip()
                         
                         if line:
+                            # Skip boot/debug messages
+                            skip = any(pattern in line for pattern in skip_patterns)
+                            if skip:
+                                continue
+                            
                             # Parse status messages
                             if line.startswith('St:'):
                                 if self.callbacks['on_status']:
@@ -328,7 +335,7 @@ class ArduinoActionsApp:
         self.live_btn.pack(side=tk.LEFT, padx=5)
         
         self.status_btn = tk.Button(btn_row2, text="📊 STATUS", 
-                                    command=lambda: self.send_command("STATUS"),
+                                    command=self.request_status,
                                     bg="#555555", fg="#ffffff", 
                                     font=("Segoe UI", 11, "bold"), width=15, height=2,
                                     relief=tk.FLAT, bd=0,
@@ -484,8 +491,8 @@ class ArduinoActionsApp:
         self.dump_btn.config(state=tk.NORMAL)
         self.dump_selected_btn.config(state=tk.NORMAL)
         
-        # Request initial status (keep full word - less time-critical)
-        self.root.after(500, lambda: self.send_command("STATUS"))
+        # Don't auto-request status to avoid GPS interference
+        # self.root.after(500, lambda: self.send_command("STATUS"))
     
     def on_disconnected(self):
         """Handle disconnection."""
@@ -561,6 +568,11 @@ class ArduinoActionsApp:
             self.dump_timeout = time.time() + 30  # 30 second timeout
             self.log_console(f"📥 Starting dump of {filename}...")
             self.send_command(f"D {filename}")
+    
+    def request_status(self):
+        """Request status using single-letter command."""
+        # Use single-letter 'T' for status (sTatus)
+        self.send_command("T")
     
     def on_data_received(self, data):
         """Handle data from Arduino."""
@@ -720,8 +732,7 @@ class ArduinoActionsApp:
             
             # Check if we haven't received any data for a while (Arduino might be frozen)
             time_since_data = current_time - self.last_data_time
-            if time_since_data > 30 and self.pending_command is None:
-                self.log_console(f"⚠️ WARNING: No data received for {time_since_data:.0f}s - Arduino may be frozen")
+            if time_since_data > 60 and self.pending_command is None:  # Extended to 60s
                 self.last_data_time = current_time  # Reset to avoid spam
         
         # Schedule next check

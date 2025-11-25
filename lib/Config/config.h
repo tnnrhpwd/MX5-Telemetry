@@ -62,17 +62,16 @@
 // ============================================================================
 // USB COMMAND INTERFACE
 // ============================================================================
-// Single-letter commands (corruption-resistant): S P X L D I ? T
-// Full word commands (backward compatible): START PAUSE STOP LIVE DUMP LIST HELP TEST
+// Single-letter commands (corruption-resistant): S P X L D I T ?
+// Full word commands (backward compatible): START PAUSE STOP LIVE DUMP LIST STATUS HELP
 #define CMD_START       "S"          // Start logging (or START)
 #define CMD_PAUSE       "P"          // Pause logging (or PAUSE)
 #define CMD_STOP        "X"          // Stop/exit (or STOP)
 #define CMD_LIVE        "L"          // Live data stream (or LIVE)
 #define CMD_DUMP        "D"          // Dump log file (or DUMP filename)
 #define CMD_LIST        "I"          // List files (or LIST)
+#define CMD_STATUS      "T"          // Status info (or STATUS)
 #define CMD_HELP        "?"          // Show commands (or HELP)
-#define CMD_STATUS      "STATUS"     // Print diagnostic information
-#define CMD_TEST        "T"          // Test mode (or TEST)
 
 // ============================================================================
 // OBD-II PROTOCOL CONSTANTS - Complete Parameter Set

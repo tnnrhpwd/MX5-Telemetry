@@ -93,7 +93,7 @@ void CommandHandler::processCommand(const char* cmd) {
             case 'L': handleLive(); return;        // L = LIVE
             case '?': handleHelp(); return;        // ? = HELP
             case 'I': handleList(); return;        // I = LIST (lIst)
-            case 'T': handleTest(); return;        // T = TEST
+            case 'T': handleStatus(); return;      // T = STATUS (sTatus)
         }
     }
     
@@ -116,7 +116,7 @@ void CommandHandler::processCommand(const char* cmd) {
         handleStop();
     }
     else if (strcmp(command, "HELP") == 0 || strcmp(command, "?") == 0) handleHelp();
-    else if (strcmp(command, "STATUS") == 0) {
+    else if (strcmp(command, "STATUS") == 0 || strcmp(command, "T") == 0) {
         handleStatus();
     }
     else if (strcmp(command, "LIST") == 0 || strcmp(command, "I") == 0) {
@@ -124,9 +124,6 @@ void CommandHandler::processCommand(const char* cmd) {
     }
     else if (strncmp(command, "DUMP", 4) == 0 || firstChar == 'D') {
         handleDump(cmd);  // Use original cmd, not uppercase command
-    }
-    else if (strcmp(command, "TEST") == 0 || strcmp(command, "T") == 0) {
-        handleTest();
     }
     else if (command[0] != '\0') {
         Serial.print(F("? "));
@@ -238,8 +235,7 @@ void CommandHandler::handleStop() {
 }
 
 void CommandHandler::handleHelp() {
-    Serial.println(F("S=START P=PAUSE X=STOP L=LIVE D=DUMP I=LIST ?=HELP T=TEST"));
-    Serial.flush();
+    Serial.println(F("S P X L D I T ?"));
 }
 
 void CommandHandler::handleStatus() {
@@ -347,20 +343,7 @@ void CommandHandler::handleRPM(const char* command) {
     }
 }
 
-void CommandHandler::handleTest() {
-    if (!dataLogger) {
-        Serial.println(F("ERR:NO_LOGGER"));
-        Serial.flush();
-        return;
-    }
-    
-    Serial.println(F("Creating test file..."));
-    Serial.flush();
-    
-    // TEST command not critical - just acknowledge
-    Serial.println(F("Test mode disabled"));
-    Serial.flush();
-}
+
 
 void CommandHandler::handleLED(const char* command) {
     // Parse LED color data from command (format: LED:RRGGBBRRGGBB...)
