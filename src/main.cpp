@@ -96,14 +96,10 @@ void printSystemStatus() {
     #endif
     
     #if ENABLE_GPS
-        Serial.print(F(" GPS:"));
-        Serial.print(gps.isEnabled() ? 'E' : 'D');  // E=Enabled, D=Disabled
-        Serial.print(F(" Fix:"));
+        Serial.print(F(" G:"));
+        Serial.print(gps.isEnabled() ? 'E' : 'D');
         Serial.print(gps.isValid() ? 'Y' : 'N');
-        Serial.print(F(" Sat:"));
         Serial.print(gps.getSatellites());
-    #else
-        Serial.print(F(" GPS:Off"));
     #endif
     
     #if ENABLE_LOGGING

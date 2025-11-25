@@ -5,17 +5,6 @@
 // Data Logger Implementation
 // ============================================================================
 
-// Helper function to format milliseconds as HH:MM:SS.mmm
-static void formatElapsedTime(uint32_t millis, char* buffer) {
-    uint32_t totalSeconds = millis / 1000;
-    uint16_t millisPart = millis % 1000;
-    uint8_t hours = totalSeconds / 3600;
-    uint8_t minutes = (totalSeconds % 3600) / 60;
-    uint8_t seconds = totalSeconds % 60;
-    
-    sprintf(buffer, "%02u:%02u:%02u.%03u", hours, minutes, seconds, millisPart);
-}
-
 DataLogger::DataLogger(uint8_t cs)
     : csPin(cs), initialized(false), isLogging(false), errorCount(0) {
     logFileName[0] = '\0';
@@ -35,7 +24,7 @@ bool DataLogger::begin() {
     return false;
 }
 
-void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
+void DataLogger::createLogFile(uint32_t /*gpsDate*/, uint32_t /*gpsTime*/) {
     if (!initialized) return;
     
     // Find next available filename to avoid overwriting
@@ -62,7 +51,7 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     
     // Create file with header - open/write/close immediately
     if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
-        logFile.write("Time,Date,GPSTime,RPM\n");
+        logFile.write("Time,Date,GPSTime,Lat,Lon,Speed,Alt,Sat,RPM\n");
         logFile.close();
         // Note: Don't print to Serial here - it interferes with command responses
     } else {
@@ -73,27 +62,53 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
 }
 
 void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHandler& can,
-                         bool logStatus, uint16_t canErrorCount) {
+                         bool /*logStatus*/, uint16_t /*canErrorCount*/) {
     if (!initialized || !isLogging || logFileName[0] == '\0') return;
     
-    // Simple: open file, write one line, close file
-    if (logFile.open(&sd, logFileName, O_WRITE | O_APPEND)) {
-        char buffer[48];
-        sprintf(buffer, "%lu,%lu,%lu,%u\n", 
-                timestamp, 
-                gps.getDate(), 
-                gps.getTime(), 
-                can.getRPM());
-        logFile.write(buffer);
-        logFile.close();
-        errorCount = 0;
-    } else {
+    // Open file for append
+    if (!logFile.open(&sd, logFileName, O_WRITE | O_APPEND)) {
         errorCount++;
         if (errorCount > 10) {
-            logFileName[0] = '\0';  // Stop trying after 10 failures
+            logFileName[0] = '\0';
             isLogging = false;
         }
+        return;
     }
+    
+    // Use compact buffer - write entire line at once
+    char buffer[96];
+    
+    // Format entire CSV line (more efficient than multiple writes)
+    // Time,Date,Time,Lat,Lon,Speed,Alt,Sat,RPM
+    sprintf(buffer, "%lu,%lu,%lu,", 
+            timestamp, 
+            gps.getDate(), 
+            gps.getTime());
+    logFile.write(buffer);
+    
+    // GPS coordinates (use dtostrf for floats)
+    dtostrf(gps.getLatitude(), 1, 6, buffer);
+    logFile.write(buffer);
+    logFile.write(',');
+    
+    dtostrf(gps.getLongitude(), 1, 6, buffer);
+    logFile.write(buffer);
+    logFile.write(',');
+    
+    dtostrf(gps.getSpeed(), 1, 2, buffer);
+    logFile.write(buffer);
+    logFile.write(',');
+    
+    dtostrf(gps.getAltitude(), 1, 1, buffer);
+    logFile.write(buffer);
+    
+    // Satellites and RPM
+    sprintf(buffer, ",%u,%u\n", gps.getSatellites(), can.getRPM());
+    logFile.write(buffer);
+    
+    // Close file
+    logFile.close();
+    errorCount = 0;
 }
 
 void DataLogger::finishLogging() {
@@ -109,14 +124,12 @@ void DataLogger::finishLogging() {
 void DataLogger::listFiles() {
     if (!initialized) {
         Serial.println(F("Files:0"));
-        Serial.flush();
         return;
     }
     
     FatFile root;
     if (!root.open(&sd, "/", O_RDONLY)) {
         Serial.println(F("Files:0"));
-        Serial.flush();
         return;
     }
     
@@ -142,7 +155,6 @@ void DataLogger::listFiles() {
     }
     
     root.close();
-    Serial.flush();
 }
 
 void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fileCount) {
@@ -175,23 +187,20 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
 
 void DataLogger::dumpFile(const char* filename) {
     if (!initialized) {
-        Serial.println(F("ERR:SD_NOT_INIT"));
-        Serial.flush();
+        Serial.println(F("ERR:SD"));
         return;
     }
     
     if (!filename || *filename == '\0') {
-        Serial.println(F("ERR:NO_FILENAME"));
-        Serial.flush();
+        Serial.println(F("ERR:FN"));
         return;
     }
     
     // Open file from SD card volume
     FatFile file;
     if (!file.open(&sd, filename, O_RDONLY)) {
-        Serial.print(F("ERR:FILE_NOT_FOUND:"));
+        Serial.print(F("ERR:"));
         Serial.println(filename);
-        Serial.flush();
         return;
     }
     
@@ -204,17 +213,14 @@ void DataLogger::dumpFile(const char* filename) {
     }
     
     file.close();
-    Serial.println();  // End with newline
-    Serial.println(F("OK"));
-    Serial.flush();
+    Serial.println(F("\nOK"));
 }
 
 void DataLogger::dumpCurrentLog() {
     if (logFileName[0] != '\0') {
         dumpFile(logFileName);
     } else {
-        Serial.println(F("ERR:NO_ACTIVE_LOG(use DUMP filename)"));
-        Serial.flush();
+        Serial.println(F("ERR:NOLOG"));
     }
 }
 
@@ -224,10 +230,8 @@ void DataLogger::dumpCurrentLog() {
 
 void DataLogger::streamData(uint32_t timestamp, const GPSHandler& gps, const CANHandler& can,
                             bool logStatus, uint16_t canErrorCount) {
-    // Stream in CSV format - optimized for memory
-    char timeBuffer[16];
-    formatElapsedTime(timestamp, timeBuffer);
-    Serial.print(timeBuffer);
+    // Stream in simplified CSV format (saves flash memory)
+    Serial.print(timestamp);
     Serial.write(',');
     Serial.print(gps.getDate());
     Serial.write(',');

@@ -11,16 +11,15 @@ Features:
 - Real-time system status monitoring
 - Log file browser and management
 
-Commands:
-- START   : Begin logging and LED display
-- PAUSE   : Stop logging and LED display
-- RESUME  : Continue logging and LED display
-- LIVE    : Real-time data streaming (no SD logging)
-- STOP    : Exit live mode, return to pause
-- DUMP    : Transfer log files to laptop
-- STATUS  : Show system diagnostics
-- LIST    : List all files on SD card
-- HELP    : Show command reference
+Commands (single-letter for reliability):
+- S       : START - Begin logging and LED display
+- P       : PAUSE - Stop logging and LED display
+- X       : STOP - Exit and return to pause
+- L       : LIVE - Real-time data streaming (no SD logging)
+- D       : DUMP - Transfer log files to laptop
+- I       : LIST - List all files on SD card
+- ?       : HELP - Show command reference
+- STATUS  : Full diagnostics (kept as word)
 
 Hardware Requirements:
 - Arduino Nano V3.0 with MX5-Telemetry firmware
@@ -290,7 +289,7 @@ class ArduinoActionsApp:
         btn_row1.pack(pady=5)
         
         self.start_btn = tk.Button(btn_row1, text="▶ START", 
-                                   command=lambda: self.send_command("START"),
+                                   command=lambda: self.send_command("S"),
                                    bg="#00aa00", fg="#ffffff", 
                                    font=("Segoe UI", 11, "bold"), width=12, height=2,
                                    relief=tk.FLAT, bd=0,
@@ -299,7 +298,7 @@ class ArduinoActionsApp:
         self.start_btn.pack(side=tk.LEFT, padx=5)
         
         self.pause_btn = tk.Button(btn_row1, text="⏸ PAUSE", 
-                                   command=lambda: self.send_command("PAUSE"),
+                                   command=lambda: self.send_command("P"),
                                    bg="#ff8800", fg="#ffffff", 
                                    font=("Segoe UI", 11, "bold"), width=12, height=2,
                                    relief=tk.FLAT, bd=0,
@@ -308,7 +307,7 @@ class ArduinoActionsApp:
         self.pause_btn.pack(side=tk.LEFT, padx=5)
         
         self.stop_btn = tk.Button(btn_row1, text="⏹ STOP", 
-                                 command=lambda: self.send_command("STOP"),
+                                 command=lambda: self.send_command("X"),
                                  bg="#cc0000", fg="#ffffff", 
                                  font=("Segoe UI", 11, "bold"), width=12, height=2,
                                  relief=tk.FLAT, bd=0,
@@ -320,7 +319,7 @@ class ArduinoActionsApp:
         btn_row2.pack(pady=5)
         
         self.live_btn = tk.Button(btn_row2, text="📡 LIVE MONITOR", 
-                                  command=lambda: self.send_command("LIVE"),
+                                  command=lambda: self.send_command("L"),
                                   bg="#9900cc", fg="#ffffff", 
                                   font=("Segoe UI", 11, "bold"), width=15, height=2,
                                   relief=tk.FLAT, bd=0,
@@ -338,7 +337,7 @@ class ArduinoActionsApp:
         self.status_btn.pack(side=tk.LEFT, padx=5)
         
         self.help_btn = tk.Button(btn_row2, text="❓ HELP", 
-                                 command=lambda: self.send_command("HELP"),
+                                 command=lambda: self.send_command("?"),
                                  bg="#555555", fg="#ffffff", 
                                  font=("Segoe UI", 11, "bold"), width=15, height=2,
                                  relief=tk.FLAT, bd=0,
@@ -485,7 +484,7 @@ class ArduinoActionsApp:
         self.dump_btn.config(state=tk.NORMAL)
         self.dump_selected_btn.config(state=tk.NORMAL)
         
-        # Request initial status
+        # Request initial status (keep full word - less time-critical)
         self.root.after(500, lambda: self.send_command("STATUS"))
     
     def on_disconnected(self):
@@ -526,7 +525,7 @@ class ArduinoActionsApp:
         """List files on SD card."""
         self.file_listbox.delete(0, tk.END)
         self.file_listbox.insert(tk.END, "Requesting file list...")
-        self.send_command("LIST")
+        self.send_command("I")
     
     def dump_current_log(self):
         """Dump current log file from SD card."""
@@ -538,7 +537,7 @@ class ArduinoActionsApp:
             self.log_console("📥 Starting dump of current log...")
             # Set timeout for dump operation
             self.dump_timeout = time.time() + 30  # 30 second timeout
-            self.send_command("DUMP")
+            self.send_command("D")
     
     def dump_selected_file(self):
         """Dump selected file from list."""
@@ -561,7 +560,7 @@ class ArduinoActionsApp:
             self.dump_save_path = save_path
             self.dump_timeout = time.time() + 30  # 30 second timeout
             self.log_console(f"📥 Starting dump of {filename}...")
-            self.send_command(f"DUMP {filename}")
+            self.send_command(f"D {filename}")
     
     def on_data_received(self, data):
         """Handle data from Arduino."""
