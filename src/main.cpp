@@ -143,7 +143,11 @@ void setup() {
     
     // Initialize only enabled modules
     #if ENABLE_CAN_BUS
-        canBus.begin();
+        if (canBus.begin()) {
+            Serial.println(F("CAN: OK"));
+        } else {
+            Serial.println(F("CAN: Error"));
+        }
     #else
         Serial.println(F("CAN: Disabled"));
     #endif
@@ -158,6 +162,7 @@ void setup() {
     
     #if ENABLE_GPS
         gps.begin();
+        Serial.println(F("GPS: Waiting for fix..."));
     #else
         Serial.println(F("GPS: Disabled"));
     #endif
@@ -213,9 +218,10 @@ void loop() {
     
     // ========================================================================
     // HIGH-FREQUENCY CAN BUS READING (50Hz - only if enabled)
+    // Only update if CAN was successfully initialized
     // ========================================================================
     #if ENABLE_CAN_BUS
-        if (currentMillis - lastCANRead >= CAN_READ_INTERVAL) {
+        if (canBus.isInitialized() && currentMillis - lastCANRead >= CAN_READ_INTERVAL) {
             lastCANRead = currentMillis;
             canBus.update();
         }
@@ -257,8 +263,8 @@ void loop() {
         if (cmdHandler.shouldLog() && currentMillis - lastLogWrite >= LOG_INTERVAL) {
             lastLogWrite = currentMillis;
             
-            // Create log file if first run
-            if (dataLogger.getLogFileName().length() == 0) {
+            // Safety check: only log if we have an active log file
+            if (dataLogger.getLogFileName()[0] == '\0') {
                 #if ENABLE_GPS
                     dataLogger.createLogFile(gps.getDate(), gps.getTime());
                 #else
@@ -266,25 +272,29 @@ void loop() {
                 #endif
             }
             
-            dataLogger.logData(
-                currentMillis,
-                #if ENABLE_GPS
-                    gps,
-                #else
-                    gps,  // Pass anyway, DataLogger will handle missing data
-                #endif
-                #if ENABLE_CAN_BUS
-                    canBus,
-                #else
-                    canBus,  // Pass anyway, DataLogger will handle missing data
-                #endif
-                true,  // Log status: actively logging
-                #if ENABLE_CAN_BUS
-                    canBus.getErrorCount()
-                #else
-                    0
-                #endif
-            );
+            // Double-check we still have a filename after creation attempt
+            // This prevents writes after STOP clears the filename
+            if (dataLogger.getLogFileName()[0] != '\0') {
+                dataLogger.logData(
+                    currentMillis,
+                    #if ENABLE_GPS
+                        gps,
+                    #else
+                        gps,  // Pass anyway, DataLogger will handle missing data
+                    #endif
+                    #if ENABLE_CAN_BUS
+                        canBus,
+                    #else
+                        canBus,  // Pass anyway, DataLogger will handle missing data
+                    #endif
+                    true,  // Log status: actively logging
+                    #if ENABLE_CAN_BUS
+                        canBus.getErrorCount()
+                    #else
+                        0
+                    #endif
+                );
+            }
         }
     #endif
     

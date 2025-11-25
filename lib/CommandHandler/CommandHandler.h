@@ -66,7 +66,7 @@ private:
     void handleHelp();
     void handleStatus();
     void handleList();
-    void handleDump(const String& command);
+    void handleDump(const char* command);
     void handleRPM(const char* command);
     void handleLED(const char* command);
     void handleTest();

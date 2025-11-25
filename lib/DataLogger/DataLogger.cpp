@@ -17,7 +17,8 @@ static void formatElapsedTime(uint32_t millis, char* buffer) {
 }
 
 DataLogger::DataLogger(uint8_t cs)
-    : csPin(cs), initialized(false), errorCount(0), logFileName("") {
+    : csPin(cs), initialized(false), isLogging(false), errorCount(0) {
+    logFileName[0] = '\0';
 }
 
 bool DataLogger::begin() {
@@ -37,29 +38,28 @@ bool DataLogger::begin() {
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     if (!initialized) return;
     
-    char filename[13];
-    
     // Simple filename: LOG_XXXX.CSV where XXXX is seconds since boot
     uint16_t fileNum = (millis() / 1000) % 10000;
-    sprintf(filename, "LOG_%04u.CSV", fileNum);
-    logFileName = String(filename);
+    sprintf(logFileName, "LOG_%04u.CSV", fileNum);
+    isLogging = true;
     
     // Create file with header - open/write/close immediately
-    if (logFile.open(&sd, filename, O_CREAT | O_WRITE | O_TRUNC)) {
+    if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
         logFile.write("Time,RPM\n");
         logFile.close();
     } else {
-        logFileName = "";
+        logFileName[0] = '\0';
+        isLogging = false;
         errorCount++;
     }
 }
 
 void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHandler& can,
                          bool logStatus, uint16_t canErrorCount) {
-    if (!initialized || logFileName.length() == 0) return;
+    if (!initialized || !isLogging || logFileName[0] == '\0') return;
     
     // Simple: open file, write one line, close file
-    if (logFile.open(&sd, logFileName.c_str(), O_WRITE | O_APPEND)) {
+    if (logFile.open(&sd, logFileName, O_WRITE | O_APPEND)) {
         char buffer[32];
         sprintf(buffer, "%lu,%u\n", timestamp, can.getRPM());
         logFile.write(buffer);
@@ -68,14 +68,16 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     } else {
         errorCount++;
         if (errorCount > 10) {
-            logFileName = "";  // Stop trying after 10 failures
+            logFileName[0] = '\0';  // Stop trying after 10 failures
+            isLogging = false;
         }
     }
 }
 
 void DataLogger::finishLogging() {
-    // Just clear the filename - no file is kept open
-    logFileName = "";
+    // Just clear the flag - don't touch String to avoid heap issues
+    isLogging = false;
+    errorCount = 0;
 }
 
 // ============================================================================
@@ -149,17 +151,24 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
     usedKB = totalBytes / 1024;
 }
 
-void DataLogger::dumpFile(const String& filename) {
+void DataLogger::dumpFile(const char* filename) {
     if (!initialized) {
         Serial.println(F("ERR:SD_NOT_INIT"));
         Serial.flush();
         return;
     }
     
+    if (!filename || *filename == '\0') {
+        Serial.println(F("ERR:NO_FILENAME"));
+        Serial.flush();
+        return;
+    }
+    
     // Open file from SD card volume
     FatFile file;
-    if (!file.open(&sd, filename.c_str(), O_RDONLY)) {
-        Serial.println(F("ERR:FILE_NOT_FOUND"));
+    if (!file.open(&sd, filename, O_RDONLY)) {
+        Serial.print(F("ERR:FILE_NOT_FOUND:"));
+        Serial.println(filename);
         Serial.flush();
         return;
     }
@@ -179,10 +188,10 @@ void DataLogger::dumpFile(const String& filename) {
 }
 
 void DataLogger::dumpCurrentLog() {
-    if (logFileName.length() > 0) {
+    if (logFileName[0] != '\0') {
         dumpFile(logFileName);
     } else {
-        Serial.println(F("ERR:NO_ACTIVE_LOG"));
+        Serial.println(F("ERR:NO_ACTIVE_LOG(use DUMP filename)"));
         Serial.flush();
     }
 }

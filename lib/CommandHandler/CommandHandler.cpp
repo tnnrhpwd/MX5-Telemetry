@@ -104,7 +104,7 @@ void CommandHandler::processCommand(const char* cmd) {
         handleList();
     }
     else if (strncmp(command, "DUMP", 4) == 0) {
-        handleDump(String(command));
+        handleDump(cmd);  // Use original cmd, not uppercase command
     }
     else if (strcmp(command, "TEST") == 0) {
         handleTest();
@@ -159,9 +159,10 @@ void CommandHandler::handleLive() {
 }
 
 void CommandHandler::handleStop() {
+    // Stop all operations immediately
     setState(STATE_PAUSED);
     
-    // Flush any buffered SD card data
+    // Signal stop request - cleanup happens in logData
     if (dataLogger) {
         dataLogger->finishLogging();
     }
@@ -202,8 +203,8 @@ void CommandHandler::handleStatus() {
         Serial.print(F(" Files:"));
         Serial.print(fileCount);
         
-        String currentLog = dataLogger->getLogFileName();
-        if (currentLog.length() > 0) {
+        const char* currentLog = dataLogger->getLogFileName();
+        if (currentLog[0] != '\0') {
             Serial.print(F(" Log:"));
             Serial.print(currentLog);
         }
@@ -225,7 +226,7 @@ void CommandHandler::handleList() {
     }
 }
 
-void CommandHandler::handleDump(const String& command) {
+void CommandHandler::handleDump(const char* command) {
     if (!dataLogger) {
         Serial.println(F("ERR:NO_LOGGER"));
         Serial.flush();
@@ -234,18 +235,29 @@ void CommandHandler::handleDump(const String& command) {
     
     setState(STATE_DUMPING);
     
-    // Parse filename if provided
-    if (command.length() > 5) {
-        String filename = command.substring(5);
-        filename.trim();
-        dataLogger->dumpFile(filename);
+    // Parse filename from command without using String objects
+    // Format: "DUMP filename" or just "DUMP"
+    const char* spacePtr = strchr(command, ' ');
+    
+    if (spacePtr != nullptr && *(spacePtr + 1) != '\0') {
+        // Found space and there's content after it
+        const char* filename = spacePtr + 1;
+        
+        // Skip leading whitespace
+        while (*filename == ' ' || *filename == '\t') filename++;
+        
+        if (*filename != '\0') {
+            // Have a filename - pass directly without String conversion
+            dataLogger->dumpFile(filename);
+        } else {
+            dataLogger->dumpCurrentLog();
+        }
     } else {
-        // Current log dump
+        // No space or no content after space - dump current log
         dataLogger->dumpCurrentLog();
     }
     
     setState(STATE_IDLE);
-    // Note: OK is sent by dumpFile()
 }
 
 void CommandHandler::handleRPM(const char* command) {

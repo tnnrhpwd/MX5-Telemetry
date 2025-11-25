@@ -29,12 +29,12 @@ public:
     // Status
     bool isInitialized() const { return initialized; }
     uint16_t getErrorCount() const { return errorCount; }
-    String getLogFileName() const { return logFileName; }
+    const char* getLogFileName() const { return logFileName; }
     void getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fileCount);
     
     // Data Retrieval (Serial Dump)
     void listFiles();
-    void dumpFile(const String& filename);
+    void dumpFile(const char* filename);
     void dumpCurrentLog();
     
     // Live Data Streaming
@@ -44,8 +44,9 @@ public:
 private:
     uint8_t csPin;
     bool initialized;
+    bool isLogging;
     uint16_t errorCount;
-    String logFileName;
+    char logFileName[13];  // "LOG_XXXX.CSV" + null terminator
     SdFat sd;
     FatFile logFile;
     

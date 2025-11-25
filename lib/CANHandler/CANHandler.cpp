@@ -77,15 +77,16 @@ void CANHandler::update() {
     // ROBUST ERROR HANDLING (as specified in requirements)
     // ============================================================================
     // Gracefully handle CAN Bus errors without crashing the system
-    // Auto-reinitialize after threshold of errors to recover communication
+    // Auto-reinitialize disabled to prevent serial spam from MCP_CAN library
     // ============================================================================
     byte canStatus = can.checkError();
     if (canStatus != 0) {
         errorCount++;
-        if (errorCount > CAN_ERROR_THRESHOLD) {
-            initialized = begin();
-            errorCount = 0;
-        }
+        // Reinit disabled - causes debug spam from library
+        // if (errorCount > CAN_ERROR_THRESHOLD) {
+        //     initialized = begin();
+        //     errorCount = 0;
+        // }
     }
 }
 
