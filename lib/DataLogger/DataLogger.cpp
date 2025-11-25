@@ -85,17 +85,79 @@ void DataLogger::finishLogging() {
 // ============================================================================
 
 void DataLogger::listFiles() {
-    // Directory operations hang - disable for stability
-    // Files ARE being created, verify by checking SD card on PC
-    Serial.println(F("Files:0"));
+    if (!initialized) {
+        Serial.println(F("Files:0"));
+        Serial.flush();
+        return;
+    }
+    
+    // Try opening root with FILE_WRITE mode (workaround for SD library bug)
+    File root = SD.open("/", FILE_WRITE);
+    if (!root) {
+        // Fallback: try without mode flag
+        root = SD.open("/");
+        if (!root) {
+            Serial.println(F("Files:0"));
+            Serial.flush();
+            return;
+        }
+    }
+    
+    uint8_t count = 0;
+    File entry;
+    
+    // Limit iterations to prevent infinite loops
+    for (int i = 0; i < 50; i++) {
+        entry = root.openNextFile();
+        if (!entry) break;
+        
+        if (!entry.isDirectory()) {
+            if (count == 0) Serial.print(F("Files:"));
+            Serial.println(entry.name());
+            count++;
+        }
+        entry.close();
+    }
+    
+    if (count == 0) {
+        Serial.println(F("Files:0"));
+    }
+    
+    root.close();
     Serial.flush();
 }
 
 void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fileCount) {
-    // Directory operations hang - disable for stability
     totalKB = 0;
     usedKB = 0;
     fileCount = 0;
+    
+    if (!initialized) return;
+    
+    // Try FILE_WRITE mode workaround
+    File root = SD.open("/", FILE_WRITE);
+    if (!root) {
+        root = SD.open("/");
+        if (!root) return;
+    }
+    
+    unsigned long totalBytes = 0;
+    File entry;
+    
+    // Limit to prevent hangs
+    for (int i = 0; i < 50; i++) {
+        entry = root.openNextFile();
+        if (!entry) break;
+        
+        if (!entry.isDirectory()) {
+            fileCount++;
+            totalBytes += entry.size();
+        }
+        entry.close();
+    }
+    
+    root.close();
+    usedKB = totalBytes / 1024;
 }
 
 void DataLogger::dumpFile(const String& filename) {
