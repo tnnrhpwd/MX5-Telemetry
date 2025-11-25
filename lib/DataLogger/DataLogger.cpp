@@ -45,7 +45,7 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     logFileName = String(filename);
     
     // Create file with header - open/write/close immediately
-    if (logFile.open(filename, O_CREAT | O_WRITE | O_TRUNC)) {
+    if (logFile.open(&sd, filename, O_CREAT | O_WRITE | O_TRUNC)) {
         logFile.write("Time,RPM\n");
         logFile.close();
     } else {
@@ -59,7 +59,7 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     if (!initialized || logFileName.length() == 0) return;
     
     // Simple: open file, write one line, close file
-    if (logFile.open(logFileName.c_str(), O_WRITE | O_APPEND)) {
+    if (logFile.open(&sd, logFileName.c_str(), O_WRITE | O_APPEND)) {
         char buffer[32];
         sprintf(buffer, "%lu,%u\n", timestamp, can.getRPM());
         logFile.write(buffer);
@@ -90,7 +90,7 @@ void DataLogger::listFiles() {
     }
     
     FatFile root;
-    if (!root.open("/")) {
+    if (!root.open(&sd, "/", O_RDONLY)) {
         Serial.println(F("Files:0"));
         Serial.flush();
         return;
@@ -129,7 +129,7 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
     if (!initialized) return;
     
     FatFile root;
-    if (!root.open("/")) return;
+    if (!root.open(&sd, "/", O_RDONLY)) return;
     
     unsigned long totalBytes = 0;
     FatFile entry;
@@ -156,8 +156,9 @@ void DataLogger::dumpFile(const String& filename) {
         return;
     }
     
+    // Open file from SD card volume
     FatFile file;
-    if (!file.open(filename.c_str(), O_RDONLY)) {
+    if (!file.open(&sd, filename.c_str(), O_RDONLY)) {
         Serial.println(F("ERR:FILE_NOT_FOUND"));
         Serial.flush();
         return;
@@ -172,6 +173,8 @@ void DataLogger::dumpFile(const String& filename) {
     }
     
     file.close();
+    Serial.println();  // End with newline
+    Serial.println(F("OK"));
     Serial.flush();
 }
 

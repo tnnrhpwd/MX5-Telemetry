@@ -572,10 +572,15 @@ class ArduinoActionsApp:
         """Process received data (runs in main thread)."""
         # Update last data time and clear pending command
         self.last_data_time = time.time()
+        
+        # Check if this is a response to our pending command
         if self.pending_command:
-            self.pending_command = None
-            self.pending_command_time = None
-            self.consecutive_timeouts = 0
+            # Clear pending on any meaningful response
+            if data.strip() and data not in ["OK"]:
+                self.consecutive_timeouts = 0
+            if data == "OK" or data.startswith("Files:") or data.startswith("St:") or data.startswith("ERR:"):
+                self.pending_command = None
+                self.pending_command_time = None
         
         if self.dump_mode:
             # Check timeout
@@ -586,31 +591,49 @@ class ArduinoActionsApp:
                 self.dump_save_path = None
                 return
             
-            # Collecting dump data
-            if data.startswith("END_DUMP"):
+            # Collecting dump data - look for OK to end dump
+            if data == "OK":
                 self.dump_mode = False
                 self.save_dump_data()
-            elif data.startswith("BEGIN_DUMP"):
-                self.log_console("📥 Receiving data...")
-                # Start collecting, don't add BEGIN_DUMP to buffer
+            elif data.startswith("ERR:"):
+                self.dump_mode = False
+                self.log_console(f"❌ Dump failed: {data}")
+                self.dump_buffer = []
+                self.dump_save_path = None
             else:
+                # Collect all data lines
                 self.dump_buffer.append(data)
-        elif data.startswith("FILES:") or data.startswith("Files:") or data.startswith("DEBUG:"):
-            # File list response or debug messages
-            if data.startswith("DEBUG:"):
-                self.log_console(f"🔍 {data}")
-                return
-                
-            files_str = data.split(':', 1)[1].strip()
-            self.file_listbox.delete(0, tk.END)
-            
-            if files_str == "0" or not files_str:
+        elif data.startswith("Files:"):
+            # File list response - expecting "Files:0" or filename lines to follow
+            if data == "Files:0":
+                self.file_listbox.delete(0, tk.END)
                 self.file_listbox.insert(tk.END, "(No files on SD card)")
+                self.log_console(data)
             else:
-                files = files_str.split(',')
-                for f in files:
-                    if f.strip():
-                        self.file_listbox.insert(tk.END, f.strip())
+                # Files: prefix means files follow on next lines
+                self.file_listbox.delete(0, tk.END)
+                self.log_console(data)
+                # Mark that we're collecting file list
+                self.collecting_files = True
+        elif hasattr(self, 'collecting_files') and self.collecting_files:
+            # Receiving file list entries
+            if data == "OK" or data.startswith("St:"):
+                # End of file list
+                self.collecting_files = False
+                if data.startswith("St:"):
+                    self._process_status(data)
+                else:
+                    self.log_console(data)
+            elif data.endswith(".CSV") or data.endswith(".TXT"):
+                # This is a filename
+                self.file_listbox.insert(tk.END, data)
+                self.log_console(data)
+            else:
+                # Unknown data during file collection
+                self.log_console(data)
+        elif data.startswith("DEBUG:"):
+            # Debug messages
+            self.log_console(f"🔍 {data}")
         else:
             # Regular console output
             self.log_console(data)

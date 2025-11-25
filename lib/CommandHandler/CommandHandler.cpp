@@ -245,6 +245,7 @@ void CommandHandler::handleDump(const String& command) {
     }
     
     setState(STATE_IDLE);
+    // Note: OK is sent by dumpFile()
 }
 
 void CommandHandler::handleRPM(const char* command) {
