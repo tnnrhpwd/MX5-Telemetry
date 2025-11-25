@@ -217,7 +217,7 @@ class ArduinoActionsApp:
         # Command tracking for timeout detection
         self.pending_command = None
         self.pending_command_time = None
-        self.command_timeout = 5.0  # 5 seconds
+        self.command_timeout = 15.0  # 15 seconds (extended for slower operations)
         self.last_data_time = time.time()
         self.error_count = 0
         self.consecutive_timeouts = 0
@@ -721,6 +721,10 @@ class ArduinoActionsApp:
             
             # Check if we have a pending command that's timed out
             if self.pending_command and self.pending_command_time:
+                # Skip timeout check for dump commands (they have their own 30s timeout)
+                if self.pending_command.startswith('D '):
+                    return
+                
                 elapsed = current_time - self.pending_command_time
                 if elapsed > self.command_timeout:
                     self.consecutive_timeouts += 1
