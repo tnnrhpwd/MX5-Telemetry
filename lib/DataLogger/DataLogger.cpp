@@ -24,36 +24,41 @@ bool DataLogger::begin() {
     return false;
 }
 
-void DataLogger::createLogFile(uint32_t /*gpsDate*/, uint32_t /*gpsTime*/) {
+void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     if (!initialized) return;
     
-    // Find next available filename to avoid overwriting
     static uint16_t fileCounter = 0;
-    uint16_t fileNum;
-    bool fileExists;
     
-    // Try up to 100 filenames to find an unused one
-    for (int attempt = 0; attempt < 100; attempt++) {
-        fileNum = (millis() / 1000 + fileCounter) % 10000;
-        sprintf(logFileName, "LOG_%04u.CSV", fileNum);
-        
-        // Check if file already exists
-        fileExists = logFile.open(&sd, logFileName, O_RDONLY);
-        if (fileExists) {
-            logFile.close();
-            fileCounter++;  // Try next number
-        } else {
-            break;  // Found unused filename
+    #if GPS_FILENAMES_ENABLED
+        // Use GPS-based filename if valid date
+        if (gpsDate > 20000000 && gpsDate < 21000000) {
+            // Format: MMDD_HHMM.CSV (e.g., 1125_1530.CSV for Nov 25, 3:30pm)
+            sprintf(logFileName, "%04lu_%04lu.CSV", gpsDate % 10000, (gpsTime / 10000) % 10000);
+            isLogging = true;
+            
+            if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
+                logFile.write("Time,Date,GPSTime,Lat,Lon,Speed,Alt,Sat,RPM\n");
+                logFile.close();
+                return;
+            } else {
+                logFileName[0] = '\0';
+                isLogging = false;
+                errorCount++;
+                return;
+            }
         }
-    }
+    #endif
+    
+    // Fallback: counter-based filename
+    fileCounter = (millis() / 1000 + fileCounter) % 10000;
+    sprintf(logFileName, "LOG_%04u.CSV", fileCounter);
+    fileCounter++;
     
     isLogging = true;
     
-    // Create file with header - open/write/close immediately
     if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
         logFile.write("Time,Date,GPSTime,Lat,Lon,Speed,Alt,Sat,RPM\n");
         logFile.close();
-        // Note: Don't print to Serial here - it interferes with command responses
     } else {
         logFileName[0] = '\0';
         isLogging = false;
@@ -173,20 +178,27 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
 
 void DataLogger::dumpFile(const char* filename) {
     if (!initialized) {
-        Serial.println(F("ERR:SD"));
+        Serial.println(F("ERR:SD_NOT_INIT"));
         return;
     }
     
     if (!filename || *filename == '\0') {
-        Serial.println(F("ERR:FN"));
+        Serial.println(F("ERR:NO_FILENAME"));
         return;
     }
     
     // Open file from SD card volume
     FatFile file;
     if (!file.open(&sd, filename, O_RDONLY)) {
-        Serial.print(F("ERR:"));
+        Serial.print(F("ERR:OPEN_"));
         Serial.println(filename);
+        return;
+    }
+    
+    // Check if file is empty
+    if (file.fileSize() == 0) {
+        file.close();
+        Serial.println(F("ERR:EMPTY"));
         return;
     }
     
@@ -199,7 +211,7 @@ void DataLogger::dumpFile(const char* filename) {
     }
     
     file.close();
-    Serial.println(F("\nOK"));
+    Serial.println(F("OK"));
 }
 
 void DataLogger::dumpCurrentLog() {

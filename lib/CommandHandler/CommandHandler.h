@@ -51,6 +51,9 @@ public:
     // State transitions
     void setState(SystemState newState) { currentState = newState; }
     
+    // Public command handlers (for auto-start on boot)
+    void handleStart();
+    
 private:
     SystemState currentState;
     char inputBuffer[256];  // Large buffer for LED commands (244 chars for 40 LEDs)
@@ -61,7 +64,6 @@ private:
     
     // Command processors
     void processCommand(const char* command);
-    void handleStart();
     void handlePause();
     void handleResume();
     void handleLive();

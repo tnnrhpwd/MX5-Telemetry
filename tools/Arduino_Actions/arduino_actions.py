@@ -621,8 +621,12 @@ class ArduinoActionsApp:
                 self.file_listbox.insert(tk.END, "(No files on SD card)")
                 self.log_console(data)
             else:
-                # Files: prefix means files follow on next lines
+                # Files: prefix with first filename on same line
                 self.file_listbox.delete(0, tk.END)
+                # Extract first filename from "Files:FILENAME"
+                first_file = data.split("Files:")[1].strip()
+                if first_file:
+                    self.file_listbox.insert(tk.END, first_file)
                 self.log_console(data)
                 # Mark that we're collecting file list
                 self.collecting_files = True

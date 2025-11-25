@@ -74,6 +74,7 @@ unsigned long lastCANRead = 0;
 unsigned long lastGPSRead = 0;
 unsigned long lastLogWrite = 0;
 unsigned long lastStatusPrint = 0;
+unsigned long logFileStartTime = 0;  // Track when current log file was created
 
 // ============================================================================
 // STATUS PRINTING
@@ -126,28 +127,36 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     Serial.setTimeout(100); // Set 100ms timeout for Serial operations
     
+    // Wait up to 3 seconds for USB serial connection
+    bool usbConnected = false;
     while (!Serial && millis() < 3000) {
-        ; // Wait up to 3 seconds for serial connection
+        ; // Wait for serial connection
     }
     
-    delay(500);
-    
-    // Clear any garbage in the serial buffer after connection
-    while (Serial.available() > 0) {
-        Serial.read();
+    // Check if USB actually connected
+    if (Serial) {
+        usbConnected = true;
+        delay(500);
+        
+        // Clear any garbage in the serial buffer after connection
+        while (Serial.available() > 0) {
+            Serial.read();
+        }
     }
     
-    Serial.println(F("MX5v3"));
+    if (usbConnected) {
+        Serial.println(F("MX5v3"));
+    }
     
     // Initialize only enabled modules
     #if ENABLE_CAN_BUS
         if (canBus.begin()) {
-            Serial.println(F("CAN: OK"));
+            if (usbConnected) Serial.println(F("CAN: OK"));
         } else {
-            Serial.println(F("CAN: Error"));
+            if (usbConnected) Serial.println(F("CAN: Error"));
         }
     #else
-        Serial.println(F("CAN: Disabled"));
+        if (usbConnected) Serial.println(F("CAN: Disabled"));
     #endif
     
     #if ENABLE_LED_STRIP
@@ -155,24 +164,24 @@ void setup() {
         // Skip startup animation - blocks for ~7 seconds!
         // ledStrip.startupAnimation();
     #else
-        Serial.println(F("LED: Disabled"));
+        if (usbConnected) Serial.println(F("LED: Disabled"));
     #endif
     
     #if ENABLE_GPS
         gps.begin();
-        Serial.println(F("GPS: Ready (disabled until START)"));
+        if (usbConnected) Serial.println(F("GPS: Ready (disabled until START)"));
     #else
-        Serial.println(F("GPS: Disabled"));
+        if (usbConnected) Serial.println(F("GPS: Disabled"));
     #endif
     
     #if ENABLE_LOGGING
         if (dataLogger.begin()) {
-            Serial.println(F("SD: OK"));
+            if (usbConnected) Serial.println(F("SD: OK"));
         } else {
-            Serial.println(F("SD: FAIL (No card/Bad format)"));
+            if (usbConnected) Serial.println(F("SD: FAIL (No card/Bad format)"));
         }
     #else
-        Serial.println(F("LOG: Disabled"));
+        if (usbConnected) Serial.println(F("LOG: Disabled"));
     #endif
     
     cmdHandler.begin();
@@ -196,8 +205,19 @@ void setup() {
         ledStrip.clear();
     #endif
     
-    Serial.println(F("OK"));
-    Serial.flush();
+    if (usbConnected) {
+        Serial.println(F("OK"));
+        Serial.flush();
+    } else {
+        // No USB connected - auto-start logging for standalone operation
+        // This allows outdoor GPS testing without laptop
+        cmdHandler.handleStart();
+        
+        #if ENABLE_LED_STRIP
+            // Visual indication that logging started automatically
+            ledStrip.setBrightness(128);  // Medium brightness to show activity
+        #endif
+    }
 }
 
 // ============================================================================
@@ -217,6 +237,37 @@ void loop() {
     if (Serial.available() > 0) {
         cmdHandler.update();
     }
+    
+    // ========================================================================
+    // LOG ROTATION (create new log file periodically to prevent huge files)
+    // ========================================================================
+    #if LOG_ROTATION_ENABLED && ENABLE_LOGGING
+        if (cmdHandler.shouldLog()) {
+            // Track when current log file was created
+            if (logFileStartTime == 0) {
+                logFileStartTime = currentMillis;
+            }
+            
+            // Check if rotation interval exceeded
+            if ((currentMillis - logFileStartTime) >= LOG_ROTATION_INTERVAL) {
+                // Close current log file
+                dataLogger.finishLogging();
+                
+                // Create new log file with current GPS datetime
+                #if ENABLE_GPS
+                    dataLogger.createLogFile(gps.getDate(), gps.getTime());
+                #else
+                    dataLogger.createLogFile(0, 0);
+                #endif
+                
+                // Reset timer for new file
+                logFileStartTime = currentMillis;
+            }
+        } else {
+            // Not logging, reset timer
+            logFileStartTime = 0;
+        }
+    #endif
     
     // ========================================================================
     // HIGH-FREQUENCY CAN BUS READING (50Hz - only if enabled)

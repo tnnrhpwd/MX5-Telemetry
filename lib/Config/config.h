@@ -60,6 +60,15 @@
 #define STATUS_INTERVAL      1000    // Status update interval (1Hz)
 
 // ============================================================================
+// LOG ROTATION (automatic new file creation) - Costs ~300 bytes flash
+// ============================================================================
+#define LOG_ROTATION_ENABLED  true    // Automatically create new file every N minutes
+#define LOG_ROTATION_INTERVAL 600000  // Create new log file every 10 minutes
+                                      // 600000 = 10 min, 1800000 = 30 min, 3600000 = 1 hour
+#define GPS_FILENAMES_ENABLED false   // Use GPS datetime for filenames (MMDD_HHMM.CSV)
+                                      // Costs 340 bytes - set true only if LED strip disabled
+
+// ============================================================================
 // USB COMMAND INTERFACE
 // ============================================================================
 // Single-letter commands (corruption-resistant): S P X L D I T ?

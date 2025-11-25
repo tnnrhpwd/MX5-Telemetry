@@ -239,7 +239,7 @@ void CommandHandler::handleHelp() {
 }
 
 void CommandHandler::handleStatus() {
-    // Status printing moved to CommandHandler for better encapsulation
+    // Quick status without SD card enumeration (avoids timeout)
     Serial.print(F("St:"));
     if (currentState == STATE_RUNNING) Serial.print('R');
     else if (currentState == STATE_PAUSED) Serial.print('P');
@@ -247,35 +247,7 @@ void CommandHandler::handleStatus() {
     else if (currentState == STATE_DUMPING) Serial.print('D');
     else Serial.print('I');
     
-    // Add SD card information if DataLogger is available
-    if (dataLogger && dataLogger->isInitialized()) {
-        uint32_t totalKB = 0;
-        uint32_t usedKB = 0;
-        uint8_t fileCount = 0;
-        
-        // Flush before SD operations to prevent corruption
-        Serial.flush();
-        
-        dataLogger->getSDCardInfo(totalKB, usedKB, fileCount);
-        
-        Serial.print(F(" SD:"));
-        Serial.print(usedKB);
-        Serial.print(F("KB"));
-        
-        Serial.print(F(" Files:"));
-        Serial.print(fileCount);
-        
-        const char* currentLog = dataLogger->getLogFileName();
-        if (currentLog[0] != '\0') {
-            Serial.print(F(" Log:"));
-            Serial.print(currentLog);
-        }
-    } else {
-        Serial.print(F(" SD:N/A"));
-    }
-    
     Serial.println(F(" OK"));
-    Serial.flush();
 }
 
 void CommandHandler::handleList() {
@@ -291,7 +263,12 @@ void CommandHandler::handleList() {
 void CommandHandler::handleDump(const char* command) {
     if (!dataLogger) {
         Serial.println(F("ERR:NO_LOGGER"));
-        Serial.flush();
+        return;
+    }
+    
+    // Check current state - can't dump while running
+    if (currentState == STATE_RUNNING) {
+        Serial.println(F("ERR:BUSY"));
         return;
     }
     
@@ -305,12 +282,21 @@ void CommandHandler::handleDump(const char* command) {
         // Found space and there's content after it
         const char* filename = spacePtr + 1;
         
-        // Skip leading whitespace
+        // Skip leading whitespace and any trailing CR/LF
         while (*filename == ' ' || *filename == '\t') filename++;
         
-        if (*filename != '\0') {
-            // Have a filename - pass directly without String conversion
-            dataLogger->dumpFile(filename);
+        // Create clean filename without line endings
+        char cleanName[32];
+        uint8_t i = 0;
+        while (filename[i] && filename[i] != '\r' && filename[i] != '\n' && i < 31) {
+            cleanName[i] = filename[i];
+            i++;
+        }
+        cleanName[i] = '\0';
+        
+        if (cleanName[0] != '\0') {
+            // Have a filename - pass cleaned version
+            dataLogger->dumpFile(cleanName);
         } else {
             dataLogger->dumpCurrentLog();
         }
