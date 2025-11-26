@@ -22,7 +22,7 @@ import colorsys
 # ============================================================================
 # Configuration (matching config.h from Arduino)
 # ============================================================================
-LED_COUNT = 30
+LED_COUNT = 20
 RPM_IDLE = 800
 RPM_MIN_DISPLAY = 1000
 RPM_MAX_DISPLAY = 7000

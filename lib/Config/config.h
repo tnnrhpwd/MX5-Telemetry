@@ -48,7 +48,8 @@
 #define ENABLE_GPS          true    // GPS with dynamic enable/disable during logging
                                      // true = GPS enabled during RUNNING, disabled during USB commands
                                      // false = GPS completely disabled (no serial interference)
-#define ENABLE_LED_STRIP    true     // LED strip enabled with priority-based updates
+#define ENABLE_LED_STRIP    false    // LED strip DISABLED (using external slave Arduino)
+#define ENABLE_LED_SLAVE    true     // Send LED commands to slave Arduino via Serial1 (TX pin 1)
 #define ENABLE_LOGGING      true     // SD card data logging
 
 // ============================================================================

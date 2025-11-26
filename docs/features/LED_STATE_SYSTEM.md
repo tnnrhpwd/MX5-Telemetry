@@ -35,7 +35,7 @@ This system is implemented consistently across both the Arduino hardware and the
 ### 🟢 State 1: Gas Efficiency Zone (2000-2500 RPM)
 **Purpose:** Subtle confirmation of optimal cruising range.
 
-**Visual Pattern (16 LEDs):**
+**Visual Pattern (20 LEDs):**
 ```
 🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢
 ```

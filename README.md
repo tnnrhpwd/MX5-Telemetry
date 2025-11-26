@@ -1,19 +1,26 @@
  the# 🚗 MX5-Telemetry System
 
-A comprehensive embedded telemetry and data logging system for the 2008 Mazda Miata NC (MX-5). This system reads real-time engine data from the vehicle's CAN bus, provides visual RPM feedback via an LED strip, logs GPS-enhanced telemetry data, and automatically controls external camera recording.
+A comprehensive embedded telemetry and data logging system for the 2008 Mazda Miata NC (MX-5). This **dual Arduino system** uses a master controller for CAN bus data logging, GPS tracking, and SD card storage, while a dedicated slave controller handles high-speed LED visualization with zero latency.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Arduino](https://img.shields.io/badge/Arduino-Nano-00979D.svg)
+![Arduino](https://img.shields.io/badge/Arduino-Dual%20Nano-00979D.svg)
 ![Platform](https://img.shields.io/badge/Platform-ATmega328P-orange.svg)
+![Build System](https://img.shields.io/badge/Build-PlatformIO-orange.svg)
 
 ## ✨ Features
 
+### Dual Arduino Architecture
+- **🎯 Master Arduino (Telemetry Logger)**: Handles CAN bus communication, GPS tracking, SD card logging, and commands the slave
+- **⚡ Slave Arduino (LED Controller)**: Dedicated LED control for instant visual feedback with zero processing lag
+- **🔗 Serial Communication**: High-speed 115200 baud link between master and slave for synchronized operation
+
+### Core Capabilities
 - **Real-time CAN Bus Communication**: Reads engine data at 500 kbaud directly from the Miata's OBD-II port
-- **Visual RPM Indicator**: WS2812B LED strip displays RPM with color gradient and shift light
-- **GPS Data Logging**: Records position, speed, altitude, and timestamps
-- **CSV Data Export**: Logs all telemetry data to MicroSD card for easy analysis
-- **Error Handling**: Graceful recovery from communication failures
-- **Low-Power Standby**: Reduces power consumption when vehicle is off
+- **Visual RPM Indicator**: WS2812B LED strip displays RPM with sophisticated 5-state mirrored progress bar
+- **GPS Data Logging**: Records position, speed, altitude, and timestamps with accurate GPS time
+- **CSV Data Export**: Logs all telemetry data to MicroSD card for easy analysis in Excel/Python
+- **Error Handling**: Graceful recovery from communication failures with visual error states
+- **Log Rotation**: Automatic file management prevents SD card overflow
 
 ## 📋 Table of Contents
 
@@ -34,51 +41,44 @@ A comprehensive embedded telemetry and data logging system for the 2008 Mazda Mi
 
 ```
 MX5-Telemetry/
-├── platformio.ini              # PlatformIO configuration
+├── platformio.ini              # PlatformIO configuration (dual Arduino support)
 ├── README.md                   # This file
+├── STRUCTURE.md                # 📋 Detailed structure guide
 │
-├── src/                        # 🎯 Main application code
-│   ├── main.cpp                # Main application entry point
-│   └── config.h                # Central configuration
+├── src/                        # 🎯 Master Arduino code (Arduino #1)
+│   └── main.cpp                # Main telemetry application
 │
-├── lib/                        # 📦 Custom libraries (modular architecture)
+├── src_slave/                  # 🎯 Slave Arduino code (Arduino #2)
+│   └── main.cpp                # LED controller application
+│
+├── lib/                        # 📦 Custom libraries (master only)
 │   ├── CANHandler/             # CAN bus communication
-│   │   ├── CANHandler.h
-│   │   └── CANHandler.cpp
-│   ├── LEDController/          # LED strip visual feedback
-│   │   ├── LEDController.h
-│   │   └── LEDController.cpp
 │   ├── GPSHandler/             # GPS data acquisition
-│   │   ├── GPSHandler.h
-│   │   └── GPSHandler.cpp
 │   ├── DataLogger/             # SD card CSV logging
-│   │   ├── DataLogger.h
-│   │   └── DataLogger.cpp
+│   ├── CommandHandler/         # USB command interface
+│   ├── LEDSlave/               # Serial communication to slave
+│   ├── LEDController/          # Legacy local LED control
+│   └── Config/                 # Configuration constants
 │
-├── docs/                       # 📚 All documentation
-│   ├── QUICK_START.md          # 30-min setup guide
-│   ├── WIRING_GUIDE.md         # Hardware assembly
-│   ├── PARTS_LIST.md           # Bill of materials
-│   ├── PLATFORMIO_GUIDE.md     # Development setup
-│   ├── LIBRARY_INSTALL_GUIDE.md # Library troubleshooting
-│   ├── DATA_ANALYSIS.md        # Data visualization
-│   └── REQUIREMENTS_COMPLIANCE.md # ✅ Requirements verification
+├── docs/                       # 📚 Organized documentation
+│   ├── setup/                  # Quick start & installation guides
+│   ├── hardware/               # Wiring, parts, architecture
+│   ├── development/            # Build guides & testing
+│   └── features/               # Feature-specific docs
 │
-├── scripts/                    # 🔧 Helper scripts
-│   ├── pio_quick_start.bat     # PlatformIO menu (Windows)
-│   ├── pio_quick_start.sh      # PlatformIO menu (Linux/Mac)
-│   ├── verify_build.bat        # Build verification (Windows)
-│   ├── verify_build.sh         # Build verification (Linux/Mac)
-│   ├── install_libraries.bat   # Arduino library installer
-│   └── install_libraries.sh    # Arduino library installer
+├── build-automation/           # 🔧 Build scripts & installers
+│   ├── install_libraries.*     # Library installers
+│   ├── pio_quick_start.*       # PlatformIO menu
+│   └── verify_build.*          # Build verification
 │
-├── tools/                      # 🎮 Development tools
-│   ├── led_simulator.py        # Interactive LED simulator (GUI)
-│   ├── run_simulator.bat       # Simulator launcher (Windows)
-│   └── README.md               # Tool documentation
+├── tools/                      # 🛠️ Development tools
+│   ├── simulators/             # LED simulator & testing
+│   │   └── led_simulator/      # Interactive GUI simulator
+│   └── utilities/              # Arduino helper scripts
+│       └── arduino_actions/    # Management utilities
 │
-├── hardware/                   # 🔌 Hardware files
-│   ├── diagram.json            # Wokwi circuit diagram
+├── hardware/                   # 🔌 Wokwi simulation files
+│   ├── diagram.json            # Virtual circuit
 │   └── wokwi.toml              # Simulator config
 │
 ├── test/                       # ✅ Unit tests
@@ -88,37 +88,71 @@ MX5-Telemetry/
     └── tasks.json              # Build/upload tasks
 ```
 
+> **🔌 Dual Arduino Architecture:** This project uses two Arduinos:
+> - **Master (nano_atmega328):** Full telemetry logger with CAN, GPS, SD card
+> - **Slave (led_slave):** Dedicated LED controller receiving Serial commands
+> 
+> 📖 See [docs/STRUCTURE.md](docs/STRUCTURE.md) for detailed organization guide  
+> ⚡ See [docs/setup/DUAL_ARDUINO_SETUP.md](docs/setup/DUAL_ARDUINO_SETUP.md) for setup instructions
+
 ## 🔧 Hardware Requirements
 
-### Core Components
+### Core Components (Dual Arduino System)
 
-| Component | Model/Type | Interface | Notes |
-|-----------|------------|-----------|-------|
-| Microcontroller | Arduino Nano V3.0 | - | ATmega328P, 16MHz, 5V logic |
-| CAN Controller | MCP2515 + TJA1050 | SPI | 500 kbaud CAN transceiver |
-| LED Strip | WS2812B | Single-wire | 30 LEDs recommended |
-| GPS Module | Neo-6M | Software Serial | UART, 9600 baud |
-| SD Card Module | MicroSD | SPI | Shares SPI bus with CAN |
-| Buck Converter | LM2596 | - | 12V automotive → 5V regulated |
+| Component | Model/Type | Interface | Quantity | Notes |
+|-----------|------------|-----------|----------|-------|
+| **Master** Arduino Nano | Arduino Nano V3.0 | - | 1 | ATmega328P, 16MHz, 5V logic |
+| **Slave** Arduino Nano | Arduino Nano V3.0 | - | 1 | ATmega328P, 16MHz, 5V logic |
+| CAN Controller | MCP2515 + TJA1050 | SPI | 1 | 500 kbaud CAN transceiver (master only) |
+| LED Strip | WS2812B | Single-wire | 1 | 20 LEDs (slave only) |
+| GPS Module | Neo-6M | Software Serial | 1 | UART, 9600 baud (master only) |
+| SD Card Module | MicroSD | SPI | 1 | Shares SPI bus with CAN (master only) |
+| Buck Converter | LM2596 | - | 1 | 12V automotive → 5V regulated (powers both) |
 
 ### Wiring Connections
 
-#### Arduino Nano Pin Assignments
+#### Master Arduino Nano (Telemetry Logger)
 
 ```
 Digital Pins:
-  D2  → GPS Module TX (via SoftwareSerial RX)
-  D3  → GPS Module RX (via SoftwareSerial TX)
-  D4  → SD Card CS (Chip Select)
-  D6  → WS2812B Data In
-  D10 → MCP2515 CS (Chip Select)
-  D11 → MOSI (shared SPI)
-  D12 → MISO (shared SPI)
-  D13 → SCK (shared SPI)
+  D0 (RX)  → USB programming / debug serial
+  D1 (TX)  → Slave Arduino RX (Serial commands)
+  D2       → GPS Module TX (via SoftwareSerial RX)
+  D3       → GPS Module RX (via SoftwareSerial TX)
+  D4       → SD Card CS (Chip Select)
+  D10      → MCP2515 CS (Chip Select)
+  D11      → MOSI (shared SPI to CAN & SD)
+  D12      → MISO (shared SPI to CAN & SD)
+  D13      → SCK (shared SPI to CAN & SD)
 
 Power:
-  5V  → All module VCC pins (via buck converter)
+  5V  → Buck converter output
   GND → Common ground (all modules + vehicle ground)
+```
+
+#### Slave Arduino Nano (LED Controller)
+
+```
+Digital Pins:
+  D0 (RX)  → Master Arduino TX (receives commands)
+  D1 (TX)  → USB programming (disconnect during operation)
+  D6       → WS2812B LED strip Data In
+
+Power:
+  5V  → Buck converter output (shared with master)
+  GND → Common ground (shared with master)
+```
+
+#### Serial Communication
+
+```
+Master TX (D1) ──────► Slave RX (D0)   [115200 baud]
+
+Commands sent from Master to Slave:
+- RPM:xxxx    (e.g., "RPM:3450")
+- SPD:xxx     (e.g., "SPD:065")
+- ERR         (error state)
+- CLR         (clear error)
 ```
 
 ## 🔌 Wiring Diagram
@@ -134,74 +168,102 @@ Power:
                         │  5V 3A  │
                         └────┬────┘
                              │ 5V Regulated
-              ┌──────────────┼──────────────┐
-              │              │              │
-         ┌────▼────┐    ┌────▼────┐   ┌────▼────┐
-         │ Arduino │    │ WS2812B │   │  Neo-6M │
-         │  Nano   │    │ LED(30) │   │   GPS   │
-         │         │    └─────────┘   └────┬────┘
-         │   D2◄───┼───────────────────────┘ TX
-         │   D3►───┼──────────────────────────► RX
-         │   D4───►┼────► SD Card (CS)
-         │   D6───►┼────► WS2812B Data
-         │   D10──►┼────► MCP2515 (CS)
-         │   D11──►┼────► MOSI (shared)
-         │   D12◄──┼────► MISO (shared)
-         │   D13──►┼────► SCK (shared)
-         └────┬────┘
-              │
-         ┌────▼────┐          ┌──────────┐
-         │ MCP2515 │          │   SD     │
-         │ + TJA   ◄──────────┤  Card    │
-         │  1050   │   SPI    │  Module  │
-         └────┬────┘          └──────────┘
-              │
-    ┌─────────▼─────────┐
-    │   OBD-II Port     │
-    │  CAN-H (Pin 6)    │
-    │  CAN-L (Pin 14)   │
-    │  GND   (Pin 5)    │
-    └───────────────────┘
+              ┌──────────────┴──────────────┐
+              │                             │
+    ┌─────────▼─────────┐         ┌─────────▼─────────┐
+    │  MASTER ARDUINO   │ Serial  │  SLAVE ARDUINO    │
+    │   (Telemetry)     │ 115200  │  (LED Control)    │
+    │                   │  baud   │                   │
+    │   D1 (TX) ────────┼────────►┼─── D0 (RX)        │
+    │   D2 (RX) ◄───────┼─GPS TX  │                   │
+    │   D3 (TX) ────────┼─GPS RX  │   D6 ─────────────┼──► WS2812B
+    │   D4 (CS) ────────┼─SD CS   │                   │    LED Strip
+    │   D10 (CS) ───────┼─CAN CS  │                   │    (16 LEDs)
+    │   D11 (MOSI) ─────┼─SPI     │                   │
+    │   D12 (MISO) ─────┼─SPI     │                   │
+    │   D13 (SCK) ──────┼─SPI     │                   │
+    └───────┬───────────┘         └───────────────────┘
+            │
+     ┌──────┴──────┐
+     │             │
+┌────▼────┐   ┌────▼────┐
+│ MCP2515 │   │   SD    │
+│ + TJA   │   │  Card   │
+│  1050   │   │ Module  │
+└────┬────┘   └─────────┘
+     │
+┌────▼─────────┐    ┌─────────┐
+│  OBD-II Port │    │ Neo-6M  │
+│ CAN-H (Pin6) │    │   GPS   │
+│ CAN-L (Pin14)│    └─────────┘
+│ GND (Pin 5)  │
+└──────────────┘
+
+Serial Commands (Master → Slave):
+  RPM:xxxx  - Update RPM value
+  SPD:xxx   - Update speed value  
+  ERR       - Enter error state
+  CLR       - Clear error state
 ```
 
 ## 📚 Software Dependencies
 
-### Development Environment Options
+### Development Environment
 
-**Option 1: Arduino IDE** (Traditional)
+**PlatformIO** (Strongly Recommended)
+- VS Code extension with professional tooling
+- Automatic dependency management per Arduino
+- Built-in testing, simulation, and dual firmware management
+- Separate build environments for master and slave
+- See [docs/development/PLATFORMIO_GUIDE.md](docs/development/PLATFORMIO_GUIDE.md) for complete setup
+- Quick start: Run `build-automation/pio_quick_start.bat` (Windows) or `build-automation/pio_quick_start.sh` (Linux/Mac)
+
+**Arduino IDE** (Alternative, more complex for dual setup)
 - Download: https://www.arduino.cc/en/software
+- Requires manual library management
+- Must manually switch between master and slave code
 - See [Library Installation](#library-installation-commands) below
-
-**Option 2: PlatformIO** (Recommended for Advanced Users)
-- VS Code extension with better tooling
-- Automatic dependency management
-- Built-in testing and simulation
-- See `docs/PLATFORMIO_GUIDE.md` for complete setup
-- Quick start: Run `scripts/pio_quick_start.bat` (Windows) or `scripts/pio_quick_start.sh` (Linux/Mac)
 
 ### Required Arduino Libraries
 
-Install these libraries via Arduino IDE Library Manager or PlatformIO will auto-install:
+PlatformIO automatically manages these dependencies per Arduino. For Arduino IDE, install via Library Manager:
+
+#### Master Arduino (Telemetry Logger) Dependencies
 
 ```cpp
 // Core Libraries (built-in)
-#include <SPI.h>              // SPI communication
+#include <SPI.h>              // SPI communication for CAN & SD
 
-// Third-party Libraries (install via Library Manager)
+// Third-party Libraries
 #include <mcp_can.h>          // MCP2515 CAN Controller
                               // by Cory J. Fowler
                               
 #include <SD.h>               // SD Card file operations
                               // (built-in)
                               
-#include <Adafruit_NeoPixel.h> // WS2812B LED control
-                               // by Adafruit
-                               
 #include <TinyGPS++.h>        // GPS NMEA sentence parser
                               // by Mikal Hart
                               
 #include <SoftwareSerial.h>   // Software UART for GPS
                               // (built-in)
+
+// Custom Libraries (in lib/ folder)
+#include <CANHandler.h>       // CAN bus interface
+#include <GPSHandler.h>       // GPS data processing
+#include <DataLogger.h>       // SD card CSV logging
+#include <CommandHandler.h>   // USB command interface
+#include <LEDSlave.h>         // Serial commands to slave
+#include <config.h>           // System configuration
+```
+
+#### Slave Arduino (LED Controller) Dependencies
+
+```cpp
+// Third-party Libraries (minimal, optimized for speed)
+#include <Adafruit_NeoPixel.h> // WS2812B LED control
+                               // by Adafruit
+
+// No custom libraries - standalone firmware for maximum responsiveness
 ```
 
 ### Library Installation Commands
@@ -225,16 +287,18 @@ arduino-cli lib install "TinyGPSPlus"
 
 ### 1. Hardware Assembly
 
-1. **Mount the Arduino Nano** in a protective enclosure
-2. **Connect the buck converter** to vehicle 12V (fused recommended: 2A)
-3. **Wire the MCP2515** to the OBD-II port:
-   - CAN-H → Pin 6
-   - CAN-L → Pin 14
-   - GND → Pin 5
-4. **Connect all modules** according to the wiring diagram above
-5. **Mount the LED strip** in your desired location (dashboard, windshield, etc.)
+1. **Mount both Arduino Nanos** in protective enclosures (or a single dual enclosure)
+2. **Connect the buck converter** to vehicle 12V (fused recommended: 3A for both Arduinos + LEDs)
+3. **Wire the master Arduino**:
+   - Connect MCP2515 to OBD-II port (CAN-H → Pin 6, CAN-L → Pin 14, GND → Pin 5)
+   - Connect GPS module, SD card module (see wiring diagram)
+4. **Wire the slave Arduino**:
+   - Connect WS2812B LED strip (Data → D6, 5V, GND)
+5. **Connect serial link**: Master TX (D1) → Slave RX (D0)
+6. **Power both Arduinos** from buck converter (5V, GND)
+7. **Mount the LED strip** in your desired location (dashboard, windshield, etc.)
 
-### 2. Software Setup
+### 2. Software Setup (PlatformIO - Recommended)
 
 1. **Clone this repository**:
    ```bash
@@ -242,21 +306,33 @@ arduino-cli lib install "TinyGPSPlus"
    cd MX5-Telemetry
    ```
 
-2. **Open the sketch** in Arduino IDE:
+2. **Install PlatformIO**:
+   - Install VS Code
+   - Install PlatformIO IDE extension
+   - See [docs/development/PLATFORMIO_GUIDE.md](docs/development/PLATFORMIO_GUIDE.md) for details
+
+3. **Open project in VS Code**:
    ```bash
-   arduino MX5_Telemetry.ino
+   code .
    ```
 
-3. **Install required libraries** (see [Software Dependencies](#software-dependencies))
+4. **PlatformIO will auto-install** all required libraries for both Arduinos
 
-4. **Configure settings** (optional, see [Configuration](#configuration))
+5. **Build and upload master firmware**:
+   - Connect master Arduino via USB
+   - Select `env:nano_atmega328` (Master) environment
+   - Click Upload button or use task: `PlatformIO: Upload`
 
-5. **Select board and port**:
-   - Board: `Arduino Nano`
-   - Processor: `ATmega328P`
-   - Port: Select your COM port
+6. **Build and upload slave firmware**:
+   - Disconnect master, connect slave Arduino via USB
+   - Select `env:led_slave` (Slave) environment  
+   - Click Upload button or use task: `PlatformIO: Upload`
 
-6. **Upload the sketch** to your Arduino Nano
+### Alternative: Software Setup (Arduino IDE)
+
+1. **Install required libraries** (see [Software Dependencies](#software-dependencies))
+2. **Upload master code**: Open `src/main.cpp`, upload to master Arduino
+3. **Upload slave code**: Open `src_slave/main.cpp`, upload to slave Arduino
 
 ### 3. First-Time Setup
 
@@ -274,30 +350,47 @@ arduino-cli lib install "TinyGPSPlus"
 
 ### Adjustable Parameters
 
-Edit these constants in `MX5_Telemetry.ino` to customize behavior:
+#### Master Arduino Configuration
+
+Edit these constants in `lib/Config/config.h` to customize master behavior:
+
+```cpp
+// Timing Configuration
+#define CAN_READ_INTERVAL    50    // CAN polling rate (ms)
+#define GPS_READ_INTERVAL    1000  // GPS update rate (ms)
+#define LOG_INTERVAL         1000  // Data logging rate (ms)
+#define SLAVE_UPDATE_RATE    100   // Serial command rate to slave (ms)
+
+// Pin Configuration
+#define CAN_CS_PIN      10
+#define SD_CS_PIN       4
+#define GPS_RX_PIN      2
+#define GPS_TX_PIN      3
+#define SLAVE_TX_PIN    1  // Hardware serial to slave
+
+// Logging Configuration
+#define MAX_LOG_SIZE_MB      100   // Auto-rotate logs at this size
+#define MAX_LOG_FILES        10    // Keep this many log files
+```
+
+#### Slave Arduino Configuration
+
+Edit these constants in `src_slave/main.cpp` to customize LED behavior:
 
 ```cpp
 // LED Strip Configuration
-#define LED_COUNT       30    // Number of LEDs in your strip
+#define LED_COUNT       20    // Number of LEDs in your strip
+#define LED_PIN         6     // WS2812B data pin
 
-// RPM Thresholds (adjust for your engine)
+// RPM Thresholds (must match master configuration)
 #define RPM_IDLE        800   // Idle RPM
 #define RPM_MIN_DISPLAY 1000  // Minimum RPM to show on LEDs
 #define RPM_MAX_DISPLAY 7000  // Maximum RPM for gradient
 #define RPM_SHIFT_LIGHT 6500  // RPM to activate shift light
 #define RPM_REDLINE     7200  // Absolute redline
 
-// Timing Configuration
-#define CAN_READ_INTERVAL    20    // CAN polling rate (ms)
-#define GPS_READ_INTERVAL    100   // GPS update rate (ms)
-#define LOG_INTERVAL         200   // Data logging rate (ms)
-
-// Pin Configuration (if you need different pins)
-#define CAN_CS_PIN      10
-#define SD_CS_PIN       4
-#define LED_DATA_PIN    6
-#define GPS_RX_PIN      2
-#define GPS_TX_PIN      3
+// Serial Configuration
+#define SERIAL_BAUD     115200  // Must match master
 ```
 
 ### CAN Bus Configuration
@@ -339,30 +432,30 @@ The LED strip uses a sophisticated mirrored progress bar that grows from both ed
 
 #### 🟢 State 1: Gas Efficiency Zone (2000-2500 RPM)
 **Visual:** Gentle green glow on outermost 2 LEDs per side  
-**Pattern (16 LEDs):** `🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢`  
+**Pattern (20 LEDs):** `🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢`  
 **Purpose:** Quiet confirmation of optimal cruising range
 
 #### 🟠 State 2: Stall Danger (750-1999 RPM)
 **Visual:** Orange bars pulse **outward** from center to edges  
-**Pattern:** `⚫ ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ ⚫ → 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠`  
+**Pattern:** `⚫ ⚫ ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ ⚫ ⚫ → (full strip orange)`  
 **Purpose:** Warn of potential engine stall (below torque range)  
 **Animation:** 600ms pulse period, brightness 20-200
 
 #### 🟡 State 3: Normal Driving / Power Band (2501-4500 RPM)
 **Visual:** Solid yellow bars grow **inward** from edges toward center  
-**Pattern (at ~4000 RPM):** `🟡 🟡 🟡 🟡 🟡 ⚫ ⚫ ⚫ ⚫ 🟡 🟡 🟡 🟡 🟡`  
+**Pattern (at ~4000 RPM):** `🟡 🟡 🟡 🟡 🟡 🟡 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟡 🟡 🟡 🟡 🟡 🟡`  
 **Purpose:** Mirrored progress bar showing current RPM percentage
 
 #### 🔴 State 4: High RPM / Shift Danger (4501-7199 RPM)
 **Visual:** Filled segments turn **solid red**, unfilled center gap **flashes violently**  
-**Pattern (at ~6000 RPM):** `🟥 🟥 🟥 🟥 🟥 🟥 ✨ ✨ ✨ ✨ 🟥 🟥 🟥 🟥 🟥 🟥`  
+**Pattern (at ~6000 RPM):** `🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 ✨ ✨ ✨ ✨ 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥`  
 *(✨ = rapid red/white/cyan flashing)*  
 **Purpose:** Urgent shift signal - gauge nearly full, flash speed 150ms→40ms  
 **Behavior:** Bar continues growing inward while gap flashes faster as RPM rises
 
 #### 🛑 State 5: Rev Limit Cut (7200+ RPM)
 **Visual:** Bars meet completely, entire strip **solid red**  
-**Pattern (Full Strip):** `🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥`  
+**Pattern (Full Strip):** `🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥 🟥`  
 **Purpose:** Maximum limit reached (fuel cut), immediate action required
 
 #### ❌ Error State: CAN Bus Read Error
@@ -517,7 +610,7 @@ Timestamp,Date,Time,Latitude,Longitude,Altitude,Satellites,RPM,Speed,Throttle,Co
 **Solutions**:
 1. Check WS2812B data pin connection (D6)
 2. Ensure LED strip is powered from 5V supply (not Arduino pin)
-3. Verify `LED_COUNT` matches your actual LED count
+3. Verify `LED_COUNT` is set to 20 to match your actual LED count
 4. Add a 470Ω resistor between D6 and LED data line (reduces signal noise)
 5. Add a 1000µF capacitor across LED power supply
 
@@ -541,42 +634,61 @@ Monitor at **115200 baud** in Serial Monitor.
 
 ### Timing Specifications
 
-- **CAN Bus Read Rate**: 50Hz (every 20ms)
-  - High-frequency polling for responsive LED display
+#### Master Arduino (Telemetry Logger)
+- **CAN Bus Read Rate**: 20Hz (every 50ms)
+  - Sufficient for telemetry without overwhelming serial link
   
-- **GPS Update Rate**: 10Hz (every 100ms)
-  - Standard GPS refresh rate
+- **GPS Update Rate**: 1Hz (every 1000ms)
+  - Standard GPS refresh rate, matches logging interval
   
-- **Data Logging Rate**: 5Hz (every 200ms)
+- **Data Logging Rate**: 1Hz (every 1000ms)
   - Balances data density with SD card write speed
   
-- **LED Refresh Rate**: ~50Hz (every 20ms)
-  - Flicker-free visual feedback
+- **Slave Command Rate**: 10Hz (every 100ms)
+  - High-frequency updates for responsive LED display
+
+#### Slave Arduino (LED Controller)
+- **Serial Processing Rate**: ~10Hz (receives commands from master)
+  - 115200 baud ensures low latency
+  
+- **LED Refresh Rate**: ~60Hz
+  - Flicker-free visual feedback, independent of master
 
 ### Memory Usage
 
 Approximate flash and RAM usage on ATmega328P:
 
+#### Master Arduino:
 ```
-Sketch uses 24,568 bytes (79%) of program storage space
-Global variables use 1,124 bytes (54%) of dynamic memory
+Sketch uses 26,142 bytes (85%) of program storage space
+Global variables use 1,456 bytes (71%) of dynamic memory
 ```
 
-**Note**: Tight on memory. Reduce `LED_COUNT` or optimize strings if running out of RAM.
+#### Slave Arduino:
+```
+Sketch uses 8,234 bytes (26%) of program storage space
+Global variables use 448 bytes (21%) of dynamic memory
+```
+
+**Benefits of Dual Arduino Architecture**:
+- Master focuses on I/O-heavy tasks (CAN, GPS, SD) without LED overhead
+- Slave is dedicated to LED control with plenty of headroom for complex animations
+- Independent operation prevents LED lag during SD card writes
 
 ### Power Consumption
 
-Typical current draw at 5V:
+Typical current draw at 5V (dual Arduino system):
 
-- Arduino Nano: ~50mA
+- **Master Arduino Nano**: ~50mA
+- **Slave Arduino Nano**: ~50mA
 - MCP2515 module: ~30mA
 - GPS module: ~40mA
 - SD card (active): ~100mA
-- WS2812B LEDs: ~60mA per LED at full brightness (30 LEDs = 1.8A max)
+- WS2812B LEDs: ~60mA per LED at full brightness (20 LEDs = 1.2A max)
 
-**Total system**: ~250mA (LEDs off) to 2.1A (all LEDs full brightness)
+**Total system**: ~270mA (LEDs off) to 1.47A (all LEDs full brightness)
 
-**Recommendation**: Use 3A or higher buck converter for reliable operation.
+**Recommendation**: Use 3A buck converter for reliable operation with headroom.
 
 ## 🎯 Advanced Customization
 
@@ -649,17 +761,21 @@ This creates an isolated Python environment in the `venv/` folder (already exclu
 **Windows (with virtual environment):**
 ```powershell
 .\venv\Scripts\Activate.ps1
-python tools\LED_Simulator\led_simulator_v2.1.py
+python tools\simulators\led_simulator\led_simulator_v2.1.py
 ```
 
 **Windows (batch launcher):**
 ```batch
-tools\LED_Simulator\run_simulator.bat
+tools\simulators\led_simulator\LED_Simulator.bat
 ```
+
+**Windows (VS Code Task):**
+- Open Command Palette (Ctrl+Shift+P)
+- Run task: `Start RPM LED Simulator`
 
 **All Platforms:**
 ```bash
-python tools/LED_Simulator/led_simulator_v2.1.py
+python tools/simulators/led_simulator/led_simulator_v2.1.py
 ```
 
 ### Features
@@ -685,7 +801,7 @@ python tools/LED_Simulator/led_simulator_v2.1.py
 
 ### Car Configuration Files
 
-Create custom car profiles in `tools/cars/` directory:
+Create custom car profiles in `tools/simulators/led_simulator/cars/` directory:
 
 **Included Cars:**
 - `2008_miata_nc.json` - 2008 Mazda MX-5 NC (default)
@@ -696,7 +812,7 @@ Create custom car profiles in `tools/cars/` directory:
 2. Modify specs (gear ratios, RPM limits, top speed, etc.)
 3. Load in simulator using "Load Car File" button
 
-See `tools/cars/README.md` for complete file format documentation.
+See `tools/simulators/led_simulator/cars/README.md` for complete file format documentation.
 
 **Perfect for:**
 - Testing LED color changes before upload
@@ -705,21 +821,47 @@ See `tools/cars/README.md` for complete file format documentation.
 - Testing different vehicle configurations
 - Demonstrating the system to others
 
-See [tools/README.md](tools/README.md) for detailed usage and customization guide.
+See [tools/simulators/led_simulator/README.md](tools/simulators/led_simulator/README.md) for detailed usage and customization guide.
 
 ## 📚 Documentation
 
-Complete documentation is available in the `docs/` folder:
+Complete documentation is organized by category in the `docs/` folder:
 
-- **[Quick Start Guide](docs/QUICK_START.md)** - Get up and running in 30 minutes
-- **[Wiring Guide](docs/WIRING_GUIDE.md)** - Step-by-step hardware assembly
-- **[Parts List](docs/PARTS_LIST.md)** - Complete bill of materials with prices
-- **[PlatformIO Guide](docs/PLATFORMIO_GUIDE.md)** - Development environment setup and testing
-- **[Library Install Guide](docs/LIBRARY_INSTALL_GUIDE.md)** - Troubleshooting library installation
-- **[Data Analysis](docs/DATA_ANALYSIS.md)** - Python scripts for track data visualization
-- **[Requirements Compliance](docs/REQUIREMENTS_COMPLIANCE.md)** - ✅ Verification of all project requirements
+### 🚀 Getting Started
+- **[Quick Start Guide](docs/setup/QUICK_START.md)** - Get up and running in 30 minutes
+- **[Dual Arduino Setup](docs/setup/DUAL_ARDUINO_SETUP.md)** - Complete master/slave configuration
+- **[Quick Reference](docs/setup/QUICK_REFERENCE.md)** - Command reference card
+- **[Library Install Guide](docs/setup/LIBRARY_INSTALL_GUIDE.md)** - Manual library installation
+- **[Outdoor Test Guide](docs/setup/OUTDOOR_TEST_QUICKSTART.md)** - Field testing checklist
 
-See [docs/README.md](docs/README.md) for a complete documentation index.
+### 🔧 Hardware
+- **[Wiring Guide](docs/hardware/WIRING_GUIDE.md)** - Step-by-step hardware assembly
+- **[Parts List](docs/hardware/PARTS_LIST.md)** - Complete bill of materials with prices
+- **[Master/Slave Architecture](docs/hardware/MASTER_SLAVE_ARCHITECTURE.md)** - Design rationale
+
+### 💻 Development
+- **[PlatformIO Guide](docs/development/PLATFORMIO_GUIDE.md)** - Development environment setup
+- **[Build Guide](docs/development/BUILD_GUIDE.md)** - Building and testing
+- **[Build Architecture](docs/development/BUILD_ARCHITECTURE.md)** - PlatformIO environment details
+- **[Cleanup Guide](docs/development/CLEANUP_GUIDE.md)** - Repository maintenance
+- **[Data Analysis](docs/development/DATA_ANALYSIS.md)** - Python scripts for track data
+- **[Requirements Compliance](docs/development/REQUIREMENTS_COMPLIANCE.md)** - Design requirements
+
+### ✨ Features
+- **[LED State System](docs/features/LED_STATE_SYSTEM.md)** - 5-state LED animation details
+- **[LED Auto Sync](docs/features/LED_AUTO_SYNC.md)** - Master/slave synchronization
+- **[LED Quick Reference](docs/features/LED_QUICKREF.md)** - LED pattern cheat sheet
+- **[LED Simulator Connection](docs/features/LED_SIMULATOR_ARDUINO_CONNECTION.md)** - Testing with hardware
+- **[LED Simulator Troubleshooting](docs/features/LED_SIMULATOR_TROUBLESHOOTING.md)** - Simulator issues
+- **[GPS Troubleshooting](docs/features/GPS_TROUBLESHOOTING.md)** - GPS fix issues
+- **[GPS & Status Explained](docs/features/STATUS_AND_GPS_EXPLAINED.md)** - Data interpretation
+- **[Comprehensive Data Logging](docs/features/COMPREHENSIVE_DATA_LOGGING.md)** - Logging system details
+- **[Log Rotation](docs/features/LOG_ROTATION_FEATURE.md)** - Automatic file management
+- **[Runaway Logging Prevention](docs/features/RUNAWAY_LOGGING_PREVENTION.md)** - Safety mechanisms
+- **[Auto-Start Feature](docs/features/AUTO_START_FEATURE.md)** - Boot-on-power behavior
+
+📖 See [docs/STRUCTURE.md](docs/STRUCTURE.md) for complete repository organization guide  
+📋 See [docs/README.md](docs/README.md) for full documentation index with all 31 active documents
 
 ## 📄 License
 

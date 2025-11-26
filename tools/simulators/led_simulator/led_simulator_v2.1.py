@@ -1239,7 +1239,7 @@ class LEDSimulator:
                 # Open serial connection
                 self.arduino_port = serial.Serial(
                     port=port_name,
-                    baudrate=115200,
+                    baudrate=9600,
                     timeout=1,
                     write_timeout=1,
                     rtscts=False,  # Disable hardware flow control
@@ -1267,7 +1267,7 @@ class LEDSimulator:
                 print(f"Connection error: {e}")
     
     def send_leds_to_arduino(self, led_pattern):
-        """Send LED color data to Arduino to control real LEDs."""
+        """Send master protocol commands to slave Arduino based on LED state analysis."""
         if not self.arduino_connected or not self.arduino_port:
             return
         
@@ -1280,15 +1280,66 @@ class LEDSimulator:
         self.last_led_send_time = current_time
         
         try:
-            # Send LED data in compact format: LED:RRGGBBRRGGBB...\n
-            # Convert LED pattern to hex string (2 chars per color channel)
-            hex_data = ''.join(f'{r:02X}{g:02X}{b:02X}' for r, g, b in led_pattern)
-            command = f"LED:{hex_data}\n"
-            self.arduino_port.write(command.encode('utf-8'))
+            # Analyze LED pattern to determine state and generate RPM/SPD commands
+            # Count how many LEDs are lit (non-black)
+            lit_leds = sum(1 for r, g, b in led_pattern if (r > 0 or g > 0 or b > 0))
+            
+            # Determine dominant color to identify state
+            if lit_leds == 0:
+                rpm = 0
+                spd = 0
+            else:
+                # Sample the middle LED to determine state color
+                mid_idx = len(led_pattern) // 2
+                r, g, b = led_pattern[mid_idx]
+                
+                # Map LED states back to RPM values based on color and pattern
+                # STATE_0: Blue pepper (idle) - RPM ~500-800
+                if b > r and b > g:
+                    rpm = 650
+                    spd = 0
+                
+                # STATE_1: Green bar (gas efficiency) - RPM ~1200-1800
+                elif g > r and g > b and lit_leds <= 4:
+                    rpm = 1500
+                    spd = 40
+                
+                # STATE_2: Yellow pulse (stall danger) - RPM ~800-1200
+                elif r > 100 and g > 100 and b < 50:
+                    rpm = 1000
+                    spd = 25
+                
+                # STATE_3: Green progressive bar (normal) - RPM ~1800-5700
+                elif g > r and g > b and lit_leds > 4:
+                    # Map lit LEDs to RPM range
+                    rpm = 1800 + int((lit_leds / 20.0) * (5700 - 1800))
+                    spd = 60
+                
+                # STATE_4: Yellow/orange bar + white flash (high RPM) - RPM ~5700-6900
+                elif (r > 200 and g > 100) or (r > 200 and g > 200 and b > 200):
+                    rpm = 5700 + int((lit_leds / 20.0) * (6900 - 5700))
+                    spd = 100
+                
+                # STATE_5: Red solid (rev limit) - RPM ~6900+
+                elif r > 200 and g < 50 and b < 50:
+                    rpm = 7200
+                    spd = 120
+                
+                # Default to normal driving range
+                else:
+                    rpm = 3000
+                    spd = 60
+            
+            # Send commands in master protocol format (RPM:xxxx\n, SPD:xxx\n)
+            rpm_cmd = f"RPM:{rpm}\n"
+            spd_cmd = f"SPD:{spd}\n"
+            
+            self.arduino_port.write(rpm_cmd.encode('utf-8'))
+            self.arduino_port.write(spd_cmd.encode('utf-8'))
             self.arduino_port.flush()
         except Exception as e:
-            self.log_console(f"⚠️ Error sending LED data to Arduino: {e}")
-            print(f"Error sending LED data to Arduino: {e}")
+            self.log_console(f"⚠️ Error sending commands to Arduino: {e}")
+            print(f"Error sending commands to Arduino: {e}")
             # Disconnect on error
             self.arduino_connected = False
             self.connect_btn.config(text="Connect", bg="#006600")

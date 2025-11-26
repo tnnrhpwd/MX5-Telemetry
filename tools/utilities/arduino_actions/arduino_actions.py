@@ -64,11 +64,40 @@ class ArduinoConnection:
         for port in serial.tools.list_ports.comports():
             # Look for common Arduino identifiers
             if 'Arduino' in port.description or 'CH340' in port.description or 'USB Serial' in port.description:
-                ports.append({'port': port.device, 'desc': port.description})
+                # Identify if it's Master or Slave
+                arduino_type = self._identify_arduino(port.device)
+                desc = f"{port.description} [{arduino_type}]"
+                ports.append({'port': port.device, 'desc': desc, 'type': arduino_type})
             # Also include all USB serial devices
             elif 'USB' in port.description or 'COM' in port.device:
-                ports.append({'port': port.device, 'desc': port.description})
+                arduino_type = self._identify_arduino(port.device)
+                desc = f"{port.description} [{arduino_type}]"
+                ports.append({'port': port.device, 'desc': desc, 'type': arduino_type})
         return ports
+    
+    def _identify_arduino(self, port_name):
+        """Identify if Arduino is Master or Slave by checking serial output."""
+        try:
+            # Try 115200 baud (bootloader speed) to read startup messages
+            test_serial = serial.Serial(port=port_name, baudrate=115200, timeout=1)
+            time.sleep(0.5)  # Brief wait for startup messages
+            
+            # Read any available data
+            if test_serial.in_waiting > 0:
+                data = test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
+                test_serial.close()
+                
+                # Master outputs "MX5v3" on startup
+                if 'MX5v3' in data:
+                    return 'MASTER'
+                # Slave is silent or outputs different messages
+                else:
+                    return 'SLAVE'
+            
+            test_serial.close()
+            return 'UNKNOWN'
+        except:
+            return 'UNKNOWN'
     
     def connect(self, port_name, baud_rate=115200):
         """Connect to Arduino on specified port."""

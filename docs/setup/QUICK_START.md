@@ -235,7 +235,7 @@ See `README.md` Troubleshooting section for detailed solutions.
 
 **Different LED count?** Edit:
 ```cpp
-#define LED_COUNT       30    // Number of LEDs in your strip
+#define LED_COUNT       20    // Number of LEDs in your strip
 ```
 
 **Want faster data logging?**

@@ -7,7 +7,7 @@ REM ============================================================================
 
 echo.
 echo ========================================================================
-echo Creating Desktop Shortcuts for MX5-Telemetry Tools
+echo Creating Shortcuts for MX5-Telemetry Tools and Upload Scripts
 echo ========================================================================
 echo.
 
@@ -17,7 +17,13 @@ cscript //nologo "%~dp0create_shortcuts.vbs"
 if %errorlevel% equ 0 (
     echo.
     echo Shortcuts created successfully!
-    echo Check your desktop for:
+    echo.
+    echo Build-Automation folder:
+    echo   - Upload Master Arduino.lnk
+    echo   - Upload Slave Arduino.lnk
+    echo   - Upload Both Arduinos.lnk
+    echo.
+    echo Tools folder:
     echo   - LED Simulator.lnk
     echo   - Arduino Actions.lnk
     echo.

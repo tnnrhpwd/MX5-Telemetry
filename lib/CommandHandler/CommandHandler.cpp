@@ -1,6 +1,5 @@
 #include "CommandHandler.h"
 #include "DataLogger.h"
-#include "LEDController.h"
 #include "GPSHandler.h"
 #include <SdFat.h>
 
@@ -9,7 +8,7 @@
 // ============================================================================
 
 CommandHandler::CommandHandler()
-    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), ledController(nullptr), gpsHandler(nullptr) {
+    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr) {
     inputBuffer[0] = '\0';
 }
 
@@ -123,10 +122,6 @@ void CommandHandler::processCommand(const char* cmd) {
 
 void CommandHandler::handleStart() {
     if (currentState == STATE_IDLE || currentState == STATE_PAUSED || currentState == STATE_DUMPING) {
-        #if ENABLE_LED_STRIP
-        if (ledController) ledController->disable();
-        #endif
-        
         setState(STATE_RUNNING);
         
         // Enable GPS if feature is enabled in config
@@ -149,15 +144,6 @@ void CommandHandler::handleStart() {
             dataLogger->createLogFile(0, 0);  // GPS disabled in config
             #endif
         }
-        
-        delay(100);  // Delay after file creation before re-enabling LEDs
-        
-        #if ENABLE_LED_STRIP
-        if (ledController) {
-            ledController->enable();
-            delay(50);  // Allow enable to settle
-        }
-        #endif
         
         Serial.println(F("OK"));
         Serial.flush();
@@ -238,27 +224,12 @@ void CommandHandler::handleStatus() {
 }
 
 void CommandHandler::handleList() {
-    #if ENABLE_LED_STRIP
-    if (ledController) {
-        ledController->disable();
-        delay(100);  // Long delay after disabling LEDs
-    }
-    #endif
-    
     if (dataLogger) {
         dataLogger->listFiles();
         delay(100);  // Long delay after SD operation
     } else {
         Serial.println(F("Files:0"));
     }
-    
-    #if ENABLE_LED_STRIP
-    // Re-enable LEDs after SD operation completes
-    if (ledController && shouldUpdateLEDs()) {
-        delay(100);  // Long delay before re-enabling LEDs
-        ledController->enable();
-    }
-    #endif
 }
 
 void CommandHandler::handleDump(const char* command) {
@@ -272,13 +243,6 @@ void CommandHandler::handleDump(const char* command) {
         Serial.println(F("E:B"));
         return;
     }
-    
-    #if ENABLE_LED_STRIP
-    if (ledController) {
-        ledController->disable();
-        delay(100);  // Long delay after disabling LEDs
-    }
-    #endif
     
     setState(STATE_DUMPING);
     
@@ -314,81 +278,14 @@ void CommandHandler::handleDump(const char* command) {
     }
     
     setState(STATE_IDLE);
-    
-    #if ENABLE_LED_STRIP
-    // Re-enable LEDs after SD operation completes (only if appropriate for current state)
-    if (ledController && shouldUpdateLEDs()) {
-        delay(100);  // Long delay before re-enabling LEDs
-        ledController->enable();
-    }
-    #endif
 }
 
-void CommandHandler::handleRPM(const char* command) {
-    // Parse RPM value from command (format: RPM:xxxx)
-    int rpm = 0;
-    
-    // Skip "RPM:" prefix (4 characters)
-    const char* rpmStr = command + 4;
-    
-    // Convert string to integer
-    while (*rpmStr >= '0' && *rpmStr <= '9') {
-        rpm = rpm * 10 + (*rpmStr - '0');
-        rpmStr++;
-    }
-    
-    // Update LED display based on RPM
-    // This directly updates the LED strip to match the simulator
-    if (ledController) {
-        ledController->setRPM(rpm);
-        ledController->update();
-    }
+void CommandHandler::handleRPM(const char* /* command */) {
+    // RPM handling removed - LED control moved to slave Arduino
+    // Master no longer processes simulator RPM commands
 }
 
-
-
-void CommandHandler::handleLED(const char* command) {
-    // Parse LED color data from command (format: LED:RRGGBBRRGGBB...)
-    // Each LED is 6 hex characters: RRGGBB
-    
-    if (!ledController) {
-        return;
-    }
-    
-    // Skip "LED:" prefix (4 characters)
-    const char* hexData = command + 4;
-    
-    // Helper function to convert hex char to int
-    auto hexToInt = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        return 0;
-    };
-    
-    // Parse each LED color (40 LEDs * 6 chars = 240 chars expected)
-    int ledIndex = 0;
-    while (*hexData && ledIndex < 40) {
-        // Parse R (2 hex chars)
-        if (!hexData[0] || !hexData[1]) break;
-        uint8_t r = (hexToInt(hexData[0]) << 4) | hexToInt(hexData[1]);
-        hexData += 2;
-        
-        // Parse G (2 hex chars)
-        if (!hexData[0] || !hexData[1]) break;
-        uint8_t g = (hexToInt(hexData[0]) << 4) | hexToInt(hexData[1]);
-        hexData += 2;
-        
-        // Parse B (2 hex chars)
-        if (!hexData[0] || !hexData[1]) break;
-        uint8_t b = (hexToInt(hexData[0]) << 4) | hexToInt(hexData[1]);
-        hexData += 2;
-        
-        // Set LED color directly
-        ledController->setPixelColor(ledIndex, r, g, b);
-        ledIndex++;
-    }
-    
-    // Update the strip to show changes
-    ledController->update();
+void CommandHandler::handleLED(const char* /* command */) {
+    // LED handling removed - LED control moved to slave Arduino
+    // Master no longer processes simulator LED commands
 }

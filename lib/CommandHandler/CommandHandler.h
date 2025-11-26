@@ -21,7 +21,6 @@ enum SystemState {
 
 // Forward declarations
 class DataLogger;
-class LEDController;
 class GPSHandler;
 
 class CommandHandler {
@@ -33,7 +32,6 @@ public:
     
     // Set references to other components
     void setDataLogger(DataLogger* logger) { dataLogger = logger; }
-    void setLEDController(LEDController* controller) { ledController = controller; }
     void setGPSHandler(GPSHandler* handler) { gpsHandler = handler; }
     
     // Command processing
@@ -56,10 +54,9 @@ public:
     
 private:
     SystemState currentState;
-    char inputBuffer[256];  // Large buffer for LED commands (244 chars for 40 LEDs)
+    char inputBuffer[64];  // Reduced buffer - LED control moved to slave Arduino
     uint8_t bufferIndex;
     DataLogger* dataLogger;
-    LEDController* ledController;
     GPSHandler* gpsHandler;
     
     // Command processors

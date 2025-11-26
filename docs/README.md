@@ -1,30 +1,84 @@
-# 📚 MX5-Telemetry Documentation
+# 📚 MX5-Telemetry Documentation Index
 
-Complete documentation for the MX5-Telemetry system.
+Complete documentation for the MX5-Telemetry dual Arduino system, organized by category for easy navigation.
 
-## 📖 Documentation Files
+---
 
-### Getting Started
+## 📖 Essential Documentation
 
-- **[QUICK_START.md](QUICK_START.md)** - 30-minute setup guide for rapid deployment
-- **[WIRING_GUIDE.md](WIRING_GUIDE.md)** - Step-by-step hardware assembly instructions
-- **[PARTS_LIST.md](PARTS_LIST.md)** - Complete bill of materials with suppliers and pricing (~$80-140)
+### Repository Organization
+- **[STRUCTURE.md](STRUCTURE.md)** - Complete repository structure guide and navigation
+- **[PLATFORMIO_VERIFICATION.md](PLATFORMIO_VERIFICATION.md)** - PlatformIO dual Arduino setup verification
+- **[REORGANIZATION_SUMMARY.md](REORGANIZATION_SUMMARY.md)** - Recent structural changes and migration guide
 
-### Development & Installation
+---
 
-- **[PLATFORMIO_GUIDE.md](PLATFORMIO_GUIDE.md)** - Complete PlatformIO setup, testing, and simulation guide
-- **[LIBRARY_INSTALL_GUIDE.md](LIBRARY_INSTALL_GUIDE.md)** - Arduino IDE library installation troubleshooting
-- **[libraries_needed.txt](libraries_needed.txt)** - Quick reference list of required libraries
+## 🚀 Getting Started
 
-### LED System
+### Quick Setup (Start Here!)
+1. **[QUICK_START.md](setup/QUICK_START.md)** - 30-minute rapid deployment guide
+2. **[DUAL_ARDUINO_SETUP.md](setup/DUAL_ARDUINO_SETUP.md)** - Master/slave Arduino configuration
+3. **[WIRING_GUIDE.md](hardware/WIRING_GUIDE.md)** - Hardware assembly instructions
 
-- **[LED_STATE_SYSTEM.md](LED_STATE_SYSTEM.md)** - Complete documentation of mirrored progress bar LED states
-- **[LED_QUICKREF.md](LED_QUICKREF.md)** - Quick reference for LED state modifications
-- **[LED_AUTO_SYNC.md](LED_AUTO_SYNC.md)** - Automatic synchronization between Arduino and Python simulator
+### Setup Guides ([setup/](setup/))
+- **[QUICK_REFERENCE.md](setup/QUICK_REFERENCE.md)** - Command reference card
+- **[LIBRARY_INSTALL_GUIDE.md](setup/LIBRARY_INSTALL_GUIDE.md)** - Library installation troubleshooting
+- **[OUTDOOR_TEST_QUICKSTART.md](setup/OUTDOOR_TEST_QUICKSTART.md)** - Field testing guide
 
-### Data & Analysis
+---
 
-- **[DATA_ANALYSIS.md](DATA_ANALYSIS.md)** - Python scripts for CSV data visualization and track analysis
+## 🔧 Hardware
+
+### Physical Assembly ([hardware/](hardware/))
+- **[WIRING_GUIDE.md](hardware/WIRING_GUIDE.md)** - Step-by-step wiring instructions
+- **[PARTS_LIST.md](hardware/PARTS_LIST.md)** - Bill of materials (~$80-140)
+- **[MASTER_SLAVE_ARCHITECTURE.md](hardware/MASTER_SLAVE_ARCHITECTURE.md)** - Dual Arduino design rationale
+
+---
+
+## 💻 Development
+
+### Build & Test ([development/](development/))
+- **[PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md)** - PlatformIO setup and testing
+- **[BUILD_GUIDE.md](development/BUILD_GUIDE.md)** - Building and uploading firmware
+- **[BUILD_ARCHITECTURE.md](development/BUILD_ARCHITECTURE.md)** - Code architecture overview
+- **[DATA_ANALYSIS.md](development/DATA_ANALYSIS.md)** - CSV data visualization tools
+- **[REQUIREMENTS_COMPLIANCE.md](development/REQUIREMENTS_COMPLIANCE.md)** - Requirements verification
+- **[CLEANUP_GUIDE.md](development/CLEANUP_GUIDE.md)** - Code cleanup history
+
+---
+
+## ✨ Features & Troubleshooting
+
+### LED System ([features/](features/))
+- **[LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md)** - Complete LED animation documentation
+- **[LED_QUICKREF.md](features/LED_QUICKREF.md)** - Quick reference for LED states
+- **[LED_AUTO_SYNC.md](features/LED_AUTO_SYNC.md)** - Arduino/Python simulator sync
+- **[LED_SIMULATOR_ARDUINO_CONNECTION.md](features/LED_SIMULATOR_ARDUINO_CONNECTION.md)** - Simulator integration
+- **[LED_SIMULATOR_TROUBLESHOOTING.md](features/LED_SIMULATOR_TROUBLESHOOTING.md)** - Simulator debugging
+
+### GPS System ([features/](features/))
+- **[GPS_TROUBLESHOOTING.md](features/GPS_TROUBLESHOOTING.md)** - GPS fix issues
+- **[STATUS_AND_GPS_EXPLAINED.md](features/STATUS_AND_GPS_EXPLAINED.md)** - GPS status indicators
+
+### Data Logging ([features/](features/))
+- **[COMPREHENSIVE_DATA_LOGGING.md](features/COMPREHENSIVE_DATA_LOGGING.md)** - Logging system details
+- **[LOG_ROTATION_FEATURE.md](features/LOG_ROTATION_FEATURE.md)** - Log file management
+- **[AUTO_START_FEATURE.md](features/AUTO_START_FEATURE.md)** - Automatic startup
+- **[RUNAWAY_LOGGING_PREVENTION.md](features/RUNAWAY_LOGGING_PREVENTION.md)** - Safety features
+
+---
+
+## 📦 Archive
+
+Historical documentation (for reference only):
+
+- **[archive/](archive/)** - Legacy documentation including changelogs, bug fix summaries, and historical notes
+  - `CHANGELOG_V3.md` - Version 3 changelog
+  - `UPDATE_SUMMARY.md` - Update history
+  - `HANG_FIX_SUMMARY.md`, `TIMEOUT_FIX_SUMMARY.md` - Historical bug fixes
+  - `THREE_STATE_SUMMARY.md` - Historical feature summary
+  - `PROJECT_INTEGRATION_SUMMARY.md` - Integration notes
 
 ## 🗂️ Project Structure
 

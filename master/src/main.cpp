@@ -51,20 +51,20 @@
 #include <Arduino.h>
 #include <config.h>
 #include "CANHandler.h"
-#include "LEDController.h"
 #include "GPSHandler.h"
 #include "DataLogger.h"
 #include "CommandHandler.h"
+#include "LEDSlave.h"
 
 // ============================================================================
 // GLOBAL OBJECTS
 // ============================================================================
 
 CANHandler canBus(CAN_CS_PIN);
-LEDController ledStrip(LED_DATA_PIN, LED_COUNT);
 GPSHandler gps(GPS_RX_PIN, GPS_TX_PIN);
 DataLogger dataLogger(SD_CS_PIN);
 CommandHandler cmdHandler;
+LEDSlave ledSlave;  // Communicates with slave Arduino via Serial1
 
 // ============================================================================
 // TIMING VARIABLES
@@ -161,10 +161,8 @@ void setup() {
     #endif
     
     #if ENABLE_LED_STRIP
-        ledStrip.begin();
-        ledStrip.enable();  // Enable LEDs at boot - stay on until STOP
-        // Skip startup animation - blocks for ~7 seconds!
-        // ledStrip.startupAnimation();
+        ledSlave.begin();
+        if (usbConnected) Serial.println(F("LED: Slave Ready"));
     #else
         if (usbConnected) Serial.println(F("LED: Disabled"));
     #endif
@@ -193,18 +191,14 @@ void setup() {
         cmdHandler.setDataLogger(&dataLogger);
     #endif
     
-    #if ENABLE_LED_STRIP
-        cmdHandler.setLEDController(&ledStrip);
-    #endif
+    // LED control handled by LEDSlave class via Serial1
     
     #if ENABLE_GPS
         cmdHandler.setGPSHandler(&gps);
     #endif
     
     #if ENABLE_LED_STRIP
-        // Skip animations for faster startup - they block for ~12 seconds total!
-        // ledStrip.readyAnimation();
-        ledStrip.clear();
+        ledSlave.clear();
     #endif
     
     if (usbConnected) {
@@ -216,8 +210,7 @@ void setup() {
         cmdHandler.handleStart();
         
         #if ENABLE_LED_STRIP
-            // Visual indication that logging started automatically
-            ledStrip.setBrightness(128);  // Medium brightness to show activity
+            ledSlave.setBrightness(128);  // Medium brightness for auto-start
         #endif
     }
 }
@@ -302,22 +295,22 @@ void loop() {
     #endif
     
     // ========================================================================
-    // LED VISUAL FEEDBACK (Low priority: yield to ALL other operations)
+    // LED VISUAL FEEDBACK (Send commands to slave Arduino)
     // ========================================================================
     #if ENABLE_LED_STRIP
-        // Only update if LEDs are enabled, enough time has passed, AND no Serial data waiting
-        if (ledStrip.isEnabled() && currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL && Serial.available() == 0) {
+        // Send RPM updates to slave Arduino at reduced rate
+        if (cmdHandler.shouldUpdateLEDs() && currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL && Serial.available() == 0) {
             lastLEDUpdate = currentMillis;
             
             #if ENABLE_CAN_BUS
                 // Show error state if CAN not initialized or has errors
                 if (!canBus.isInitialized() || canBus.getErrorCount() > 100) {
-                    ledStrip.updateRPMError();  // Red pepper animation for CAN errors
+                    ledSlave.updateRPMError();
                 } else {
-                    ledStrip.updateRPM(canBus.getRPM());
+                    ledSlave.updateRPM(canBus.getRPM());
                 }
             #else
-                ledStrip.updateRPM(800);  // Show idle state when CAN disabled
+                ledSlave.updateRPM(800);  // Show idle state when CAN disabled
             #endif
         }
     #endif

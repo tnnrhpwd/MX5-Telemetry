@@ -157,7 +157,7 @@ def get_rpm_color(rpm):
 Match these values with your `lib/Config/config.h`:
 
 ```python
-LED_COUNT = 30              # Number of LEDs in strip
+LED_COUNT = 20              # Number of LEDs in strip
 RPM_IDLE = 800             # Idle RPM
 RPM_MIN_DISPLAY = 1000     # Minimum RPM to light LEDs
 RPM_MAX_DISPLAY = 7000     # Maximum RPM for gradient
