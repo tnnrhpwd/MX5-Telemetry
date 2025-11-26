@@ -224,8 +224,8 @@ class ArduinoConnection:
     def _read_loop(self):
         """Background thread for reading serial data."""
         buffer = ""
-        # Skip boot messages
-        skip_patterns = ['MX5v3', 'Entering Configuration', 'Setting Baudrate', 'CAN:', 'LED:', 'GPS:', 'SD:']
+        # Skip boot messages (but allow DEBUG messages through)
+        skip_patterns = ['MX5v3', 'Entering Configuration', 'Setting Baudrate']
         while self.running and self.is_connected:
             try:
                 if self.serial_port and self.serial_port.in_waiting > 0:

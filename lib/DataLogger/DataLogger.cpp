@@ -25,7 +25,10 @@ bool DataLogger::begin() {
 }
 
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
-    if (!initialized) return;
+    if (!initialized) {
+        Serial.println(F("DEBUG: SD not initialized"));
+        return;
+    }
     
     delay(50);  // Delay before SD operations
     
@@ -38,12 +41,17 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
             sprintf(logFileName, "%04lu_%04lu.CSV", gpsDate % 10000, (gpsTime / 10000) % 10000);
             isLogging = true;
             
+            Serial.print(F("DEBUG: Creating GPS file: "));
+            Serial.println(logFileName);
+            
             if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
                 logFile.write("Time,Date,GPSTime,Lat,Lon,Speed,Alt,Sat,RPM\n");
                 logFile.close();
+                Serial.println(F("DEBUG: File created OK"));
                 delay(50);  // Delay after SD operations
                 return;
             } else {
+                Serial.println(F("DEBUG: File open FAILED"));
                 logFileName[0] = '\0';
                 isLogging = false;
                 errorCount++;
@@ -60,10 +68,15 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     
     isLogging = true;
     
+    Serial.print(F("DEBUG: Creating counter file: "));
+    Serial.println(logFileName);
+    
     if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
         logFile.write("Time,Date,GPSTime,Lat,Lon,Speed,Alt,Sat,RPM\n");
         logFile.close();
+        Serial.println(F("DEBUG: File created OK"));
     } else {
+        Serial.println(F("DEBUG: File open FAILED"));
         logFileName[0] = '\0';
         isLogging = false;
         errorCount++;
