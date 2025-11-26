@@ -27,6 +27,8 @@ bool DataLogger::begin() {
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     if (!initialized) return;
     
+    delay(50);  // Delay before SD operations
+    
     static uint16_t fileCounter = 0;
     
     #if GPS_FILENAMES_ENABLED
@@ -39,11 +41,13 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
             if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
                 logFile.write("Time,Date,GPSTime,Lat,Lon,Speed,Alt,Sat,RPM\n");
                 logFile.close();
+                delay(50);  // Delay after SD operations
                 return;
             } else {
                 logFileName[0] = '\0';
                 isLogging = false;
                 errorCount++;
+                delay(50);  // Delay after SD operations
                 return;
             }
         }
@@ -64,6 +68,8 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
         isLogging = false;
         errorCount++;
     }
+    
+    delay(50);  // Delay after SD operations
 }
 
 void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHandler& can,
@@ -115,12 +121,16 @@ void DataLogger::finishLogging() {
 void DataLogger::listFiles() {
     if (!initialized) {
         Serial.println(F("Files:0"));
+        Serial.flush();
         return;
     }
+    
+    delay(50);  // Delay before SD operations
     
     FatFile root;
     if (!root.open(&sd, "/", O_RDONLY)) {
         Serial.println(F("Files:0"));
+        Serial.flush();
         return;
     }
     
@@ -128,14 +138,16 @@ void DataLogger::listFiles() {
     FatFile entry;
     char name[13];
     
-    // Limit iterations to prevent infinite loops
     root.rewind();
     while (entry.openNext(&root, O_RDONLY)) {
         if (!entry.isDir()) {
-            if (count == 0) Serial.print(F("Files:"));
-            entry.getName(name, sizeof(name));
-            Serial.println(name);
-            count++;
+            if (entry.getName(name, sizeof(name))) {
+                if (count == 0) Serial.print(F("Files:"));
+                Serial.println(name);
+                Serial.flush();
+                delay(10);  // Small delay between file listings
+                count++;
+            }
         }
         entry.close();
         if (count >= 50) break;
@@ -143,9 +155,11 @@ void DataLogger::listFiles() {
     
     if (count == 0) {
         Serial.println(F("Files:0"));
+        Serial.flush();
     }
     
     root.close();
+    delay(50);  // Delay after SD operations
 }
 
 void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fileCount) {
@@ -178,7 +192,7 @@ void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fil
 
 void DataLogger::dumpFile(const char* filename) {
     if (!initialized) {
-        Serial.println(F("ERR:SD_NOT_INIT"));
+        Serial.println(F("E:SD"));
         return;
     }
     
@@ -192,13 +206,6 @@ void DataLogger::dumpFile(const char* filename) {
     if (!file.open(&sd, filename, O_RDONLY)) {
         Serial.print(F("ERR:OPEN_"));
         Serial.println(filename);
-        return;
-    }
-    
-    // Check if file is empty
-    if (file.fileSize() == 0) {
-        file.close();
-        Serial.println(F("ERR:EMPTY"));
         return;
     }
     
@@ -218,7 +225,7 @@ void DataLogger::dumpCurrentLog() {
     if (logFileName[0] != '\0') {
         dumpFile(logFileName);
     } else {
-        Serial.println(F("ERR:NOLOG"));
+        Serial.println(F("E:NL"));
     }
 }
 

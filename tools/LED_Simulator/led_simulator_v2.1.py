@@ -60,7 +60,7 @@ except ImportError:
 # LED Configuration - DEFAULT VALUES (can be overridden from Arduino)
 # ============================================================================
 # These defaults ensure the simulator works even if Arduino config can't be loaded
-LED_COUNT = 40  # Fixed hardware constant - matches first 40 LEDs of physical strip
+LED_COUNT = 20  # Fixed hardware constant - matches first 20 LEDs of physical strip
 
 # State 0: Idle/Neutral (White Pepper Inward)
 STATE_0_SPEED_THRESHOLD = 1

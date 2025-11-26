@@ -106,25 +106,15 @@ void CommandHandler::processCommand(const char* cmd) {
     }
     command[i] = '\0';
     
-    // Full word commands (backward compatibility)
-    if (strcmp(command, "START") == 0 || strcmp(command, "S") == 0) {
-        handleStart();
-    }
-    else if (strcmp(command, "PAUSE") == 0 || strcmp(command, "P") == 0) handlePause();
-    else if (strcmp(command, "LIVE") == 0 || strcmp(command, "L") == 0) handleLive();
-    else if (strcmp(command, "STOP") == 0 || strcmp(command, "X") == 0) {
-        handleStop();
-    }
-    else if (strcmp(command, "HELP") == 0 || strcmp(command, "?") == 0) handleHelp();
-    else if (strcmp(command, "STATUS") == 0 || strcmp(command, "T") == 0) {
-        handleStatus();
-    }
-    else if (strcmp(command, "LIST") == 0 || strcmp(command, "I") == 0) {
-        handleList();
-    }
-    else if (strncmp(command, "DUMP", 4) == 0 || firstChar == 'D') {
-        handleDump(cmd);  // Use original cmd, not uppercase command
-    }
+    // Short commands only
+    if (firstChar == 'S') handleStart();
+    else if (firstChar == 'P') handlePause();
+    else if (firstChar == 'L') handleLive();
+    else if (firstChar == 'X') handleStop();
+    else if (firstChar == '?') handleHelp();
+    else if (firstChar == 'T') handleStatus();
+    else if (firstChar == 'I') handleList();
+    else if (firstChar == 'D') handleDump(cmd);
     else if (command[0] != '\0') {
         Serial.print(F("? "));
         Serial.println(command);
@@ -133,6 +123,10 @@ void CommandHandler::processCommand(const char* cmd) {
 
 void CommandHandler::handleStart() {
     if (currentState == STATE_IDLE || currentState == STATE_PAUSED || currentState == STATE_DUMPING) {
+        #if ENABLE_LED_STRIP
+        if (ledController) ledController->disable();
+        #endif
+        
         setState(STATE_RUNNING);
         
         // Enable GPS if feature is enabled in config
@@ -143,6 +137,7 @@ void CommandHandler::handleStart() {
         #endif
         
         // Create log file immediately on START
+        delay(100);  // Extra delay after disabling LEDs
         if (dataLogger) {
             #if ENABLE_GPS
             if (gpsHandler) {
@@ -155,10 +150,19 @@ void CommandHandler::handleStart() {
             #endif
         }
         
+        delay(100);  // Delay after file creation before re-enabling LEDs
+        
+        #if ENABLE_LED_STRIP
+        if (ledController) {
+            ledController->enable();
+            delay(50);  // Allow enable to settle
+        }
+        #endif
+        
         Serial.println(F("OK"));
         Serial.flush();
     } else {
-        Serial.println(F("ERR:STATE"));
+        Serial.println(F("E:S"));
     }
 }
 
@@ -174,7 +178,7 @@ void CommandHandler::handlePause() {
         setState(STATE_PAUSED);
         Serial.println(F("OK"));
     } else {
-        Serial.println(F("ERR:STATE"));
+        Serial.println(F("E:S"));
     }
 }
 
@@ -190,7 +194,7 @@ void CommandHandler::handleLive() {
         setState(STATE_LIVE_MONITOR);
         Serial.println(F("LIVE"));
     } else {
-        Serial.println(F("ERR:STATE"));
+        Serial.println(F("E:S"));
     }
 }
 
@@ -209,7 +213,6 @@ void CommandHandler::handleStop() {
         dataLogger->finishLogging();
     }
     
-    // Clear any remaining serial garbage before responding
     while (Serial.available() > 0) {
         Serial.read();
     }
@@ -235,24 +238,47 @@ void CommandHandler::handleStatus() {
 }
 
 void CommandHandler::handleList() {
+    #if ENABLE_LED_STRIP
+    if (ledController) {
+        ledController->disable();
+        delay(100);  // Long delay after disabling LEDs
+    }
+    #endif
+    
     if (dataLogger) {
         dataLogger->listFiles();
+        delay(100);  // Long delay after SD operation
     } else {
         Serial.println(F("Files:0"));
     }
+    
+    #if ENABLE_LED_STRIP
+    // Re-enable LEDs after SD operation completes
+    if (ledController && shouldUpdateLEDs()) {
+        delay(100);  // Long delay before re-enabling LEDs
+        ledController->enable();
+    }
+    #endif
 }
 
 void CommandHandler::handleDump(const char* command) {
     if (!dataLogger) {
-        Serial.println(F("ERR:NO_LOGGER"));
+        Serial.println(F("E:DL"));
         return;
     }
     
     // Check current state - can't dump while running
     if (currentState == STATE_RUNNING) {
-        Serial.println(F("ERR:BUSY"));
+        Serial.println(F("E:B"));
         return;
     }
+    
+    #if ENABLE_LED_STRIP
+    if (ledController) {
+        ledController->disable();
+        delay(100);  // Long delay after disabling LEDs
+    }
+    #endif
     
     setState(STATE_DUMPING);
     
@@ -288,6 +314,14 @@ void CommandHandler::handleDump(const char* command) {
     }
     
     setState(STATE_IDLE);
+    
+    #if ENABLE_LED_STRIP
+    // Re-enable LEDs after SD operation completes (only if appropriate for current state)
+    if (ledController && shouldUpdateLEDs()) {
+        delay(100);  // Long delay before re-enabling LEDs
+        ledController->enable();
+    }
+    #endif
 }
 
 void CommandHandler::handleRPM(const char* command) {
@@ -358,9 +392,3 @@ void CommandHandler::handleLED(const char* command) {
     // Update the strip to show changes
     ledController->update();
 }
-
-
-
-
-
-

@@ -78,6 +78,8 @@ private:
     void canErrorState();              // Error: Red pepper inward
     
     // Helper functions
+    void pepperAnimation(uint8_t r, uint8_t g, uint8_t b, uint16_t delay, uint16_t holdTime);
+    void solidFill(uint8_t r, uint8_t g, uint8_t b);
     uint32_t getRPMColor(int ledIndex, int totalLEDs);
     void shiftLightPattern(uint16_t rpm);
     uint32_t wheelColor(byte wheelPos);

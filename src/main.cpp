@@ -262,6 +262,11 @@ void loop() {
                     dataLogger.createLogFile(0, 0);
                 #endif
                 
+                // Skip LED updates during file rotation
+                #if ENABLE_LED_STRIP
+                    lastLEDUpdate = currentMillis;
+                #endif
+                
                 // Reset timer for new file
                 logFileStartTime = currentMillis;
             }
@@ -297,19 +302,23 @@ void loop() {
     #endif
     
     // ========================================================================
-    // LED VISUAL FEEDBACK (Priority-based: yield to Serial/SD operations)
+    // LED VISUAL FEEDBACK (Low priority: yield to ALL other operations)
     // ========================================================================
     #if ENABLE_LED_STRIP
-        if (currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL) {
-            // Skip LED update if Serial has data waiting (higher priority)
-            if (Serial.available() == 0 && cmdHandler.shouldUpdateLEDs()) {
-                lastLEDUpdate = currentMillis;
-                #if ENABLE_CAN_BUS
+        // Only update if LEDs are enabled, enough time has passed, AND no Serial data waiting
+        if (ledStrip.isEnabled() && currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL && Serial.available() == 0) {
+            lastLEDUpdate = currentMillis;
+            
+            #if ENABLE_CAN_BUS
+                // Show error state if CAN not initialized or has errors
+                if (!canBus.isInitialized() || canBus.getErrorCount() > 100) {
+                    ledStrip.updateRPMError();  // Red pepper animation for CAN errors
+                } else {
                     ledStrip.updateRPM(canBus.getRPM());
-                #else
-                    ledStrip.updateRPM(800);  // Show idle state when CAN disabled
-                #endif
-            }
+                }
+            #else
+                ledStrip.updateRPM(800);  // Show idle state when CAN disabled
+            #endif
         }
     #endif
     

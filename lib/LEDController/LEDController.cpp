@@ -19,6 +19,44 @@ void LEDController::begin() {
     strip.setBrightness(255);  // Full brightness
 }
 
+// ============================================================================
+// Helper: Pepper Animation (Inward from Edges)
+// ============================================================================
+void LEDController::pepperAnimation(uint8_t r, uint8_t g, uint8_t b, uint16_t delay, uint16_t holdTime) {
+    unsigned long currentTime = millis();
+    
+    if (currentTime - lastAnimationUpdate >= delay) {
+        lastAnimationUpdate = currentTime;
+        pepperPosition++;
+        
+        if (pepperPosition >= (LED_COUNT / 2) + (holdTime / delay)) {
+            pepperPosition = 0;
+        }
+    }
+    
+    for (int i = 0; i < LED_COUNT; i++) {
+        int distanceFromEdge = (i < LED_COUNT / 2) ? i : LED_COUNT - 1 - i;
+        
+        if (distanceFromEdge <= pepperPosition && pepperPosition < (LED_COUNT / 2)) {
+            strip.setPixelColor(i, strip.Color(r, g, b));
+        } else {
+            strip.setPixelColor(i, 0);
+        }
+    }
+    
+    strip.show();
+}
+
+// ============================================================================
+// Helper: Solid Color Fill
+// ============================================================================
+void LEDController::solidFill(uint8_t r, uint8_t g, uint8_t b) {
+    for (int i = 0; i < LED_COUNT; i++) {
+        strip.setPixelColor(i, strip.Color(r, g, b));
+    }
+    strip.show();
+}
+
 void LEDController::updateRPM(uint16_t rpm) {
     // Default: assume vehicle is moving (no speed check)
     updateRPM(rpm, 1);  // Non-zero speed bypasses idle/neutral state
@@ -69,55 +107,15 @@ void LEDController::updateRPMError() {
 // State 0: Idle/Neutral - White Pepper Inward (Speed = 0)
 // ============================================================================
 void LEDController::idleNeutralState() {
-    unsigned long currentTime = millis();
-    
-    // Update pepper animation
-    if (currentTime - lastAnimationUpdate >= STATE_0_PEPPER_DELAY) {
-        lastAnimationUpdate = currentTime;
-        pepperPosition++;
-        
-        // Reset after completing full animation + hold time
-        if (pepperPosition >= (LED_COUNT / 2) + (STATE_0_HOLD_TIME / STATE_0_PEPPER_DELAY)) {
-            pepperPosition = 0;
-        }
-    }
-    
-    // Draw pepper effect from edges inward
-    for (int i = 0; i < LED_COUNT; i++) {
-        int distanceFromEdge;
-        if (i < LED_COUNT / 2) {
-            distanceFromEdge = i;  // Left side
-        } else {
-            distanceFromEdge = LED_COUNT - 1 - i;  // Right side
-        }
-        
-        if (distanceFromEdge <= pepperPosition && pepperPosition < (LED_COUNT / 2)) {
-            // Light up this LED
-            strip.setPixelColor(i, strip.Color(STATE_0_COLOR_R, STATE_0_COLOR_G, STATE_0_COLOR_B));
-        } else {
-            strip.setPixelColor(i, 0);
-        }
-    }
-    
-    strip.show();
+    pepperAnimation(STATE_0_COLOR_R, STATE_0_COLOR_G, STATE_0_COLOR_B, 
+                    STATE_0_PEPPER_DELAY, STATE_0_HOLD_TIME);
 }
 
 // ============================================================================
 // State 1: Gas Efficiency Zone - Steady Green Edges
 // ============================================================================
 void LEDController::gasEfficiencyState() {
-    // Light up outermost LEDs on each side with steady green
-    for (int i = 0; i < LED_COUNT; i++) {
-        if (i < STATE_1_LEDS_PER_SIDE || i >= (LED_COUNT - STATE_1_LEDS_PER_SIDE)) {
-            // Outer LEDs - Green
-            strip.setPixelColor(i, strip.Color(STATE_1_COLOR_R, STATE_1_COLOR_G, STATE_1_COLOR_B));
-        } else {
-            // Inner LEDs - Off
-            strip.setPixelColor(i, 0);
-        }
-    }
-    
-    strip.show();
+    drawMirroredBar(STATE_1_LEDS_PER_SIDE, STATE_1_COLOR_R, STATE_1_COLOR_G, STATE_1_COLOR_B);
 }
 
 // ============================================================================
@@ -128,15 +126,9 @@ void LEDController::stallDangerState(uint16_t /* rpm */) {
                                             STATE_2_MIN_BRIGHTNESS, 
                                             STATE_2_MAX_BRIGHTNESS);
     
-    // Pulsing orange on all LEDs
-    for (int i = 0; i < LED_COUNT; i++) {
-        uint8_t r = scaleColor(STATE_2_COLOR_R, brightness);
-        uint8_t g = scaleColor(STATE_2_COLOR_G, brightness);
-        uint8_t b = scaleColor(STATE_2_COLOR_B, brightness);
-        strip.setPixelColor(i, strip.Color(r, g, b));
-    }
-    
-    strip.show();
+    solidFill(scaleColor(STATE_2_COLOR_R, brightness),
+              scaleColor(STATE_2_COLOR_G, brightness),
+              scaleColor(STATE_2_COLOR_B, brightness));
 }
 
 // ============================================================================
@@ -209,48 +201,15 @@ void LEDController::highRPMShiftState(uint16_t rpm) {
 // State 5: Rev Limit Cut - Solid Red Strip
 // ============================================================================
 void LEDController::revLimitState() {
-    // All LEDs solid red
-    for (int i = 0; i < LED_COUNT; i++) {
-        strip.setPixelColor(i, strip.Color(STATE_5_COLOR_R, STATE_5_COLOR_G, STATE_5_COLOR_B));
-    }
-    strip.show();
+    solidFill(STATE_5_COLOR_R, STATE_5_COLOR_G, STATE_5_COLOR_B);
 }
 
 // ============================================================================
 // Error State: CAN Bus Read Error - Red Pepper Inward
 // ============================================================================
 void LEDController::canErrorState() {
-    unsigned long currentTime = millis();
-    
-    // Update pepper animation
-    if (currentTime - lastAnimationUpdate >= ERROR_PEPPER_DELAY) {
-        lastAnimationUpdate = currentTime;
-        pepperPosition++;
-        
-        // Reset after completing full animation + hold time
-        if (pepperPosition >= (LED_COUNT / 2) + (ERROR_HOLD_TIME / ERROR_PEPPER_DELAY)) {
-            pepperPosition = 0;
-        }
-    }
-    
-    // Draw pepper effect from edges inward (red)
-    for (int i = 0; i < LED_COUNT; i++) {
-        int distanceFromEdge;
-        if (i < LED_COUNT / 2) {
-            distanceFromEdge = i;  // Left side
-        } else {
-            distanceFromEdge = LED_COUNT - 1 - i;  // Right side
-        }
-        
-        if (distanceFromEdge <= pepperPosition && pepperPosition < (LED_COUNT / 2)) {
-            // Light up this LED with red
-            strip.setPixelColor(i, strip.Color(ERROR_COLOR_R, ERROR_COLOR_G, ERROR_COLOR_B));
-        } else {
-            strip.setPixelColor(i, 0);
-        }
-    }
-    
-    strip.show();
+    pepperAnimation(ERROR_COLOR_R, ERROR_COLOR_G, ERROR_COLOR_B, 
+                    ERROR_PEPPER_DELAY, ERROR_HOLD_TIME);
 }
 
 // ============================================================================
@@ -403,12 +362,17 @@ void LEDController::setBrightness(uint8_t brightness) {
 
 void LEDController::enable() {
     enabled = true;
+    delay(10);  // Brief delay to ensure enable takes effect
 }
 
 void LEDController::disable() {
     enabled = false;
-    // Don't call strip.show() - it causes interrupt conflicts
-    // LEDs will stay in last state until power cycle
+    strip.clear();
+    strip.show();
+    delay(50);  // Long delay to ensure all LED operations complete
+    strip.clear();
+    strip.show();
+    delay(50);  // Double clear with long delays for safety
 }
 
 uint32_t LEDController::wheelColor(byte wheelPos) {
