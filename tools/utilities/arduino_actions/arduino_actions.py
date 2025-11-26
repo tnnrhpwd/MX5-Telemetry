@@ -121,10 +121,14 @@ class ArduinoConnection:
             result = 'UNKNOWN'
             
             # Master responds with: help text "S P X...", status "St:", or data "RPM:,SPD:"
-            if any(keyword in data for keyword in ['S P X', 'St:', 'CAN:', 'GPS:', 'SD:', 'RPM:', 'SPD:', 'OK']):
+            if any(keyword in data for keyword in ['S P X', 'St:', 'CAN:', 'GPS:', 'SD:', 'RPM:', 'SPD:', 'MX5v3']):
                 result = 'MASTER'
                 self._log_identification(port_name, result, f"Got: {data[:60].strip()}")
-            # Slave is silent at 115200 baud (uses 9600 baud SoftwareSerial on D2)
+            # Slave sends debug messages like "LED Slave", "LED Pin:", "Serial RX Pin:"
+            elif any(keyword in data for keyword in ['LED Slave', 'LED Pin:', 'Serial RX Pin:']):
+                result = 'SLAVE'
+                self._log_identification(port_name, result, f"Got: {data[:60].strip()}")
+            # Slave might also be silent at 115200 baud (uses 9600 baud SoftwareSerial on D2)
             elif len(data.strip()) == 0:
                 result = 'SLAVE'
                 self._log_identification(port_name, result, "Silent at 115200 (SoftwareSerial@9600)")
