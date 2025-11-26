@@ -48,7 +48,7 @@
 #define ENABLE_GPS          true    // GPS with dynamic enable/disable during logging
                                      // true = GPS enabled during RUNNING, disabled during USB commands
                                      // false = GPS completely disabled (no serial interference)
-#define ENABLE_LED_STRIP    false    // LED strip disabled to conserve memory
+#define ENABLE_LED_STRIP    true     // LED strip enabled with priority-based updates
 #define ENABLE_LOGGING      true     // SD card data logging
 
 // ============================================================================
@@ -57,6 +57,7 @@
 #define CAN_READ_INTERVAL    20      // Read CAN bus every 20ms (50Hz)
 #define GPS_READ_INTERVAL    100     // Read GPS every 100ms (10Hz)
 #define LOG_INTERVAL         200     // Log data every 200ms (5Hz)
+#define LED_UPDATE_INTERVAL  100     // Update LEDs every 100ms (10Hz) - rate-limited
 #define STATUS_INTERVAL      1000    // Status update interval (1Hz)
 
 // ============================================================================

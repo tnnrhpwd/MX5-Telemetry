@@ -128,7 +128,6 @@ void CommandHandler::processCommand(const char* cmd) {
     else if (command[0] != '\0') {
         Serial.print(F("? "));
         Serial.println(command);
-        Serial.flush();
     }
 }
 
@@ -158,12 +157,8 @@ void CommandHandler::handleStart() {
         
         Serial.println(F("OK"));
         Serial.flush();
-    } else if (currentState == STATE_RUNNING) {
-        Serial.println(F("ALREADY_RUNNING"));
-        Serial.flush();
-    } else if (currentState == STATE_LIVE_MONITOR) {
-        Serial.println(F("ERR:IN_LIVE_MODE"));
-        Serial.flush();
+    } else {
+        Serial.println(F("ERR:STATE"));
     }
 }
 
@@ -175,15 +170,11 @@ void CommandHandler::handlePause() {
             gpsHandler->disable();
         }
         #endif
+        
         setState(STATE_PAUSED);
         Serial.println(F("OK"));
-        Serial.flush();
-    } else if (currentState == STATE_PAUSED || currentState == STATE_IDLE) {
-        Serial.println(F("ALREADY_PAUSED"));
-        Serial.flush();
     } else {
-        Serial.println(F("ERR:INVALID_STATE"));
-        Serial.flush();
+        Serial.println(F("ERR:STATE"));
     }
 }
 
@@ -195,29 +186,22 @@ void CommandHandler::handleLive() {
             gpsHandler->disable();
         }
         #endif
+        
         setState(STATE_LIVE_MONITOR);
         Serial.println(F("LIVE"));
-        Serial.flush();
-    } else if (currentState == STATE_LIVE_MONITOR) {
-        Serial.println(F("ALREADY_LIVE"));
-        Serial.flush();
     } else {
-        Serial.println(F("ERR:INVALID_STATE"));
-        Serial.flush();
+        Serial.println(F("ERR:STATE"));
     }
 }
 
 void CommandHandler::handleStop() {
-    // Disable GPS first to prevent serial interference (only if GPS enabled in config)
+    // Disable GPS to prevent serial interference
     #if ENABLE_GPS
     if (gpsHandler) {
         gpsHandler->disable();
-        // Brief delay to ensure GPS serial buffer is cleared
-        delay(20);
     }
     #endif
     
-    // Stop all operations
     setState(STATE_PAUSED);
     
     // Signal stop request - cleanup happens in logData
@@ -251,12 +235,10 @@ void CommandHandler::handleStatus() {
 }
 
 void CommandHandler::handleList() {
-    // Call DataLogger to list files
     if (dataLogger) {
         dataLogger->listFiles();
     } else {
         Serial.println(F("Files:0"));
-        Serial.flush();
     }
 }
 

@@ -74,6 +74,7 @@ unsigned long lastCANRead = 0;
 unsigned long lastGPSRead = 0;
 unsigned long lastLogWrite = 0;
 unsigned long lastStatusPrint = 0;
+unsigned long lastLEDUpdate = 0;  // Track LED updates to rate-limit
 unsigned long logFileStartTime = 0;  // Track when current log file was created
 
 // ============================================================================
@@ -161,6 +162,7 @@ void setup() {
     
     #if ENABLE_LED_STRIP
         ledStrip.begin();
+        ledStrip.enable();  // Enable LEDs at boot - stay on until STOP
         // Skip startup animation - blocks for ~7 seconds!
         // ledStrip.startupAnimation();
     #else
@@ -295,17 +297,19 @@ void loop() {
     #endif
     
     // ========================================================================
-    // LED VISUAL FEEDBACK (State-dependent, only if enabled)
+    // LED VISUAL FEEDBACK (Priority-based: yield to Serial/SD operations)
     // ========================================================================
     #if ENABLE_LED_STRIP
-        if (cmdHandler.shouldUpdateLEDs()) {
-            #if ENABLE_CAN_BUS
-                ledStrip.updateRPM(canBus.getRPM());
-            #else
-                ledStrip.updateRPM(800);  // Show idle state when CAN disabled
-            #endif
-        } else if (cmdHandler.isPaused()) {
-            ledStrip.clear();
+        if (currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL) {
+            // Skip LED update if Serial has data waiting (higher priority)
+            if (Serial.available() == 0 && cmdHandler.shouldUpdateLEDs()) {
+                lastLEDUpdate = currentMillis;
+                #if ENABLE_CAN_BUS
+                    ledStrip.updateRPM(canBus.getRPM());
+                #else
+                    ledStrip.updateRPM(800);  // Show idle state when CAN disabled
+                #endif
+            }
         }
     #endif
     
@@ -315,6 +319,11 @@ void loop() {
     #if ENABLE_LOGGING
         if (cmdHandler.shouldLog() && currentMillis - lastLogWrite >= LOG_INTERVAL) {
             lastLogWrite = currentMillis;
+            
+            // Skip LED updates during this loop iteration (SD write priority)
+            #if ENABLE_LED_STRIP
+                lastLEDUpdate = currentMillis;
+            #endif
             
             // Safety check: only log if we have an active log file
             if (dataLogger.getLogFileName()[0] == '\0') {

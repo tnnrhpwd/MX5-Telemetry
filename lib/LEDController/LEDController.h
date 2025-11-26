@@ -55,12 +55,18 @@ public:
     void clear();
     void setBrightness(uint8_t brightness);
     
+    // Enable/disable LEDs (avoids interrupt conflicts with SD/Serial)
+    void enable();
+    void disable();
+    bool isEnabled() const { return enabled; }
+    
 private:
     Adafruit_NeoPixel strip;
     unsigned long lastAnimationUpdate;
     uint8_t chasePosition;
     uint8_t pepperPosition;      // For inward pepper animations
     bool flashState;             // For State 4 flashing gap
+    bool enabled;                // LED updates enabled/disabled
     
     // State visualization methods
     void idleNeutralState();           // State 0: White pepper inward

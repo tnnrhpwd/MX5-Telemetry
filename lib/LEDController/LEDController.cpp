@@ -9,7 +9,8 @@ LEDController::LEDController(uint8_t pin, uint16_t numLeds)
       lastAnimationUpdate(0), 
       chasePosition(0),
       pepperPosition(0),
-      flashState(false) {
+      flashState(false),
+      enabled(false) {  // Start disabled to avoid conflicts
 }
 
 void LEDController::begin() {
@@ -24,6 +25,9 @@ void LEDController::updateRPM(uint16_t rpm) {
 }
 
 void LEDController::updateRPM(uint16_t rpm, uint16_t speed_kmh) {
+    // Skip update if LEDs disabled (avoids interrupt conflicts)
+    if (!enabled) return;
+    
     // State 0: Idle/Neutral (speed = 0, not moving)
     if (IS_STATE_0(speed_kmh)) {
         idleNeutralState();
@@ -395,6 +399,16 @@ void LEDController::clear() {
 
 void LEDController::setBrightness(uint8_t brightness) {
     strip.setBrightness(brightness);
+}
+
+void LEDController::enable() {
+    enabled = true;
+}
+
+void LEDController::disable() {
+    enabled = false;
+    // Don't call strip.show() - it causes interrupt conflicts
+    // LEDs will stay in last state until power cycle
 }
 
 uint32_t LEDController::wheelColor(byte wheelPos) {
