@@ -76,28 +76,73 @@ class ArduinoConnection:
         return ports
     
     def _identify_arduino(self, port_name):
-        """Identify if Arduino is Master or Slave by checking serial output."""
+        """Identify if Arduino is Master or Slave by actively probing."""
         try:
-            # Try 115200 baud (bootloader speed) to read startup messages
-            test_serial = serial.Serial(port=port_name, baudrate=115200, timeout=1)
-            time.sleep(0.5)  # Brief wait for startup messages
+            # Open without triggering reset - don't use dsrdtr
+            test_serial = serial.Serial(port=port_name, baudrate=115200, timeout=1.5,
+                                       rtscts=False, dsrdtr=False, xonxoff=False)
             
-            # Read any available data
+            # Flush buffers
+            test_serial.reset_input_buffer()
+            test_serial.reset_output_buffer()
+            time.sleep(0.1)
+            
+            # Try multiple detection methods
+            data = ""
+            
+            # Method 1: Send '?' for help (master responds with "S P X L D I T ?")
+            test_serial.write(b"?\n")
+            test_serial.flush()
+            time.sleep(0.4)
+            
             if test_serial.in_waiting > 0:
-                data = test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
-                test_serial.close()
-                
-                # Master outputs "MX5v3" on startup
-                if 'MX5v3' in data:
-                    return 'MASTER'
-                # Slave is silent or outputs different messages
-                else:
-                    return 'SLAVE'
+                data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
             
+            # Method 2: Send 'T' for status (master responds with "St:X OK")
+            if len(data.strip()) == 0:
+                test_serial.write(b"T\n")
+                test_serial.flush()
+                time.sleep(0.4)
+                
+                if test_serial.in_waiting > 0:
+                    data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
+            
+            # Method 3: Just listen (master might be streaming data if auto-started)
+            if len(data.strip()) == 0:
+                time.sleep(0.6)
+                if test_serial.in_waiting > 0:
+                    data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
+            
+            # Close and wait for port to free up
             test_serial.close()
+            time.sleep(0.2)
+            
+            # Determine type based on response
+            result = 'UNKNOWN'
+            
+            # Master responds with: help text "S P X...", status "St:", or data "RPM:,SPD:"
+            if any(keyword in data for keyword in ['S P X', 'St:', 'CAN:', 'GPS:', 'SD:', 'RPM:', 'SPD:', 'OK']):
+                result = 'MASTER'
+                self._log_identification(port_name, result, f"Got: {data[:60].strip()}")
+            # Slave is silent at 115200 baud (uses 9600 baud SoftwareSerial on D2)
+            elif len(data.strip()) == 0:
+                result = 'SLAVE'
+                self._log_identification(port_name, result, "Silent at 115200 (SoftwareSerial@9600)")
+            else:
+                result = 'UNKNOWN'
+                self._log_identification(port_name, result, f"Unexpected: {data[:60].strip()}")
+            
+            return result
+        except Exception as e:
+            self._log_identification(port_name, 'ERROR', str(e))
             return 'UNKNOWN'
-        except:
-            return 'UNKNOWN'
+    
+    def _log_identification(self, port, result, details):
+        """Log identification results to console (called from background thread)."""
+        # Store for later display in UI thread
+        if not hasattr(self, '_id_logs'):
+            self._id_logs = []
+        self._id_logs.append(f"🔍 {port}: {result} - {details}")
     
     def connect(self, port_name, baud_rate=115200):
         """Connect to Arduino on specified port."""
@@ -290,7 +335,7 @@ class ArduinoActionsApp:
         style.configure('TCombobox', fieldbackground='#3a3a3a', background='#3a3a3a', 
                        foreground="#2600ff", borderwidth=0)
         
-        self.port_combo = ttk.Combobox(port_frame, width=42, state='readonly', style='TCombobox')
+        self.port_combo = ttk.Combobox(port_frame, width=60, state='readonly', style='TCombobox')
         self.port_combo.pack(side=tk.LEFT, padx=5)
         
         self.refresh_btn = tk.Button(port_frame, text="🔄 Refresh", 
@@ -476,21 +521,35 @@ class ArduinoActionsApp:
     
     def refresh_ports(self):
         """Refresh available serial ports."""
+        self.log_console("\n🔄 Scanning for Arduinos...")
         ports = self.arduino.find_arduino_ports()
+        
+        # Display identification logs
+        if hasattr(self.arduino, '_id_logs'):
+            for log in self.arduino._id_logs:
+                self.log_console(log)
+            self.arduino._id_logs = []
+        
         port_list = [f"{p['port']} - {p['desc']}" for p in ports]
         
         self.port_combo['values'] = port_list
         if port_list:
             self.port_combo.current(0)
-            self.log_console(f"Found {len(port_list)} port(s)")
+            self.log_console(f"✓ Found {len(port_list)} port(s)\n")
+            
+            # Log summary
+            for p in ports:
+                self.log_console(f"  {p['port']}: {p['type']}")
         else:
             self.log_console("⚠️ No Arduino ports detected")
     
     def refresh_ports_periodically(self):
         """Auto-refresh ports every 5 seconds if not connected."""
-        if not self.arduino.is_connected:
-            self.refresh_ports()
-        self.root.after(5000, self.refresh_ports_periodically)
+        # Disabled to prevent spam - user can manually refresh
+        # if not self.arduino.is_connected:
+        #     self.refresh_ports()
+        # self.root.after(5000, self.refresh_ports_periodically)
+        pass
     
     def toggle_connection(self):
         """Toggle Arduino connection."""
