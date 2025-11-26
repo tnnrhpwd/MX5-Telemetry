@@ -293,35 +293,40 @@ void setup() {
     }
     Serial.println("LED strip initialized");
     
-    // Hardware test - force all LEDs to white one at a time to verify propagation
-    Serial.println("Testing LEDs - Sequential fill...");
-    for (int i = 0; i < LED_COUNT; i++) {
-        strip.setPixelColor(i, strip.Color(255, 255, 255));
-        strip.show();
-        delay(50);  // Slow enough to see each LED turn on
-        Serial.print("LED ");
-        Serial.print(i);
-        Serial.println(" ON");
-    }
-    delay(1000);
+    // Futuristic rainbow startup sequence - wave towards center
+    Serial.println("Starting rainbow startup sequence...");
     
-    // Now all white
-    Serial.println("All LEDs white for 2 seconds...");
-    for (int i = 0; i < LED_COUNT; i++) {
-        strip.setPixelColor(i, strip.Color(255, 255, 255));
+    // Rainbow wave converging to center from both edges
+    for (int cycle = 0; cycle < 3; cycle++) {  // 3 complete rainbow cycles
+        for (int phase = 0; phase < 256; phase += 2) {  // Color wheel rotation
+            for (int i = 0; i < LED_COUNT; i++) {
+                // Calculate distance from center (makes wave converge to middle)
+                int distanceFromCenter = abs(i - (LED_COUNT / 2));
+                
+                // Calculate hue with mirrored phase offset for center convergence
+                uint16_t hue = ((distanceFromCenter * 65536L / (LED_COUNT / 2)) + (phase * 256)) & 0xFFFF;
+                
+                // Convert HSV to RGB (hue, saturation=255, value=255)
+                uint32_t color = strip.gamma32(strip.ColorHSV(hue, 255, 255));
+                strip.setPixelColor(i, color);
+            }
+            strip.show();
+            delay(15);  // Smooth animation speed
+        }
     }
+    
+    // Fade out to black smoothly
+    Serial.println("Fading out...");
+    for (int brightness = 255; brightness >= 0; brightness -= 5) {
+        strip.setBrightness(brightness);
+        strip.show();
+        delay(10);
+    }
+    
+    // Reset brightness and clear
+    strip.setBrightness(255);
+    strip.clear();
     strip.show();
-    delay(2000);
-    
-    // Startup animation - quick flash to show it's ready
-    Serial.println("Starting startup animation...");
-    for (int i = 0; i < 3; i++) {
-        solidFill(0, 255, 0);
-        delay(200);
-        strip.clear();
-        strip.show();
-        delay(200);
-    }
     
     // Start in error mode to show red animation until master connects
     errorMode = true;
