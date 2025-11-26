@@ -25,6 +25,7 @@ private:
     void sendByte(uint8_t byte);  // Software UART transmit
     uint16_t lastRPM;
     uint16_t lastSpeed;
+    bool initialized;
 };
 
 #endif // LED_SLAVE_H

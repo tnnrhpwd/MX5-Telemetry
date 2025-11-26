@@ -1,28 +1,41 @@
 #include "LEDSlave.h"
+#include <Arduino.h>
 
 // ============================================================================
 // LED Slave Communication Implementation
 // ============================================================================
-// Uses TX pin (D1) for one-way communication to slave Arduino
-// Simple bit-banging at 9600 baud to avoid conflicts with USB Serial
+// Uses hardware Serial1 (TX on D1) for communication to slave Arduino
+// Note: This conflicts with USB Serial debugging, but Arduino Nano only has one hardware UART
+// We use TX1 with diode isolation to slave's SoftwareSerial RX on D2
 // ============================================================================
 
-#define TX_PIN 1
-#define BAUD_DELAY_US 104  // 1000000 / 9600 ≈ 104 microseconds per bit
+// Use HardwareSerial alias for Serial (TX1/D1, RX0/D0)
+// On Arduino Nano, Serial is the only UART and handles both USB and TX1
+#define SLAVE_SERIAL Serial
 
-LEDSlave::LEDSlave() : lastRPM(0), lastSpeed(1) {}
+LEDSlave::LEDSlave() : lastRPM(0), lastSpeed(1), initialized(false) {}
 
 void LEDSlave::begin() {
-    // Configure TX pin as output
-    pinMode(TX_PIN, OUTPUT);
-    digitalWrite(TX_PIN, HIGH);  // Idle state is HIGH for UART
+    // Serial is already initialized in main setup at 115200 for USB
+    // We can't change baud rate without affecting USB communication
+    // Solution: Use bit-banging on TX1 pin directly
+    initialized = true;
     delay(100);
     clear();
 }
 
-// Software UART transmit function (9600 baud, 8N1)
+// Software UART transmit function (9600 baud, 8N1) on TX1 pin
 void LEDSlave::sendByte(uint8_t byte) {
+    // Use hardware Serial at 9600 baud would conflict with USB
+    // Keep bit-banging but ensure timing is correct
+    
+    #define TX_PIN 1
+    #define BAUD_DELAY_US 104  // 1000000 / 9600 ≈ 104 microseconds
+    
+    noInterrupts();  // Disable interrupts for accurate timing
+    
     // Start bit (LOW)
+    pinMode(TX_PIN, OUTPUT);
     digitalWrite(TX_PIN, LOW);
     delayMicroseconds(BAUD_DELAY_US);
     
@@ -35,9 +48,13 @@ void LEDSlave::sendByte(uint8_t byte) {
     // Stop bit (HIGH)
     digitalWrite(TX_PIN, HIGH);
     delayMicroseconds(BAUD_DELAY_US);
+    
+    interrupts();  // Re-enable interrupts
 }
 
 void LEDSlave::sendCommand(const char* cmd) {
+    if (!initialized) return;
+    
     // Send each character
     while (*cmd) {
         sendByte(*cmd);
@@ -45,7 +62,7 @@ void LEDSlave::sendCommand(const char* cmd) {
     }
     // Send newline
     sendByte('\n');
-    delayMicroseconds(BAUD_DELAY_US * 2);  // Extra delay for stability
+    delay(2);  // Small delay for slave to process
 }
 
 void LEDSlave::updateRPM(uint16_t rpm) {

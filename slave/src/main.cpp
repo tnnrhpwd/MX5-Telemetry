@@ -225,18 +225,26 @@ void updateLEDDisplay() {
 // ============================================================================
 
 void processCommand(const char* cmd) {
+    Serial.print("CMD: ");
+    Serial.println(cmd);
+    
     // RPM command: RPM:xxxx
     if (strncmp(cmd, "RPM:", 4) == 0) {
         currentRPM = atoi(cmd + 4);
         errorMode = false;
+        Serial.print("RPM set to: ");
+        Serial.println(currentRPM);
     }
     // Speed command: SPD:xxx
     else if (strncmp(cmd, "SPD:", 4) == 0) {
         currentSpeed = atoi(cmd + 4);
+        Serial.print("Speed set to: ");
+        Serial.println(currentSpeed);
     }
     // Error command: ERR
     else if (strcmp(cmd, "ERR") == 0) {
         errorMode = true;
+        Serial.println("Error mode ON");
     }
     // Clear command: CLR
     else if (strcmp(cmd, "CLR") == 0) {
@@ -245,11 +253,14 @@ void processCommand(const char* cmd) {
         currentRPM = 0;
         currentSpeed = 0;
         errorMode = false;
+        Serial.println("LEDs cleared");
     }
     // Brightness command: BRT:xxx
     else if (strncmp(cmd, "BRT:", 4) == 0) {
         uint8_t brightness = atoi(cmd + 4);
         strip.setBrightness(brightness);
+        Serial.print("Brightness set to: ");
+        Serial.println(brightness);
     }
 }
 
@@ -258,23 +269,63 @@ void processCommand(const char* cmd) {
 // ============================================================================
 
 void setup() {
+    // Initialize hardware Serial for debug output (won't interfere with SoftwareSerial)
+    Serial.begin(115200);
+    Serial.println("LED Slave v2.1");
+    Serial.print("LED Pin: D");
+    Serial.println(LED_DATA_PIN);
+    Serial.print("Serial RX Pin: D");
+    Serial.println(SERIAL_RX_PIN);
+    
     // Initialize SoftwareSerial for commands from master
     slaveSerial.begin(SERIAL_BAUD);
+    Serial.println("SoftwareSerial ready at 9600 baud");
     
-    // Initialize LED strip
+    // Initialize LED strip with aggressive reset
     strip.begin();
     strip.setBrightness(255);
-    strip.clear();
-    strip.show();
     
-    // Startup animation - quick flash to show it's ready
-    for (int i = 0; i < 3; i++) {
-        solidFill(0, 255, 0);
-        delay(100);
+    // Send multiple clears to wake up strip
+    for (int i = 0; i < 5; i++) {
         strip.clear();
         strip.show();
-        delay(100);
+        delay(10);
     }
+    Serial.println("LED strip initialized");
+    
+    // Hardware test - force all LEDs to white one at a time to verify propagation
+    Serial.println("Testing LEDs - Sequential fill...");
+    for (int i = 0; i < LED_COUNT; i++) {
+        strip.setPixelColor(i, strip.Color(255, 255, 255));
+        strip.show();
+        delay(50);  // Slow enough to see each LED turn on
+        Serial.print("LED ");
+        Serial.print(i);
+        Serial.println(" ON");
+    }
+    delay(1000);
+    
+    // Now all white
+    Serial.println("All LEDs white for 2 seconds...");
+    for (int i = 0; i < LED_COUNT; i++) {
+        strip.setPixelColor(i, strip.Color(255, 255, 255));
+    }
+    strip.show();
+    delay(2000);
+    
+    // Startup animation - quick flash to show it's ready
+    Serial.println("Starting startup animation...");
+    for (int i = 0; i < 3; i++) {
+        solidFill(0, 255, 0);
+        delay(200);
+        strip.clear();
+        strip.show();
+        delay(200);
+    }
+    
+    // Start in error mode to show red animation until master connects
+    errorMode = true;
+    Serial.println("Startup complete - showing error pattern until master connects");
     
     bufferIndex = 0;
     inputBuffer[0] = '\0';

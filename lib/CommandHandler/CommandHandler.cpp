@@ -212,13 +212,44 @@ void CommandHandler::handleHelp() {
 }
 
 void CommandHandler::handleStatus() {
-    // Quick status without SD card enumeration (avoids timeout)
+    // Full status with all system components
     Serial.print(F("St:"));
     if (currentState == STATE_RUNNING) Serial.print('R');
     else if (currentState == STATE_PAUSED) Serial.print('P');
     else if (currentState == STATE_LIVE_MONITOR) Serial.print('L');
     else if (currentState == STATE_DUMPING) Serial.print('D');
     else Serial.print('I');
+    
+    // Show SD card status
+    #if ENABLE_LOGGING
+    Serial.print(F(" SD:"));
+    if (dataLogger && dataLogger->isInitialized()) {
+        Serial.print('Y');
+    } else {
+        Serial.print('N');
+    }
+    #else
+    Serial.print(F(" SD:Off"));
+    #endif
+    
+    // Show GPS status
+    #if ENABLE_GPS
+    Serial.print(F(" GPS:"));
+    if (gpsHandler && gpsHandler->isEnabled()) {
+        Serial.print('Y');
+    } else {
+        Serial.print('N');
+    }
+    #else
+    Serial.print(F(" GPS:Off"));
+    #endif
+    
+    // Show LED status
+    #if ENABLE_LED_STRIP
+    Serial.print(F(" LED:Y"));
+    #else
+    Serial.print(F(" LED:Off"));
+    #endif
     
     Serial.println(F(" OK"));
 }
