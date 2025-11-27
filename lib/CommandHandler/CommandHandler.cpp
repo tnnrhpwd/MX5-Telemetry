@@ -1,6 +1,7 @@
 #include "CommandHandler.h"
 #include "DataLogger.h"
 #include "GPSHandler.h"
+#include "LEDSlave.h"
 #include <SdFat.h>
 
 // ============================================================================
@@ -27,6 +28,7 @@ void CommandHandler::update() {
     // Read all available characters rapidly to prevent buffer overflow
     int charsRead = 0;
     while (Serial.available() > 0 && charsRead < 64) {  // Limit chars per update
+        // USB detection is handled in main loop now
         char c = Serial.read();
         charsRead++;
         
@@ -242,13 +244,6 @@ void CommandHandler::handleStatus() {
     }
     #else
     Serial.print(F(" GPS:Off"));
-    #endif
-    
-    // Show LED status
-    #if ENABLE_LED_STRIP
-    Serial.print(F(" LED:Y"));
-    #else
-    Serial.print(F(" LED:Off"));
     #endif
     
     Serial.println(F(" OK"));

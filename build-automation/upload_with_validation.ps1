@@ -80,24 +80,18 @@ if (-not $masterConnected -and -not $slaveConnected) {
     exit 1
 }
 
-# Step 2: Warn if master detected on slave port
+# Step 2: Auto-swap if master detected on slave port
 if ($currentSlave -eq "MASTER") {
     Write-Host "[!] WARNING: MASTER firmware detected on $SlavePort!" -ForegroundColor Red
-    Write-Host "  This suggests the ports may be swapped." -ForegroundColor Yellow
-    $response = Read-Host "  Swap ports and upload? (Y/N)"
-    if ($response -eq "Y" -or $response -eq "y") {
-        $temp = $MasterPort
-        $MasterPort = $SlavePort
-        $SlavePort = $temp
-        $temp = $masterConnected
-        $masterConnected = $slaveConnected
-        $slaveConnected = $temp
-        Write-Host "  Ports swapped: Master=$MasterPort, Slave=$SlavePort" -ForegroundColor Cyan
-    }
-    else {
-        Write-Host "  Upload cancelled by user." -ForegroundColor Red
-        exit 1
-    }
+    Write-Host "  Auto-swapping ports..." -ForegroundColor Yellow
+    $temp = $MasterPort
+    $MasterPort = $SlavePort
+    $SlavePort = $temp
+    $temp = $masterConnected
+    $masterConnected = $slaveConnected
+    $slaveConnected = $temp
+    Write-Host "  Ports swapped: Master=$MasterPort, Slave=$SlavePort" -ForegroundColor Cyan
+    Write-Host ""
 }
 
 # Step 3: Determine upload strategy

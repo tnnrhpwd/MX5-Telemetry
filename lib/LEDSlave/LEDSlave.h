@@ -17,6 +17,7 @@ public:
     void updateRPM(uint16_t rpm);
     void updateRPM(uint16_t rpm, uint16_t speed_kmh);
     void updateRPMError();
+    void updateRPMRainbow();  // Rainbow pattern for error display
     void clear();
     void setBrightness(uint8_t brightness);
     

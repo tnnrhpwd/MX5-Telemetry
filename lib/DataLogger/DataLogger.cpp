@@ -45,7 +45,7 @@ void DataLogger::writeMetadataHeader(uint32_t gpsDate, uint32_t gpsTime) {
 
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     if (!initialized) {
-        Serial.println(F("DEBUG: SD not initialized"));
+        if (Serial) Serial.println(F("DEBUG: SD not initialized"));
         return;
     }
     
@@ -63,25 +63,27 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
             sprintf(logFileName, "%04lu_%04lu.CSV", gpsDate % 10000, (gpsTime / 10000) % 10000);
             isLogging = true;
             
-            Serial.print(F("DEBUG: Creating GPS file: "));
-            Serial.println(logFileName);
+            if (Serial) {
+                Serial.print(F("DEBUG: Creating GPS file: "));
+                Serial.println(logFileName);
+            }
             
             if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
-                Serial.println(F("DEBUG: File opened"));
+                if (Serial) Serial.println(F("DEBUG: File opened"));
                 
                 // Write header first (simpler, more reliable)
                 if (!logFile.write("SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status\n")) {
-                    Serial.println(F("DEBUG: Header write FAILED"));
+                    if (Serial) Serial.println(F("DEBUG: Header write FAILED"));
                 } else {
-                    Serial.println(F("DEBUG: Header written"));
+                    if (Serial) Serial.println(F("DEBUG: Header written"));
                 }
                 
                 logFile.close();
-                Serial.println(F("DEBUG: File created OK"));
+                if (Serial) Serial.println(F("DEBUG: File created OK"));
                 delay(50);  // Delay after SD operations
                 return;
             } else {
-                Serial.println(F("DEBUG: File open FAILED"));
+                if (Serial) Serial.println(F("DEBUG: File open FAILED"));
                 logFileName[0] = '\0';
                 isLogging = false;
                 errorCount++;
@@ -98,23 +100,25 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     
     isLogging = true;
     
-    Serial.print(F("DEBUG: Creating counter file: "));
-    Serial.println(logFileName);
+    if (Serial) {
+        Serial.print(F("DEBUG: Creating counter file: "));
+        Serial.println(logFileName);
+    }
     
     if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
-        Serial.println(F("DEBUG: File opened"));
+        if (Serial) Serial.println(F("DEBUG: File opened"));
         
         // Write header first (simpler, more reliable)
         if (!logFile.write("SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status\n")) {
-            Serial.println(F("DEBUG: Header write FAILED"));
+            if (Serial) Serial.println(F("DEBUG: Header write FAILED"));
         } else {
-            Serial.println(F("DEBUG: Header written"));
+            if (Serial) Serial.println(F("DEBUG: Header written"));
         }
         
         logFile.close();
-        Serial.println(F("DEBUG: File created OK"));
+        if (Serial) Serial.println(F("DEBUG: File created OK"));
     } else {
-        Serial.println(F("DEBUG: File open FAILED"));
+        if (Serial) Serial.println(F("DEBUG: File open FAILED"));
         logFileName[0] = '\0';
         isLogging = false;
         errorCount++;

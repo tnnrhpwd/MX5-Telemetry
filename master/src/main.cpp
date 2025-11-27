@@ -76,6 +76,7 @@ unsigned long lastLogWrite = 0;
 unsigned long lastStatusPrint = 0;
 unsigned long lastLEDUpdate = 0;  // Track LED updates to rate-limit
 unsigned long logFileStartTime = 0;  // Track when current log file was created
+bool usbConnectedAtStartup = false;  // Track if USB was connected at startup
 
 // ============================================================================
 // STATUS PRINTING
@@ -111,7 +112,7 @@ void printSystemStatus() {
         Serial.print(F(" SD:Off"));
     #endif
     
-    #if ENABLE_LED_STRIP
+    #if ENABLE_LED_SLAVE
         Serial.print(F(" LED:"));
         Serial.println(cmdHandler.shouldUpdateLEDs() ? 'Y' : 'N');
     #else
@@ -128,60 +129,50 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     Serial.setTimeout(100); // Set 100ms timeout for Serial operations
     
-    // Wait up to 3 seconds for USB serial connection
-    bool usbConnected = false;
-    while (!Serial && millis() < 3000) {
-        ; // Wait for serial connection
-    }
+    // Start in standalone mode - USB detection happens when commands arrive
+    usbConnectedAtStartup = false;
     
-    // Check if USB actually connected
-    if (Serial) {
-        usbConnected = true;
-        delay(500);
-        
-        // Clear any garbage in the serial buffer after connection
-        while (Serial.available() > 0) {
-            Serial.read();
-        }
-    }
-    
-    if (usbConnected) {
-        Serial.println(F("MX5v3"));
-    }
+    // Print identification (ignored if no PC)
+    Serial.println(F("MX5v3"));
     
     // Initialize only enabled modules
     #if ENABLE_CAN_BUS
         if (canBus.begin()) {
-            if (usbConnected) Serial.println(F("CAN: OK"));
+            if (Serial) Serial.println(F("CAN: OK"));
         } else {
-            if (usbConnected) Serial.println(F("CAN: Error"));
+            if (Serial) Serial.println(F("CAN: Error"));
         }
     #else
-        if (usbConnected) Serial.println(F("CAN: Disabled"));
+        if (Serial) Serial.println(F("CAN: Disabled"));
     #endif
     
-    #if ENABLE_LED_STRIP
+    #if ENABLE_LED_SLAVE
         ledSlave.begin();
-        if (usbConnected) Serial.println(F("LED: Slave Ready"));
+        if (Serial) Serial.println(F("LED: Slave Ready"));
+        
+        // Test communication - send clear command
+        delay(500);
+        ledSlave.clear();
+        delay(100);
     #else
-        if (usbConnected) Serial.println(F("LED: Disabled"));
+        if (Serial) Serial.println(F("LED: Disabled"));
     #endif
     
     #if ENABLE_GPS
         gps.begin();
-        if (usbConnected) Serial.println(F("GPS: Ready (disabled until START)"));
+        if (Serial) Serial.println(F("GPS: Ready (disabled until START)"));
     #else
-        if (usbConnected) Serial.println(F("GPS: Disabled"));
+        if (Serial) Serial.println(F("GPS: Disabled"));
     #endif
     
     #if ENABLE_LOGGING
         if (dataLogger.begin()) {
-            if (usbConnected) Serial.println(F("SD: OK"));
+            if (Serial) Serial.println(F("SD: OK"));
         } else {
-            if (usbConnected) Serial.println(F("SD: FAIL (No card/Bad format)"));
+            if (Serial) Serial.println(F("SD: FAIL (No card/Bad format)"));
         }
     #else
-        if (usbConnected) Serial.println(F("LOG: Disabled"));
+        if (Serial) Serial.println(F("LOG: Disabled"));
     #endif
     
     cmdHandler.begin();
@@ -197,22 +188,24 @@ void setup() {
         cmdHandler.setGPSHandler(&gps);
     #endif
     
-    #if ENABLE_LED_STRIP
+    #if ENABLE_LED_SLAVE
         ledSlave.clear();
+        delay(100);  // Wait for slave to process clear command
+        
+        // Send initial LED state immediately after setup
+        #if ENABLE_CAN_BUS
+            if (!canBus.isInitialized()) {
+                ledSlave.updateRPMError();  // Show error pattern
+            } else {
+                ledSlave.updateRPM(800);  // Show idle state
+            }
+        #else
+            ledSlave.updateRPM(800);  // Show idle state when CAN disabled
+        #endif
     #endif
     
-    if (usbConnected) {
-        Serial.println(F("OK"));
-        Serial.flush();
-    } else {
-        // No USB connected - auto-start logging for standalone operation
-        // This allows outdoor GPS testing without laptop
-        cmdHandler.handleStart();
-        
-        #if ENABLE_LED_STRIP
-            ledSlave.setBrightness(128);  // Medium brightness for auto-start
-        #endif
-    }
+    Serial.println(F("OK"));
+    Serial.flush();
 }
 
 // ============================================================================
@@ -256,7 +249,7 @@ void loop() {
                 #endif
                 
                 // Skip LED updates during file rotation
-                #if ENABLE_LED_STRIP
+                #if ENABLE_LED_SLAVE
                     lastLEDUpdate = currentMillis;
                 #endif
                 
@@ -297,17 +290,27 @@ void loop() {
     // ========================================================================
     // LED VISUAL FEEDBACK (Send commands to slave Arduino)
     // ========================================================================
-    #if ENABLE_LED_STRIP
+    #if ENABLE_LED_SLAVE
         // Send RPM updates to slave Arduino at reduced rate
-        if (cmdHandler.shouldUpdateLEDs() && currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL && Serial.available() == 0) {
+        // Always update LEDs regardless of state to show system status
+        if (currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL && Serial.available() == 0) {
             lastLEDUpdate = currentMillis;
             
             #if ENABLE_CAN_BUS
                 // Show error state if CAN not initialized or has errors
                 if (!canBus.isInitialized() || canBus.getErrorCount() > 100) {
-                    ledSlave.updateRPMError();
+                    if (usbConnectedAtStartup) {
+                        ledSlave.updateRPMRainbow();  // Rainbow pattern when USB connected
+                    } else {
+                        ledSlave.updateRPMError();  // Normal error pattern when standalone
+                    }
                 } else {
-                    ledSlave.updateRPM(canBus.getRPM());
+                    // Only show RPM when running/live monitoring, otherwise show idle
+                    if (cmdHandler.shouldUpdateLEDs()) {
+                        ledSlave.updateRPM(canBus.getRPM());
+                    } else {
+                        ledSlave.updateRPM(800);  // Show idle when not running
+                    }
                 }
             #else
                 ledSlave.updateRPM(800);  // Show idle state when CAN disabled
@@ -323,7 +326,7 @@ void loop() {
             lastLogWrite = currentMillis;
             
             // Skip LED updates during this loop iteration (SD write priority)
-            #if ENABLE_LED_STRIP
+            #if ENABLE_LED_SLAVE
                 lastLEDUpdate = currentMillis;
             #endif
             
@@ -363,32 +366,8 @@ void loop() {
     #endif
     
     // ========================================================================
-    // LIVE DATA STREAMING (5Hz - Only in LIVE_MONITOR state and if enabled)
+    // LIVE DATA STREAMING removed - not used
     // ========================================================================
-    #if ENABLE_LOGGING
-        if (cmdHandler.isLiveMonitoring() && currentMillis - lastLogWrite >= LOG_INTERVAL) {
-            lastLogWrite = currentMillis;
-            dataLogger.streamData(
-                currentMillis,
-                #if ENABLE_GPS
-                    gps,
-                #else
-                    gps,
-                #endif
-                #if ENABLE_CAN_BUS
-                    canBus,
-                #else
-                    canBus,
-                #endif
-                false,  // Log status: streaming only, not logging to SD
-                #if ENABLE_CAN_BUS
-                    canBus.getErrorCount()
-                #else
-                    0
-                #endif
-            );
-        }
-    #endif
     
     // ========================================================================
     // PERIODIC STATUS PRINTING (only in specific states)
