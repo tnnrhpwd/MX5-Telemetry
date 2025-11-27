@@ -14,7 +14,10 @@ GPSHandler::GPSHandler(uint8_t rxPin, uint8_t txPin)
       satellites(0),
       gpsTime(0),
       gpsDate(0),
-      gpsValid(false) {
+      gpsValid(false),
+      fixType(0),
+      hdop(9999),
+      course(0.0) {
 }
 
 void GPSHandler::begin() {
@@ -82,5 +85,24 @@ void GPSHandler::update() {
     
     if (gps.date.isValid()) {
         gpsDate = (gps.date.year() * 10000) + (gps.date.month() * 100) + gps.date.day();
+    }
+    
+    // Update fix quality information
+    if (gps.location.isValid() && gps.location.age() < 2000) {
+        fixType = 1;  // Basic GPS fix (TinyGPS++ doesn't differentiate DGPS)
+    } else {
+        fixType = 0;  // No fix
+    }
+    
+    // Update HDOP (Horizontal Dilution of Precision)
+    if (gps.hdop.isValid()) {
+        hdop = gps.hdop.value();  // Already stored as hdop * 100
+    } else {
+        hdop = 9999;  // Invalid/unknown HDOP
+    }
+    
+    // Update course/heading
+    if (gps.course.isValid()) {
+        course = gps.course.deg();
     }
 }

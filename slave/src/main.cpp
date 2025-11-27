@@ -34,8 +34,10 @@
 
 #define LED_DATA_PIN        5       // D5 on Arduino #2
 #define SERIAL_RX_PIN       2       // D2 for SoftwareSerial RX (from master TX1)
+#define HAPTIC_PIN          3       // D3 for haptic motor (vibration feedback)
 #define LED_COUNT           20      // Number of LEDs in strip (adjust to your strip)
 #define SERIAL_BAUD         9600    // Serial communication with master
+#define ENABLE_HAPTIC       true    // Enable/disable haptic feedback
 
 // ============================================================================
 // GLOBAL OBJECTS
@@ -56,6 +58,16 @@ uint8_t pepperPosition = 0;
 bool flashState = false;
 char inputBuffer[16];
 uint8_t bufferIndex = 0;
+bool hapticActive = false;
+unsigned long hapticStartTime = 0;
+uint16_t hapticDuration = 0;
+
+// ============================================================================
+// FORWARD DECLARATIONS
+// ============================================================================
+
+void triggerHaptic(uint16_t durationMs);
+void updateHaptic();
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -175,6 +187,33 @@ void highRPMShiftState(uint16_t rpm) {
 
 void revLimitState() {
     solidFill(STATE_5_COLOR_R, STATE_5_COLOR_G, STATE_5_COLOR_B);
+    
+    // Trigger haptic pulse when hitting rev limit
+    #if ENABLE_HAPTIC
+    static unsigned long lastHapticPulse = 0;
+    if (millis() - lastHapticPulse >= 500) {  // Pulse every 500ms
+        triggerHaptic(100);  // Short 100ms pulse
+        lastHapticPulse = millis();
+    }
+    #endif
+}
+
+void triggerHaptic(uint16_t durationMs) {
+    #if ENABLE_HAPTIC
+    hapticActive = true;
+    hapticStartTime = millis();
+    hapticDuration = durationMs;
+    analogWrite(HAPTIC_PIN, 51);  // 20% power (51/255 = 0.2)
+    #endif
+}
+
+void updateHaptic() {
+    #if ENABLE_HAPTIC
+    if (hapticActive && (millis() - hapticStartTime >= hapticDuration)) {
+        analogWrite(HAPTIC_PIN, 0);  // Turn off
+        hapticActive = false;
+    }
+    #endif
 }
 
 void errorState() {
@@ -262,6 +301,14 @@ void processCommand(const char* cmd) {
         Serial.print("Brightness set to: ");
         Serial.println(brightness);
     }
+    // Haptic command: VIB:xxx (vibrate for xxx milliseconds)
+    else if (strncmp(cmd, "VIB:", 4) == 0) {
+        uint16_t duration = atoi(cmd + 4);
+        triggerHaptic(duration);
+        Serial.print("Haptic triggered: ");
+        Serial.print(duration);
+        Serial.println("ms");
+    }
 }
 
 // ============================================================================
@@ -271,11 +318,19 @@ void processCommand(const char* cmd) {
 void setup() {
     // Initialize hardware Serial for debug output (won't interfere with SoftwareSerial)
     Serial.begin(115200);
-    Serial.println("LED Slave v2.1");
+    Serial.println("LED Slave v2.2 (Haptic)");
     Serial.print("LED Pin: D");
     Serial.println(LED_DATA_PIN);
     Serial.print("Serial RX Pin: D");
     Serial.println(SERIAL_RX_PIN);
+    
+    // Initialize haptic motor pin
+    #if ENABLE_HAPTIC
+    pinMode(HAPTIC_PIN, OUTPUT);
+    digitalWrite(HAPTIC_PIN, LOW);
+    Serial.print("Haptic Pin: D");
+    Serial.println(HAPTIC_PIN);
+    #endif
     
     // Initialize SoftwareSerial for commands from master
     slaveSerial.begin(SERIAL_BAUD);
@@ -293,12 +348,40 @@ void setup() {
     }
     Serial.println("LED strip initialized");
     
-    // Futuristic rainbow startup sequence - wave towards center
+    // Futuristic rainbow startup sequence - wave towards center with haptic sync
     Serial.println("Starting rainbow startup sequence...");
     
-    // Rainbow wave converging to center from both edges
+    // Rainbow wave converging to center from both edges with synchronized haptic revs
+    // Each rainbow cycle = ~1.92 seconds (256 phases × 15ms), 3 cycles = ~5.76 seconds total
     for (int cycle = 0; cycle < 3; cycle++) {  // 3 complete rainbow cycles
         for (int phase = 0; phase < 256; phase += 2) {  // Color wheel rotation
+            #if ENABLE_HAPTIC
+            // Calculate haptic intensity based on cycle and phase for smooth rev pattern
+            int baseIntensity = 35 + (cycle * 15);  // Rev 1: 35, Rev 2: 50, Rev 3: 65
+            int hapticIntensity;
+            
+            // Rev up during first 20% of cycle
+            if (phase < 51) {
+                hapticIntensity = (cycle == 0 ? 0 : 20) + ((phase * baseIntensity) / 51);
+            }
+            // Hold at peak during middle 40% of cycle
+            else if (phase < 154) {
+                hapticIntensity = baseIntensity;
+            }
+            // Decay during last 40% of cycle
+            else {
+                int decayAmount = ((phase - 154) * baseIntensity) / 102;
+                hapticIntensity = baseIntensity - decayAmount;
+                if (cycle < 2) {
+                    hapticIntensity = constrain(hapticIntensity, 20, baseIntensity);
+                } else {
+                    hapticIntensity = constrain(hapticIntensity, 0, baseIntensity);
+                }
+            }
+            
+            analogWrite(HAPTIC_PIN, hapticIntensity);
+            #endif
+            
             for (int i = 0; i < LED_COUNT; i++) {
                 // Calculate distance from center (makes wave converge to middle)
                 int distanceFromCenter = abs(i - (LED_COUNT / 2));
@@ -314,6 +397,10 @@ void setup() {
             delay(15);  // Smooth animation speed
         }
     }
+    
+    #if ENABLE_HAPTIC
+    analogWrite(HAPTIC_PIN, 0);
+    #endif
     
     // Fade out to black smoothly
     Serial.println("Fading out...");
@@ -358,6 +445,9 @@ void loop() {
     
     // Update LED display continuously
     updateLEDDisplay();
+    
+    // Update haptic motor state
+    updateHaptic();
     
     // Small delay to prevent overloading
     delay(10);

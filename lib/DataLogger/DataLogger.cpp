@@ -6,7 +6,8 @@
 // ============================================================================
 
 DataLogger::DataLogger(uint8_t cs)
-    : csPin(cs), initialized(false), isLogging(false), errorCount(0) {
+    : csPin(cs), initialized(false), isLogging(false), errorCount(0),
+      writeErrorCount(0), recordsWritten(0), logStartTime(0) {
     logFileName[0] = '\0';
 }
 
@@ -24,6 +25,24 @@ bool DataLogger::begin() {
     return false;
 }
 
+void DataLogger::writeMetadataHeader(uint32_t gpsDate, uint32_t gpsTime) {
+    if (!logFile.isOpen()) return;
+    
+    // Simplified metadata header to minimize memory usage and SD writes
+    char buf[64];
+    
+    // Just write firmware version and start time
+    sprintf(buf, "# MX5 v%s", FIRMWARE_VERSION);
+    logFile.write(buf);
+    
+    if (gpsDate > 20000000 && gpsDate < 21000000) {
+        sprintf(buf, " - %lu/%lu", gpsDate, gpsTime);
+        logFile.write(buf);
+    }
+    
+    logFile.write("\n");
+}
+
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     if (!initialized) {
         Serial.println(F("DEBUG: SD not initialized"));
@@ -33,6 +52,9 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     delay(50);  // Delay before SD operations
     
     static uint16_t fileCounter = 0;
+    recordsWritten = 0;
+    writeErrorCount = 0;
+    logStartTime = millis();
     
     #if GPS_FILENAMES_ENABLED
         // Use GPS-based filename if valid date
@@ -45,7 +67,15 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
             Serial.println(logFileName);
             
             if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
-                logFile.write("Time,Date,GPSTime,Lat,Lon,Speed,Alt,Sat,RPM\n");
+                Serial.println(F("DEBUG: File opened"));
+                
+                // Write header first (simpler, more reliable)
+                if (!logFile.write("SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status\n")) {
+                    Serial.println(F("DEBUG: Header write FAILED"));
+                } else {
+                    Serial.println(F("DEBUG: Header written"));
+                }
+                
                 logFile.close();
                 Serial.println(F("DEBUG: File created OK"));
                 delay(50);  // Delay after SD operations
@@ -72,7 +102,15 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     Serial.println(logFileName);
     
     if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
-        logFile.write("Time,Date,GPSTime,Lat,Lon,Speed,Alt,Sat,RPM\n");
+        Serial.println(F("DEBUG: File opened"));
+        
+        // Write header first (simpler, more reliable)
+        if (!logFile.write("SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status\n")) {
+            Serial.println(F("DEBUG: Header write FAILED"));
+        } else {
+            Serial.println(F("DEBUG: Header written"));
+        }
+        
         logFile.close();
         Serial.println(F("DEBUG: File created OK"));
     } else {
@@ -86,12 +124,13 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
 }
 
 void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHandler& can,
-                         bool /*logStatus*/, uint16_t /*canErrorCount*/) {
+                         bool /*logStatus*/, uint16_t canErrorCount) {
     if (!initialized || !isLogging || logFileName[0] == '\0') return;
     
     // Open file for append
     if (!logFile.open(&sd, logFileName, O_WRITE | O_APPEND)) {
         errorCount++;
+        writeErrorCount++;
         if (errorCount > 10) {
             logFileName[0] = '\0';
             isLogging = false;
@@ -100,29 +139,77 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     }
     
     // Build entire line in buffer before writing (more reliable)
-    char buf[80];
-    char lat[12], lon[12], spd[8], alt[8];
+    // Format: SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status
+    char buf[120];
+    char lat[12], lon[12], spdGPS[8], alt[8], heading[8];
     
-    // Convert floats to strings
-    dtostrf(gps.getLatitude(), 1, 6, lat);
-    dtostrf(gps.getLongitude(), 1, 6, lon);
-    dtostrf(gps.getSpeed(), 1, 2, spd);
-    dtostrf(gps.getAltitude(), 1, 1, alt);
+    // Convert floats to strings (use -1 for invalid data)
+    if (gps.isValid()) {
+        dtostrf(gps.getLatitude(), 1, 6, lat);
+        dtostrf(gps.getLongitude(), 1, 6, lon);
+        dtostrf(gps.getSpeed(), 1, 2, spdGPS);
+        dtostrf(gps.getAltitude(), 1, 1, alt);
+        dtostrf(gps.getCourse(), 1, 1, heading);
+    } else {
+        strcpy(lat, "0");
+        strcpy(lon, "0");
+        strcpy(spdGPS, "-1");
+        strcpy(alt, "-1");
+        strcpy(heading, "-1");
+    }
     
-    // Write line (split into two writes to avoid buffer overflow)
-    sprintf(buf, "%lu,%lu,%lu,%s,%s,", timestamp, gps.getDate(), gps.getTime(), lat, lon);
+    // Determine CAN status: 0=OK, 1=Errors, 2=No Init
+    uint8_t canStatus = can.isInitialized() ? (canErrorCount > 0 ? 1 : 0) : 2;
+    
+    // GPS data: use -1 for HDOP when invalid
+    uint16_t hdop = gps.getHDOP();
+    int16_t hdopValue = (hdop == 9999) ? -1 : hdop;
+    
+    // CAN data: use -1 for unavailable data
+    int16_t rpm = can.isInitialized() ? can.getRPM() : -1;
+    int16_t speedCAN = can.isInitialized() ? can.getSpeed() : -1;
+    int16_t throttle = can.isInitialized() ? can.getThrottle() : -1;
+    int16_t load = can.isInitialized() ? can.getCalculatedLoad() : -1;
+    int16_t coolant = can.isInitialized() ? can.getCoolantTemp() : -99;
+    int16_t timing = can.isInitialized() ? can.getTimingAdvance() : -99;
+    
+    // Write line (split into multiple writes to avoid buffer overflow)
+    // Part 1: System time, date, GPS time, fix, position
+    sprintf(buf, "%lu,%lu,%lu,%u,%s,%s,", 
+            timestamp, gps.getDate(), gps.getTime(), gps.getFixType(), lat, lon);
     logFile.write(buf);
     
-    sprintf(buf, "%s,%s,%u,%u\n", spd, alt, gps.getSatellites(), can.getRPM());
+    // Part 2: GPS speed, altitude, satellites, HDOP, heading
+    sprintf(buf, "%s,%s,%u,%d,%s,", 
+            spdGPS, alt, gps.getSatellites(), hdopValue, heading);
     logFile.write(buf);
     
-    // Close file
+    // Part 3: CAN data (RPM, speed, throttle, load, coolant, timing) and status
+    sprintf(buf, "%d,%d,%d,%d,%d,%d,%u\n", 
+            rpm, speedCAN, throttle, load, coolant, timing, canStatus);
+    logFile.write(buf);
+    
+    // Close file and update counters
     logFile.close();
     errorCount = 0;
+    recordsWritten++;
 }
 
 void DataLogger::finishLogging() {
-    // Just clear the flag - don't touch String to avoid heap issues
+    // Write session summary at end of log (simplified)
+    if (initialized && logFileName[0] != '\0') {
+        delay(50);
+        if (logFile.open(&sd, logFileName, O_WRITE | O_APPEND)) {
+            char buf[48];
+            sprintf(buf, "# End: %lu rec, %u err, %lu sec\n", 
+                    recordsWritten, writeErrorCount, (millis() - logStartTime) / 1000);
+            logFile.write(buf);
+            logFile.close();
+        }
+        delay(50);
+    }
+    
+    // Clear the flag - don't touch String to avoid heap issues
     isLogging = false;
     errorCount = 0;
 }

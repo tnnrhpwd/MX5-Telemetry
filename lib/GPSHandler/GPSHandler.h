@@ -36,6 +36,9 @@ public:
     uint32_t getTime() const { return gpsTime; }
     uint32_t getDate() const { return gpsDate; }
     bool isValid() const { return gpsValid; }
+    uint8_t getFixType() const { return fixType; }  // 0=no fix, 1=GPS fix, 2=DGPS fix
+    uint16_t getHDOP() const { return hdop; }  // Horizontal Dilution of Precision (*100)
+    double getCourse() const { return course; }  // Heading in degrees
     
 private:
     TinyGPSPlus gps;
@@ -51,6 +54,9 @@ private:
     uint32_t gpsTime;
     uint32_t gpsDate;
     bool gpsValid;
+    uint8_t fixType;  // GPS fix quality
+    uint16_t hdop;    // Horizontal Dilution of Precision (*100)
+    double course;    // Course heading in degrees
 };
 
 #endif // GPS_HANDLER_H
