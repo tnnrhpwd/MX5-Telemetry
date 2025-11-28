@@ -23,6 +23,19 @@ GPSHandler::GPSHandler(uint8_t rxPin, uint8_t txPin)
 void GPSHandler::begin() {
     gpsSerial.begin(GPS_BAUD);
     enabled = false;  // Start disabled, will be enabled on START command
+    
+    // Clear GPS data to start clean (prevent logging uninitialized values)
+    gpsValid = false;
+    gpsDate = 0;
+    gpsTime = 0;
+    latitude = 0.0;
+    longitude = 0.0;
+    altitude = 0.0;
+    speed = 0.0;
+    satellites = 0;
+    fixType = 0;
+    hdop = 9999;
+    course = 0.0;
 }
 
 void GPSHandler::enable() {
@@ -42,8 +55,14 @@ void GPSHandler::disable() {
         while (gpsSerial.available() > 0) {
             gpsSerial.read();
         }
-        // Optionally invalidate GPS data
+        // Clear GPS data to prevent logging stale/garbage values
         gpsValid = false;
+        gpsDate = 0;
+        gpsTime = 0;
+        latitude = 0.0;
+        longitude = 0.0;
+        satellites = 0;
+        fixType = 0;
     }
 }
 
@@ -58,37 +77,43 @@ void GPSHandler::update() {
         gps.encode(gpsSerial.read());
     }
     
-    // Update global variables if valid data is available
-    if (gps.location.isValid()) {
-        latitude = gps.location.lat();
-        longitude = gps.location.lng();
-        gpsValid = true;
-    } else {
-        gpsValid = false;
-    }
-    
-    if (gps.altitude.isValid()) {
-        altitude = gps.altitude.meters();
-    }
-    
-    if (gps.speed.isValid()) {
-        speed = gps.speed.kmph();  // GPS speed in km/h
-    }
-    
-    if (gps.satellites.isValid()) {
+    // Update global variables ONLY if we have satellites (prevents garbage data)
+    if (gps.satellites.isValid() && gps.satellites.value() > 0) {
         satellites = gps.satellites.value();
+        
+        // Only update position if location is valid
+        if (gps.location.isValid()) {
+            latitude = gps.location.lat();
+            longitude = gps.location.lng();
+            gpsValid = true;
+        } else {
+            gpsValid = false;
+        }
+        
+        if (gps.altitude.isValid()) {
+            altitude = gps.altitude.meters();
+        }
+        
+        if (gps.speed.isValid()) {
+            speed = gps.speed.kmph();  // GPS speed in km/h
+        }
+        
+        if (gps.time.isValid()) {
+            gpsTime = (gps.time.hour() * 10000) + (gps.time.minute() * 100) + gps.time.second();
+        }
+        
+        if (gps.date.isValid()) {
+            gpsDate = (gps.date.year() * 10000) + (gps.date.month() * 100) + gps.date.day();
+        }
+    } else {
+        // No satellites = no valid data
+        gpsValid = false;
+        fixType = 0;
+        satellites = 0;
     }
     
-    if (gps.time.isValid()) {
-        gpsTime = (gps.time.hour() * 10000) + (gps.time.minute() * 100) + gps.time.second();
-    }
-    
-    if (gps.date.isValid()) {
-        gpsDate = (gps.date.year() * 10000) + (gps.date.month() * 100) + gps.date.day();
-    }
-    
-    // Update fix quality information
-    if (gps.location.isValid() && gps.location.age() < 2000) {
+    // Update fix quality information - require valid location AND satellites
+    if (gps.location.isValid() && gps.location.age() < 2000 && gps.satellites.isValid() && gps.satellites.value() > 0) {
         fixType = 1;  // Basic GPS fix (TinyGPS++ doesn't differentiate DGPS)
     } else {
         fixType = 0;  // No fix

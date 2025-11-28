@@ -43,11 +43,13 @@ public:
     // Status
     bool isInitialized() const { return initialized; }
     uint16_t getErrorCount() const { return errorCount; }
+    bool hasRecentData() const { return (millis() - lastDataUpdate) < 2000; }  // Data received within 2 sec
     
 private:
     MCP_CAN can;
     bool initialized;
     uint16_t errorCount;
+    unsigned long lastDataUpdate;  // Track when data was last received
     
     // Vehicle data - Core Performance
     volatile uint16_t currentRPM;

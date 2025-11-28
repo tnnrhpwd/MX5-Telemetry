@@ -161,46 +161,83 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     if (gps.isValid()) {
         dtostrf(gps.getLatitude(), 1, 6, lat);
         dtostrf(gps.getLongitude(), 1, 6, lon);
-        dtostrf(gps.getSpeed(), 1, 2, spdGPS);
-        dtostrf(gps.getAltitude(), 1, 1, alt);
-        dtostrf(gps.getCourse(), 1, 1, heading);
+        dtostrf(gps.getSpeed(), 5, 2, spdGPS);
+        dtostrf(gps.getAltitude(), 6, 1, alt);
+        dtostrf(gps.getCourse(), 5, 1, heading);
     } else {
         strcpy(lat, "0");
         strcpy(lon, "0");
-        strcpy(spdGPS, "-1");
-        strcpy(alt, "-1");
-        strcpy(heading, "-1");
+        strcpy(spdGPS, "-");
+        strcpy(alt, "-");
+        strcpy(heading, "-");
     }
     
-    // Determine CAN status: 0=OK, 1=Errors, 2=No Init
-    uint8_t canStatus = can.isInitialized() ? (canErrorCount > 0 ? 1 : 0) : 2;
+    // Determine CAN status: 1=OK, E=Errors, X=No Init, -=Not connected
+    char canStatus;
+    if (!can.isInitialized()) {
+        canStatus = 'X';  // CAN chip failed to initialize
+    } else if (!can.hasRecentData()) {
+        canStatus = '-';  // Initialized but no recent data (not connected to vehicle)
+    } else if (canErrorCount > 0) {
+        canStatus = 'E';  // Receiving data but with errors
+    } else {
+        canStatus = '1';  // OK - receiving clean data from vehicle
+    }
     
-    // GPS data: use -1 for HDOP when invalid
+    // CAN data: prepare strings with dash for unavailable/stale data
+    bool canDataValid = can.isInitialized() && can.hasRecentData();
+    char rpmStr[8], speedStr[8], throttleStr[8], loadStr[8], coolantStr[8], timingStr[8], hdopStr[8], satStr[8], fixStr[8];
+    
+    // CAN data strings
+    if (canDataValid) {
+        sprintf(rpmStr, "%d", can.getRPM());
+        sprintf(speedStr, "%d", can.getSpeed());
+        sprintf(throttleStr, "%d", can.getThrottle());
+        sprintf(loadStr, "%d", can.getCalculatedLoad());
+        sprintf(coolantStr, "%d", can.getCoolantTemp());
+        sprintf(timingStr, "%d", can.getTimingAdvance());
+    } else {
+        strcpy(rpmStr, "-");
+        strcpy(speedStr, "-");
+        strcpy(throttleStr, "-");
+        strcpy(loadStr, "-");
+        strcpy(coolantStr, "-");
+        strcpy(timingStr, "-");
+    }
+    
+    // GPS data strings
     uint16_t hdop = gps.getHDOP();
-    int16_t hdopValue = (hdop == 9999) ? -1 : hdop;
+    if (hdop == 9999) {
+        strcpy(hdopStr, "-");
+    } else {
+        sprintf(hdopStr, "%d", hdop);
+    }
     
-    // CAN data: use -1 for unavailable data
-    int16_t rpm = can.isInitialized() ? can.getRPM() : -1;
-    int16_t speedCAN = can.isInitialized() ? can.getSpeed() : -1;
-    int16_t throttle = can.isInitialized() ? can.getThrottle() : -1;
-    int16_t load = can.isInitialized() ? can.getCalculatedLoad() : -1;
-    int16_t coolant = can.isInitialized() ? can.getCoolantTemp() : -99;
-    int16_t timing = can.isInitialized() ? can.getTimingAdvance() : -99;
+    if (gps.getFixType() > 0) {
+        sprintf(satStr, "%u", gps.getSatellites());
+        sprintf(fixStr, "%u", gps.getFixType());
+    } else {
+        strcpy(satStr, "-");
+        strcpy(fixStr, "-");
+    }
     
     // Write line (split into multiple writes to avoid buffer overflow)
     // Part 1: System time, date, GPS time, fix, position
-    sprintf(buf, "%lu,%lu,%lu,%u,%s,%s,", 
-            timestamp, gps.getDate(), gps.getTime(), gps.getFixType(), lat, lon);
+    // Use 0 for Date/Time when GPS has no fix (prevents garbage values)
+    uint32_t safeDate = (gps.getFixType() > 0) ? gps.getDate() : 0;
+    uint32_t safeTime = (gps.getFixType() > 0) ? gps.getTime() : 0;
+    sprintf(buf, "%lu,%lu,%lu,%s,%s,%s,", 
+            timestamp, safeDate, safeTime, fixStr, lat, lon);
     logFile.write(buf);
     
     // Part 2: GPS speed, altitude, satellites, HDOP, heading
-    sprintf(buf, "%s,%s,%u,%d,%s,", 
-            spdGPS, alt, gps.getSatellites(), hdopValue, heading);
+    sprintf(buf, "%s,%s,%s,%s,%s,", 
+            spdGPS, alt, satStr, hdopStr, heading);
     logFile.write(buf);
     
     // Part 3: CAN data (RPM, speed, throttle, load, coolant, timing) and status
-    sprintf(buf, "%d,%d,%d,%d,%d,%d,%u\n", 
-            rpm, speedCAN, throttle, load, coolant, timing, canStatus);
+    sprintf(buf, "%s,%s,%s,%s,%s,%s,%c\n", 
+            rpmStr, speedStr, throttleStr, loadStr, coolantStr, timingStr, canStatus);
     logFile.write(buf);
     
     // Close file and update counters
@@ -326,13 +363,31 @@ void DataLogger::dumpFile(const char* filename) {
     // Read and print file contents
     char buffer[64];
     int bytesRead;
+    int chunkCount = 0;
+    bool aborted = false;
+    
     while ((bytesRead = file.read(buffer, sizeof(buffer) - 1)) > 0) {
         buffer[bytesRead] = '\0';
         Serial.print(buffer);
+        delayMicroseconds(500);  // Brief delay to prevent TX buffer overflow without blocking
+        
+        // Every 10 chunks (~640 bytes), check for abort command
+        if (++chunkCount % 10 == 0 && Serial.available() > 0) {
+            char cmd = Serial.read();
+            if (cmd == 'X' || cmd == 'x') {
+                aborted = true;
+                break;
+            }
+        }
     }
     
     file.close();
-    Serial.println(F("OK"));
+    
+    if (aborted) {
+        Serial.println(F("ABORTED"));
+    } else {
+        Serial.println(F("OK"));
+    }
 }
 
 void DataLogger::dumpCurrentLog() {
