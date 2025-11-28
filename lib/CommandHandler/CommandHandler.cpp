@@ -93,7 +93,6 @@ void CommandHandler::processCommand(const char* cmd) {
         switch (firstChar) {
             case 'S': handleStart(); return;      // S = START
             case 'X': handleStop(); return;        // X = STOP (eXit)
-            case '?': handleHelp(); return;        // ? = HELP
             case 'I': handleList(); return;        // I = LIST (lIst)
             case 'T': handleStatus(); return;      // T = STATUS (sTatus)
         }
@@ -111,7 +110,6 @@ void CommandHandler::processCommand(const char* cmd) {
     // Short commands only
     if (firstChar == 'S') handleStart();
     else if (firstChar == 'X') handleStop();
-    else if (firstChar == '?') handleHelp();
     else if (firstChar == 'T') handleStatus();
     else if (firstChar == 'I') handleList();
     else if (firstChar == 'D') handleDump(cmd);
@@ -174,10 +172,6 @@ void CommandHandler::handleStop() {
     
     Serial.println(F("OK"));
     Serial.flush();
-}
-
-void CommandHandler::handleHelp() {
-    Serial.println(F("S X D I T ?"));
 }
 
 void CommandHandler::handleStatus() {

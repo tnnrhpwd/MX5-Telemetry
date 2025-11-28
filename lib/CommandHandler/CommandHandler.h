@@ -60,7 +60,6 @@ private:
     // Command processors
     void processCommand(const char* command);
     void handleStop();
-    void handleHelp();
     void handleStatus();
     void handleList();
     void handleDump(const char* command);

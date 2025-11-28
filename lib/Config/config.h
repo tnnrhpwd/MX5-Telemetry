@@ -86,13 +86,12 @@
 // ============================================================================
 // USB COMMAND INTERFACE
 // ============================================================================
-// Single-letter commands (corruption-resistant): S X D I T ?
+// Single-letter commands (corruption-resistant): S X D I T
 #define CMD_START       "S"          // Start logging
 #define CMD_STOP        "X"          // Stop/exit
 #define CMD_DUMP        "D"          // Dump log file
 #define CMD_LIST        "I"          // List files
 #define CMD_STATUS      "T"          // Status info
-#define CMD_HELP        "?"          // Show commands
 
 // ============================================================================
 // OBD-II PROTOCOL CONSTANTS - Complete Parameter Set

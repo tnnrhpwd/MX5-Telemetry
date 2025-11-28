@@ -5,21 +5,17 @@ Interactive GUI for controlling Arduino telemetry system via USB-C.
 
 Features:
 - Auto-detect Arduino on USB ports
-- Send commands (START, PAUSE, RESUME, LIVE, STOP, etc.)
-- Live data streaming viewer
+- Send commands (START, STOP, etc.)
 - Dump log files from SD card to computer
 - Real-time system status monitoring
 - Log file browser and management
 
 Commands (single-letter for reliability):
 - S       : START - Begin logging and LED display
-- P       : PAUSE - Stop logging and LED display
-- X       : STOP - Exit and return to pause
-- L       : LIVE - Real-time data streaming (no SD logging)
+- X       : STOP - Stop logging
 - D       : DUMP - Transfer log files to laptop
 - I       : LIST - List all files on SD card
-- ?       : HELP - Show command reference
-- STATUS  : Full diagnostics (kept as word)
+- T       : STATUS - Full diagnostics
 
 Hardware Requirements:
 - Arduino Nano V3.0 with MX5-Telemetry firmware
@@ -90,8 +86,8 @@ class ArduinoConnection:
             # Try multiple detection methods
             data = ""
             
-            # Method 1: Send '?' for help (master responds with "S P X L D I T ?")
-            test_serial.write(b"?\n")
+            # Method 1: Send 'T' for status (master responds with "St:")
+            test_serial.write(b"T\n")
             test_serial.flush()
             time.sleep(0.4)
             
@@ -382,15 +378,6 @@ class ArduinoActionsApp:
                                    cursor="hand2", state=tk.DISABLED)
         self.start_btn.pack(side=tk.LEFT, padx=5)
         
-        self.pause_btn = tk.Button(btn_row1, text="⏸ PAUSE", 
-                                   command=lambda: self.send_command("P"),
-                                   bg="#ff8800", fg="#ffffff", 
-                                   font=("Segoe UI", 11, "bold"), width=12, height=2,
-                                   relief=tk.FLAT, bd=0,
-                                   activebackground="#ffaa00", activeforeground="#ffffff",
-                                   cursor="hand2", state=tk.DISABLED)
-        self.pause_btn.pack(side=tk.LEFT, padx=5)
-        
         self.stop_btn = tk.Button(btn_row1, text="⏹ STOP", 
                                  command=lambda: self.send_command("X"),
                                  bg="#cc0000", fg="#ffffff", 
@@ -403,15 +390,6 @@ class ArduinoActionsApp:
         btn_row2 = tk.Frame(cmd_frame, bg="#2a2a2a")
         btn_row2.pack(pady=5)
         
-        self.live_btn = tk.Button(btn_row2, text="📡 LIVE MONITOR", 
-                                  command=lambda: self.send_command("L"),
-                                  bg="#9900cc", fg="#ffffff", 
-                                  font=("Segoe UI", 11, "bold"), width=15, height=2,
-                                  relief=tk.FLAT, bd=0,
-                                  activebackground="#bb00ff", activeforeground="#ffffff",
-                                  cursor="hand2", state=tk.DISABLED)
-        self.live_btn.pack(side=tk.LEFT, padx=5)
-        
         self.status_btn = tk.Button(btn_row2, text="📊 STATUS", 
                                     command=self.request_status,
                                     bg="#555555", fg="#ffffff", 
@@ -420,15 +398,6 @@ class ArduinoActionsApp:
                                     activebackground="#777777", activeforeground="#ffffff",
                                     cursor="hand2", state=tk.DISABLED)
         self.status_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.help_btn = tk.Button(btn_row2, text="❓ HELP", 
-                                 command=lambda: self.send_command("?"),
-                                 bg="#555555", fg="#ffffff", 
-                                 font=("Segoe UI", 11, "bold"), width=15, height=2,
-                                 relief=tk.FLAT, bd=0,
-                                 activebackground="#777777", activeforeground="#ffffff",
-                                 cursor="hand2", state=tk.DISABLED)
-        self.help_btn.pack(side=tk.LEFT, padx=5)
         
         # Data dump frame
         dump_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.FLAT, bd=0)
@@ -574,11 +543,8 @@ class ArduinoActionsApp:
         
         # Enable command buttons
         self.start_btn.config(state=tk.NORMAL)
-        self.pause_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.NORMAL)
-        self.live_btn.config(state=tk.NORMAL)
         self.status_btn.config(state=tk.NORMAL)
-        self.help_btn.config(state=tk.NORMAL)
         self.list_btn.config(state=tk.NORMAL)
         self.dump_btn.config(state=tk.NORMAL)
         self.dump_selected_btn.config(state=tk.NORMAL)
@@ -593,11 +559,8 @@ class ArduinoActionsApp:
         
         # Disable command buttons
         self.start_btn.config(state=tk.DISABLED)
-        self.pause_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.DISABLED)
-        self.live_btn.config(state=tk.DISABLED)
         self.status_btn.config(state=tk.DISABLED)
-        self.help_btn.config(state=tk.DISABLED)
         self.list_btn.config(state=tk.DISABLED)
         self.dump_btn.config(state=tk.DISABLED)
         self.dump_selected_btn.config(state=tk.DISABLED)
