@@ -157,19 +157,19 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     char buf[120];
     char lat[12], lon[12], spdGPS[8], alt[8], heading[8];
     
-    // Convert floats to strings (use -1 for invalid data)
-    if (gps.isValid()) {
+    // Convert floats to strings - only use GPS data if we have a valid fix
+    if (gps.getFixType() > 0) {
         dtostrf(gps.getLatitude(), 1, 6, lat);
         dtostrf(gps.getLongitude(), 1, 6, lon);
-        dtostrf(gps.getSpeed(), 5, 2, spdGPS);
-        dtostrf(gps.getAltitude(), 6, 1, alt);
-        dtostrf(gps.getCourse(), 5, 1, heading);
+        sprintf(spdGPS, "%.1f", gps.getSpeed());
+        sprintf(alt, "%.1f", gps.getAltitude());
+        sprintf(heading, "%.1f", gps.getCourse());
     } else {
         strcpy(lat, "0");
         strcpy(lon, "0");
-        strcpy(spdGPS, "-");
-        strcpy(alt, "-");
-        strcpy(heading, "-");
+        strcpy(spdGPS, "0");
+        strcpy(alt, "0");
+        strcpy(heading, "0");
     }
     
     // Determine CAN status: 1=OK, E=Errors, X=No Init, -=Not connected

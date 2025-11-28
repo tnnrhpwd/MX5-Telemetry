@@ -119,8 +119,8 @@ void GPSHandler::update() {
         fixType = 0;  // No fix
     }
     
-    // Update HDOP (Horizontal Dilution of Precision)
-    if (gps.hdop.isValid()) {
+    // Update HDOP (Horizontal Dilution of Precision) - only when satellites available
+    if (gps.satellites.isValid() && gps.satellites.value() > 0 && gps.hdop.isValid()) {
         hdop = gps.hdop.value();  // Already stored as hdop * 100
     } else {
         hdop = 9999;  // Invalid/unknown HDOP
