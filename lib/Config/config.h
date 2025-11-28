@@ -78,18 +78,21 @@
                                       // Costs 340 bytes - set true only if LED strip disabled
 
 // ============================================================================
+// STANDALONE AUTO-START CONFIGURATION
+// ============================================================================
+#define AUTO_START_ENABLED     true   // Automatically start logging if no USB commands received
+#define AUTO_START_TIMEOUT     10000  // Wait 10 seconds for USB commands before auto-start (milliseconds)
+
+// ============================================================================
 // USB COMMAND INTERFACE
 // ============================================================================
-// Single-letter commands (corruption-resistant): S P X L D I T ?
-// Full word commands (backward compatible): START PAUSE STOP LIVE DUMP LIST STATUS HELP
-#define CMD_START       "S"          // Start logging (or START)
-#define CMD_PAUSE       "P"          // Pause logging (or PAUSE)
-#define CMD_STOP        "X"          // Stop/exit (or STOP)
-#define CMD_LIVE        "L"          // Live data stream (or LIVE)
-#define CMD_DUMP        "D"          // Dump log file (or DUMP filename)
-#define CMD_LIST        "I"          // List files (or LIST)
-#define CMD_STATUS      "T"          // Status info (or STATUS)
-#define CMD_HELP        "?"          // Show commands (or HELP)
+// Single-letter commands (corruption-resistant): S X D I T ?
+#define CMD_START       "S"          // Start logging
+#define CMD_STOP        "X"          // Stop/exit
+#define CMD_DUMP        "D"          // Dump log file
+#define CMD_LIST        "I"          // List files
+#define CMD_STATUS      "T"          // Status info
+#define CMD_HELP        "?"          // Show commands
 
 // ============================================================================
 // OBD-II PROTOCOL CONSTANTS - Complete Parameter Set

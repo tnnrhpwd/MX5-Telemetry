@@ -12,19 +12,17 @@
  * - GPS logging with Neo-6M module (10Hz updates)
  * - SD card data logging in CSV format (5Hz logging rate)
  * - USB command interface for laptop control
- * - Live data streaming mode
+ * - Auto-start logging after 10 seconds if no USB detected (standalone mode)
  * - Graceful error handling with auto-recovery
  * 
  * USB COMMANDS:
- * - START   : Begin logging and LED display
- * - PAUSE   : Stop logging and LED display
- * - RESUME  : Continue logging and LED display
- * - LIVE    : Real-time data streaming (no SD logging)
- * - STOP    : Exit live mode, return to pause
- * - DUMP    : Transfer log files to laptop
- * - STATUS  : Show system diagnostics
- * - LIST    : List all files on SD card
- * - HELP    : Show command reference
+ * - S/START : Begin logging and LED display
+ * - P/PAUSE : Stop logging and LED display
+ * - X/STOP  : Stop logging, return to idle
+ * - D/DUMP  : Transfer log files to laptop
+ * - T/STATUS: Show system diagnostics
+ * - I/LIST  : List all files on SD card
+ * - ?/HELP  : Show command reference
  * 
  * HARDWARE REQUIREMENTS:
  * - Arduino Nano V3.0 (ATmega328P, 16MHz, 5V logic)
@@ -73,10 +71,10 @@ LEDSlave ledSlave;  // Communicates with slave Arduino via Serial1
 unsigned long lastCANRead = 0;
 unsigned long lastGPSRead = 0;
 unsigned long lastLogWrite = 0;
-unsigned long lastStatusPrint = 0;
 unsigned long lastLEDUpdate = 0;  // Track LED updates to rate-limit
 unsigned long logFileStartTime = 0;  // Track when current log file was created
-bool usbConnectedAtStartup = false;  // Track if USB was connected at startup
+unsigned long bootTime = 0;  // Track system boot time for auto-start
+bool autoStartTriggered = false;  // Track if auto-start has been triggered
 
 // ============================================================================
 // STATUS PRINTING
@@ -85,8 +83,7 @@ bool usbConnectedAtStartup = false;  // Track if USB was connected at startup
 void printSystemStatus() {
     Serial.print(F("St:"));
     if (cmdHandler.isRunning()) Serial.print('R');
-    else if (cmdHandler.isPaused()) Serial.print('P');
-    else if (cmdHandler.isLiveMonitoring()) Serial.print('L');
+    else if (cmdHandler.isDumping()) Serial.print('D');
     else Serial.print('I');
     
     #if ENABLE_CAN_BUS
@@ -129,8 +126,9 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     Serial.setTimeout(100); // Set 100ms timeout for Serial operations
     
-    // Start in standalone mode - USB detection happens when commands arrive
-    usbConnectedAtStartup = false;
+    // Record boot time for auto-start feature
+    bootTime = millis();
+    autoStartTriggered = false;
     
     // Print identification (ignored if no PC)
     Serial.println(F("MX5v3"));
@@ -227,6 +225,26 @@ void loop() {
     }
     
     // ========================================================================
+    // AUTO-START (Standalone mode - no USB commands received)
+    // ========================================================================
+    #if AUTO_START_ENABLED
+        // If no USB data received within timeout and still in IDLE state, auto-start
+        if (!autoStartTriggered && 
+            !cmdHandler.hasReceivedData() &&
+            cmdHandler.getState() == STATE_IDLE && 
+            (currentMillis - bootTime) >= AUTO_START_TIMEOUT) {
+            
+            autoStartTriggered = true;
+            
+            // Log auto-start (will be ignored if no USB connected)
+            if (Serial) Serial.println(F("Auto-start: No USB detected, starting logging..."));
+            
+            // Trigger START command
+            cmdHandler.handleStart();
+        }
+    #endif
+    
+    // ========================================================================
     // LOG ROTATION (create new log file periodically to prevent huge files)
     // ========================================================================
     #if LOG_ROTATION_ENABLED && ENABLE_LOGGING
@@ -299,11 +317,7 @@ void loop() {
             #if ENABLE_CAN_BUS
                 // Show error state if CAN not initialized or has errors
                 if (!canBus.isInitialized() || canBus.getErrorCount() > 100) {
-                    if (usbConnectedAtStartup) {
-                        ledSlave.updateRPMRainbow();  // Rainbow pattern when USB connected
-                    } else {
-                        ledSlave.updateRPMError();  // Normal error pattern when standalone
-                    }
+                    ledSlave.updateRPMError();  // Show error pattern
                 } else {
                     // Only show RPM when running/live monitoring, otherwise show idle
                     if (cmdHandler.shouldUpdateLEDs()) {
@@ -366,19 +380,8 @@ void loop() {
     #endif
     
     // ========================================================================
-    // LIVE DATA STREAMING removed - not used
+    // PERIODIC STATUS (disabled - not used)
     // ========================================================================
-    
-    // ========================================================================
-    // PERIODIC STATUS PRINTING (only in specific states)
-    // ========================================================================
-    if (currentMillis - lastStatusPrint >= STATUS_INTERVAL) {
-        lastStatusPrint = currentMillis;
-        // Auto-print status periodically if in certain states
-        if (cmdHandler.isRunning() || cmdHandler.isLiveMonitoring()) {
-            // Status already being sent via data stream
-        }
-    }
     
     // GPS is now updated during timed intervals only (see above)
     // This reduces SoftwareSerial interrupt overhead that interferes with USB Serial
