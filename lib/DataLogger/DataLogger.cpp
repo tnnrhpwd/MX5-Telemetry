@@ -12,13 +12,16 @@ DataLogger::DataLogger(uint8_t cs)
 }
 
 bool DataLogger::begin() {
-    // Try to initialize SD card with retries (quick attempts to minimize boot delay)
+    // Wait for SD card to stabilize after power-on (critical for reliable detection)
+    delay(200);
+    
+    // Try to initialize SD card with retries
     for (int attempt = 0; attempt < 3; attempt++) {
         if (sd.begin(csPin, SD_SCK_MHZ(4))) {
             initialized = true;
             return true;
         }
-        delay(50);  // Short delay before retry
+        delay(100);  // Delay before retry (increased from 50ms)
     }
     // Failed after retries
     initialized = false;
@@ -44,9 +47,16 @@ void DataLogger::writeMetadataHeader(uint32_t gpsDate, uint32_t gpsTime) {
 }
 
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
+    // Try to reinitialize if SD card wasn't ready at boot
     if (!initialized) {
-        if (Serial) Serial.println(F("DEBUG: SD not initialized"));
-        return;
+        if (Serial) Serial.println(F("DEBUG: SD not initialized, retrying..."));
+        if (sd.begin(csPin, SD_SCK_MHZ(4))) {
+            initialized = true;
+            if (Serial) Serial.println(F("DEBUG: SD reinitialized OK"));
+        } else {
+            if (Serial) Serial.println(F("DEBUG: SD reinit failed"));
+            return;
+        }
     }
     
     delay(50);  // Delay before SD operations
