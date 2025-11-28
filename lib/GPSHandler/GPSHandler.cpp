@@ -55,14 +55,18 @@ void GPSHandler::disable() {
         while (gpsSerial.available() > 0) {
             gpsSerial.read();
         }
-        // Clear GPS data to prevent logging stale/garbage values
+        // Clear ALL GPS data to prevent logging stale/garbage values
         gpsValid = false;
         gpsDate = 0;
         gpsTime = 0;
         latitude = 0.0;
         longitude = 0.0;
+        altitude = 0.0;
+        speed = 0.0;
         satellites = 0;
         fixType = 0;
+        hdop = 9999;
+        course = 0.0;
     }
 }
 

@@ -155,22 +155,9 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     // Build entire line in buffer before writing (more reliable)
     // Format: SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status
     char buf[120];
-    char lat[12], lon[12], spdGPS[8], alt[8], heading[8];
     
-    // Convert floats to strings - only use GPS data if we have a valid fix
-    if (gps.getFixType() > 0) {
-        dtostrf(gps.getLatitude(), 1, 6, lat);
-        dtostrf(gps.getLongitude(), 1, 6, lon);
-        sprintf(spdGPS, "%.1f", gps.getSpeed());
-        sprintf(alt, "%.1f", gps.getAltitude());
-        sprintf(heading, "%.1f", gps.getCourse());
-    } else {
-        strcpy(lat, "0");
-        strcpy(lon, "0");
-        strcpy(spdGPS, "0");
-        strcpy(alt, "0");
-        strcpy(heading, "0");
-    }
+    // Check if location is actually valid (not just enabled but has real satellite fix)
+    bool hasValidLocation = gps.isValid() && gps.getSatellites() > 0;
     
     // Determine CAN status: 1=OK, E=Errors, X=No Init, -=Not connected
     char canStatus;
@@ -204,35 +191,42 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
         strcpy(coolantStr, "-");
         strcpy(timingStr, "-");
     }
-    
-    // GPS data strings
-    uint16_t hdop = gps.getHDOP();
-    if (hdop == 9999) {
-        strcpy(hdopStr, "-");
+    // Write line in parts to minimize stack usage and avoid buffer overflow
+    // Part 1: System time, date, GPS time, fix
+    if (hasValidLocation) {
+        sprintf(buf, "%lu,%lu,%lu,%u,", 
+                timestamp, gps.getDate(), gps.getTime(), gps.getFixType());
     } else {
-        sprintf(hdopStr, "%d", hdop);
+        sprintf(buf, "%lu,-,-,%u,", timestamp, gps.getFixType());
     }
-    
-    if (gps.getFixType() > 0) {
-        sprintf(satStr, "%u", gps.getSatellites());
-        sprintf(fixStr, "%u", gps.getFixType());
-    } else {
-        strcpy(satStr, "-");
-        strcpy(fixStr, "-");
-    }
-    
-    // Write line (split into multiple writes to avoid buffer overflow)
-    // Part 1: System time, date, GPS time, fix, position
-    // Use 0 for Date/Time when GPS has no fix (prevents garbage values)
-    uint32_t safeDate = (gps.getFixType() > 0) ? gps.getDate() : 0;
-    uint32_t safeTime = (gps.getFixType() > 0) ? gps.getTime() : 0;
-    sprintf(buf, "%lu,%lu,%lu,%s,%s,%s,", 
-            timestamp, safeDate, safeTime, fixStr, lat, lon);
     logFile.write(buf);
     
-    // Part 2: GPS speed, altitude, satellites, HDOP, heading
-    sprintf(buf, "%s,%s,%s,%s,%s,", 
-            spdGPS, alt, satStr, hdopStr, heading);
+    // Part 2: Position (lat, lon)
+    if (hasValidLocation) {
+        char lat[12], lon[12];
+        dtostrf(gps.getLatitude(), 1, 6, lat);
+        dtostrf(gps.getLongitude(), 1, 6, lon);
+        sprintf(buf, "%s,%s,", lat, lon);
+    } else {
+        strcpy(buf, "-,-,");
+    }
+    logFile.write(buf);
+    
+    // Part 3: GPS speed, altitude, satellites, HDOP, heading
+    if (hasValidLocation) {
+        uint16_t hdop = gps.getHDOP();
+        sprintf(buf, "%.1f,%.1f,%u,", gps.getSpeed(), gps.getAltitude(), gps.getSatellites());
+        logFile.write(buf);
+        if (hdop == 9999) {
+            strcpy(buf, "-,");
+        } else {
+            sprintf(buf, "%u,", hdop);
+        }
+        logFile.write(buf);
+        sprintf(buf, "%.1f,", gps.getCourse());
+    } else {
+        sprintf(buf, "-,-,%u,-,-,", gps.getSatellites());
+    }
     logFile.write(buf);
     
     // Part 3: CAN data (RPM, speed, throttle, load, coolant, timing) and status
