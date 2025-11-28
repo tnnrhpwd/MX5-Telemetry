@@ -284,6 +284,9 @@ class ArduinoActionsApp:
         self.dump_buffer = []
         self.dump_save_path = None
         self.dump_timeout = None
+        self.dump_file_size = 0  # Expected file size from Arduino
+        self.dump_bytes_received = 0  # Bytes received so far
+        self.dump_filename = None  # Name of file being dumped
         self.log_files = []
         self.last_command_time = 0
         self.command_cooldown = 0.5  # 500ms between commands
@@ -596,9 +599,12 @@ class ArduinoActionsApp:
             self.dump_buffer = []
             self.dump_mode = True
             self.dump_save_path = save_path
+            self.dump_file_size = 0
+            self.dump_bytes_received = 0
+            self.dump_filename = "current"
             self.log_console("📥 Starting dump of current log...")
-            # Set timeout for dump operation
-            self.dump_timeout = time.time() + 30  # 30 second timeout
+            # Set timeout for dump operation - 120 seconds for large files
+            self.dump_timeout = time.time() + 120
             self.send_command("D")
     
     def dump_selected_file(self):
@@ -620,7 +626,11 @@ class ArduinoActionsApp:
             self.dump_buffer = []
             self.dump_mode = True
             self.dump_save_path = save_path
-            self.dump_timeout = time.time() + 30  # 30 second timeout
+            self.dump_file_size = 0
+            self.dump_bytes_received = 0
+            self.dump_filename = filename
+            # Extended timeout: 120 seconds for large files (at 115200 baud, ~10KB/s theoretical)
+            self.dump_timeout = time.time() + 120
             self.log_console(f"📥 Starting dump of {filename}...")
             self.send_command(f"D {filename}")
     
@@ -649,26 +659,42 @@ class ArduinoActionsApp:
                 self.pending_command_time = None
         
         if self.dump_mode:
-            # Check timeout
-            if self.dump_timeout and time.time() > self.dump_timeout:
-                self.dump_mode = False
-                self.log_console("⚠️ Dump timeout - no data received")
-                self.dump_buffer = []
-                self.dump_save_path = None
-                return
+            # Reset timeout on any data received (keeps connection alive)
+            if self.dump_timeout:
+                self.dump_timeout = time.time() + 30  # Reset to 30s on each data
+            
+            # Handle SIZE header from Arduino (file size info)
+            if data.startswith("SIZE:"):
+                try:
+                    self.dump_file_size = int(data.split(":")[1])
+                    self.log_console(f"📊 File size: {self.dump_file_size} bytes")
+                except ValueError:
+                    pass
+                return  # Don't add SIZE line to buffer
             
             # Collecting dump data - look for OK to end dump
             if data == "OK":
                 self.dump_mode = False
                 self.save_dump_data()
+            elif data == "ABORTED":
+                self.dump_mode = False
+                self.log_console("⚠️ Dump aborted by user")
+                self.dump_buffer = []
+                self.dump_save_path = None
             elif data.startswith("ERR:"):
                 self.dump_mode = False
                 self.log_console(f"❌ Dump failed: {data}")
                 self.dump_buffer = []
                 self.dump_save_path = None
             else:
-                # Collect all data lines
+                # Collect all data lines and track bytes received
                 self.dump_buffer.append(data)
+                self.dump_bytes_received += len(data) + 1  # +1 for newline
+                
+                # Log progress every 10KB
+                if self.dump_file_size > 0 and self.dump_bytes_received % 10240 < 100:
+                    pct = min(100, int(self.dump_bytes_received * 100 / self.dump_file_size))
+                    self.log_console(f"📥 Progress: {pct}% ({self.dump_bytes_received}/{self.dump_file_size} bytes)")
         elif data.startswith("Files:"):
             # File list response - expecting "Files:0" or filename lines to follow
             if data == "Files:0":

@@ -81,19 +81,38 @@ void GPSHandler::update() {
         gps.encode(gpsSerial.read());
     }
     
-    // Update global variables ONLY if we have satellites (prevents garbage data)
-    if (gps.satellites.isValid() && gps.satellites.value() > 0) {
-        satellites = gps.satellites.value();
-        
-        // Only update position if location is valid
-        if (gps.location.isValid()) {
-            latitude = gps.location.lat();
-            longitude = gps.location.lng();
-            gpsValid = true;
-        } else {
-            gpsValid = false;
+    // Always update satellite count if available (even before fix)
+    // This helps debug GPS acquisition
+    if (gps.satellites.isValid()) {
+        uint8_t sats = gps.satellites.value();
+        // Sanity check - reject garbage values
+        if (sats <= 50) {
+            satellites = sats;
         }
+    }
+    
+    // Time and date are often available before full position fix
+    // Update them independently to aid debugging and logging
+    if (gps.time.isValid() && gps.time.age() < 2000) {
+        gpsTime = (gps.time.hour() * 10000) + (gps.time.minute() * 100) + gps.time.second();
+    }
+    
+    if (gps.date.isValid() && gps.date.age() < 5000) {
+        uint32_t newDate = (gps.date.year() * 10000) + (gps.date.month() * 100) + gps.date.day();
+        // Sanity check date range (year 2020-2100)
+        if (newDate >= 20200101 && newDate <= 21001231) {
+            gpsDate = newDate;
+        }
+    }
+    
+    // Update position data ONLY with valid satellites and location
+    if (satellites > 0 && gps.location.isValid() && gps.location.age() < 2000) {
+        latitude = gps.location.lat();
+        longitude = gps.location.lng();
+        gpsValid = true;
+        fixType = 1;  // GPS fix acquired
         
+        // Update additional data when we have a fix
         if (gps.altitude.isValid()) {
             altitude = gps.altitude.meters();
         }
@@ -102,36 +121,18 @@ void GPSHandler::update() {
             speed = gps.speed.kmph();  // GPS speed in km/h
         }
         
-        if (gps.time.isValid()) {
-            gpsTime = (gps.time.hour() * 10000) + (gps.time.minute() * 100) + gps.time.second();
+        if (gps.course.isValid()) {
+            course = gps.course.deg();
         }
         
-        if (gps.date.isValid()) {
-            gpsDate = (gps.date.year() * 10000) + (gps.date.month() * 100) + gps.date.day();
+        // Update HDOP when available
+        if (gps.hdop.isValid()) {
+            hdop = gps.hdop.value();  // Already stored as hdop * 100
         }
     } else {
-        // No satellites = no valid data
+        // No valid fix
         gpsValid = false;
         fixType = 0;
-        satellites = 0;
-    }
-    
-    // Update fix quality information - require valid location AND satellites
-    if (gps.location.isValid() && gps.location.age() < 2000 && gps.satellites.isValid() && gps.satellites.value() > 0) {
-        fixType = 1;  // Basic GPS fix (TinyGPS++ doesn't differentiate DGPS)
-    } else {
-        fixType = 0;  // No fix
-    }
-    
-    // Update HDOP (Horizontal Dilution of Precision) - only when satellites available
-    if (gps.satellites.isValid() && gps.satellites.value() > 0 && gps.hdop.isValid()) {
-        hdop = gps.hdop.value();  // Already stored as hdop * 100
-    } else {
-        hdop = 9999;  // Invalid/unknown HDOP
-    }
-    
-    // Update course/heading
-    if (gps.course.isValid()) {
-        course = gps.course.deg();
+        // Keep satellite count for diagnostic purposes - don't reset to 0
     }
 }

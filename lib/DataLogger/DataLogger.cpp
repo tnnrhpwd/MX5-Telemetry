@@ -140,14 +140,20 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     // Format: SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status
     char buf[80];
     
-    // STRICT GPS validation: must have satellites AND valid location AND sane values
+    // GPS data tracking - separate from position validity
     uint8_t sats = gps.getSatellites();
     uint8_t fixType = gps.getFixType();
+    uint32_t gpsDate = gps.getDate();
+    uint32_t gpsTime = gps.getTime();
     
     // Sanitize satellite count - reject garbage values
     if (sats > 50) sats = 0;
     
+    // Check if we have valid position data
     bool hasValidLocation = gps.isValid() && sats > 0 && fixType > 0 && fixType < 10;
+    
+    // Check if we have valid time/date (even without position fix)
+    bool hasValidTime = (gpsDate >= 20200101 && gpsDate <= 21001231) && gpsTime > 0;
     
     // Determine CAN status: 1=OK, E=Errors, X=No Init, -=Not connected
     char canStatus;
@@ -183,8 +189,12 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     }
     
     // Part 1: System time, date, GPS time, fix type
+    // Log GPS date/time even without full position fix (aids debugging)
     if (hasValidLocation) {
-        sprintf(buf, "%lu,%lu,%lu,%u,", timestamp, gps.getDate(), gps.getTime(), fixType);
+        sprintf(buf, "%lu,%lu,%lu,%u,", timestamp, gpsDate, gpsTime, fixType);
+    } else if (hasValidTime) {
+        // We have time but no position - still log date/time for debugging
+        sprintf(buf, "%lu,%lu,%lu,0,", timestamp, gpsDate, gpsTime);
     } else {
         sprintf(buf, "%lu,-,-,0,", timestamp);
     }
@@ -343,34 +353,71 @@ void DataLogger::dumpFile(const char* filename) {
         return;
     }
     
-    // Read and print file contents
-    char buffer[64];
+    // Get file size for progress tracking
+    uint32_t fileSize = file.fileSize();
+    uint32_t bytesWritten = 0;
+    
+    // Send file size header so receiver knows what to expect
+    Serial.print(F("SIZE:"));
+    Serial.println(fileSize);
+    Serial.flush();
+    delay(10);
+    
+    // Use smaller buffer and proper flow control to prevent TX overflow
+    // At 115200 baud, 1 byte = ~87us, so 32 bytes = ~2.8ms
+    // Serial TX buffer is 64 bytes, so we need to wait for it to drain
+    char buffer[32];
     int bytesRead;
     int chunkCount = 0;
     bool aborted = false;
+    unsigned long lastProgressTime = millis();
     
     while ((bytesRead = file.read(buffer, sizeof(buffer) - 1)) > 0) {
         buffer[bytesRead] = '\0';
-        Serial.print(buffer);
-        delayMicroseconds(500);  // Brief delay to prevent TX buffer overflow without blocking
         
-        // Every 10 chunks (~640 bytes), check for abort command
-        if (++chunkCount % 10 == 0 && Serial.available() > 0) {
-            char cmd = Serial.read();
-            if (cmd == 'X' || cmd == 'x') {
-                aborted = true;
-                break;
+        // Wait for TX buffer to have space (critical for large files)
+        Serial.flush();  // Block until TX buffer is empty
+        Serial.print(buffer);
+        bytesWritten += bytesRead;
+        
+        // Small delay between chunks to allow receiver to process
+        delay(2);  // 2ms delay gives receiver time to process
+        
+        // Every 32 chunks (~1KB), do housekeeping
+        if (++chunkCount % 32 == 0) {
+            // Check for abort command
+            if (Serial.available() > 0) {
+                char cmd = Serial.read();
+                if (cmd == 'X' || cmd == 'x') {
+                    aborted = true;
+                    break;
+                }
             }
+            
+            // Send progress every 2 seconds for large files
+            if (millis() - lastProgressTime > 2000) {
+                // Don't send progress mid-file to avoid corrupting data
+                // Just update internal tracking
+                lastProgressTime = millis();
+            }
+            
+            // Yield to prevent watchdog timeout on very large files
+            delay(1);
         }
     }
     
     file.close();
+    
+    // Ensure all data is sent before OK
+    Serial.flush();
+    delay(10);
     
     if (aborted) {
         Serial.println(F("ABORTED"));
     } else {
         Serial.println(F("OK"));
     }
+    Serial.flush();
 }
 
 void DataLogger::dumpCurrentLog() {
