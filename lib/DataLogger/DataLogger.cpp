@@ -287,7 +287,10 @@ void DataLogger::listFiles() {
         if (!entry.isDir()) {
             if (entry.getName(name, sizeof(name))) {
                 if (count == 0) Serial.print(F("Files:"));
-                Serial.println(name);
+                // Format: filename|size (e.g., LOG_0001.CSV|12345)
+                Serial.print(name);
+                Serial.print('|');
+                Serial.println(entry.fileSize());
                 Serial.flush();
                 delay(10);  // Small delay between file listings
                 count++;
