@@ -74,9 +74,10 @@ class ArduinoConnection:
     def _identify_arduino(self, port_name):
         """Identify if Arduino is Master or Slave by actively probing."""
         try:
-            # Open without triggering reset - don't use dsrdtr
-            test_serial = serial.Serial(port=port_name, baudrate=115200, timeout=1.5,
-                                       rtscts=False, dsrdtr=False, xonxoff=False)
+            # Open with short timeout to avoid freezing
+            test_serial = serial.Serial(port=port_name, baudrate=115200, timeout=0.5,
+                                       rtscts=False, dsrdtr=False, xonxoff=False,
+                                       write_timeout=0.5)
             
             # Flush buffers
             test_serial.reset_input_buffer()
@@ -89,29 +90,20 @@ class ArduinoConnection:
             # Method 1: Send 'T' for status (master responds with "St:")
             test_serial.write(b"T\n")
             test_serial.flush()
-            time.sleep(0.4)
+            time.sleep(0.3)
             
             if test_serial.in_waiting > 0:
                 data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
             
-            # Method 2: Send 'T' for status (master responds with "St:X OK")
+            # Method 2: Just listen briefly
             if len(data.strip()) == 0:
-                test_serial.write(b"T\n")
-                test_serial.flush()
-                time.sleep(0.4)
-                
-                if test_serial.in_waiting > 0:
-                    data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
-            
-            # Method 3: Just listen (master might be streaming data if auto-started)
-            if len(data.strip()) == 0:
-                time.sleep(0.6)
+                time.sleep(0.3)
                 if test_serial.in_waiting > 0:
                     data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
             
             # Close and wait for port to free up
             test_serial.close()
-            time.sleep(0.2)
+            time.sleep(0.1)
             
             # Determine type based on response
             result = 'UNKNOWN'
@@ -901,6 +893,11 @@ def main():
     print("="*70 + "\n")
     
     root = tk.Tk()
+    # Force window to appear in front
+    root.lift()
+    root.attributes('-topmost', True)
+    root.after(100, lambda: root.attributes('-topmost', False))
+    root.focus_force()
     app = ArduinoActionsApp(root)
     root.mainloop()
 
