@@ -1,7 +1,7 @@
 # Upload Arduinos with automatic identification and validation
 # Supports selective upload when only one Arduino is connected
 param(
-    [string]$MasterPort = "COM6",
+    [string]$MasterPort = "COM3",
     [string]$SlavePort = "COM4"
 )
 

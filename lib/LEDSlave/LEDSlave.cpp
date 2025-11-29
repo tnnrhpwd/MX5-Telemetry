@@ -9,15 +9,21 @@
 // Slave Arduino listens on SoftwareSerial D2 at 9600 baud
 // ============================================================================
 
-// Bit-bang timing for 9600 baud (104 microseconds per bit)
-#define BIT_DELAY_US 104
+// Bit-bang timing for 9600 baud
+// 1,000,000 us / 9600 baud = 104.166... us per bit
+// Using direct port manipulation to reduce overhead and improve timing accuracy
+#define BIT_DELAY_US 102  // Slightly reduced to compensate for instruction overhead
+
+// Direct port manipulation for D6 (PORTD bit 6) - much faster than digitalWrite
+#define TX_HIGH()  (PORTD |= (1 << 6))
+#define TX_LOW()   (PORTD &= ~(1 << 6))
 
 LEDSlave::LEDSlave() : lastRPM(65535), lastSpeed(65535), initialized(false) {}
 
 void LEDSlave::begin() {
     // Configure D6 as output for bit-bang TX
     pinMode(SLAVE_TX_PIN, OUTPUT);
-    digitalWrite(SLAVE_TX_PIN, HIGH);  // Idle high (like UART)
+    TX_HIGH();  // Idle high (like UART)
     initialized = true;
     delay(100);
     clear();
@@ -28,17 +34,24 @@ void LEDSlave::sendByte(uint8_t byte) {
     noInterrupts();  // Disable interrupts for precise timing
     
     // Start bit
-    digitalWrite(SLAVE_TX_PIN, LOW);
+    TX_LOW();
     delayMicroseconds(BIT_DELAY_US);
     
-    // 8 data bits, LSB first
+    // 8 data bits, LSB first - using direct port manipulation
     for (uint8_t i = 0; i < 8; i++) {
-        digitalWrite(SLAVE_TX_PIN, (byte & (1 << i)) ? HIGH : LOW);
+        if (byte & (1 << i)) {
+            TX_HIGH();
+        } else {
+            TX_LOW();
+        }
         delayMicroseconds(BIT_DELAY_US);
     }
     
     // Stop bit
-    digitalWrite(SLAVE_TX_PIN, HIGH);
+    TX_HIGH();
+    delayMicroseconds(BIT_DELAY_US);
+    
+    // Extra stop bit time for reliability
     delayMicroseconds(BIT_DELAY_US);
     
     interrupts();  // Re-enable interrupts
@@ -52,8 +65,10 @@ void LEDSlave::sendCommand(const char* cmd) {
     Serial.println(cmd);
     
     // Send each character via bit-bang to Slave
+    // Add small delay between bytes for receiver to process
     while (*cmd) {
         sendByte(*cmd++);
+        delayMicroseconds(200);  // Inter-byte gap for SoftwareSerial buffer
     }
     sendByte('\n');  // End with newline
 }

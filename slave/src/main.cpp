@@ -64,6 +64,9 @@ uint8_t bufferIndex = 0;
 bool hapticActive = false;
 unsigned long hapticStartTime = 0;
 uint16_t hapticDuration = 0;
+unsigned long lastCommandTime = 0;          // Track when last command was received
+#define MASTER_TIMEOUT_MS 5000              // Enter error mode if no command for 5 seconds
+#define INITIAL_WAIT_MS 3000                // Wait for master after startup before showing error
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -431,7 +434,15 @@ void setup() {
     Serial.begin(115200);
     
     // Send identification immediately
-    Serial.println("LED Slave v2.2 (Haptic)");
+    Serial.println("LED Slave v2.2 (Haptic+Diag)");
+    Serial.print("RX Pin: D");
+    Serial.println(SERIAL_RX_PIN);
+    
+    // Quick diagnostic: read pin state before SoftwareSerial takes over
+    pinMode(SERIAL_RX_PIN, INPUT_PULLUP);
+    int pinState = digitalRead(SERIAL_RX_PIN);
+    Serial.print("D2 initial state (should be HIGH): ");
+    Serial.println(pinState == HIGH ? "HIGH (OK)" : "LOW (Check wiring!)");
     
     // Check supply voltage before enabling haptic
     float vcc = readVcc();
@@ -544,11 +555,17 @@ void setup() {
     strip.clear();
     strip.show();
     
-    // Start in error mode to show red animation until master connects
-    errorMode = true;
+    // Start in NON-error mode - wait for master to connect
+    // Master will send commands after its boot delay completes
+    errorMode = false;
+    
+    // Record startup time for initial wait period
+    lastCommandTime = millis();
     
     bufferIndex = 0;
     inputBuffer[0] = '\0';
+    
+    Serial.println("Waiting for master connection...");
 }
 
 // ============================================================================
@@ -556,40 +573,59 @@ void setup() {
 // ============================================================================
 
 void loop() {
-    // Read serial commands from master
-    static unsigned long lastByteTime = 0;
-    static bool dataReceived = false;
+    unsigned long currentTime = millis();
+    static unsigned long totalBytesReceived = 0;  // Track total bytes for diagnostics
     
-    while (slaveSerial.available() > 0) {
-        char c = slaveSerial.read();
-        dataReceived = true;  // Flag that we got data
-        
-        // Debug: print every byte received
-        Serial.print("RX: ");
-        Serial.print((int)c);
-        Serial.print(" '");
-        if (c >= 32 && c <= 126) Serial.print(c);
-        Serial.println("'");
-        
-        if (c == '\n' || c == '\r') {
-            if (bufferIndex > 0) {
-                inputBuffer[bufferIndex] = '\0';
-                Serial.print("Processing: ");
-                Serial.println(inputBuffer);
-                processCommand(inputBuffer);
-                bufferIndex = 0;
+    // Read serial commands from master - check multiple times per loop for responsiveness
+    for (int i = 0; i < 3; i++) {
+        while (slaveSerial.available() > 0) {
+            char c = slaveSerial.read();
+            lastCommandTime = currentTime;  // Update last command time on ANY data
+            totalBytesReceived++;  // Count bytes for diagnostics
+            
+            // Debug: print every byte received
+            Serial.print("RX: ");
+            Serial.print((int)c);
+            Serial.print(" '");
+            if (c >= 32 && c <= 126) Serial.print(c);
+            Serial.println("'");
+            
+            if (c == '\n' || c == '\r') {
+                if (bufferIndex > 0) {
+                    inputBuffer[bufferIndex] = '\0';
+                    Serial.print("Processing: ");
+                    Serial.println(inputBuffer);
+                    processCommand(inputBuffer);
+                    bufferIndex = 0;
+                }
+            } else if (c >= 32 && c <= 126 && bufferIndex < 15) {
+                inputBuffer[bufferIndex++] = c;
             }
-        } else if (c >= 32 && c <= 126 && bufferIndex < 15) {
-            inputBuffer[bufferIndex++] = c;
+        }
+        delayMicroseconds(500);  // Brief pause between checks
+    }
+    
+    // Timeout check: if no data received from master for MASTER_TIMEOUT_MS, enter error mode
+    // But only after the initial wait period has passed
+    if (!errorMode && (currentTime - lastCommandTime) > MASTER_TIMEOUT_MS) {
+        // Only show error after initial startup wait
+        if (currentTime > INITIAL_WAIT_MS) {
+            Serial.println("Master timeout - entering error mode");
+            errorMode = true;
+            rainbowMode = false;
         }
     }
     
-    // Visual debug: Flash green LED[0] when data is received
-    if (dataReceived) {
-        strip.setPixelColor(0, strip.Color(0, 255, 0));  // Green flash on first LED
-        strip.show();
-        delay(50);
-        dataReceived = false;
+    // Periodic diagnostic: print status every 5 seconds when in error mode
+    static unsigned long lastDiagTime = 0;
+    if (currentTime - lastDiagTime >= 5000) {
+        lastDiagTime = currentTime;
+        Serial.print("Status: errorMode=");
+        Serial.print(errorMode ? "YES" : "NO");
+        Serial.print(" bytesRx=");
+        Serial.print(totalBytesReceived);
+        Serial.print(" D2=");
+        Serial.println(digitalRead(SERIAL_RX_PIN) ? "HIGH" : "LOW");
     }
     
     // Update LED display continuously
@@ -598,6 +634,6 @@ void loop() {
     // Update haptic motor state
     updateHaptic();
     
-    // Small delay to prevent overloading
-    delay(10);
+    // Minimal delay - SoftwareSerial has its own buffering
+    delayMicroseconds(500);
 }
