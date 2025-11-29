@@ -74,9 +74,10 @@ class ArduinoConnection:
     def _identify_arduino(self, port_name):
         """Identify if Arduino is Master or Slave by actively probing."""
         try:
-            # Open without triggering reset - don't use dsrdtr
-            test_serial = serial.Serial(port=port_name, baudrate=115200, timeout=1.5,
-                                       rtscts=False, dsrdtr=False, xonxoff=False)
+            # Open with short timeout to avoid freezing
+            test_serial = serial.Serial(port=port_name, baudrate=115200, timeout=0.5,
+                                       rtscts=False, dsrdtr=False, xonxoff=False,
+                                       write_timeout=0.5)
             
             # Flush buffers
             test_serial.reset_input_buffer()
@@ -89,29 +90,20 @@ class ArduinoConnection:
             # Method 1: Send 'T' for status (master responds with "St:")
             test_serial.write(b"T\n")
             test_serial.flush()
-            time.sleep(0.4)
+            time.sleep(0.3)
             
             if test_serial.in_waiting > 0:
                 data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
             
-            # Method 2: Send 'T' for status (master responds with "St:X OK")
+            # Method 2: Just listen briefly
             if len(data.strip()) == 0:
-                test_serial.write(b"T\n")
-                test_serial.flush()
-                time.sleep(0.4)
-                
-                if test_serial.in_waiting > 0:
-                    data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
-            
-            # Method 3: Just listen (master might be streaming data if auto-started)
-            if len(data.strip()) == 0:
-                time.sleep(0.6)
+                time.sleep(0.3)
                 if test_serial.in_waiting > 0:
                     data += test_serial.read(test_serial.in_waiting).decode('utf-8', errors='ignore')
             
             # Close and wait for port to free up
             test_serial.close()
-            time.sleep(0.2)
+            time.sleep(0.1)
             
             # Determine type based on response
             result = 'UNKNOWN'
@@ -718,27 +710,51 @@ class ArduinoActionsApp:
             else:
                 # Files: prefix with first filename on same line
                 self.file_listbox.delete(0, tk.END)
+                # Initialize file buffer for sorting
+                self.file_buffer = []
                 # Extract first file info from "Files:FILENAME|SIZE"
                 first_file = data.split("Files:")[1].strip()
                 if first_file:
-                    display_name = self._format_file_entry(first_file)
-                    self.file_listbox.insert(tk.END, display_name)
+                    self.file_buffer.append(first_file)
                 self.log_console(data)
                 # Mark that we're collecting file list
                 self.collecting_files = True
         elif hasattr(self, 'collecting_files') and self.collecting_files:
             # Receiving file list entries
-            if data == "OK" or data.startswith("St:"):
-                # End of file list
+            data_stripped = data.strip()
+            if data_stripped == "OK" or data_stripped.startswith("St:"):
+                # End of file list - sort and display files (most recent first)
                 self.collecting_files = False
-                if data.startswith("St:"):
-                    self._process_status(data)
+                if hasattr(self, 'file_buffer') and self.file_buffer:
+                    # Sort files by log number descending (most recent first)
+                    def get_log_num(entry):
+                        # Extract log number from "LOG_XXXX.CSV|size" or just filename
+                        name = entry.split('|')[0] if '|' in entry else entry
+                        if name.startswith('LOG_') and len(name) >= 8:
+                            try:
+                                return int(name[4:8])
+                            except ValueError:
+                                return -1
+                        return -1
+                    
+                    self.file_buffer.sort(key=get_log_num, reverse=True)
+                    
+                    # Display sorted files in listbox
+                    for file_entry in self.file_buffer:
+                        display_name = self._format_file_entry(file_entry)
+                        self.file_listbox.insert(tk.END, display_name)
+                    
+                    self.log_console(f"📁 Loaded {len(self.file_buffer)} files (sorted by newest)")
+                    self.file_buffer = []
+                
+                if data_stripped.startswith("St:"):
+                    self._process_status(data_stripped)
                 else:
                     self.log_console(data)
             elif '|' in data or data.endswith(".CSV") or data.endswith(".TXT"):
-                # This is a filename (with optional size: "filename|size")
-                display_name = self._format_file_entry(data)
-                self.file_listbox.insert(tk.END, display_name)
+                # This is a filename (with optional size: "filename|size") - buffer it
+                if hasattr(self, 'file_buffer'):
+                    self.file_buffer.append(data.strip())
                 self.log_console(data)
             else:
                 # Unknown data during file collection
@@ -877,6 +893,11 @@ def main():
     print("="*70 + "\n")
     
     root = tk.Tk()
+    # Force window to appear in front
+    root.lift()
+    root.attributes('-topmost', True)
+    root.after(100, lambda: root.attributes('-topmost', False))
+    root.focus_force()
     app = ArduinoActionsApp(root)
     root.mainloop()
 

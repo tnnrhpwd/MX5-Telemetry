@@ -287,26 +287,26 @@ void DataLogger::listFiles() {
         if (!entry.isDir()) {
             if (entry.getName(name, sizeof(name))) {
                 if (count == 0) Serial.print(F("Files:"));
-                // Format: filename|size (e.g., LOG_0001.CSV|12345)
                 Serial.print(name);
                 Serial.print('|');
                 Serial.println(entry.fileSize());
                 Serial.flush();
-                delay(10);  // Small delay between file listings
+                delay(25);  // Increased delay to prevent serial corruption
                 count++;
             }
         }
         entry.close();
-        if (count >= 50) break;
+        if (count >= 100) break;
     }
     
     if (count == 0) {
         Serial.println(F("Files:0"));
-        Serial.flush();
     }
     
     root.close();
-    delay(50);  // Delay after SD operations
+    delay(50);
+    Serial.println(F("OK"));
+    Serial.flush();
 }
 
 void DataLogger::getSDCardInfo(uint32_t& totalKB, uint32_t& usedKB, uint8_t& fileCount) {

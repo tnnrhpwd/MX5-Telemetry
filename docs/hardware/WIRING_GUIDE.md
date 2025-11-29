@@ -199,23 +199,67 @@ WWZMDIB MicroSD Reader          Arduino Nano
 3. **Insert card**: Push until it clicks, label facing up
 4. **Test detection**: Card should be detected on Arduino startup
 
-## 💡 WS2812B LED Strip
+## 💡 WS2812B LED Strip (Slave Arduino)
+
+### Dual Arduino Architecture
+
+The LED strip is controlled by a **separate Slave Arduino** to avoid interrupt conflicts with SD card logging. See [MASTER_SLAVE_ARCHITECTURE.md](MASTER_SLAVE_ARCHITECTURE.md) for details.
+
+### Master to Slave Communication
+
+| Master Pin | Slave Pin | Description |
+|------------|-----------|-------------|
+| D6         | D2        | Serial data (9600 baud bit-bang) |
+| GND        | GND       | Common ground (REQUIRED) |
+
+```
+Master Arduino (Logger)         Slave Arduino (LED Controller)
+┌──────────────────┐            ┌──────────────────┐
+│                  │            │                  │
+│  D6 (TX) ────────┼────────────┤ D2 (RX)          │
+│                  │            │                  │
+│  GND ────────────┼────────────┤ GND              │
+│                  │            │                  │
+└──────────────────┘            └──────────────────┘
+```
+
+**IMPORTANT:**
+- Master uses **D6** (NOT D1/TX which is USB Serial)
+- Slave uses **D2** (SoftwareSerial RX)
+- Communication is **9600 baud** (bit-bang on Master, SoftwareSerial on Slave)
+- **Common ground is essential** - without it, serial communication will fail!
 
 ### Power Considerations
 
 LED strips draw significant current:
 - Each LED: ~60mA at full white brightness
-- 30 LEDs: up to 1.8A
+- 20 LEDs: up to 1.2A
 
 **Critical**: Power the LED strip directly from the buck converter, NOT from Arduino's 5V pin!
+
+### Slave Arduino Wiring
+
+| Component | Slave Pin | Notes |
+|-----------|-----------|-------|
+| LED Strip Data | D5 | 470Ω resistor recommended |
+| LED Strip 5V | Buck Converter OUT+ | Use thick wire (18-20 AWG) |
+| LED Strip GND | Common GND | Shared with Arduino GND |
+| Haptic Motor + | D3 | Optional vibration feedback |
+| Haptic Motor - | GND | |
+| Master TX | D2 | SoftwareSerial RX |
+| Master GND | GND | Common ground |
 
 ### Wiring Diagram
 
 ```
 Buck Converter OUT+ ────────────► LED Strip 5V/VCC
 Buck Converter OUT- ────────────► LED Strip GND
-Arduino D6 ──[470Ω]──────────────► LED Strip Data In
+Slave Arduino D5 ──[470Ω]───────► LED Strip Data In
                      (resistor optional but recommended)
+
+Master-Slave Connection:
+Master D6 ──────────────────────► Slave D2
+Master GND ─────────────────────► Slave GND
 
 LED Strip Power:
     Add 1000µF capacitor across 5V and GND near strip
@@ -396,10 +440,19 @@ Arduino D5 ───┬───┤ Gate         │
 
 ### LED Strip Issues
 
-- Check data pin connection (D6)
-- Verify LED strip receives adequate power (thick wires)
-- Ensure common ground between Arduino and LED strip
+- Check data pin connection (Slave D5)
+- Verify LED strip receives adequate power (thick wires from buck converter)
+- Ensure common ground between Slave Arduino and LED strip
 - Try adding 470Ω resistor to data line
+
+### Master-Slave Communication Issues
+
+- Check wire from **Master D6** to **Slave D2**
+- Verify **common ground** between both Arduinos
+- Confirm both use **9600 baud** (Master bit-bang, Slave SoftwareSerial)
+- Master logs should show `LED->Slave: RPM:0`, `LED->Slave: SPD:0`, etc.
+- If Slave shows red error animation, it's not receiving valid commands
+- Connect Slave to USB Serial Monitor (115200) to see `RX:` debug output
 
 ### GPS Not Working
 
