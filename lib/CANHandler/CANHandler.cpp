@@ -8,6 +8,7 @@ CANHandler::CANHandler(uint8_t csPin)
     : can(csPin), 
       initialized(false), 
       errorCount(0),
+      lastDataUpdate(0),
       currentRPM(0),
       vehicleSpeed(0),
       throttlePosition(0),
@@ -60,6 +61,9 @@ void CANHandler::update() {
         
         // Reset error counter on successful read (robust error handling)
         errorCount = 0;
+        
+        // Update timestamp for data freshness tracking
+        lastDataUpdate = millis();
         
         // Parse based on message type
         parseMazdaCANFrame(rxId, len, rxBuf);

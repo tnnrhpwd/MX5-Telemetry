@@ -1,6 +1,7 @@
 #include "CommandHandler.h"
 #include "DataLogger.h"
 #include "GPSHandler.h"
+#include "LEDSlave.h"
 #include <SdFat.h>
 
 // ============================================================================
@@ -8,7 +9,7 @@
 // ============================================================================
 
 CommandHandler::CommandHandler()
-    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr) {
+    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr), dataReceived(false) {
     inputBuffer[0] = '\0';
 }
 
@@ -16,6 +17,7 @@ void CommandHandler::begin() {
     currentState = STATE_IDLE;
     bufferIndex = 0;
     inputBuffer[0] = '\0';
+    dataReceived = false;
 }
 
 void CommandHandler::update() {
@@ -27,6 +29,9 @@ void CommandHandler::update() {
     // Read all available characters rapidly to prevent buffer overflow
     int charsRead = 0;
     while (Serial.available() > 0 && charsRead < 64) {  // Limit chars per update
+        // Mark that we've received USB data (prevents auto-start)
+        dataReceived = true;
+        
         char c = Serial.read();
         charsRead++;
         
@@ -87,10 +92,7 @@ void CommandHandler::processCommand(const char* cmd) {
     if (cmd[1] == '\0' || cmd[1] == '\r' || cmd[1] == '\n') {
         switch (firstChar) {
             case 'S': handleStart(); return;      // S = START
-            case 'P': handlePause(); return;       // P = PAUSE
             case 'X': handleStop(); return;        // X = STOP (eXit)
-            case 'L': handleLive(); return;        // L = LIVE
-            case '?': handleHelp(); return;        // ? = HELP
             case 'I': handleList(); return;        // I = LIST (lIst)
             case 'T': handleStatus(); return;      // T = STATUS (sTatus)
         }
@@ -107,10 +109,7 @@ void CommandHandler::processCommand(const char* cmd) {
     
     // Short commands only
     if (firstChar == 'S') handleStart();
-    else if (firstChar == 'P') handlePause();
-    else if (firstChar == 'L') handleLive();
     else if (firstChar == 'X') handleStop();
-    else if (firstChar == '?') handleHelp();
     else if (firstChar == 'T') handleStatus();
     else if (firstChar == 'I') handleList();
     else if (firstChar == 'D') handleDump(cmd);
@@ -121,7 +120,7 @@ void CommandHandler::processCommand(const char* cmd) {
 }
 
 void CommandHandler::handleStart() {
-    if (currentState == STATE_IDLE || currentState == STATE_PAUSED || currentState == STATE_DUMPING) {
+    if (currentState == STATE_IDLE || currentState == STATE_DUMPING) {
         setState(STATE_RUNNING);
         
         // Enable GPS if feature is enabled in config
@@ -152,38 +151,6 @@ void CommandHandler::handleStart() {
     }
 }
 
-void CommandHandler::handlePause() {
-    if (currentState == STATE_RUNNING || currentState == STATE_LIVE_MONITOR) {
-        // Disable GPS to restore clean USB communication
-        #if ENABLE_GPS
-        if (gpsHandler) {
-            gpsHandler->disable();
-        }
-        #endif
-        
-        setState(STATE_PAUSED);
-        Serial.println(F("OK"));
-    } else {
-        Serial.println(F("E:S"));
-    }
-}
-
-void CommandHandler::handleLive() {
-    if (currentState == STATE_PAUSED || currentState == STATE_IDLE || currentState == STATE_RUNNING) {
-        // Disable GPS for clean USB streaming
-        #if ENABLE_GPS
-        if (gpsHandler) {
-            gpsHandler->disable();
-        }
-        #endif
-        
-        setState(STATE_LIVE_MONITOR);
-        Serial.println(F("LIVE"));
-    } else {
-        Serial.println(F("E:S"));
-    }
-}
-
 void CommandHandler::handleStop() {
     // Disable GPS to prevent serial interference
     #if ENABLE_GPS
@@ -192,7 +159,7 @@ void CommandHandler::handleStop() {
     }
     #endif
     
-    setState(STATE_PAUSED);
+    setState(STATE_IDLE);
     
     // Signal stop request - cleanup happens in logData
     if (dataLogger) {
@@ -207,48 +174,28 @@ void CommandHandler::handleStop() {
     Serial.flush();
 }
 
-void CommandHandler::handleHelp() {
-    Serial.println(F("S P X L D I T ?"));
-}
-
 void CommandHandler::handleStatus() {
-    // Full status with all system components
+    // Compact status with all system components
     Serial.print(F("St:"));
     if (currentState == STATE_RUNNING) Serial.print('R');
-    else if (currentState == STATE_PAUSED) Serial.print('P');
-    else if (currentState == STATE_LIVE_MONITOR) Serial.print('L');
     else if (currentState == STATE_DUMPING) Serial.print('D');
     else Serial.print('I');
     
-    // Show SD card status
     #if ENABLE_LOGGING
     Serial.print(F(" SD:"));
-    if (dataLogger && dataLogger->isInitialized()) {
-        Serial.print('Y');
-    } else {
-        Serial.print('N');
-    }
-    #else
-    Serial.print(F(" SD:Off"));
+    Serial.print((dataLogger && dataLogger->isInitialized()) ? 'Y' : 'N');
     #endif
     
-    // Show GPS status
+    // Show GPS status with satellite count (key diagnostic info)
     #if ENABLE_GPS
     Serial.print(F(" GPS:"));
-    if (gpsHandler && gpsHandler->isEnabled()) {
-        Serial.print('Y');
+    if (gpsHandler) {
+        Serial.print(gpsHandler->isEnabled() ? 'Y' : 'N');
+        Serial.print(F(" S"));
+        Serial.print(gpsHandler->getSatellites());
     } else {
-        Serial.print('N');
+        Serial.print('X');
     }
-    #else
-    Serial.print(F(" GPS:Off"));
-    #endif
-    
-    // Show LED status
-    #if ENABLE_LED_STRIP
-    Serial.print(F(" LED:Y"));
-    #else
-    Serial.print(F(" LED:Off"));
     #endif
     
     Serial.println(F(" OK"));

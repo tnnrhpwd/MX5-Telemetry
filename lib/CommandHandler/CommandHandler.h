@@ -14,8 +14,6 @@
 enum SystemState {
     STATE_IDLE,          // Initial state, waiting for START command
     STATE_RUNNING,       // Normal operation: logging + LED display active
-    STATE_PAUSED,        // Logging and LED paused, awaiting commands
-    STATE_LIVE_MONITOR,  // Real-time data streaming to laptop (no SD logging)
     STATE_DUMPING        // Transferring log files to laptop
 };
 
@@ -40,11 +38,10 @@ public:
     // State management
     SystemState getState() const { return currentState; }
     bool isRunning() const { return currentState == STATE_RUNNING; }
-    bool isPaused() const { return currentState == STATE_PAUSED; }
-    bool isLiveMonitoring() const { return currentState == STATE_LIVE_MONITOR; }
     bool isDumping() const { return currentState == STATE_DUMPING; }
     bool shouldLog() const { return currentState == STATE_RUNNING; }
-    bool shouldUpdateLEDs() const { return currentState == STATE_RUNNING || currentState == STATE_LIVE_MONITOR; }
+    bool shouldUpdateLEDs() const { return currentState == STATE_RUNNING; }
+    bool hasReceivedData() const { return dataReceived; }  // Check if any USB data received
     
     // State transitions
     void setState(SystemState newState) { currentState = newState; }
@@ -58,14 +55,11 @@ private:
     uint8_t bufferIndex;
     DataLogger* dataLogger;
     GPSHandler* gpsHandler;
+    bool dataReceived;  // Track if any USB data has been received
     
     // Command processors
     void processCommand(const char* command);
-    void handlePause();
-    void handleResume();
-    void handleLive();
     void handleStop();
-    void handleHelp();
     void handleStatus();
     void handleList();
     void handleDump(const char* command);

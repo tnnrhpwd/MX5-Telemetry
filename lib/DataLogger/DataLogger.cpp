@@ -12,13 +12,16 @@ DataLogger::DataLogger(uint8_t cs)
 }
 
 bool DataLogger::begin() {
-    // Try to initialize SD card with retries (quick attempts to minimize boot delay)
+    // Wait for SD card to stabilize after power-on (critical for reliable detection)
+    delay(200);
+    
+    // Try to initialize SD card with retries
     for (int attempt = 0; attempt < 3; attempt++) {
         if (sd.begin(csPin, SD_SCK_MHZ(4))) {
             initialized = true;
             return true;
         }
-        delay(50);  // Short delay before retry
+        delay(100);  // Delay before retry (increased from 50ms)
     }
     // Failed after retries
     initialized = false;
@@ -44,9 +47,13 @@ void DataLogger::writeMetadataHeader(uint32_t gpsDate, uint32_t gpsTime) {
 }
 
 void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
+    // Try to reinitialize if SD card wasn't ready at boot
     if (!initialized) {
-        Serial.println(F("DEBUG: SD not initialized"));
-        return;
+        if (sd.begin(csPin, SD_SCK_MHZ(4))) {
+            initialized = true;
+        } else {
+            return;
+        }
     }
     
     delay(50);  // Delay before SD operations
@@ -59,68 +66,59 @@ void DataLogger::createLogFile(uint32_t gpsDate, uint32_t gpsTime) {
     #if GPS_FILENAMES_ENABLED
         // Use GPS-based filename if valid date
         if (gpsDate > 20000000 && gpsDate < 21000000) {
-            // Format: MMDD_HHMM.CSV (e.g., 1125_1530.CSV for Nov 25, 3:30pm)
             sprintf(logFileName, "%04lu_%04lu.CSV", gpsDate % 10000, (gpsTime / 10000) % 10000);
             isLogging = true;
             
-            Serial.print(F("DEBUG: Creating GPS file: "));
-            Serial.println(logFileName);
-            
             if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
-                Serial.println(F("DEBUG: File opened"));
-                
-                // Write header first (simpler, more reliable)
-                if (!logFile.write("SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status\n")) {
-                    Serial.println(F("DEBUG: Header write FAILED"));
-                } else {
-                    Serial.println(F("DEBUG: Header written"));
-                }
-                
+                logFile.write("SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status\n");
                 logFile.close();
-                Serial.println(F("DEBUG: File created OK"));
-                delay(50);  // Delay after SD operations
+                delay(50);
                 return;
             } else {
-                Serial.println(F("DEBUG: File open FAILED"));
                 logFileName[0] = '\0';
                 isLogging = false;
                 errorCount++;
-                delay(50);  // Delay after SD operations
+                delay(50);
                 return;
             }
         }
     #endif
     
-    // Fallback: counter-based filename
-    fileCounter = (millis() / 1000 + fileCounter) % 10000;
-    sprintf(logFileName, "LOG_%04u.CSV", fileCounter);
-    fileCounter++;
+    // Sequential filename: Find highest existing LOG_XXXX.CSV and use next number
+    uint16_t highestNum = 0;
+    FatFile root;
+    FatFile entry;
+    char name[13];
     
+    if (root.open(&sd, "/", O_RDONLY)) {
+        while (entry.openNext(&root, O_RDONLY)) {
+            if (!entry.isDir() && entry.getName(name, sizeof(name))) {
+                if (strncmp(name, "LOG_", 4) == 0 && strstr(name, ".CSV")) {
+                    uint16_t num = atoi(name + 4);
+                    if (num > highestNum) {
+                        highestNum = num;
+                    }
+                }
+            }
+            entry.close();
+        }
+        root.close();
+    }
+    
+    fileCounter = highestNum + 1;
+    sprintf(logFileName, "LOG_%04u.CSV", fileCounter);
     isLogging = true;
     
-    Serial.print(F("DEBUG: Creating counter file: "));
-    Serial.println(logFileName);
-    
     if (logFile.open(&sd, logFileName, O_CREAT | O_WRITE | O_TRUNC)) {
-        Serial.println(F("DEBUG: File opened"));
-        
-        // Write header first (simpler, more reliable)
-        if (!logFile.write("SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status\n")) {
-            Serial.println(F("DEBUG: Header write FAILED"));
-        } else {
-            Serial.println(F("DEBUG: Header written"));
-        }
-        
+        logFile.write("SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status\n");
         logFile.close();
-        Serial.println(F("DEBUG: File created OK"));
     } else {
-        Serial.println(F("DEBUG: File open FAILED"));
         logFileName[0] = '\0';
         isLogging = false;
         errorCount++;
     }
     
-    delay(50);  // Delay after SD operations
+    delay(50);
 }
 
 void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHandler& can,
@@ -140,53 +138,99 @@ void DataLogger::logData(uint32_t timestamp, const GPSHandler& gps, const CANHan
     
     // Build entire line in buffer before writing (more reliable)
     // Format: SysTime_ms,Date,GPSTime,GPS_Fix,Lat,Lon,Speed_GPS,Alt,Sat,HDOP,Heading,RPM,Speed_CAN,Throttle,Load,Coolant,Timing,CAN_Status
-    char buf[120];
-    char lat[12], lon[12], spdGPS[8], alt[8], heading[8];
+    char buf[80];
     
-    // Convert floats to strings (use -1 for invalid data)
-    if (gps.isValid()) {
-        dtostrf(gps.getLatitude(), 1, 6, lat);
-        dtostrf(gps.getLongitude(), 1, 6, lon);
-        dtostrf(gps.getSpeed(), 1, 2, spdGPS);
-        dtostrf(gps.getAltitude(), 1, 1, alt);
-        dtostrf(gps.getCourse(), 1, 1, heading);
+    // GPS data tracking - separate from position validity
+    uint8_t sats = gps.getSatellites();
+    uint8_t fixType = gps.getFixType();
+    uint32_t gpsDate = gps.getDate();
+    uint32_t gpsTime = gps.getTime();
+    
+    // Sanitize satellite count - reject garbage values
+    if (sats > 50) sats = 0;
+    
+    // Check if we have valid position data
+    bool hasValidLocation = gps.isValid() && sats > 0 && fixType > 0 && fixType < 10;
+    
+    // Check if we have valid time/date (even without position fix)
+    bool hasValidTime = (gpsDate >= 20200101 && gpsDate <= 21001231) && gpsTime > 0;
+    
+    // Determine CAN status: 1=OK, E=Errors, X=No Init, -=Not connected
+    char canStatus;
+    if (!can.isInitialized()) {
+        canStatus = 'X';  // CAN chip failed to initialize
+    } else if (!can.hasRecentData()) {
+        canStatus = '-';  // Initialized but no recent data (not connected to vehicle)
+    } else if (canErrorCount > 0) {
+        canStatus = 'E';  // Receiving data but with errors
     } else {
-        strcpy(lat, "0");
-        strcpy(lon, "0");
-        strcpy(spdGPS, "-1");
-        strcpy(alt, "-1");
-        strcpy(heading, "-1");
+        canStatus = '1';  // OK - receiving clean data from vehicle
     }
     
-    // Determine CAN status: 0=OK, 1=Errors, 2=No Init
-    uint8_t canStatus = can.isInitialized() ? (canErrorCount > 0 ? 1 : 0) : 2;
+    // CAN data: prepare strings with dash for unavailable/stale data
+    bool canDataValid = can.isInitialized() && can.hasRecentData();
+    char rpmStr[8], speedStr[8], throttleStr[8], loadStr[8], coolantStr[8], timingStr[8];
     
-    // GPS data: use -1 for HDOP when invalid
-    uint16_t hdop = gps.getHDOP();
-    int16_t hdopValue = (hdop == 9999) ? -1 : hdop;
+    // CAN data strings
+    if (canDataValid) {
+        sprintf(rpmStr, "%d", can.getRPM());
+        sprintf(speedStr, "%d", can.getSpeed());
+        sprintf(throttleStr, "%d", can.getThrottle());
+        sprintf(loadStr, "%d", can.getCalculatedLoad());
+        sprintf(coolantStr, "%d", can.getCoolantTemp());
+        sprintf(timingStr, "%d", can.getTimingAdvance());
+    } else {
+        strcpy(rpmStr, "-");
+        strcpy(speedStr, "-");
+        strcpy(throttleStr, "-");
+        strcpy(loadStr, "-");
+        strcpy(coolantStr, "-");
+        strcpy(timingStr, "-");
+    }
     
-    // CAN data: use -1 for unavailable data
-    int16_t rpm = can.isInitialized() ? can.getRPM() : -1;
-    int16_t speedCAN = can.isInitialized() ? can.getSpeed() : -1;
-    int16_t throttle = can.isInitialized() ? can.getThrottle() : -1;
-    int16_t load = can.isInitialized() ? can.getCalculatedLoad() : -1;
-    int16_t coolant = can.isInitialized() ? can.getCoolantTemp() : -99;
-    int16_t timing = can.isInitialized() ? can.getTimingAdvance() : -99;
-    
-    // Write line (split into multiple writes to avoid buffer overflow)
-    // Part 1: System time, date, GPS time, fix, position
-    sprintf(buf, "%lu,%lu,%lu,%u,%s,%s,", 
-            timestamp, gps.getDate(), gps.getTime(), gps.getFixType(), lat, lon);
+    // Part 1: System time, date, GPS time, fix type
+    // Log GPS date/time even without full position fix (aids debugging)
+    if (hasValidLocation) {
+        sprintf(buf, "%lu,%lu,%lu,%u,", timestamp, gpsDate, gpsTime, fixType);
+    } else if (hasValidTime) {
+        // We have time but no position - still log date/time for debugging
+        sprintf(buf, "%lu,%lu,%lu,0,", timestamp, gpsDate, gpsTime);
+    } else {
+        sprintf(buf, "%lu,-,-,0,", timestamp);
+    }
     logFile.write(buf);
     
-    // Part 2: GPS speed, altitude, satellites, HDOP, heading
-    sprintf(buf, "%s,%s,%u,%d,%s,", 
-            spdGPS, alt, gps.getSatellites(), hdopValue, heading);
+    // Part 2: Position (lat, lon) - use dtostrf for reliable float formatting
+    if (hasValidLocation) {
+        char lat[12], lon[12];
+        dtostrf(gps.getLatitude(), 1, 6, lat);
+        dtostrf(gps.getLongitude(), 1, 6, lon);
+        sprintf(buf, "%s,%s,", lat, lon);
+    } else {
+        strcpy(buf, "-,-,");
+    }
     logFile.write(buf);
     
-    // Part 3: CAN data (RPM, speed, throttle, load, coolant, timing) and status
-    sprintf(buf, "%d,%d,%d,%d,%d,%d,%u\n", 
-            rpm, speedCAN, throttle, load, coolant, timing, canStatus);
+    // Part 3: Speed, Alt, Sat, HDOP, Heading - use dtostrf for floats
+    if (hasValidLocation) {
+        char spd[8], alt[10], hdg[8];
+        dtostrf(gps.getSpeed(), 1, 1, spd);
+        dtostrf(gps.getAltitude(), 1, 1, alt);
+        dtostrf(gps.getCourse(), 1, 1, hdg);
+        uint16_t hdop = gps.getHDOP();
+        if (hdop == 9999 || hdop > 5000) {
+            sprintf(buf, "%s,%s,%u,-,%s,", spd, alt, sats, hdg);
+        } else {
+            sprintf(buf, "%s,%s,%u,%u,%s,", spd, alt, sats, hdop, hdg);
+        }
+    } else {
+        sprintf(buf, "-,-,%u,-,-,", sats);
+    }
+    logFile.write(buf);
+    
+    // Part 4: CAN data (RPM, speed, throttle, load, coolant, timing) and status
+    sprintf(buf, "%s,%s,%s,%s,%s,%s,%c\n", 
+            rpmStr, speedStr, throttleStr, loadStr, coolantStr, timingStr, canStatus);
     logFile.write(buf);
     
     // Close file and update counters
@@ -243,7 +287,10 @@ void DataLogger::listFiles() {
         if (!entry.isDir()) {
             if (entry.getName(name, sizeof(name))) {
                 if (count == 0) Serial.print(F("Files:"));
-                Serial.println(name);
+                // Format: filename|size (e.g., LOG_0001.CSV|12345)
+                Serial.print(name);
+                Serial.print('|');
+                Serial.println(entry.fileSize());
                 Serial.flush();
                 delay(10);  // Small delay between file listings
                 count++;
@@ -309,16 +356,71 @@ void DataLogger::dumpFile(const char* filename) {
         return;
     }
     
-    // Read and print file contents
-    char buffer[64];
+    // Get file size for progress tracking
+    uint32_t fileSize = file.fileSize();
+    uint32_t bytesWritten = 0;
+    
+    // Send file size header so receiver knows what to expect
+    Serial.print(F("SIZE:"));
+    Serial.println(fileSize);
+    Serial.flush();
+    delay(10);
+    
+    // Use smaller buffer and proper flow control to prevent TX overflow
+    // At 115200 baud, 1 byte = ~87us, so 32 bytes = ~2.8ms
+    // Serial TX buffer is 64 bytes, so we need to wait for it to drain
+    char buffer[32];
     int bytesRead;
+    int chunkCount = 0;
+    bool aborted = false;
+    unsigned long lastProgressTime = millis();
+    
     while ((bytesRead = file.read(buffer, sizeof(buffer) - 1)) > 0) {
         buffer[bytesRead] = '\0';
+        
+        // Wait for TX buffer to have space (critical for large files)
+        Serial.flush();  // Block until TX buffer is empty
         Serial.print(buffer);
+        bytesWritten += bytesRead;
+        
+        // Small delay between chunks to allow receiver to process
+        delay(2);  // 2ms delay gives receiver time to process
+        
+        // Every 32 chunks (~1KB), do housekeeping
+        if (++chunkCount % 32 == 0) {
+            // Check for abort command
+            if (Serial.available() > 0) {
+                char cmd = Serial.read();
+                if (cmd == 'X' || cmd == 'x') {
+                    aborted = true;
+                    break;
+                }
+            }
+            
+            // Send progress every 2 seconds for large files
+            if (millis() - lastProgressTime > 2000) {
+                // Don't send progress mid-file to avoid corrupting data
+                // Just update internal tracking
+                lastProgressTime = millis();
+            }
+            
+            // Yield to prevent watchdog timeout on very large files
+            delay(1);
+        }
     }
     
     file.close();
-    Serial.println(F("OK"));
+    
+    // Ensure all data is sent before OK
+    Serial.flush();
+    delay(10);
+    
+    if (aborted) {
+        Serial.println(F("ABORTED"));
+    } else {
+        Serial.println(F("OK"));
+    }
+    Serial.flush();
 }
 
 void DataLogger::dumpCurrentLog() {

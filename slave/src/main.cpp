@@ -16,6 +16,7 @@
  * - RPM:xxxx     Set RPM and update display (e.g., RPM:3500)
  * - SPD:xxx      Set speed in km/h (e.g., SPD:60)
  * - ERR          Show error state (red pepper animation)
+ * - RBW          Show rainbow error pattern (for USB-connected mode)
  * - CLR          Clear all LEDs
  * - BRT:xxx      Set brightness 0-255 (e.g., BRT:128)
  * 
@@ -38,6 +39,7 @@
 #define LED_COUNT           20      // Number of LEDs in strip (adjust to your strip)
 #define SERIAL_BAUD         9600    // Serial communication with master
 #define ENABLE_HAPTIC       true    // Enable/disable haptic feedback
+#define MIN_VOLTAGE_FOR_HAPTIC  4.7 // Minimum voltage (V) to enable haptic on startup
 
 // ============================================================================
 // GLOBAL OBJECTS
@@ -53,8 +55,9 @@ Adafruit_NeoPixel strip(LED_COUNT, LED_DATA_PIN, NEO_GRB + NEO_KHZ800);
 uint16_t currentRPM = 0;
 uint16_t currentSpeed = 0;
 bool errorMode = false;
+bool rainbowMode = false;  // Track if USB is connected
 unsigned long lastAnimationUpdate = 0;
-uint8_t pepperPosition = 0;
+uint16_t pepperPosition = 0;  // Changed to uint16_t to handle 0-255 range for rainbow
 bool flashState = false;
 char inputBuffer[16];
 uint8_t bufferIndex = 0;
@@ -68,6 +71,7 @@ uint16_t hapticDuration = 0;
 
 void triggerHaptic(uint16_t durationMs);
 void updateHaptic();
+float readVcc();
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -89,7 +93,23 @@ void pepperAnimation(uint8_t r, uint8_t g, uint8_t b, uint16_t delay, uint16_t h
         int distanceFromEdge = (i < LED_COUNT / 2) ? i : LED_COUNT - 1 - i;
         
         if (distanceFromEdge <= pepperPosition && pepperPosition < (LED_COUNT / 2)) {
-            strip.setPixelColor(i, strip.Color(r, g, b));
+            // Calculate how long this LED has been lit (0 = newest, higher = older)
+            int ageOfLED = pepperPosition - distanceFromEdge;
+            
+            // Newest LED is full brightness, older LEDs fade
+            // Max fade over ~8 steps to create visible gradient
+            uint8_t brightness = 255;
+            if (ageOfLED > 0) {
+                // Exponential fade looks better than linear
+                brightness = 255 - constrain(ageOfLED * 28, 0, 200);  // Fade to ~20% min brightness
+            }
+            
+            // Apply brightness to color
+            uint8_t dimR = (r * brightness) / 255;
+            uint8_t dimG = (g * brightness) / 255;
+            uint8_t dimB = (b * brightness) / 255;
+            
+            strip.setPixelColor(i, strip.Color(dimR, dimG, dimB));
         } else {
             strip.setPixelColor(i, 0);
         }
@@ -198,6 +218,37 @@ void revLimitState() {
     #endif
 }
 
+// Read Arduino Vcc (5V rail voltage) using internal 1.1V reference
+// Returns voltage in volts (e.g., 4.85)
+float readVcc() {
+    // Read 1.1V reference against AVcc
+    // Set the reference to Vcc and the measurement to the internal 1.1V reference
+    #if defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
+        ADMUX = _BV(REFS0) | _BV(MUX4) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+    #elif defined (__AVR_ATtiny24__) || defined(__AVR_ATtiny44__) || defined(__AVR_ATtiny84__)
+        ADMUX = _BV(MUX5) | _BV(MUX0);
+    #elif defined (__AVR_ATtiny25__) || defined(__AVR_ATtiny45__) || defined(__AVR_ATtiny85__)
+        ADMUX = _BV(MUX3) | _BV(MUX2);
+    #else
+        // ATmega328P (Arduino Nano/Uno)
+        ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+    #endif
+    
+    delay(2); // Wait for Vref to settle
+    ADCSRA |= _BV(ADSC); // Start conversion
+    while (bit_is_set(ADCSRA, ADSC)); // Wait for conversion to complete
+    
+    uint8_t low = ADCL; // Read ADCL first
+    uint8_t high = ADCH; // Then ADCH
+    
+    long result = (high << 8) | low;
+    
+    // Calculate Vcc (in mV); 1125300 = 1.1*1023*1000
+    result = 1125300L / result; // Calculate Vcc (in mV)
+    
+    return result / 1000.0; // Convert to volts
+}
+
 void triggerHaptic(uint16_t durationMs) {
     #if ENABLE_HAPTIC
     hapticActive = true;
@@ -221,9 +272,51 @@ void errorState() {
                     ERROR_PEPPER_DELAY, ERROR_HOLD_TIME);
 }
 
+void rainbowErrorState() {
+    unsigned long currentTime = millis();
+    
+    // Update at slower rate for more visible chase effect
+    if (currentTime - lastAnimationUpdate >= 60) {  // Slowed down from 20ms to 60ms
+        lastAnimationUpdate = currentTime;
+        pepperPosition++;
+        if (pepperPosition >= (LED_COUNT / 2) + 8) pepperPosition = 0;  // Reset after reaching center + tail length
+    }
+    
+    // Rainbow comet/chase effect - chases from edges to center (mirrored)
+    for (int i = 0; i < LED_COUNT; i++) {
+        // Calculate distance from edge (mirrored from both ends)
+        int distanceFromEdge = (i < LED_COUNT / 2) ? i : LED_COUNT - 1 - i;
+        
+        // Calculate distance from the comet head
+        int distanceFromComet = distanceFromEdge - pepperPosition;
+        
+        // Comet head is at pepperPosition moving toward center
+        if (distanceFromComet == 0 && pepperPosition < (LED_COUNT / 2)) {
+            // Head - full brightness with rotating hue
+            uint16_t hue = (pepperPosition * 2048) & 0xFFFF;
+            uint32_t color = strip.gamma32(strip.ColorHSV(hue, 255, 255));
+            strip.setPixelColor(i, color);
+        } else if (distanceFromComet < 0 && distanceFromComet >= -6) {
+            // Tail - same hue but fading brightness (trail behind the comet)
+            uint16_t hue = (pepperPosition * 2048) & 0xFFFF;
+            uint8_t brightness = 255 + (distanceFromComet * 40);  // Fade over 6 LEDs behind
+            uint32_t color = strip.gamma32(strip.ColorHSV(hue, 255, brightness));
+            strip.setPixelColor(i, color);
+        } else {
+            strip.setPixelColor(i, 0);  // Off
+        }
+    }
+    strip.show();
+}
+
 void updateLEDDisplay() {
     if (errorMode) {
-        errorState();
+        // Show rainbow if explicitly commanded by master
+        if (rainbowMode) {
+            rainbowErrorState();
+        } else {
+            errorState();
+        }
         return;
     }
     
@@ -271,6 +364,7 @@ void processCommand(const char* cmd) {
     if (strncmp(cmd, "RPM:", 4) == 0) {
         currentRPM = atoi(cmd + 4);
         errorMode = false;
+        rainbowMode = false;
         Serial.print("RPM set to: ");
         Serial.println(currentRPM);
     }
@@ -280,18 +374,25 @@ void processCommand(const char* cmd) {
         Serial.print("Speed set to: ");
         Serial.println(currentSpeed);
     }
-    // Error command: ERR
-    else if (strcmp(cmd, "ERR") == 0) {
+    // Error mode command: E
+    else if (strcmp(cmd, "E") == 0) {
         errorMode = true;
+        rainbowMode = false;
         Serial.println("Error mode ON");
     }
-    // Clear command: CLR
+    // Rainbow error command: R
+    else if (strcmp(cmd, "R") == 0) {
+        errorMode = true;
+        rainbowMode = true;
+        Serial.println("Rainbow error mode ON");
+    }
+    // Clear command: CLR (doesn't change error/rainbow mode)
     else if (strcmp(cmd, "CLR") == 0) {
         strip.clear();
         strip.show();
         currentRPM = 0;
         currentSpeed = 0;
-        errorMode = false;
+        // Don't reset errorMode/rainbowMode - let master control those explicitly
         Serial.println("LEDs cleared");
     }
     // Brightness command: BRT:xxx
@@ -318,23 +419,26 @@ void processCommand(const char* cmd) {
 void setup() {
     // Initialize hardware Serial for debug output (won't interfere with SoftwareSerial)
     Serial.begin(115200);
+    
+    // Send identification immediately
     Serial.println("LED Slave v2.2 (Haptic)");
-    Serial.print("LED Pin: D");
-    Serial.println(LED_DATA_PIN);
-    Serial.print("Serial RX Pin: D");
-    Serial.println(SERIAL_RX_PIN);
+    
+    // Check supply voltage before enabling haptic
+    float vcc = readVcc();
+    bool hapticEnabled = false;
     
     // Initialize haptic motor pin
     #if ENABLE_HAPTIC
     pinMode(HAPTIC_PIN, OUTPUT);
     digitalWrite(HAPTIC_PIN, LOW);
-    Serial.print("Haptic Pin: D");
-    Serial.println(HAPTIC_PIN);
+    
+    if (vcc >= MIN_VOLTAGE_FOR_HAPTIC) {
+        hapticEnabled = true;
+    }
     #endif
     
     // Initialize SoftwareSerial for commands from master
     slaveSerial.begin(SERIAL_BAUD);
-    Serial.println("SoftwareSerial ready at 9600 baud");
     
     // Initialize LED strip with aggressive reset
     strip.begin();
@@ -346,7 +450,6 @@ void setup() {
         strip.show();
         delay(10);
     }
-    Serial.println("LED strip initialized");
     
     // Futuristic rainbow startup sequence - wave towards center with haptic sync
     Serial.println("Starting rainbow startup sequence...");
@@ -356,30 +459,45 @@ void setup() {
     for (int cycle = 0; cycle < 3; cycle++) {  // 3 complete rainbow cycles
         for (int phase = 0; phase < 256; phase += 2) {  // Color wheel rotation
             #if ENABLE_HAPTIC
-            // Calculate haptic intensity based on cycle and phase for smooth rev pattern
-            int baseIntensity = 35 + (cycle * 15);  // Rev 1: 35, Rev 2: 50, Rev 3: 65
-            int hapticIntensity;
-            
-            // Rev up during first 20% of cycle
-            if (phase < 51) {
-                hapticIntensity = (cycle == 0 ? 0 : 20) + ((phase * baseIntensity) / 51);
-            }
-            // Hold at peak during middle 40% of cycle
-            else if (phase < 154) {
-                hapticIntensity = baseIntensity;
-            }
-            // Decay during last 40% of cycle
-            else {
-                int decayAmount = ((phase - 154) * baseIntensity) / 102;
-                hapticIntensity = baseIntensity - decayAmount;
-                if (cycle < 2) {
-                    hapticIntensity = constrain(hapticIntensity, 20, baseIntensity);
-                } else {
-                    hapticIntensity = constrain(hapticIntensity, 0, baseIntensity);
+            // Check voltage every 10 phases to detect voltage sag from motor
+            if (hapticEnabled && (phase % 10 == 0)) {
+                float currentVcc = readVcc();
+                if (currentVcc < MIN_VOLTAGE_FOR_HAPTIC) {
+                    Serial.print("Voltage dropped to ");
+                    Serial.print(currentVcc, 2);
+                    Serial.println("V - disabling haptic");
+                    analogWrite(HAPTIC_PIN, 0);
+                    hapticEnabled = false;
                 }
             }
             
-            analogWrite(HAPTIC_PIN, hapticIntensity);
+            // Only run haptic if voltage is sufficient
+            if (hapticEnabled) {
+                // Calculate haptic intensity based on cycle and phase for smooth rev pattern
+                int baseIntensity = 35 + (cycle * 15);  // Rev 1: 35, Rev 2: 50, Rev 3: 65
+                int hapticIntensity;
+                
+                // Rev up during first 20% of cycle
+                if (phase < 51) {
+                    hapticIntensity = (cycle == 0 ? 0 : 20) + ((phase * baseIntensity) / 51);
+                }
+                // Hold at peak during middle 40% of cycle
+                else if (phase < 154) {
+                    hapticIntensity = baseIntensity;
+                }
+                // Decay during last 40% of cycle
+                else {
+                    int decayAmount = ((phase - 154) * baseIntensity) / 102;
+                    hapticIntensity = baseIntensity - decayAmount;
+                    if (cycle < 2) {
+                        hapticIntensity = constrain(hapticIntensity, 20, baseIntensity);
+                    } else {
+                        hapticIntensity = constrain(hapticIntensity, 0, baseIntensity);
+                    }
+                }
+                
+                analogWrite(HAPTIC_PIN, hapticIntensity);
+            }
             #endif
             
             for (int i = 0; i < LED_COUNT; i++) {
@@ -399,11 +517,12 @@ void setup() {
     }
     
     #if ENABLE_HAPTIC
-    analogWrite(HAPTIC_PIN, 0);
+    if (hapticEnabled) {
+        analogWrite(HAPTIC_PIN, 0);
+    }
     #endif
     
     // Fade out to black smoothly
-    Serial.println("Fading out...");
     for (int brightness = 255; brightness >= 0; brightness -= 5) {
         strip.setBrightness(brightness);
         strip.show();
@@ -417,7 +536,6 @@ void setup() {
     
     // Start in error mode to show red animation until master connects
     errorMode = true;
-    Serial.println("Startup complete - showing error pattern until master connects");
     
     bufferIndex = 0;
     inputBuffer[0] = '\0';
@@ -429,8 +547,16 @@ void setup() {
 
 void loop() {
     // Read serial commands from master
+    static unsigned long lastByteTime = 0;
     while (slaveSerial.available() > 0) {
         char c = slaveSerial.read();
+        
+        // Debug: Show we're receiving data
+        if (millis() - lastByteTime > 1000) {
+            Serial.print("RX byte: ");
+            Serial.println((int)c);
+            lastByteTime = millis();
+        }
         
         if (c == '\n' || c == '\r') {
             if (bufferIndex > 0) {
