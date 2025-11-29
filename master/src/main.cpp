@@ -195,10 +195,10 @@ void setup() {
             if (!canBus.isInitialized()) {
                 ledSlave.updateRPMError();  // Show error pattern
             } else {
-                ledSlave.updateRPM(800);  // Show idle state
+                ledSlave.updateRPM(0, 0);  // Show idle state (car off)
             }
         #else
-            ledSlave.updateRPM(800);  // Show idle state when CAN disabled
+            ledSlave.updateRPM(0, 0);  // Show idle state when CAN disabled
         #endif
     #endif
     
@@ -315,19 +315,21 @@ void loop() {
             lastLEDUpdate = currentMillis;
             
             #if ENABLE_CAN_BUS
-                // Show error state if CAN not initialized or has errors
-                if (!canBus.isInitialized() || canBus.getErrorCount() > 100) {
+                // Show error state ONLY if CAN failed to initialize
+                if (!canBus.isInitialized()) {
                     ledSlave.updateRPMError();  // Show error pattern
                 } else {
-                    // Only show RPM when running/live monitoring, otherwise show idle
-                    if (cmdHandler.shouldUpdateLEDs()) {
-                        ledSlave.updateRPM(canBus.getRPM());
+                    // CAN initialized - show actual RPM data
+                    if (canBus.hasRecentData()) {
+                        // Real CAN data available - show actual values
+                        ledSlave.updateRPM(canBus.getRPM(), canBus.getSpeed());
                     } else {
-                        ledSlave.updateRPM(800);  // Show idle when not running
+                        // No CAN traffic (car off or ACC mode) - show idle state (RPM:0, SPD:0)
+                        ledSlave.updateRPM(0, 0);
                     }
                 }
             #else
-                ledSlave.updateRPM(800);  // Show idle state when CAN disabled
+                ledSlave.updateRPM(0, 0);  // Show idle state when CAN disabled
             #endif
         }
     #endif

@@ -34,10 +34,10 @@
 // ============================================================================
 
 #define LED_DATA_PIN        5       // D5 on Arduino #2
-#define SERIAL_RX_PIN       2       // D2 for SoftwareSerial RX (from master TX1)
+#define SERIAL_RX_PIN       2       // D2 for SoftwareSerial RX (from master D6)
 #define HAPTIC_PIN          3       // D3 for haptic motor (vibration feedback)
 #define LED_COUNT           20      // Number of LEDs in strip (adjust to your strip)
-#define SERIAL_BAUD         9600    // Serial communication with master
+#define SLAVE_SERIAL_BAUD   9600    // Baud rate for Master->Slave communication (bit-bang)
 #define ENABLE_HAPTIC       true    // Enable/disable haptic feedback
 #define MIN_VOLTAGE_FOR_HAPTIC  4.7 // Minimum voltage (V) to enable haptic on startup
 
@@ -360,6 +360,12 @@ void processCommand(const char* cmd) {
     Serial.print("CMD: ");
     Serial.println(cmd);
     
+    // Commands from Master are prefixed with "LED:"
+    // Strip the prefix if present
+    if (strncmp(cmd, "LED:", 4) == 0) {
+        cmd += 4;  // Skip "LED:" prefix
+    }
+    
     // RPM command: RPM:xxxx
     if (strncmp(cmd, "RPM:", 4) == 0) {
         currentRPM = atoi(cmd + 4);
@@ -386,13 +392,14 @@ void processCommand(const char* cmd) {
         rainbowMode = true;
         Serial.println("Rainbow error mode ON");
     }
-    // Clear command: CLR (doesn't change error/rainbow mode)
+    // Clear command: CLR
     else if (strcmp(cmd, "CLR") == 0) {
         strip.clear();
         strip.show();
         currentRPM = 0;
         currentSpeed = 0;
-        // Don't reset errorMode/rainbowMode - let master control those explicitly
+        errorMode = false;  // Clear also resets error mode
+        rainbowMode = false;
         Serial.println("LEDs cleared");
     }
     // Brightness command: BRT:xxx
@@ -438,7 +445,7 @@ void setup() {
     #endif
     
     // Initialize SoftwareSerial for commands from master
-    slaveSerial.begin(SERIAL_BAUD);
+    slaveSerial.begin(SLAVE_SERIAL_BAUD);
     
     // Initialize LED strip with aggressive reset
     strip.begin();
@@ -548,25 +555,38 @@ void setup() {
 void loop() {
     // Read serial commands from master
     static unsigned long lastByteTime = 0;
+    static bool dataReceived = false;
+    
     while (slaveSerial.available() > 0) {
         char c = slaveSerial.read();
+        dataReceived = true;  // Flag that we got data
         
-        // Debug: Show we're receiving data
-        if (millis() - lastByteTime > 1000) {
-            Serial.print("RX byte: ");
-            Serial.println((int)c);
-            lastByteTime = millis();
-        }
+        // Debug: print every byte received
+        Serial.print("RX: ");
+        Serial.print((int)c);
+        Serial.print(" '");
+        if (c >= 32 && c <= 126) Serial.print(c);
+        Serial.println("'");
         
         if (c == '\n' || c == '\r') {
             if (bufferIndex > 0) {
                 inputBuffer[bufferIndex] = '\0';
+                Serial.print("Processing: ");
+                Serial.println(inputBuffer);
                 processCommand(inputBuffer);
                 bufferIndex = 0;
             }
         } else if (c >= 32 && c <= 126 && bufferIndex < 15) {
             inputBuffer[bufferIndex++] = c;
         }
+    }
+    
+    // Visual debug: Flash green LED[0] when data is received
+    if (dataReceived) {
+        strip.setPixelColor(0, strip.Color(0, 255, 0));  // Green flash on first LED
+        strip.show();
+        delay(50);
+        dataReceived = false;
     }
     
     // Update LED display continuously
