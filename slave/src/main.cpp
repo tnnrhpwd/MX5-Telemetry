@@ -320,8 +320,11 @@ void updateLEDDisplay() {
         return;
     }
     
-    // State 0: Idle/Neutral (speed = 0)
-    if (currentSpeed <= STATE_0_SPEED_THRESHOLD) {
+    // State 0: Idle/Neutral - show when:
+    // - Speed is 0 (stopped/stationary)
+    // - OR RPM is 0 (engine off but OBD-II connected and working)
+    // This gives visual confirmation that CAN communication is working
+    if (currentSpeed <= STATE_0_SPEED_THRESHOLD || currentRPM == 0) {
         idleNeutralState();
         return;
     }

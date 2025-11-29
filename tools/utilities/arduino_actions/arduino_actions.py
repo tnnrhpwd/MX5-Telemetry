@@ -718,27 +718,51 @@ class ArduinoActionsApp:
             else:
                 # Files: prefix with first filename on same line
                 self.file_listbox.delete(0, tk.END)
+                # Initialize file buffer for sorting
+                self.file_buffer = []
                 # Extract first file info from "Files:FILENAME|SIZE"
                 first_file = data.split("Files:")[1].strip()
                 if first_file:
-                    display_name = self._format_file_entry(first_file)
-                    self.file_listbox.insert(tk.END, display_name)
+                    self.file_buffer.append(first_file)
                 self.log_console(data)
                 # Mark that we're collecting file list
                 self.collecting_files = True
         elif hasattr(self, 'collecting_files') and self.collecting_files:
             # Receiving file list entries
-            if data == "OK" or data.startswith("St:"):
-                # End of file list
+            data_stripped = data.strip()
+            if data_stripped == "OK" or data_stripped.startswith("St:"):
+                # End of file list - sort and display files (most recent first)
                 self.collecting_files = False
-                if data.startswith("St:"):
-                    self._process_status(data)
+                if hasattr(self, 'file_buffer') and self.file_buffer:
+                    # Sort files by log number descending (most recent first)
+                    def get_log_num(entry):
+                        # Extract log number from "LOG_XXXX.CSV|size" or just filename
+                        name = entry.split('|')[0] if '|' in entry else entry
+                        if name.startswith('LOG_') and len(name) >= 8:
+                            try:
+                                return int(name[4:8])
+                            except ValueError:
+                                return -1
+                        return -1
+                    
+                    self.file_buffer.sort(key=get_log_num, reverse=True)
+                    
+                    # Display sorted files in listbox
+                    for file_entry in self.file_buffer:
+                        display_name = self._format_file_entry(file_entry)
+                        self.file_listbox.insert(tk.END, display_name)
+                    
+                    self.log_console(f"📁 Loaded {len(self.file_buffer)} files (sorted by newest)")
+                    self.file_buffer = []
+                
+                if data_stripped.startswith("St:"):
+                    self._process_status(data_stripped)
                 else:
                     self.log_console(data)
             elif '|' in data or data.endswith(".CSV") or data.endswith(".TXT"):
-                # This is a filename (with optional size: "filename|size")
-                display_name = self._format_file_entry(data)
-                self.file_listbox.insert(tk.END, display_name)
+                # This is a filename (with optional size: "filename|size") - buffer it
+                if hasattr(self, 'file_buffer'):
+                    self.file_buffer.append(data.strip())
                 self.log_console(data)
             else:
                 # Unknown data during file collection

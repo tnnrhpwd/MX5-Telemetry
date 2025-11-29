@@ -82,6 +82,7 @@
 // ============================================================================
 #define AUTO_START_ENABLED     true   // Automatically start logging if no USB commands received
 #define AUTO_START_TIMEOUT     10000  // Wait 10 seconds for USB commands before auto-start (milliseconds)
+#define BOOT_DELAY_MS          10000  // Delay before SD init to prevent corrupted files during upload/reset
 
 // ============================================================================
 // USB COMMAND INTERFACE
