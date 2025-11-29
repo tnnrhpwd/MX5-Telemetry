@@ -21,6 +21,7 @@
 #define CAN_CS_PIN      10    // MCP2515 Chip Select (SPI)
 #define SD_CS_PIN       4     // SD Card Chip Select (SPI)
 #define LED_DATA_PIN    5     // WS2812B Data Pin (D5 per wiring diagram)
+#define SLAVE_TX_PIN    6     // TX to LED Slave Arduino (connect to Slave D2)
 #define GPS_RX_PIN      8     // GPS Module RX (connect to GPS TX) - CHANGED FROM PIN 2
 #define GPS_TX_PIN      9     // GPS Module TX (connect to GPS RX) - CHANGED FROM PIN 3
 #define WIDEBAND_PIN    A0    // Wideband A/F sensor analog input
@@ -82,6 +83,7 @@
 // ============================================================================
 #define AUTO_START_ENABLED     true   // Automatically start logging if no USB commands received
 #define AUTO_START_TIMEOUT     10000  // Wait 10 seconds for USB commands before auto-start (milliseconds)
+#define BOOT_DELAY_MS          10000  // Delay before SD init to prevent corrupted files during upload/reset
 
 // ============================================================================
 // USB COMMAND INTERFACE

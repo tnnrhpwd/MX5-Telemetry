@@ -6,7 +6,8 @@
 // ============================================================================
 // LED Slave Communication Module
 // ============================================================================
-// Sends simple commands to external LED controller Arduino via Serial (TX)
+// Sends simple commands to external LED controller Arduino via bit-bang serial
+// Uses pin D6 for TX to Slave Arduino's D2 (SoftwareSerial RX)
 // ============================================================================
 
 class LEDSlave {
@@ -23,7 +24,7 @@ public:
     
 private:
     void sendCommand(const char* cmd);
-    void sendByte(uint8_t byte);  // Software UART transmit
+    void sendByte(uint8_t byte);
     uint16_t lastRPM;
     uint16_t lastSpeed;
     bool initialized;

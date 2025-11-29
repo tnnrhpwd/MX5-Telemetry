@@ -121,7 +121,8 @@ if ($uploadMaster) {
     $masterJob = Start-Job -ScriptBlock {
         param($port)
         Set-Location "C:\Users\tanne\Documents\Github\MX5-Telemetry"
-        & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -d master -t upload --upload-port $port 2>&1
+        $pioPath = "C:\Users\tanne\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\Scripts\pio.exe"
+        & $pioPath run -d master -t upload --upload-port $port 2>&1
     } -ArgumentList $MasterPort
     $jobs += @{Job = $masterJob; Name = "Master"; Port = $MasterPort}
     $uploadCount++
@@ -135,7 +136,8 @@ if ($uploadSlave) {
     $slaveJob = Start-Job -ScriptBlock {
         param($port)
         Set-Location "C:\Users\tanne\Documents\Github\MX5-Telemetry"
-        & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -d slave -t upload --upload-port $port 2>&1
+        $pioPath = "C:\Users\tanne\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\Scripts\pio.exe"
+        & $pioPath run -d slave -t upload --upload-port $port 2>&1
     } -ArgumentList $SlavePort
     $jobs += @{Job = $slaveJob; Name = "Slave"; Port = $SlavePort}
     $uploadCount++

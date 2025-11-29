@@ -207,6 +207,7 @@ void CommandHandler::handleList() {
         delay(100);  // Long delay after SD operation
     } else {
         Serial.println(F("Files:0"));
+        Serial.println(F("OK"));
     }
 }
 
