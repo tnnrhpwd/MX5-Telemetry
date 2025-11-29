@@ -5,21 +5,17 @@ Interactive GUI for controlling Arduino telemetry system via USB-C.
 
 Features:
 - Auto-detect Arduino on USB ports
-- Send commands (START, PAUSE, RESUME, LIVE, STOP, etc.)
-- Live data streaming viewer
+- Send commands (START, STOP, etc.)
 - Dump log files from SD card to computer
 - Real-time system status monitoring
 - Log file browser and management
 
 Commands (single-letter for reliability):
 - S       : START - Begin logging and LED display
-- P       : PAUSE - Stop logging and LED display
-- X       : STOP - Exit and return to pause
-- L       : LIVE - Real-time data streaming (no SD logging)
+- X       : STOP - Stop logging
 - D       : DUMP - Transfer log files to laptop
 - I       : LIST - List all files on SD card
-- ?       : HELP - Show command reference
-- STATUS  : Full diagnostics (kept as word)
+- T       : STATUS - Full diagnostics
 
 Hardware Requirements:
 - Arduino Nano V3.0 with MX5-Telemetry firmware
@@ -90,8 +86,8 @@ class ArduinoConnection:
             # Try multiple detection methods
             data = ""
             
-            # Method 1: Send '?' for help (master responds with "S P X L D I T ?")
-            test_serial.write(b"?\n")
+            # Method 1: Send 'T' for status (master responds with "St:")
+            test_serial.write(b"T\n")
             test_serial.flush()
             time.sleep(0.4)
             
@@ -288,6 +284,9 @@ class ArduinoActionsApp:
         self.dump_buffer = []
         self.dump_save_path = None
         self.dump_timeout = None
+        self.dump_file_size = 0  # Expected file size from Arduino
+        self.dump_bytes_received = 0  # Bytes received so far
+        self.dump_filename = None  # Name of file being dumped
         self.log_files = []
         self.last_command_time = 0
         self.command_cooldown = 0.5  # 500ms between commands
@@ -368,118 +367,94 @@ class ArduinoActionsApp:
         cmd_frame.pack(pady=8, padx=20, fill=tk.X)
         
         tk.Label(cmd_frame, text="COMMANDS", font=("Segoe UI", 11, "bold"), 
-                fg="#ffffff", bg="#2a2a2a").pack(pady=5)
+            fg="#ffffff", bg="#2a2a2a").pack(pady=5)
         
-        btn_row1 = tk.Frame(cmd_frame, bg="#2a2a2a")
-        btn_row1.pack(pady=5)
+        btn_row = tk.Frame(cmd_frame, bg="#2a2a2a")
+        btn_row.pack(pady=5)
         
-        self.start_btn = tk.Button(btn_row1, text="▶ START", 
-                                   command=lambda: self.send_command("S"),
-                                   bg="#00aa00", fg="#ffffff", 
-                                   font=("Segoe UI", 11, "bold"), width=12, height=2,
-                                   relief=tk.FLAT, bd=0,
-                                   activebackground="#00cc00", activeforeground="#ffffff",
-                                   cursor="hand2", state=tk.DISABLED)
+        self.start_btn = tk.Button(btn_row, text="▶ START", 
+                       command=lambda: self.send_command("S"),
+                       bg="#00aa00", fg="#ffffff", 
+                       font=("Segoe UI", 11, "bold"), width=12, height=2,
+                       relief=tk.FLAT, bd=0,
+                       activebackground="#00cc00", activeforeground="#ffffff",
+                       cursor="hand2", state=tk.DISABLED)
         self.start_btn.pack(side=tk.LEFT, padx=5)
         
-        self.pause_btn = tk.Button(btn_row1, text="⏸ PAUSE", 
-                                   command=lambda: self.send_command("P"),
-                                   bg="#ff8800", fg="#ffffff", 
-                                   font=("Segoe UI", 11, "bold"), width=12, height=2,
-                                   relief=tk.FLAT, bd=0,
-                                   activebackground="#ffaa00", activeforeground="#ffffff",
-                                   cursor="hand2", state=tk.DISABLED)
-        self.pause_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.stop_btn = tk.Button(btn_row1, text="⏹ STOP", 
-                                 command=lambda: self.send_command("X"),
-                                 bg="#cc0000", fg="#ffffff", 
-                                 font=("Segoe UI", 11, "bold"), width=12, height=2,
-                                 relief=tk.FLAT, bd=0,
-                                 activebackground="#ff0000", activeforeground="#ffffff",
-                                 cursor="hand2", state=tk.DISABLED)
+        self.stop_btn = tk.Button(btn_row, text="⏹ STOP", 
+                     command=lambda: self.send_command("X"),
+                     bg="#cc0000", fg="#ffffff", 
+                     font=("Segoe UI", 11, "bold"), width=12, height=2,
+                     relief=tk.FLAT, bd=0,
+                     activebackground="#ff0000", activeforeground="#ffffff",
+                     cursor="hand2", state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=5)
         
-        btn_row2 = tk.Frame(cmd_frame, bg="#2a2a2a")
-        btn_row2.pack(pady=5)
-        
-        self.live_btn = tk.Button(btn_row2, text="📡 LIVE MONITOR", 
-                                  command=lambda: self.send_command("L"),
-                                  bg="#9900cc", fg="#ffffff", 
-                                  font=("Segoe UI", 11, "bold"), width=15, height=2,
-                                  relief=tk.FLAT, bd=0,
-                                  activebackground="#bb00ff", activeforeground="#ffffff",
-                                  cursor="hand2", state=tk.DISABLED)
-        self.live_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.status_btn = tk.Button(btn_row2, text="📊 STATUS", 
-                                    command=self.request_status,
-                                    bg="#555555", fg="#ffffff", 
-                                    font=("Segoe UI", 11, "bold"), width=15, height=2,
-                                    relief=tk.FLAT, bd=0,
-                                    activebackground="#777777", activeforeground="#ffffff",
-                                    cursor="hand2", state=tk.DISABLED)
+        self.status_btn = tk.Button(btn_row, text="📊 STATUS", 
+                        command=self.request_status,
+                        bg="#555555", fg="#ffffff", 
+                        font=("Segoe UI", 11, "bold"), width=15, height=2,
+                        relief=tk.FLAT, bd=0,
+                        activebackground="#777777", activeforeground="#ffffff",
+                        cursor="hand2", state=tk.DISABLED)
         self.status_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.help_btn = tk.Button(btn_row2, text="❓ HELP", 
-                                 command=lambda: self.send_command("?"),
-                                 bg="#555555", fg="#ffffff", 
-                                 font=("Segoe UI", 11, "bold"), width=15, height=2,
-                                 relief=tk.FLAT, bd=0,
-                                 activebackground="#777777", activeforeground="#ffffff",
-                                 cursor="hand2", state=tk.DISABLED)
-        self.help_btn.pack(side=tk.LEFT, padx=5)
         
         # Data dump frame
         dump_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.FLAT, bd=0)
-        dump_frame.pack(pady=8, padx=20, fill=tk.X)
+        dump_frame.pack(pady=8, padx=20, fill=tk.BOTH, expand=True)
         
-        tk.Label(dump_frame, text="DATA MANAGEMENT", font=("Segoe UI", 11, "bold"), 
-                fg="#ffffff", bg="#2a2a2a").pack(pady=5)
+        tk.Label(dump_frame, text="SD CARD DATA", font=("Segoe UI", 11, "bold"), 
+                fg="#ffffff", bg="#2a2a2a").pack(pady=(5, 8))
         
+        # File list frame with scrollbar - make it prominent
+        file_frame = tk.Frame(dump_frame, bg="#1a1a1a", relief=tk.FLAT, bd=0)
+        file_frame.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        
+        # Header row with label
+        file_header = tk.Frame(file_frame, bg="#1a1a1a")
+        file_header.pack(fill=tk.X, padx=5, pady=(5, 2))
+        
+        tk.Label(file_header, text="📁 Files on SD Card:", font=("Segoe UI", 10, "bold"), 
+                fg="#888888", bg="#1a1a1a").pack(side=tk.LEFT)
+        
+        # Listbox with scrollbar
+        listbox_frame = tk.Frame(file_frame, bg="#1a1a1a")
+        listbox_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        scrollbar = tk.Scrollbar(listbox_frame, orient=tk.VERTICAL, bg="#3a3a3a", 
+                                 troughcolor="#1a1a1a", activebackground="#555555")
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.file_listbox = tk.Listbox(listbox_frame, height=10, bg="#0d0d0d", fg="#00ff88",
+                                       font=("Consolas", 11), selectmode=tk.SINGLE,
+                                       relief=tk.FLAT, bd=0, highlightthickness=2,
+                                       highlightbackground="#333333", highlightcolor="#0066cc",
+                                       selectbackground="#0066cc", selectforeground="#ffffff",
+                                       yscrollcommand=scrollbar.set)
+        self.file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.file_listbox.yview)
+        
+        # Button row below the file list
         dump_btn_frame = tk.Frame(dump_frame, bg="#2a2a2a")
-        dump_btn_frame.pack(pady=5)
+        dump_btn_frame.pack(pady=8)
         
-        self.list_btn = tk.Button(dump_btn_frame, text="📋 LIST FILES", 
+        self.list_btn = tk.Button(dump_btn_frame, text="🔄 REFRESH FILES", 
                                  command=self.list_files,
                                  bg="#0066cc", fg="#ffffff", 
-                                 font=("Segoe UI", 10, "bold"), width=15,
-                                 relief=tk.FLAT, bd=0, pady=8,
+                                 font=("Segoe UI", 11, "bold"), width=16,
+                                 relief=tk.FLAT, bd=0, pady=10,
                                  activebackground="#0088ff", activeforeground="#ffffff",
                                  cursor="hand2", state=tk.DISABLED)
-        self.list_btn.pack(side=tk.LEFT, padx=5)
+        self.list_btn.pack(side=tk.LEFT, padx=8)
         
-        self.dump_btn = tk.Button(dump_btn_frame, text="💾 DUMP CURRENT LOG", 
-                                 command=self.dump_current_log,
-                                 bg="#00aa00", fg="#ffffff", 
-                                 font=("Segoe UI", 10, "bold"), width=18,
-                                 relief=tk.FLAT, bd=0, pady=8,
-                                 activebackground="#00cc00", activeforeground="#ffffff",
-                                 cursor="hand2", state=tk.DISABLED)
-        self.dump_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.dump_selected_btn = tk.Button(dump_btn_frame, text="📥 DUMP SELECTED", 
+        self.dump_selected_btn = tk.Button(dump_btn_frame, text="💾 DOWNLOAD SELECTED", 
                                           command=self.dump_selected_file,
                                           bg="#00aa00", fg="#ffffff", 
-                                          font=("Segoe UI", 10, "bold"), width=18,
-                                          relief=tk.FLAT, bd=0, pady=8,
+                                          font=("Segoe UI", 11, "bold"), width=20,
+                                          relief=tk.FLAT, bd=0, pady=10,
                                           activebackground="#00cc00", activeforeground="#ffffff",
                                           cursor="hand2", state=tk.DISABLED)
-        self.dump_selected_btn.pack(side=tk.LEFT, padx=5)
-        
-        # File list frame
-        file_frame = tk.Frame(dump_frame, bg="#2a2a2a")
-        file_frame.pack(pady=5, padx=10, fill=tk.BOTH, expand=False)
-        
-        tk.Label(file_frame, text="SD Card Files:", font=("Segoe UI", 9, "bold"), 
-                fg="#ffffff", bg="#2a2a2a").pack(anchor=tk.W, pady=3)
-        
-        self.file_listbox = tk.Listbox(file_frame, height=4, bg="#1a1a1a", fg="#ffffff",
-                                       font=("Consolas", 9), selectmode=tk.SINGLE,
-                                       relief=tk.FLAT, bd=0, highlightthickness=1,
-                                       highlightbackground="#3a3a3a", highlightcolor="#0066cc",
-                                       selectbackground="#0066cc", selectforeground="#ffffff")
-        self.file_listbox.pack(fill=tk.BOTH, expand=True, pady=2)
+        self.dump_selected_btn.pack(side=tk.LEFT, padx=8)
         
         # Console output frame
         console_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.FLAT, bd=0)
@@ -569,18 +544,14 @@ class ArduinoActionsApp:
     
     def on_connected(self):
         """Handle successful connection."""
-        self.status_label.config(text=f"🟢 Connected to {self.arduino.port_name}", fg="#ffffff")
+        self.status_label.config(text=f"🟢 Connected to {self.arduino.port_name}", fg="#00ff88")
         self.connect_btn.config(text="🔌 Disconnect", bg="#cc0000")
         
         # Enable command buttons
         self.start_btn.config(state=tk.NORMAL)
-        self.pause_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.NORMAL)
-        self.live_btn.config(state=tk.NORMAL)
         self.status_btn.config(state=tk.NORMAL)
-        self.help_btn.config(state=tk.NORMAL)
         self.list_btn.config(state=tk.NORMAL)
-        self.dump_btn.config(state=tk.NORMAL)
         self.dump_selected_btn.config(state=tk.NORMAL)
         
         # Don't auto-request status to avoid GPS interference
@@ -588,18 +559,14 @@ class ArduinoActionsApp:
     
     def on_disconnected(self):
         """Handle disconnection."""
-        self.status_label.config(text="⚫ Disconnected", fg="#ffffff")
+        self.status_label.config(text="⚫ Disconnected", fg="#888888")
         self.connect_btn.config(text="🔌 Connect", bg="#00aa00")
         
         # Disable command buttons
         self.start_btn.config(state=tk.DISABLED)
-        self.pause_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.DISABLED)
-        self.live_btn.config(state=tk.DISABLED)
         self.status_btn.config(state=tk.DISABLED)
-        self.help_btn.config(state=tk.DISABLED)
         self.list_btn.config(state=tk.DISABLED)
-        self.dump_btn.config(state=tk.DISABLED)
         self.dump_selected_btn.config(state=tk.DISABLED)
         
         # Reset tracking
@@ -608,6 +575,31 @@ class ArduinoActionsApp:
         self.consecutive_timeouts = 0
         
         self.log_console("⚫ Disconnected from Arduino")
+    
+    def _format_file_entry(self, data):
+        """Format file entry for display. Input: 'filename|size' or just 'filename'."""
+        if '|' in data:
+            parts = data.split('|')
+            filename = parts[0].strip()
+            try:
+                size = int(parts[1].strip())
+                # Format size in human-readable format
+                if size >= 1024 * 1024:
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
+                elif size >= 1024:
+                    size_str = f"{size / 1024:.1f} KB"
+                else:
+                    size_str = f"{size} B"
+                return f"{filename}  ({size_str})"
+            except ValueError:
+                return filename
+        return data.strip()
+    
+    def _extract_filename(self, display_name):
+        """Extract just the filename from display format 'filename  (size)'."""
+        if '  (' in display_name:
+            return display_name.split('  (')[0].strip()
+        return display_name.strip()
     
     def send_command(self, command):
         """Send command to Arduino."""
@@ -626,18 +618,6 @@ class ArduinoActionsApp:
         self.file_listbox.insert(tk.END, "Requesting file list...")
         self.send_command("I")
     
-    def dump_current_log(self):
-        """Dump current log file from SD card."""
-        save_path = filedialog.askdirectory(title="Select folder to save log")
-        if save_path:
-            self.dump_buffer = []
-            self.dump_mode = True
-            self.dump_save_path = save_path
-            self.log_console("📥 Starting dump of current log...")
-            # Set timeout for dump operation
-            self.dump_timeout = time.time() + 30  # 30 second timeout
-            self.send_command("D")
-    
     def dump_selected_file(self):
         """Dump selected file from list."""
         selection = self.file_listbox.curselection()
@@ -645,11 +625,14 @@ class ArduinoActionsApp:
             messagebox.showwarning("No Selection", "Please select a file to dump")
             return
         
-        filename = self.file_listbox.get(selection[0])
+        display_name = self.file_listbox.get(selection[0])
         
         # Skip if it's the placeholder text
-        if filename == "(No files on SD card)" or filename == "Requesting file list...":
+        if display_name == "(No files on SD card)" or display_name == "Requesting file list...":
             return
+        
+        # Extract just the filename (remove size info if present)
+        filename = self._extract_filename(display_name)
             
         save_path = filedialog.askdirectory(title="Select folder to save log")
         
@@ -657,7 +640,11 @@ class ArduinoActionsApp:
             self.dump_buffer = []
             self.dump_mode = True
             self.dump_save_path = save_path
-            self.dump_timeout = time.time() + 30  # 30 second timeout
+            self.dump_file_size = 0
+            self.dump_bytes_received = 0
+            self.dump_filename = filename
+            # Extended timeout: 120 seconds for large files (at 115200 baud, ~10KB/s theoretical)
+            self.dump_timeout = time.time() + 120
             self.log_console(f"📥 Starting dump of {filename}...")
             self.send_command(f"D {filename}")
     
@@ -686,26 +673,42 @@ class ArduinoActionsApp:
                 self.pending_command_time = None
         
         if self.dump_mode:
-            # Check timeout
-            if self.dump_timeout and time.time() > self.dump_timeout:
-                self.dump_mode = False
-                self.log_console("⚠️ Dump timeout - no data received")
-                self.dump_buffer = []
-                self.dump_save_path = None
-                return
+            # Reset timeout on any data received (keeps connection alive)
+            if self.dump_timeout:
+                self.dump_timeout = time.time() + 30  # Reset to 30s on each data
+            
+            # Handle SIZE header from Arduino (file size info)
+            if data.startswith("SIZE:"):
+                try:
+                    self.dump_file_size = int(data.split(":")[1])
+                    self.log_console(f"📊 File size: {self.dump_file_size} bytes")
+                except ValueError:
+                    pass
+                return  # Don't add SIZE line to buffer
             
             # Collecting dump data - look for OK to end dump
             if data == "OK":
                 self.dump_mode = False
                 self.save_dump_data()
+            elif data == "ABORTED":
+                self.dump_mode = False
+                self.log_console("⚠️ Dump aborted by user")
+                self.dump_buffer = []
+                self.dump_save_path = None
             elif data.startswith("ERR:"):
                 self.dump_mode = False
                 self.log_console(f"❌ Dump failed: {data}")
                 self.dump_buffer = []
                 self.dump_save_path = None
             else:
-                # Collect all data lines
+                # Collect all data lines and track bytes received
                 self.dump_buffer.append(data)
+                self.dump_bytes_received += len(data) + 1  # +1 for newline
+                
+                # Log progress every 10KB
+                if self.dump_file_size > 0 and self.dump_bytes_received % 10240 < 100:
+                    pct = min(100, int(self.dump_bytes_received * 100 / self.dump_file_size))
+                    self.log_console(f"📥 Progress: {pct}% ({self.dump_bytes_received}/{self.dump_file_size} bytes)")
         elif data.startswith("Files:"):
             # File list response - expecting "Files:0" or filename lines to follow
             if data == "Files:0":
@@ -715,10 +718,11 @@ class ArduinoActionsApp:
             else:
                 # Files: prefix with first filename on same line
                 self.file_listbox.delete(0, tk.END)
-                # Extract first filename from "Files:FILENAME"
+                # Extract first file info from "Files:FILENAME|SIZE"
                 first_file = data.split("Files:")[1].strip()
                 if first_file:
-                    self.file_listbox.insert(tk.END, first_file)
+                    display_name = self._format_file_entry(first_file)
+                    self.file_listbox.insert(tk.END, display_name)
                 self.log_console(data)
                 # Mark that we're collecting file list
                 self.collecting_files = True
@@ -731,9 +735,10 @@ class ArduinoActionsApp:
                     self._process_status(data)
                 else:
                     self.log_console(data)
-            elif data.endswith(".CSV") or data.endswith(".TXT"):
-                # This is a filename
-                self.file_listbox.insert(tk.END, data)
+            elif '|' in data or data.endswith(".CSV") or data.endswith(".TXT"):
+                # This is a filename (with optional size: "filename|size")
+                display_name = self._format_file_entry(data)
+                self.file_listbox.insert(tk.END, display_name)
                 self.log_console(data)
             else:
                 # Unknown data during file collection

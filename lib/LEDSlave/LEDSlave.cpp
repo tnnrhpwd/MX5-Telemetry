@@ -87,7 +87,11 @@ void LEDSlave::updateRPM(uint16_t rpm, uint16_t speed_kmh) {
 }
 
 void LEDSlave::updateRPMError() {
-    sendCommand("ERR");
+    sendCommand("E");  // Single char: Error mode
+}
+
+void LEDSlave::updateRPMRainbow() {
+    sendCommand("R");  // Single char: Rainbow mode
 }
 
 void LEDSlave::clear() {

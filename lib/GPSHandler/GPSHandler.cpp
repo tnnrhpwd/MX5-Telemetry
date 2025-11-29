@@ -23,6 +23,19 @@ GPSHandler::GPSHandler(uint8_t rxPin, uint8_t txPin)
 void GPSHandler::begin() {
     gpsSerial.begin(GPS_BAUD);
     enabled = false;  // Start disabled, will be enabled on START command
+    
+    // Clear GPS data to start clean (prevent logging uninitialized values)
+    gpsValid = false;
+    gpsDate = 0;
+    gpsTime = 0;
+    latitude = 0.0;
+    longitude = 0.0;
+    altitude = 0.0;
+    speed = 0.0;
+    satellites = 0;
+    fixType = 0;
+    hdop = 9999;
+    course = 0.0;
 }
 
 void GPSHandler::enable() {
@@ -42,8 +55,18 @@ void GPSHandler::disable() {
         while (gpsSerial.available() > 0) {
             gpsSerial.read();
         }
-        // Optionally invalidate GPS data
+        // Clear ALL GPS data to prevent logging stale/garbage values
         gpsValid = false;
+        gpsDate = 0;
+        gpsTime = 0;
+        latitude = 0.0;
+        longitude = 0.0;
+        altitude = 0.0;
+        speed = 0.0;
+        satellites = 0;
+        fixType = 0;
+        hdop = 9999;
+        course = 0.0;
     }
 }
 
@@ -58,51 +81,58 @@ void GPSHandler::update() {
         gps.encode(gpsSerial.read());
     }
     
-    // Update global variables if valid data is available
-    if (gps.location.isValid()) {
-        latitude = gps.location.lat();
-        longitude = gps.location.lng();
-        gpsValid = true;
-    } else {
-        gpsValid = false;
-    }
-    
-    if (gps.altitude.isValid()) {
-        altitude = gps.altitude.meters();
-    }
-    
-    if (gps.speed.isValid()) {
-        speed = gps.speed.kmph();  // GPS speed in km/h
-    }
-    
+    // Always update satellite count if available (even before fix)
+    // This helps debug GPS acquisition
     if (gps.satellites.isValid()) {
-        satellites = gps.satellites.value();
+        uint8_t sats = gps.satellites.value();
+        // Sanity check - reject garbage values
+        if (sats <= 50) {
+            satellites = sats;
+        }
     }
     
-    if (gps.time.isValid()) {
+    // Time and date are often available before full position fix
+    // Update them independently to aid debugging and logging
+    if (gps.time.isValid() && gps.time.age() < 2000) {
         gpsTime = (gps.time.hour() * 10000) + (gps.time.minute() * 100) + gps.time.second();
     }
     
-    if (gps.date.isValid()) {
-        gpsDate = (gps.date.year() * 10000) + (gps.date.month() * 100) + gps.date.day();
+    if (gps.date.isValid() && gps.date.age() < 5000) {
+        uint32_t newDate = (gps.date.year() * 10000) + (gps.date.month() * 100) + gps.date.day();
+        // Sanity check date range (year 2020-2100)
+        if (newDate >= 20200101 && newDate <= 21001231) {
+            gpsDate = newDate;
+        }
     }
     
-    // Update fix quality information
-    if (gps.location.isValid() && gps.location.age() < 2000) {
-        fixType = 1;  // Basic GPS fix (TinyGPS++ doesn't differentiate DGPS)
+    // Update position data ONLY with valid satellites and location
+    if (satellites > 0 && gps.location.isValid() && gps.location.age() < 2000) {
+        latitude = gps.location.lat();
+        longitude = gps.location.lng();
+        gpsValid = true;
+        fixType = 1;  // GPS fix acquired
+        
+        // Update additional data when we have a fix
+        if (gps.altitude.isValid()) {
+            altitude = gps.altitude.meters();
+        }
+        
+        if (gps.speed.isValid()) {
+            speed = gps.speed.kmph();  // GPS speed in km/h
+        }
+        
+        if (gps.course.isValid()) {
+            course = gps.course.deg();
+        }
+        
+        // Update HDOP when available
+        if (gps.hdop.isValid()) {
+            hdop = gps.hdop.value();  // Already stored as hdop * 100
+        }
     } else {
-        fixType = 0;  // No fix
-    }
-    
-    // Update HDOP (Horizontal Dilution of Precision)
-    if (gps.hdop.isValid()) {
-        hdop = gps.hdop.value();  // Already stored as hdop * 100
-    } else {
-        hdop = 9999;  // Invalid/unknown HDOP
-    }
-    
-    // Update course/heading
-    if (gps.course.isValid()) {
-        course = gps.course.deg();
+        // No valid fix
+        gpsValid = false;
+        fixType = 0;
+        // Keep satellite count for diagnostic purposes - don't reset to 0
     }
 }
