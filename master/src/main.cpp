@@ -191,7 +191,7 @@ void setup() {
         cmdHandler.setDataLogger(&dataLogger);
     #endif
     
-    // LED control handled by LEDSlave class via Serial1
+    // LED control handled by LEDSlave class via bit-bang serial
     
     #if ENABLE_GPS
         cmdHandler.setGPSHandler(&gps);

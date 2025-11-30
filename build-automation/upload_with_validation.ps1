@@ -9,6 +9,38 @@ Write-Host ""
 Write-Host "=== Arduino Identification & Upload ===" -ForegroundColor Cyan
 Write-Host ""
 
+# Find PlatformIO executable - check multiple possible locations
+function Find-PlatformIO {
+    $possiblePaths = @(
+        "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe",  # Standard PlatformIO install
+        "$env:USERPROFILE\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\Scripts\pio.exe",  # Laptop
+        "$env:USERPROFILE\AppData\Local\Programs\Python\Python311\Scripts\pio.exe",  # Desktop alternative
+        "$env:USERPROFILE\AppData\Local\Programs\Python\Python310\Scripts\pio.exe"   # Python 3.10
+    )
+    
+    foreach ($path in $possiblePaths) {
+        if (Test-Path $path) {
+            return $path
+        }
+    }
+    
+    # Try to find pio in PATH
+    $pioInPath = Get-Command pio -ErrorAction SilentlyContinue
+    if ($pioInPath) {
+        return $pioInPath.Source
+    }
+    
+    return $null
+}
+
+$pioPath = Find-PlatformIO
+if (-not $pioPath) {
+    Write-Host "[X] PlatformIO not found! Please install PlatformIO." -ForegroundColor Red
+    exit 1
+}
+Write-Host "Using PlatformIO: $pioPath" -ForegroundColor DarkGray
+Write-Host ""
+
 # Function to check if port exists
 function Test-PortExists {
     param([string]$Port)
@@ -119,11 +151,10 @@ $uploadCount = 0
 if ($uploadMaster) {
     Write-Host "  -> Master -> $MasterPort" -ForegroundColor Cyan
     $masterJob = Start-Job -ScriptBlock {
-        param($port)
+        param($port, $pioExe)
         Set-Location "C:\Users\tanne\Documents\Github\MX5-Telemetry"
-        $pioPath = "C:\Users\tanne\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\Scripts\pio.exe"
-        & $pioPath run -d master -t upload --upload-port $port 2>&1
-    } -ArgumentList $MasterPort
+        & $pioExe run -d master -t upload --upload-port $port 2>&1
+    } -ArgumentList $MasterPort, $pioPath
     $jobs += @{Job = $masterJob; Name = "Master"; Port = $MasterPort}
     $uploadCount++
 }
@@ -134,11 +165,10 @@ else {
 if ($uploadSlave) {
     Write-Host "  -> Slave  -> $SlavePort" -ForegroundColor Cyan
     $slaveJob = Start-Job -ScriptBlock {
-        param($port)
+        param($port, $pioExe)
         Set-Location "C:\Users\tanne\Documents\Github\MX5-Telemetry"
-        $pioPath = "C:\Users\tanne\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\Scripts\pio.exe"
-        & $pioPath run -d slave -t upload --upload-port $port 2>&1
-    } -ArgumentList $SlavePort
+        & $pioExe run -d slave -t upload --upload-port $port 2>&1
+    } -ArgumentList $SlavePort, $pioPath
     $jobs += @{Job = $slaveJob; Name = "Slave"; Port = $SlavePort}
     $uploadCount++
 }

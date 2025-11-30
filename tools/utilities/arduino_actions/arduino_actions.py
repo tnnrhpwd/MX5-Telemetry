@@ -259,16 +259,27 @@ class ArduinoActionsApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MX5-Telemetry Arduino Actions - USB Command Interface")
-        self.root.geometry("1000x750")
+        self.root.geometry("1400x850")
         self.root.configure(bg='#1a1a1a')
         self.root.resizable(True, True)
+        self.root.minsize(800, 600)
         
-        # Arduino connection
-        self.arduino = ArduinoConnection()
-        self.arduino.set_callback('on_data', self.on_data_received)
-        self.arduino.set_callback('on_status', self.on_status_received)
-        self.arduino.set_callback('on_connect', self.on_connected)
-        self.arduino.set_callback('on_disconnect', self.on_disconnected)
+        # Two Arduino connections for dual monitor
+        self.master_arduino = ArduinoConnection()
+        self.slave_arduino = ArduinoConnection()
+        
+        # Set up callbacks for both
+        self.master_arduino.set_callback('on_data', self.on_master_data_received)
+        self.master_arduino.set_callback('on_status', self.on_status_received)
+        self.master_arduino.set_callback('on_connect', self.on_master_connected)
+        self.master_arduino.set_callback('on_disconnect', self.on_master_disconnected)
+        
+        self.slave_arduino.set_callback('on_data', self.on_slave_data_received)
+        self.slave_arduino.set_callback('on_connect', self.on_slave_connected)
+        self.slave_arduino.set_callback('on_disconnect', self.on_slave_disconnected)
+        
+        # Legacy alias for compatibility
+        self.arduino = self.master_arduino
         
         # State
         self.current_state = "IDLE"
@@ -279,6 +290,7 @@ class ArduinoActionsApp:
         self.dump_file_size = 0  # Expected file size from Arduino
         self.dump_bytes_received = 0  # Bytes received so far
         self.dump_filename = None  # Name of file being dumped
+        self.dump_ignore_first_ok = False  # Flag to ignore OK from stop command before dump
         self.log_files = []
         self.last_command_time = 0
         self.command_cooldown = 0.5  # 500ms between commands
@@ -290,6 +302,10 @@ class ArduinoActionsApp:
         self.last_data_time = time.time()
         self.error_count = 0
         self.consecutive_timeouts = 0
+        
+        # Byte counters for stats
+        self.master_bytes = 0
+        self.slave_bytes = 0
         
         # Create UI
         self.create_ui()
@@ -304,240 +320,573 @@ class ArduinoActionsApp:
         self.check_command_timeout()
     
     def create_ui(self):
-        """Create the user interface."""
+        """Create the user interface with scrollable content and dual consoles."""
+        
+        # Create main scrollable canvas for small screens
+        self.canvas = tk.Canvas(self.root, bg='#1a1a1a', highlightthickness=0)
+        self.scrollbar_y = tk.Scrollbar(self.root, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollable_frame = tk.Frame(self.canvas, bg='#1a1a1a')
+        
+        self.canvas_frame = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar_y.set)
+        
+        # Bind canvas resize to stretch content
+        self.canvas.bind('<Configure>', self._on_canvas_configure)
+        
+        # Bind scrollable frame configure to update scroll region
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+        
+        # Enable mousewheel scrolling
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        
+        self.scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Title
-        title = tk.Label(self.root, text="Arduino Actions - USB Control Interface", 
-                        font=("Segoe UI", 20, "bold"), fg="#ffffff", bg="#1a1a1a")
-        title.pack(pady=10)
+        title = tk.Label(self.scrollable_frame, text="Arduino Actions - Dual Monitor", 
+                        font=("Segoe UI", 16, "bold"), fg="#ffffff", bg="#1a1a1a")
+        title.pack(pady=6)
         
-        # Connection frame
-        conn_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.FLAT, bd=0)
-        conn_frame.pack(pady=8, padx=20, fill=tk.X)
+        # =================================================================
+        # CONNECTION SECTION - Both Arduinos
+        # =================================================================
+        conn_frame = tk.Frame(self.scrollable_frame, bg="#2a2a2a", relief=tk.FLAT, bd=0)
+        conn_frame.pack(pady=4, padx=12, fill=tk.X)
         
-        tk.Label(conn_frame, text="ARDUINO CONNECTION", font=("Segoe UI", 11, "bold"), 
-                fg="#ffffff", bg="#2a2a2a").pack(pady=5)
+        tk.Label(conn_frame, text="CONNECTIONS", font=("Segoe UI", 10, "bold"), 
+                fg="#ffffff", bg="#2a2a2a").pack(pady=3)
         
-        port_frame = tk.Frame(conn_frame, bg="#2a2a2a")
-        port_frame.pack(pady=8)
+        # Two-column port layout
+        ports_frame = tk.Frame(conn_frame, bg="#2a2a2a")
+        ports_frame.pack(pady=3, fill=tk.X)
         
-        tk.Label(port_frame, text="Port:", font=("Segoe UI", 10), 
-                fg="#ffffff", bg="#2a2a2a").pack(side=tk.LEFT, padx=5)
-        
-        # Style the combobox
+        # Style for combobox
         style = ttk.Style()
         style.theme_use('clam')
         style.configure('TCombobox', fieldbackground='#3a3a3a', background='#3a3a3a', 
                        foreground="#2600ff", borderwidth=0)
         
-        self.port_combo = ttk.Combobox(port_frame, width=60, state='readonly', style='TCombobox')
-        self.port_combo.pack(side=tk.LEFT, padx=5)
+        # Master port (left)
+        master_port_frame = tk.Frame(ports_frame, bg="#2a2a2a")
+        master_port_frame.pack(side=tk.LEFT, padx=15, expand=True, fill=tk.X)
         
-        self.refresh_btn = tk.Button(port_frame, text="🔄 Refresh", 
+        tk.Label(master_port_frame, text="📡 MASTER:", font=("Segoe UI", 9, "bold"), 
+                fg="#00aaff", bg="#2a2a2a").pack(side=tk.LEFT, padx=3)
+        
+        self.master_port_combo = ttk.Combobox(master_port_frame, width=32, state='readonly', style='TCombobox')
+        self.master_port_combo.pack(side=tk.LEFT, padx=3)
+        
+        self.master_connect_btn = tk.Button(master_port_frame, text="Connect", 
+                                           command=self.toggle_master_connection,
+                                           bg="#00aa00", fg="#ffffff", font=("Segoe UI", 8, "bold"),
+                                           relief=tk.FLAT, bd=0, padx=8, pady=2,
+                                           cursor="hand2")
+        self.master_connect_btn.pack(side=tk.LEFT, padx=3)
+        
+        self.master_status_label = tk.Label(master_port_frame, text="⚫", 
+                                            font=("Segoe UI", 10), fg="#888888", bg="#2a2a2a")
+        self.master_status_label.pack(side=tk.LEFT, padx=3)
+        
+        # Slave port (right)
+        slave_port_frame = tk.Frame(ports_frame, bg="#2a2a2a")
+        slave_port_frame.pack(side=tk.LEFT, padx=15, expand=True, fill=tk.X)
+        
+        tk.Label(slave_port_frame, text="💡 SLAVE:", font=("Segoe UI", 9, "bold"), 
+                fg="#ff8800", bg="#2a2a2a").pack(side=tk.LEFT, padx=3)
+        
+        self.slave_port_combo = ttk.Combobox(slave_port_frame, width=32, state='readonly', style='TCombobox')
+        self.slave_port_combo.pack(side=tk.LEFT, padx=3)
+        
+        self.slave_connect_btn = tk.Button(slave_port_frame, text="Connect", 
+                                          command=self.toggle_slave_connection,
+                                          bg="#00aa00", fg="#ffffff", font=("Segoe UI", 8, "bold"),
+                                          relief=tk.FLAT, bd=0, padx=8, pady=2,
+                                          cursor="hand2")
+        self.slave_connect_btn.pack(side=tk.LEFT, padx=3)
+        
+        self.slave_status_label = tk.Label(slave_port_frame, text="⚫", 
+                                           font=("Segoe UI", 10), fg="#888888", bg="#2a2a2a")
+        self.slave_status_label.pack(side=tk.LEFT, padx=3)
+        
+        # Quick buttons row
+        quick_frame = tk.Frame(conn_frame, bg="#2a2a2a")
+        quick_frame.pack(pady=4)
+        
+        self.refresh_btn = tk.Button(quick_frame, text="🔄 Refresh", 
                                      command=self.refresh_ports,
-                                     bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 9),
-                                     relief=tk.FLAT, bd=0, padx=15, pady=5,
-                                     activebackground="#4a4a4a", activeforeground="#ffffff",
+                                     bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 8),
+                                     relief=tk.FLAT, bd=0, padx=10, pady=3,
                                      cursor="hand2")
-        self.refresh_btn.pack(side=tk.LEFT, padx=5)
+        self.refresh_btn.pack(side=tk.LEFT, padx=4)
         
-        self.connect_btn = tk.Button(port_frame, text="🔌 Connect", 
-                                     command=self.toggle_connection,
-                                     bg="#00aa00", fg="#ffffff", 
-                                     font=("Segoe UI", 10, "bold"), width=12,
-                                     relief=tk.FLAT, bd=0, padx=10, pady=8,
-                                     activebackground="#00cc00", activeforeground="#ffffff",
-                                     cursor="hand2")
-        self.connect_btn.pack(side=tk.LEFT, padx=5)
+        self.auto_connect_btn = tk.Button(quick_frame, text="⚡ Connect Both", 
+                                          command=self.toggle_both_connections,
+                                          bg="#00aa00", fg="#ffffff", font=("Segoe UI", 8, "bold"),
+                                          relief=tk.FLAT, bd=0, padx=10, pady=3,
+                                          cursor="hand2")
+        self.auto_connect_btn.pack(side=tk.LEFT, padx=4)
         
-        self.status_label = tk.Label(conn_frame, text="⚫ Disconnected", 
-                                     font=("Segoe UI", 10), fg="#ffffff", bg="#2a2a2a")
-        self.status_label.pack(pady=5)
+        # =================================================================
+        # COMMANDS + SD CARD (compact row)
+        # =================================================================
+        cmd_sd_frame = tk.Frame(self.scrollable_frame, bg="#2a2a2a", relief=tk.FLAT, bd=0)
+        cmd_sd_frame.pack(pady=4, padx=12, fill=tk.X)
         
-        # Command buttons frame
-        cmd_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.FLAT, bd=0)
-        cmd_frame.pack(pady=8, padx=20, fill=tk.X)
+        # Commands (left side)
+        cmd_section = tk.Frame(cmd_sd_frame, bg="#2a2a2a")
+        cmd_section.pack(side=tk.LEFT, padx=10)
         
-        tk.Label(cmd_frame, text="COMMANDS", font=("Segoe UI", 11, "bold"), 
-            fg="#ffffff", bg="#2a2a2a").pack(pady=5)
+        tk.Label(cmd_section, text="COMMANDS", font=("Segoe UI", 9, "bold"), 
+                fg="#ffffff", bg="#2a2a2a").pack(pady=2)
         
-        btn_row = tk.Frame(cmd_frame, bg="#2a2a2a")
-        btn_row.pack(pady=5)
+        btn_row = tk.Frame(cmd_section, bg="#2a2a2a")
+        btn_row.pack(pady=2)
         
         self.start_btn = tk.Button(btn_row, text="▶ START", 
-                       command=lambda: self.send_command("S"),
-                       bg="#00aa00", fg="#ffffff", 
-                       font=("Segoe UI", 11, "bold"), width=12, height=2,
-                       relief=tk.FLAT, bd=0,
-                       activebackground="#00cc00", activeforeground="#ffffff",
-                       cursor="hand2", state=tk.DISABLED)
-        self.start_btn.pack(side=tk.LEFT, padx=5)
+                                   command=lambda: self.send_command("S"),
+                                   bg="#00aa00", fg="#ffffff", font=("Segoe UI", 9, "bold"),
+                                   relief=tk.FLAT, bd=0, padx=12, pady=4,
+                                   cursor="hand2", state=tk.DISABLED)
+        self.start_btn.pack(side=tk.LEFT, padx=3)
         
         self.stop_btn = tk.Button(btn_row, text="⏹ STOP", 
-                     command=lambda: self.send_command("X"),
-                     bg="#cc0000", fg="#ffffff", 
-                     font=("Segoe UI", 11, "bold"), width=12, height=2,
-                     relief=tk.FLAT, bd=0,
-                     activebackground="#ff0000", activeforeground="#ffffff",
-                     cursor="hand2", state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=5)
+                                  command=lambda: self.send_command("X"),
+                                  bg="#cc0000", fg="#ffffff", font=("Segoe UI", 9, "bold"),
+                                  relief=tk.FLAT, bd=0, padx=12, pady=4,
+                                  cursor="hand2", state=tk.DISABLED)
+        self.stop_btn.pack(side=tk.LEFT, padx=3)
         
         self.status_btn = tk.Button(btn_row, text="📊 STATUS", 
-                        command=self.request_status,
-                        bg="#555555", fg="#ffffff", 
-                        font=("Segoe UI", 11, "bold"), width=15, height=2,
-                        relief=tk.FLAT, bd=0,
-                        activebackground="#777777", activeforeground="#ffffff",
-                        cursor="hand2", state=tk.DISABLED)
-        self.status_btn.pack(side=tk.LEFT, padx=5)
+                                    command=self.request_status,
+                                    bg="#555555", fg="#ffffff", font=("Segoe UI", 9, "bold"),
+                                    relief=tk.FLAT, bd=0, padx=12, pady=4,
+                                    cursor="hand2", state=tk.DISABLED)
+        self.status_btn.pack(side=tk.LEFT, padx=3)
         
-        # Data dump frame
-        dump_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.FLAT, bd=0)
-        dump_frame.pack(pady=8, padx=20, fill=tk.BOTH, expand=True)
+        # SD Card files (right side - expandable)
+        sd_section = tk.Frame(cmd_sd_frame, bg="#2a2a2a")
+        sd_section.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
         
-        tk.Label(dump_frame, text="SD CARD DATA", font=("Segoe UI", 11, "bold"), 
-                fg="#ffffff", bg="#2a2a2a").pack(pady=(5, 8))
+        sd_header = tk.Frame(sd_section, bg="#2a2a2a")
+        sd_header.pack(fill=tk.X, pady=2)
         
-        # File list frame with scrollbar - make it prominent
-        file_frame = tk.Frame(dump_frame, bg="#1a1a1a", relief=tk.FLAT, bd=0)
-        file_frame.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        tk.Label(sd_header, text="SD CARD", font=("Segoe UI", 9, "bold"), 
+                fg="#ffffff", bg="#2a2a2a").pack(side=tk.LEFT)
         
-        # Header row with label
-        file_header = tk.Frame(file_frame, bg="#1a1a1a")
-        file_header.pack(fill=tk.X, padx=5, pady=(5, 2))
-        
-        tk.Label(file_header, text="📁 Files on SD Card:", font=("Segoe UI", 10, "bold"), 
-                fg="#888888", bg="#1a1a1a").pack(side=tk.LEFT)
-        
-        # Listbox with scrollbar
-        listbox_frame = tk.Frame(file_frame, bg="#1a1a1a")
-        listbox_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        scrollbar = tk.Scrollbar(listbox_frame, orient=tk.VERTICAL, bg="#3a3a3a", 
-                                 troughcolor="#1a1a1a", activebackground="#555555")
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        self.file_listbox = tk.Listbox(listbox_frame, height=10, bg="#0d0d0d", fg="#00ff88",
-                                       font=("Consolas", 11), selectmode=tk.SINGLE,
-                                       relief=tk.FLAT, bd=0, highlightthickness=2,
-                                       highlightbackground="#333333", highlightcolor="#0066cc",
-                                       selectbackground="#0066cc", selectforeground="#ffffff",
-                                       yscrollcommand=scrollbar.set)
-        self.file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.file_listbox.yview)
-        
-        # Button row below the file list
-        dump_btn_frame = tk.Frame(dump_frame, bg="#2a2a2a")
-        dump_btn_frame.pack(pady=8)
-        
-        self.list_btn = tk.Button(dump_btn_frame, text="🔄 REFRESH FILES", 
+        self.list_btn = tk.Button(sd_header, text="🔄 Refresh", 
                                  command=self.list_files,
-                                 bg="#0066cc", fg="#ffffff", 
-                                 font=("Segoe UI", 11, "bold"), width=16,
-                                 relief=tk.FLAT, bd=0, pady=10,
-                                 activebackground="#0088ff", activeforeground="#ffffff",
+                                 bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 8),
+                                 relief=tk.FLAT, bd=0, padx=8, pady=2,
                                  cursor="hand2", state=tk.DISABLED)
         self.list_btn.pack(side=tk.LEFT, padx=8)
         
-        self.dump_selected_btn = tk.Button(dump_btn_frame, text="💾 DOWNLOAD SELECTED", 
+        self.dump_selected_btn = tk.Button(sd_header, text="💾 Download", 
                                           command=self.dump_selected_file,
-                                          bg="#00aa00", fg="#ffffff", 
-                                          font=("Segoe UI", 11, "bold"), width=20,
-                                          relief=tk.FLAT, bd=0, pady=10,
-                                          activebackground="#00cc00", activeforeground="#ffffff",
+                                          bg="#00aa00", fg="#ffffff", font=("Segoe UI", 8),
+                                          relief=tk.FLAT, bd=0, padx=8, pady=2,
                                           cursor="hand2", state=tk.DISABLED)
-        self.dump_selected_btn.pack(side=tk.LEFT, padx=8)
+        self.dump_selected_btn.pack(side=tk.LEFT, padx=3)
         
-        # Console output frame
-        console_frame = tk.Frame(self.root, bg="#2a2a2a", relief=tk.FLAT, bd=0)
-        console_frame.pack(pady=8, padx=20, fill=tk.BOTH, expand=True)
+        # Compact file listbox
+        listbox_frame = tk.Frame(sd_section, bg="#0d0d0d")
+        listbox_frame.pack(fill=tk.X, pady=2)
         
-        tk.Label(console_frame, text="CONSOLE OUTPUT", font=("Segoe UI", 11, "bold"), 
-                fg="#ffffff", bg="#2a2a2a").pack(pady=5)
+        scrollbar = tk.Scrollbar(listbox_frame, orient=tk.VERTICAL, bg="#3a3a3a")
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.console = scrolledtext.ScrolledText(console_frame, height=15, 
-                                                bg="#0d0d0d", fg="#ffffff",
-                                                font=("Consolas", 9), wrap=tk.WORD,
-                                                state=tk.DISABLED, relief=tk.FLAT, bd=0,
-                                                highlightthickness=1, highlightbackground="#3a3a3a")
-        self.console.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        self.file_listbox = tk.Listbox(listbox_frame, height=3, bg="#0d0d0d", fg="#00ff88",
+                                       font=("Consolas", 9), selectmode=tk.SINGLE,
+                                       relief=tk.FLAT, bd=0, highlightthickness=1,
+                                       highlightbackground="#333333",
+                                       selectbackground="#0066cc", selectforeground="#ffffff",
+                                       yscrollcommand=scrollbar.set)
+        self.file_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        scrollbar.config(command=self.file_listbox.yview)
         
-        # Console control buttons
-        console_btn_frame = tk.Frame(console_frame, bg="#2a2a2a")
-        console_btn_frame.pack(pady=5)
+        # =================================================================
+        # LED TEST SECTION - Quick buttons for LED debugging
+        # =================================================================
+        led_test_frame = tk.Frame(self.scrollable_frame, bg="#2a2a2a", relief=tk.FLAT, bd=0)
+        led_test_frame.pack(pady=4, padx=12, fill=tk.X)
         
-        clear_btn = tk.Button(console_btn_frame, text="🗑 Clear Console", 
-                            command=self.clear_console,
-                            bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 9),
-                            relief=tk.FLAT, bd=0, padx=15, pady=5,
-                            activebackground="#4a4a4a", activeforeground="#ffffff",
-                            cursor="hand2")
-        clear_btn.pack(side=tk.LEFT, padx=5)
+        tk.Label(led_test_frame, text="💡 LED TEST", font=("Segoe UI", 9, "bold"), 
+                fg="#ff8800", bg="#2a2a2a").pack(side=tk.LEFT, padx=5)
         
-        diag_btn = tk.Button(console_btn_frame, text="🔍 Diagnostics", 
-                           command=self.show_diagnostics,
-                           bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 9),
-                           relief=tk.FLAT, bd=0, padx=15, pady=5,
-                           activebackground="#4a4a4a", activeforeground="#ffffff",
+        # RPM test buttons
+        rpm_tests = [
+            ("IDLE", "RPM:800", "#004400"),
+            ("2500", "RPM:2500", "#006600"),
+            ("4000", "RPM:4000", "#888800"),
+            ("5500", "RPM:5500", "#aa6600"),
+            ("6500", "RPM:6500", "#cc4400"),
+            ("7000", "RPM:7000", "#ff0000"),
+            ("7500+", "RPM:7800", "#ff00ff"),
+        ]
+        
+        for label, cmd, color in rpm_tests:
+            btn = tk.Button(led_test_frame, text=label, 
+                           command=lambda c=cmd: self.send_led_test(c),
+                           bg=color, fg="#ffffff", font=("Segoe UI", 8, "bold"),
+                           relief=tk.FLAT, bd=0, padx=6, pady=2,
                            cursor="hand2")
-        diag_btn.pack(side=tk.LEFT, padx=5)
+            btn.pack(side=tk.LEFT, padx=2)
         
-        # System state indicator
-        self.state_label = tk.Label(self.root, text="System State: IDLE", 
-                                   font=("Segoe UI", 11, "bold"), fg="#ffffff", bg="#1a1a1a")
-        self.state_label.pack(pady=8)
+        # Separator
+        tk.Label(led_test_frame, text="|", fg="#444444", bg="#2a2a2a").pack(side=tk.LEFT, padx=4)
+        
+        # Special commands
+        special_tests = [
+            ("CLR", "CLR", "#333333"),
+            ("SPD:60", "SPD:60", "#0066aa"),
+            ("SPD:120", "SPD:120", "#0088cc"),
+        ]
+        
+        for label, cmd, color in special_tests:
+            btn = tk.Button(led_test_frame, text=label, 
+                           command=lambda c=cmd: self.send_led_test(c),
+                           bg=color, fg="#ffffff", font=("Segoe UI", 8, "bold"),
+                           relief=tk.FLAT, bd=0, padx=6, pady=2,
+                           cursor="hand2")
+            btn.pack(side=tk.LEFT, padx=2)
+        
+        # =================================================================
+        # RESIZABLE PANED WINDOW - SD Card + Console with drag handles
+        # =================================================================
+        
+        # Main vertical paned window for resizable sections
+        self.main_paned = tk.PanedWindow(self.scrollable_frame, orient=tk.VERTICAL,
+                                         bg="#444444", sashwidth=6, sashrelief=tk.RAISED,
+                                         sashpad=2, showhandle=True, handlesize=10,
+                                         handlepad=100)
+        self.main_paned.pack(pady=4, padx=12, fill=tk.BOTH, expand=True)
+        
+        # =================================================================
+        # SD CARD PANE (resizable)
+        # =================================================================
+        sd_pane = tk.Frame(self.main_paned, bg="#2a2a2a")
+        
+        sd_pane_header = tk.Frame(sd_pane, bg="#2a2a2a")
+        sd_pane_header.pack(fill=tk.X, pady=2)
+        
+        tk.Label(sd_pane_header, text="📁 SD CARD FILES", font=("Segoe UI", 9, "bold"), 
+                fg="#ffffff", bg="#2a2a2a").pack(side=tk.LEFT, padx=5)
+        
+        # Drag hint
+        tk.Label(sd_pane_header, text="⋮⋮ drag to resize ⋮⋮", font=("Segoe UI", 7), 
+                fg="#666666", bg="#2a2a2a").pack(side=tk.RIGHT, padx=5)
+        
+        # SD file listbox (expandable)
+        sd_listbox_frame = tk.Frame(sd_pane, bg="#0d0d0d")
+        sd_listbox_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=2)
+        
+        sd_scrollbar = tk.Scrollbar(sd_listbox_frame, orient=tk.VERTICAL, bg="#3a3a3a")
+        sd_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.sd_file_listbox = tk.Listbox(sd_listbox_frame, bg="#0d0d0d", fg="#00ff88",
+                                          font=("Consolas", 10), selectmode=tk.SINGLE,
+                                          relief=tk.FLAT, bd=0, highlightthickness=1,
+                                          highlightbackground="#333333",
+                                          selectbackground="#0066cc", selectforeground="#ffffff",
+                                          yscrollcommand=sd_scrollbar.set)
+        self.sd_file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sd_scrollbar.config(command=self.sd_file_listbox.yview)
+        
+        # Link to main file_listbox for compatibility
+        self.file_listbox = self.sd_file_listbox
+        
+        self.main_paned.add(sd_pane, minsize=60, height=100)
+        
+        # =================================================================
+        # DUAL CONSOLE PANE (resizable) - Side by side Master & Slave
+        # =================================================================
+        console_pane = tk.Frame(self.main_paned, bg="#1a1a1a")
+        
+        console_header = tk.Frame(console_pane, bg="#1a1a1a")
+        console_header.pack(fill=tk.X, pady=2)
+        
+        tk.Label(console_header, text="CONSOLE OUTPUT", font=("Segoe UI", 10, "bold"), 
+                fg="#ffffff", bg="#1a1a1a").pack(side=tk.LEFT, padx=5)
+        
+        # Horizontal paned window for Master/Slave consoles
+        self.console_paned = tk.PanedWindow(console_pane, orient=tk.HORIZONTAL,
+                                            bg="#444444", sashwidth=6, sashrelief=tk.RAISED,
+                                            sashpad=2, showhandle=True, handlesize=10,
+                                            handlepad=80)
+        self.console_paned.pack(fill=tk.BOTH, expand=True, pady=2)
+        
+        # Master console (left pane)
+        master_console_frame = tk.Frame(self.console_paned, bg="#2a2a2a", relief=tk.FLAT)
+        
+        master_header = tk.Frame(master_console_frame, bg="#2a2a2a")
+        master_header.pack(fill=tk.X, pady=2)
+        
+        tk.Label(master_header, text="📡 MASTER (Logger)", font=("Segoe UI", 9, "bold"), 
+                fg="#00aaff", bg="#2a2a2a").pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(master_header, text="⋮ drag ⋮", font=("Segoe UI", 7), 
+                fg="#666666", bg="#2a2a2a").pack(side=tk.RIGHT, padx=2)
+        
+        clear_master_btn = tk.Button(master_header, text="🗑", 
+                                     command=self.clear_master_console,
+                                     bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 8),
+                                     relief=tk.FLAT, bd=0, padx=4, pady=1,
+                                     cursor="hand2")
+        clear_master_btn.pack(side=tk.RIGHT, padx=5)
+        
+        self.master_console = scrolledtext.ScrolledText(master_console_frame,
+                                                        bg="#0a0a0a", fg="#00ff88",
+                                                        font=("Consolas", 9), wrap=tk.WORD,
+                                                        state=tk.DISABLED, relief=tk.FLAT,
+                                                        highlightthickness=1, 
+                                                        highlightbackground="#00aaff")
+        self.master_console.pack(pady=2, padx=4, fill=tk.BOTH, expand=True)
+        
+        # Configure tags for master console
+        self.master_console.tag_configure("send", foreground="#ffaa00")
+        self.master_console.tag_configure("led", foreground="#ff00ff")
+        self.master_console.tag_configure("error", foreground="#ff4444")
+        self.master_console.tag_configure("info", foreground="#888888")
+        self.master_console.tag_configure("status", foreground="#00ffff")
+        
+        self.console_paned.add(master_console_frame, minsize=200)
+        
+        # Slave console (right pane)
+        slave_console_frame = tk.Frame(self.console_paned, bg="#2a2a2a", relief=tk.FLAT)
+        
+        slave_header = tk.Frame(slave_console_frame, bg="#2a2a2a")
+        slave_header.pack(fill=tk.X, pady=2)
+        
+        tk.Label(slave_header, text="💡 SLAVE (LED Controller)", font=("Segoe UI", 9, "bold"), 
+                fg="#ff8800", bg="#2a2a2a").pack(side=tk.LEFT, padx=5)
+        
+        clear_slave_btn = tk.Button(slave_header, text="🗑", 
+                                    command=self.clear_slave_console,
+                                    bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 8),
+                                    relief=tk.FLAT, bd=0, padx=4, pady=1,
+                                    cursor="hand2")
+        clear_slave_btn.pack(side=tk.RIGHT, padx=5)
+        
+        self.slave_console = scrolledtext.ScrolledText(slave_console_frame,
+                                                       bg="#0a0a0a", fg="#ffff00",
+                                                       font=("Consolas", 9), wrap=tk.WORD,
+                                                       state=tk.DISABLED, relief=tk.FLAT,
+                                                       highlightthickness=1, 
+                                                       highlightbackground="#ff8800")
+        self.slave_console.pack(pady=2, padx=4, fill=tk.BOTH, expand=True)
+        
+        # Configure tags for slave console
+        self.slave_console.tag_configure("rx", foreground="#00ffff")
+        self.slave_console.tag_configure("cmd", foreground="#00ff00")
+        self.slave_console.tag_configure("error", foreground="#ff4444")
+        self.slave_console.tag_configure("status", foreground="#888888")
+        
+        self.console_paned.add(slave_console_frame, minsize=200)
+        
+        # Add console pane to main paned window
+        self.main_paned.add(console_pane, minsize=150)
+        
+        # Legacy console reference (for compatibility)
+        self.console = self.master_console
+        
+        # =================================================================
+        # STATUS BAR
+        # =================================================================
+        status_bar = tk.Frame(self.scrollable_frame, bg="#2a2a2a")
+        status_bar.pack(pady=4, padx=12, fill=tk.X)
+        
+        self.state_label = tk.Label(status_bar, text="System: IDLE", 
+                                   font=("Segoe UI", 9, "bold"), fg="#ffffff", bg="#2a2a2a")
+        self.state_label.pack(side=tk.LEFT, padx=8)
+        
+        self.stats_label = tk.Label(status_bar, text="Bytes: M=0 | S=0", 
+                                   font=("Consolas", 8), fg="#888888", bg="#2a2a2a")
+        self.stats_label.pack(side=tk.LEFT, padx=15)
+        
+        diag_btn = tk.Button(status_bar, text="🔍 Diagnostics", 
+                           command=self.show_diagnostics,
+                           bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 8),
+                           relief=tk.FLAT, bd=0, padx=8, pady=2,
+                           cursor="hand2")
+        diag_btn.pack(side=tk.RIGHT, padx=4)
+        
+        clear_all_btn = tk.Button(status_bar, text="🗑 Clear All", 
+                                 command=self.clear_all_consoles,
+                                 bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 8),
+                                 relief=tk.FLAT, bd=0, padx=8, pady=2,
+                                 cursor="hand2")
+        clear_all_btn.pack(side=tk.RIGHT, padx=4)
         
         # Initial port refresh
         self.refresh_ports()
     
+    def _on_canvas_configure(self, event):
+        """Resize the scrollable frame to match canvas size for proper pane expansion."""
+        self.canvas.itemconfig(self.canvas_frame, width=event.width)
+        # Also update height so PanedWindow can expand to fill available space
+        # Get the natural height of all content above and below the paned window
+        self.scrollable_frame.update_idletasks()
+        content_height = self.scrollable_frame.winfo_reqheight()
+        # Use the larger of content height or canvas height
+        new_height = max(content_height, event.height)
+        self.canvas.itemconfig(self.canvas_frame, height=new_height)
+    
+    def _on_frame_configure(self, event):
+        """Update scroll region when frame content changes."""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    
+    def _on_mousewheel(self, event):
+        """Handle mouse wheel scrolling."""
+        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    
     def refresh_ports(self):
-        """Refresh available serial ports."""
-        self.log_console("\n🔄 Scanning for Arduinos...")
-        ports = self.arduino.find_arduino_ports()
+        """Refresh available serial ports for both Master and Slave."""
+        self.log_master_console("🔄 Scanning for Arduinos...\n", "info")
+        ports = self.master_arduino.find_arduino_ports()
         
         # Display identification logs
-        if hasattr(self.arduino, '_id_logs'):
-            for log in self.arduino._id_logs:
-                self.log_console(log)
-            self.arduino._id_logs = []
+        if hasattr(self.master_arduino, '_id_logs'):
+            for log in self.master_arduino._id_logs:
+                self.log_master_console(log + "\n", "info")
+            self.master_arduino._id_logs = []
         
         port_list = [f"{p['port']} - {p['desc']}" for p in ports]
         
-        self.port_combo['values'] = port_list
+        # Populate both dropdowns
+        self.master_port_combo['values'] = port_list
+        self.slave_port_combo['values'] = port_list
+        
         if port_list:
-            self.port_combo.current(0)
-            self.log_console(f"✓ Found {len(port_list)} port(s)\n")
+            # Try to auto-select based on detected type
+            master_idx = 0
+            slave_idx = 0
+            for i, p in enumerate(ports):
+                if p['type'] == 'MASTER':
+                    master_idx = i
+                elif p['type'] == 'SLAVE' or p['type'] == 'UNKNOWN':
+                    slave_idx = i
             
-            # Log summary
+            if len(port_list) > 0:
+                self.master_port_combo.current(master_idx)
+            if len(port_list) > 1:
+                # Make sure slave is different from master
+                if slave_idx == master_idx:
+                    slave_idx = 1 if master_idx == 0 else 0
+                self.slave_port_combo.current(slave_idx)
+            elif len(port_list) == 1:
+                self.slave_port_combo.current(0)
+            
+            self.log_master_console(f"✓ Found {len(port_list)} port(s)\n", "info")
             for p in ports:
-                self.log_console(f"  {p['port']}: {p['type']}")
+                self.log_master_console(f"  {p['port']}: {p['type']}\n", "info")
         else:
-            self.log_console("⚠️ No Arduino ports detected")
+            self.log_master_console("⚠️ No Arduino ports detected\n", "error")
     
     def refresh_ports_periodically(self):
-        """Auto-refresh ports every 5 seconds if not connected."""
-        # Disabled to prevent spam - user can manually refresh
-        # if not self.arduino.is_connected:
-        #     self.refresh_ports()
-        # self.root.after(5000, self.refresh_ports_periodically)
+        """Auto-refresh ports - disabled to prevent spam."""
         pass
     
-    def toggle_connection(self):
-        """Toggle Arduino connection."""
-        if self.arduino.is_connected:
-            self.arduino.disconnect()
+    def toggle_master_connection(self):
+        """Toggle Master Arduino connection."""
+        if self.master_arduino.is_connected:
+            self.master_arduino.disconnect()
         else:
-            selected = self.port_combo.get()
+            selected = self.master_port_combo.get()
             if selected:
                 port_name = selected.split(' - ')[0]
-                self.log_console(f"Connecting to {port_name}...")
-                if self.arduino.connect(port_name):
-                    self.log_console(f"✓ Connected to {port_name}")
+                
+                # Check if this port is already in use by Slave
+                if self.slave_arduino.is_connected:
+                    slave_port = self.slave_port_combo.get().split(' - ')[0]
+                    if port_name == slave_port:
+                        self.log_master_console(f"⚠️ Port {port_name} already in use by Slave!\n", "error")
+                        self.log_master_console("Please select a different port for Master.\n", "error")
+                        return
+                
+                self.log_master_console(f"Connecting to {port_name}...\n", "info")
+                if self.master_arduino.connect(port_name):
+                    self.log_master_console(f"✓ Connected to {port_name}\n", "info")
     
-    def on_connected(self):
-        """Handle successful connection."""
-        self.status_label.config(text=f"🟢 Connected to {self.arduino.port_name}", fg="#00ff88")
-        self.connect_btn.config(text="🔌 Disconnect", bg="#cc0000")
+    def toggle_slave_connection(self):
+        """Toggle Slave Arduino connection."""
+        if self.slave_arduino.is_connected:
+            self.slave_arduino.disconnect()
+        else:
+            selected = self.slave_port_combo.get()
+            if selected:
+                port_name = selected.split(' - ')[0]
+                
+                # Check if this port is already in use by Master
+                if self.master_arduino.is_connected:
+                    master_port = self.master_port_combo.get().split(' - ')[0]
+                    if port_name == master_port:
+                        self.log_slave_console(f"⚠️ Port {port_name} already in use by Master!\n", "error")
+                        self.log_slave_console("Please select a different port for Slave.\n", "error")
+                        return
+                
+                self.log_slave_console(f"Connecting to {port_name}...\n", "info")
+                # Slave uses 115200 for USB serial (not the 9600 SoftwareSerial on D2)
+                if self.slave_arduino.connect(port_name, baud_rate=115200):
+                    self.log_slave_console(f"✓ Connected to {port_name}\n", "info")
+    
+    def toggle_both_connections(self):
+        """Connect or disconnect both Arduinos based on current state."""
+        both_connected = self.master_arduino.is_connected and self.slave_arduino.is_connected
+        
+        if both_connected:
+            # Disconnect both
+            self.log_master_console("\n🔌 Disconnecting both Arduinos...\n", "info")
+            if self.master_arduino.is_connected:
+                self.master_arduino.disconnect()
+            if self.slave_arduino.is_connected:
+                self.slave_arduino.disconnect()
+        else:
+            # Connect both
+            self.auto_connect_both()
+    
+    def auto_connect_both(self):
+        """Auto-detect and connect to both Arduinos."""
+        self.log_master_console("\n⚡ Connecting both Arduinos...\n", "info")
+        
+        # Refresh ports first
+        ports = self.master_arduino.find_arduino_ports()
+        
+        if len(ports) < 2:
+            self.log_master_console(f"⚠️ Need 2 ports, found {len(ports)}\n", "error")
+            return
+        
+        # Find master and slave
+        master_port = None
+        slave_port = None
+        
+        for p in ports:
+            if p['type'] == 'MASTER' and not master_port:
+                master_port = p['port']
+            elif p['type'] == 'SLAVE' and not slave_port:
+                slave_port = p['port']
+        
+        # Fallback: assign by order if types not detected
+        if not master_port:
+            master_port = ports[0]['port']
+        if not slave_port:
+            for p in ports:
+                if p['port'] != master_port:
+                    slave_port = p['port']
+                    break
+        
+        # Connect master
+        if master_port and not self.master_arduino.is_connected:
+            self.log_master_console(f"Connecting Master: {master_port}\n", "info")
+            self.master_arduino.connect(master_port)
+        
+        # Connect slave
+        if slave_port and not self.slave_arduino.is_connected:
+            self.log_slave_console(f"Connecting Slave: {slave_port}\n", "info")
+            self.slave_arduino.connect(slave_port)
+    
+    def on_master_connected(self):
+        """Handle successful Master connection."""
+        self.master_status_label.config(text="🟢", fg="#00ff00")
+        self.master_connect_btn.config(text="Disconnect", bg="#cc0000")
         
         # Enable command buttons
         self.start_btn.config(state=tk.NORMAL)
@@ -546,13 +895,13 @@ class ArduinoActionsApp:
         self.list_btn.config(state=tk.NORMAL)
         self.dump_selected_btn.config(state=tk.NORMAL)
         
-        # Don't auto-request status to avoid GPS interference
-        # self.root.after(500, lambda: self.send_command("STATUS"))
+        # Update combined connect button
+        self.update_combined_connect_button()
     
-    def on_disconnected(self):
-        """Handle disconnection."""
-        self.status_label.config(text="⚫ Disconnected", fg="#888888")
-        self.connect_btn.config(text="🔌 Connect", bg="#00aa00")
+    def on_master_disconnected(self):
+        """Handle Master disconnection."""
+        self.master_status_label.config(text="⚫", fg="#888888")
+        self.master_connect_btn.config(text="Connect", bg="#00aa00")
         
         # Disable command buttons
         self.start_btn.config(state=tk.DISABLED)
@@ -566,7 +915,110 @@ class ArduinoActionsApp:
         self.pending_command_time = None
         self.consecutive_timeouts = 0
         
-        self.log_console("⚫ Disconnected from Arduino")
+        self.log_master_console("⚫ Disconnected\n", "info")
+        
+        # Update combined connect button
+        self.update_combined_connect_button()
+    
+    def on_slave_connected(self):
+        """Handle successful Slave connection."""
+        self.slave_status_label.config(text="🟢", fg="#00ff00")
+        self.slave_connect_btn.config(text="Disconnect", bg="#cc0000")
+        
+        # Update combined connect button
+        self.update_combined_connect_button()
+    
+    def on_slave_disconnected(self):
+        """Handle Slave disconnection."""
+        self.slave_status_label.config(text="⚫", fg="#888888")
+        self.slave_connect_btn.config(text="Connect", bg="#00aa00")
+        self.log_slave_console("⚫ Disconnected\n", "info")
+        
+        # Update combined connect button
+        self.update_combined_connect_button()
+    
+    def update_combined_connect_button(self):
+        """Update the combined connect/disconnect button based on connection state."""
+        both_connected = self.master_arduino.is_connected and self.slave_arduino.is_connected
+        
+        if both_connected:
+            # Both connected - show red disconnect button
+            self.auto_connect_btn.config(text="🔌 Disconnect Both", bg="#cc0000")
+        else:
+            # Not both connected - show green connect button
+            self.auto_connect_btn.config(text="⚡ Connect Both", bg="#00aa00")
+    
+    def on_master_data_received(self, data):
+        """Handle data from Master Arduino."""
+        self.root.after(0, lambda: self._process_master_data(data))
+    
+    def on_slave_data_received(self, data):
+        """Handle data from Slave Arduino."""
+        self.root.after(0, lambda: self._process_slave_data(data))
+    
+    def _process_slave_data(self, data):
+        """Process Slave serial data with color coding."""
+        self.slave_bytes += len(data) + 1
+        self.update_stats()
+        
+        # Color code based on content
+        if data.startswith('RX:'):
+            self.log_slave_console(data + "\n", "rx")
+        elif 'Processing:' in data or 'CMD:' in data:
+            self.log_slave_console(data + "\n", "cmd")
+        elif 'error' in data.lower():
+            self.log_slave_console(data + "\n", "error")
+        else:
+            self.log_slave_console(data + "\n")
+    
+    def log_master_console(self, message, tag=None):
+        """Add message to master console."""
+        self.master_console.config(state=tk.NORMAL)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        if tag:
+            self.master_console.insert(tk.END, f"[{timestamp}] {message}", tag)
+        else:
+            self.master_console.insert(tk.END, f"[{timestamp}] {message}")
+        self.master_console.see(tk.END)
+        self.master_console.config(state=tk.DISABLED)
+        self.master_bytes += len(message)
+        self.update_stats()
+    
+    def log_slave_console(self, message, tag=None):
+        """Add message to slave console."""
+        self.slave_console.config(state=tk.NORMAL)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        if tag:
+            self.slave_console.insert(tk.END, f"[{timestamp}] {message}", tag)
+        else:
+            self.slave_console.insert(tk.END, f"[{timestamp}] {message}")
+        self.slave_console.see(tk.END)
+        self.slave_console.config(state=tk.DISABLED)
+    
+    def clear_master_console(self):
+        """Clear master console."""
+        self.master_console.config(state=tk.NORMAL)
+        self.master_console.delete(1.0, tk.END)
+        self.master_console.config(state=tk.DISABLED)
+        self.master_bytes = 0
+        self.update_stats()
+    
+    def clear_slave_console(self):
+        """Clear slave console."""
+        self.slave_console.config(state=tk.NORMAL)
+        self.slave_console.delete(1.0, tk.END)
+        self.slave_console.config(state=tk.DISABLED)
+        self.slave_bytes = 0
+        self.update_stats()
+    
+    def clear_all_consoles(self):
+        """Clear both consoles."""
+        self.clear_master_console()
+        self.clear_slave_console()
+    
+    def update_stats(self):
+        """Update the stats label."""
+        self.stats_label.config(text=f"Bytes: M={self.master_bytes} | S={self.slave_bytes}")
     
     def _format_file_entry(self, data):
         """Format file entry for display. Input: 'filename|size' or just 'filename'."""
@@ -594,15 +1046,43 @@ class ArduinoActionsApp:
         return display_name.strip()
     
     def send_command(self, command):
-        """Send command to Arduino."""
-        if self.arduino.send_command(command):
-            self.log_console(f"→ {command}")
+        """Send command to Master Arduino."""
+        if self.master_arduino.send_command(command):
+            self.log_master_console(f"→ {command}\n", "send")
             # Track pending command for timeout detection
             self.pending_command = command
             self.pending_command_time = time.time()
         else:
-            self.log_console(f"⚠️ Failed to send: {command}")
+            self.log_master_console(f"⚠️ Failed to send: {command}\n", "error")
             self.error_count += 1
+    
+    def send_led_test(self, led_command):
+        """Send LED test command directly to Slave Arduino via USB."""
+        # Rate limit to prevent buffer overflow on Arduino
+        current_time = time.time()
+        if hasattr(self, '_last_led_test_time'):
+            elapsed = current_time - self._last_led_test_time
+            if elapsed < 0.3:  # Minimum 300ms between LED test commands
+                self.log_slave_console(f"⚠️ Too fast! Wait a moment...\n", "error")
+                return
+        self._last_led_test_time = current_time
+        
+        # Send directly to Slave (not through Master) to avoid firmware size issues
+        if self.slave_arduino.is_connected:
+            # For RPM commands, also send a speed > 1 to avoid idle state
+            # (LED logic shows idle when speed <= 1, regardless of RPM)
+            if led_command.startswith("RPM:"):
+                # Send speed first to exit idle state
+                self.slave_arduino.send_command("SPD:50")
+                self.log_slave_console(f"→ SPD:50 (exit idle)\n", "status")
+                time.sleep(0.2)  # Wait for Slave to process before sending RPM
+            
+            if self.slave_arduino.send_command(led_command):
+                self.log_slave_console(f"→ {led_command}\n", "cmd")
+            else:
+                self.log_slave_console(f"⚠️ Failed to send LED test\n", "error")
+        else:
+            self.log_slave_console("⚠️ Slave not connected\n", "error")
     
     def list_files(self):
         """List files on SD card."""
@@ -629,15 +1109,23 @@ class ArduinoActionsApp:
         save_path = filedialog.askdirectory(title="Select folder to save log")
         
         if save_path:
+            # First, stop logging if running (Master can't dump while logging)
+            self.log_master_console("⏹ Stopping logging before dump...\n", "info")
+            self.master_arduino.send_command("X")
+            # Wait long enough for OK response to be received and processed
+            # This prevents the stop's "OK" from being interpreted as dump completion
+            time.sleep(0.8)  # Wait for stop response to flush through
+            
             self.dump_buffer = []
             self.dump_mode = True
+            self.dump_ignore_first_ok = True  # Flag to ignore OK from stop command
             self.dump_save_path = save_path
             self.dump_file_size = 0
             self.dump_bytes_received = 0
             self.dump_filename = filename
             # Extended timeout: 120 seconds for large files (at 115200 baud, ~10KB/s theoretical)
             self.dump_timeout = time.time() + 120
-            self.log_console(f"📥 Starting dump of {filename}...")
+            self.log_master_console(f"📥 Starting dump of {filename}...\n", "info")
             self.send_command(f"D {filename}")
     
     def request_status(self):
@@ -646,14 +1134,15 @@ class ArduinoActionsApp:
         self.send_command("T")
     
     def on_data_received(self, data):
-        """Handle data from Arduino."""
-        # Use after() to update UI from main thread
-        self.root.after(0, lambda: self._process_data(data))
+        """Handle data from Arduino - legacy method redirects to master."""
+        self.on_master_data_received(data)
     
-    def _process_data(self, data):
-        """Process received data (runs in main thread)."""
+    def _process_master_data(self, data):
+        """Process received data from Master (runs in main thread)."""
         # Update last data time and clear pending command
         self.last_data_time = time.time()
+        self.master_bytes += len(data) + 1
+        self.update_stats()
         
         # Check if this is a response to our pending command
         if self.pending_command:
@@ -671,28 +1160,49 @@ class ArduinoActionsApp:
             
             # Handle SIZE header from Arduino (file size info)
             if data.startswith("SIZE:"):
+                # SIZE header means dump is really starting, clear the ignore flag
+                self.dump_ignore_first_ok = False
                 try:
                     self.dump_file_size = int(data.split(":")[1])
-                    self.log_console(f"📊 File size: {self.dump_file_size} bytes")
+                    self.log_master_console(f"📊 File size: {self.dump_file_size} bytes\n", "info")
                 except ValueError:
                     pass
                 return  # Don't add SIZE line to buffer
             
             # Collecting dump data - look for OK to end dump
             if data == "OK":
+                # Ignore the first OK which is from the stop command, not the dump
+                if self.dump_ignore_first_ok:
+                    self.dump_ignore_first_ok = False
+                    self.log_master_console("⏹ Logging stopped\n", "info")
+                    return  # Skip this OK, wait for the real dump OK
                 self.dump_mode = False
+                self.dump_ignore_first_ok = False
                 self.save_dump_data()
             elif data == "ABORTED":
                 self.dump_mode = False
-                self.log_console("⚠️ Dump aborted by user")
+                self.dump_ignore_first_ok = False
+                self.log_master_console("⚠️ Dump aborted by user\n", "error")
                 self.dump_buffer = []
                 self.dump_save_path = None
-            elif data.startswith("ERR:"):
+            elif data.startswith("ERR:") or data.startswith("E:"):
                 self.dump_mode = False
-                self.log_console(f"❌ Dump failed: {data}")
+                self.dump_ignore_first_ok = False
+                if data == "E:B":
+                    self.log_master_console("❌ Dump failed: Master is busy (try stopping first with STOP button)\n", "error")
+                elif data == "E:NL":
+                    self.log_master_console("❌ Dump failed: No log file exists (try START to create one)\n", "error")
+                elif data == "E:NF":
+                    self.log_master_console("❌ Dump failed: File not found\n", "error")
+                elif data == "E:DL":
+                    self.log_master_console("❌ Dump failed: Data logger not initialized\n", "error")
+                else:
+                    self.log_master_console(f"❌ Dump failed: {data}\n", "error")
                 self.dump_buffer = []
                 self.dump_save_path = None
             else:
+                # Any data line means dump is really happening, clear ignore flag
+                self.dump_ignore_first_ok = False
                 # Collect all data lines and track bytes received
                 self.dump_buffer.append(data)
                 self.dump_bytes_received += len(data) + 1  # +1 for newline
@@ -700,13 +1210,13 @@ class ArduinoActionsApp:
                 # Log progress every 10KB
                 if self.dump_file_size > 0 and self.dump_bytes_received % 10240 < 100:
                     pct = min(100, int(self.dump_bytes_received * 100 / self.dump_file_size))
-                    self.log_console(f"📥 Progress: {pct}% ({self.dump_bytes_received}/{self.dump_file_size} bytes)")
+                    self.log_master_console(f"📥 Progress: {pct}% ({self.dump_bytes_received}/{self.dump_file_size} bytes)\n", "info")
         elif data.startswith("Files:"):
             # File list response - expecting "Files:0" or filename lines to follow
             if data == "Files:0":
                 self.file_listbox.delete(0, tk.END)
                 self.file_listbox.insert(tk.END, "(No files on SD card)")
-                self.log_console(data)
+                self.log_master_console(data + "\n")
             else:
                 # Files: prefix with first filename on same line
                 self.file_listbox.delete(0, tk.END)
@@ -814,22 +1324,18 @@ class ArduinoActionsApp:
         self.dump_buffer = []
     
     def log_console(self, message):
-        """Add message to console."""
-        self.console.config(state=tk.NORMAL)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.console.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.console.see(tk.END)
-        self.console.config(state=tk.DISABLED)
+        """Add message to master console (legacy compatibility)."""
+        if not message.endswith('\n'):
+            message += '\n'
+        self.log_master_console(message)
     
     def clear_console(self):
-        """Clear console output."""
-        self.console.config(state=tk.NORMAL)
-        self.console.delete(1.0, tk.END)
-        self.console.config(state=tk.DISABLED)
+        """Clear master console output (legacy compatibility)."""
+        self.clear_master_console()
     
     def check_command_timeout(self):
         """Check if a command has timed out without response."""
-        if self.arduino.is_connected:
+        if self.master_arduino.is_connected:
             current_time = time.time()
             
             # Check if we have a pending command that's timed out
@@ -863,9 +1369,12 @@ class ArduinoActionsApp:
         """Show diagnostic information."""
         self.log_console("\n" + "="*50)
         self.log_console("DIAGNOSTICS:")
-        self.log_console(f"  Connection: {'Connected' if self.arduino.is_connected else 'Disconnected'}")
-        if self.arduino.is_connected:
-            self.log_console(f"  Port: {self.arduino.port_name}")
+        self.log_console(f"  Master: {'Connected' if self.master_arduino.is_connected else 'Disconnected'}")
+        if self.master_arduino.is_connected:
+            self.log_console(f"  Master Port: {self.master_arduino.port_name}")
+        self.log_console(f"  Slave: {'Connected' if self.slave_arduino.is_connected else 'Disconnected'}")
+        if self.slave_arduino.is_connected:
+            self.log_console(f"  Slave Port: {self.slave_arduino.port_name}")
         self.log_console(f"  System State: {self.current_state}")
         self.log_console(f"  Pending Command: {self.pending_command or 'None'}")
         if self.pending_command_time:
@@ -879,9 +1388,12 @@ class ArduinoActionsApp:
     
     def on_close(self):
         """Handle window close."""
-        if self.arduino.is_connected:
-            self.arduino.disconnect()
+        if self.master_arduino.is_connected:
+            self.master_arduino.disconnect()
+        if self.slave_arduino.is_connected:
+            self.slave_arduino.disconnect()
         self.root.destroy()
+
 
 # ============================================================================
 # Main Entry Point
@@ -889,7 +1401,7 @@ class ArduinoActionsApp:
 
 def main():
     print("\n" + "="*70)
-    print("MX5-Telemetry Arduino Actions - Starting...")
+    print("MX5-Telemetry Arduino Actions - Dual Monitor")
     print("="*70 + "\n")
     
     root = tk.Tk()
