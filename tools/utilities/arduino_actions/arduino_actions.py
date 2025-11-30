@@ -463,6 +463,13 @@ class ArduinoActionsApp:
                                     cursor="hand2", state=tk.DISABLED)
         self.status_btn.pack(side=tk.LEFT, padx=3)
         
+        self.loopback_btn = tk.Button(btn_row, text="🔧 LOOPBACK", 
+                                      command=lambda: self.send_command("L"),
+                                      bg="#0088cc", fg="#ffffff", font=("Segoe UI", 9, "bold"),
+                                      relief=tk.FLAT, bd=0, padx=12, pady=4,
+                                      cursor="hand2", state=tk.DISABLED)
+        self.loopback_btn.pack(side=tk.LEFT, padx=3)
+        
         # SD Card files (right side - expandable)
         sd_section = tk.Frame(cmd_sd_frame, bg="#2a2a2a")
         sd_section.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
@@ -910,6 +917,7 @@ class ArduinoActionsApp:
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.NORMAL)
         self.status_btn.config(state=tk.NORMAL)
+        self.loopback_btn.config(state=tk.NORMAL)
         self.list_btn.config(state=tk.NORMAL)
         self.dump_selected_btn.config(state=tk.NORMAL)
         
@@ -925,6 +933,7 @@ class ArduinoActionsApp:
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.DISABLED)
         self.status_btn.config(state=tk.DISABLED)
+        self.loopback_btn.config(state=tk.DISABLED)
         self.list_btn.config(state=tk.DISABLED)
         self.dump_selected_btn.config(state=tk.DISABLED)
         

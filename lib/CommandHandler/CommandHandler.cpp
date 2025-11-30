@@ -1,6 +1,7 @@
 #include "CommandHandler.h"
 #include "DataLogger.h"
 #include "GPSHandler.h"
+#include "CANHandler.h"
 #include "LEDSlave.h"
 #include <SdFat.h>
 
@@ -9,7 +10,7 @@
 // ============================================================================
 
 CommandHandler::CommandHandler()
-    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr), dataReceived(false) {
+    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr), canHandler(nullptr), dataReceived(false) {
     inputBuffer[0] = '\0';
 }
 
@@ -95,6 +96,7 @@ void CommandHandler::processCommand(const char* cmd) {
             case 'X': handleStop(); return;        // X = STOP (eXit)
             case 'I': handleList(); return;        // I = LIST (lIst)
             case 'T': handleStatus(); return;      // T = STATUS (sTatus)
+            case 'L': handleLoopback(); return;    // L = LOOPBACK test
         }
     }
     
@@ -267,4 +269,13 @@ void CommandHandler::handleRPM(const char* /* command */) {
 void CommandHandler::handleLED(const char* /* command */) {
     // LED handling removed - LED control moved to slave Arduino
     // Master no longer processes simulator LED commands
+}
+
+void CommandHandler::handleLoopback() {
+    // Run CAN loopback self-test
+    if (canHandler) {
+        canHandler->runLoopbackTest();
+    } else {
+        Serial.println(F("E: CAN not available"));
+    }
 }
