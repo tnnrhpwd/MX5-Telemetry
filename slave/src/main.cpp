@@ -37,7 +37,7 @@
 #define SERIAL_RX_PIN       2       // D2 for SoftwareSerial RX (from master D6)
 #define HAPTIC_PIN          3       // D3 for haptic motor (vibration feedback)
 #define LED_COUNT           20      // Number of LEDs in strip (adjust to your strip)
-#define SLAVE_SERIAL_BAUD   2400    // Baud rate - very slow for maximum reliability
+#define SLAVE_SERIAL_BAUD   1200    // Baud rate - very slow for maximum reliability
 #define ENABLE_HAPTIC       false   // DISABLED for debugging - set true to enable haptic feedback
 #define MIN_VOLTAGE_FOR_HAPTIC  4.7 // Minimum voltage (V) to enable haptic on startup
 
@@ -640,8 +640,15 @@ void loop() {
             if (c >= 32 && c <= 126) Serial.print(c);
             Serial.println("'");
             
-            // Start-of-message marker - reset buffer
+            // Start-of-message marker - process previous command and reset buffer
             if (c == '!') {
+                // Process whatever was in the buffer before resetting
+                if (bufferIndex > 0) {
+                    inputBuffer[bufferIndex] = '\0';
+                    Serial.print("Processing: ");
+                    Serial.println(inputBuffer);
+                    processCommand(inputBuffer);
+                }
                 bufferIndex = 0;
                 continue;  // Don't add ! to buffer
             }
