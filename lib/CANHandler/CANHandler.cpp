@@ -27,17 +27,46 @@ CANHandler::CANHandler(uint8_t csPin)
 
 bool CANHandler::begin() {
     // Initialize MCP2515 at 500kbps with 16MHz crystal
-    if (can.begin(MCP_ANY, CAN_SPEED, MCP_16MHZ) == CAN_OK) {
-        can.setMode(MCP_NORMAL);  // Set to normal mode
+    Serial.print(F("CAN init: MCP_ANY, 500KBPS, 16MHz... "));
+    byte result = can.begin(MCP_ANY, CAN_SPEED, MCP_16MHZ);
+    if (result == CAN_OK) {
+        Serial.println(F("OK"));
+        Serial.print(F("Setting normal mode... "));
+        can.setMode(MCP_NORMAL);
+        Serial.println(F("OK"));
         initialized = true;
         errorCount = 0;
         return true;
     }
+    Serial.print(F("FAILED! code="));
+    Serial.println(result);
     return false;
 }
 
 void CANHandler::update() {
     if (!initialized) return;
+    
+    // Debug: Check MCP2515 status periodically
+    static unsigned long lastStatusCheck = 0;
+    static uint32_t checkCount = 0;
+    static uint32_t msgAvailCount = 0;
+    
+    checkCount++;
+    
+    if (millis() - lastStatusCheck > 2000) {
+        lastStatusCheck = millis();
+        byte errFlag = can.getError();
+        byte status = can.checkReceive();
+        Serial.print(F("CAN status: checks="));
+        Serial.print(checkCount);
+        Serial.print(F(" msgs="));
+        Serial.print(msgAvailCount);
+        Serial.print(F(" err=0x"));
+        Serial.print(errFlag, HEX);
+        Serial.print(F(" rx="));
+        Serial.println(status == CAN_MSGAVAIL ? F("AVAIL") : F("none"));
+        checkCount = 0;
+    }
     
     long unsigned int rxId;
     unsigned char len = 0;
@@ -57,7 +86,25 @@ void CANHandler::update() {
     
     // Check if data is available
     if (can.checkReceive() == CAN_MSGAVAIL) {
+        msgAvailCount++;
         can.readMsgBuf(&rxId, &len, rxBuf);
+        
+        // DEBUG: Print every CAN frame received (helps identify correct IDs)
+        static unsigned long lastDebugPrint = 0;
+        if (millis() - lastDebugPrint > 500) {  // Limit to 2 per second
+            lastDebugPrint = millis();
+            Serial.print(F("CAN RX ID=0x"));
+            Serial.print(rxId, HEX);
+            Serial.print(F(" len="));
+            Serial.print(len);
+            Serial.print(F(" data="));
+            for (uint8_t i = 0; i < len && i < 8; i++) {
+                if (rxBuf[i] < 0x10) Serial.print('0');
+                Serial.print(rxBuf[i], HEX);
+                Serial.print(' ');
+            }
+            Serial.println();
+        }
         
         // Reset error counter on successful read (robust error handling)
         errorCount = 0;
@@ -69,13 +116,15 @@ void CANHandler::update() {
         parseMazdaCANFrame(rxId, len, rxBuf);
         parseOBDResponse(rxId, len, rxBuf);
         
-    } else {
-        // MODE 2 FALLBACK: Cycle through all OBD-II PIDs for comprehensive data collection
-        if (millis() - lastOBDRequest > 100) {  // Request every 100ms
-            lastOBDRequest = millis();
-            cycleOBDRequests();
-        }
     }
+    // DISABLED: OBD-II requests can flood the bus and trigger check engine light!
+    // Only use passive listening mode - do NOT transmit on CAN bus
+    // else {
+    //     if (millis() - lastOBDRequest > 100) {
+    //         lastOBDRequest = millis();
+    //         cycleOBDRequests();
+    //     }
+    // }
     
     // ============================================================================
     // ROBUST ERROR HANDLING (as specified in requirements)
@@ -175,29 +224,15 @@ void CANHandler::parseOBDResponse(unsigned long rxId, unsigned char len, unsigne
 }
 
 void CANHandler::requestOBDData(uint8_t pid) {
-    if (!initialized) return;
-    
-    unsigned char requestBuf[8] = {0x02, OBD2_MODE_01, pid, 0, 0, 0, 0, 0};
-    can.sendMsgBuf(OBD2_REQUEST_ID, 0, 8, requestBuf);
+    // DISABLED: Do NOT transmit on CAN bus - passive listening only!
+    // Transmitting OBD-II requests can flood the bus and trigger CEL
+    // if (!initialized) return;
+    // unsigned char requestBuf[8] = {0x02, OBD2_MODE_01, pid, 0, 0, 0, 0, 0};
+    // can.sendMsgBuf(OBD2_REQUEST_ID, 0, 8, requestBuf);
+    (void)pid;  // Suppress unused parameter warning
 }
 
 void CANHandler::cycleOBDRequests() {
-    // Cycle through all required PIDs for comprehensive data logging
-    static const uint8_t pids[] = {
-        PID_ENGINE_RPM,
-        PID_VEHICLE_SPEED,
-        PID_THROTTLE,
-        PID_CALCULATED_LOAD,
-        PID_COOLANT_TEMP,
-        PID_INTAKE_TEMP,
-        PID_BAROMETRIC,
-        PID_TIMING_ADVANCE,
-        PID_MAF_RATE,
-        PID_SHORT_FUEL_TRIM,
-        PID_LONG_FUEL_TRIM,
-        0x14  // O2 Sensor Bank 1 Sensor 1
-    };
-    
-    requestOBDData(pids[currentPidIndex]);
-    currentPidIndex = (currentPidIndex + 1) % (sizeof(pids) / sizeof(pids[0]));
+    // DISABLED: Do NOT transmit on CAN bus - passive listening only!
+    // Transmitting OBD-II requests can flood the bus and trigger CEL
 }
