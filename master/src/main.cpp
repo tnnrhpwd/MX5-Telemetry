@@ -72,9 +72,12 @@ unsigned long lastCANRead = 0;
 unsigned long lastGPSRead = 0;
 unsigned long lastLogWrite = 0;
 unsigned long lastLEDUpdate = 0;  // Track LED updates to rate-limit
+unsigned long lastDiagPrint = 0;  // Track periodic diagnostic prints
 unsigned long logFileStartTime = 0;  // Track when current log file was created
 unsigned long bootTime = 0;  // Track system boot time for auto-start
 bool autoStartTriggered = false;  // Track if auto-start has been triggered
+
+#define DIAG_PRINT_INTERVAL 60000  // Print diagnostics every 60 seconds
 
 // ============================================================================
 // STATUS PRINTING
@@ -395,6 +398,23 @@ void loop() {
     // ========================================================================
     // PERIODIC STATUS (disabled - not used)
     // ========================================================================
+    
+    // ========================================================================
+    // PERIODIC DIAGNOSTIC PRINT (Every 60 seconds in auto-start mode)
+    // Helps debug CAN data when no USB is connected but checking logs later
+    // ========================================================================
+    #if AUTO_START_ENABLED && ENABLE_CAN_BUS
+        if (autoStartTriggered && canBus.isInitialized() && 
+            (currentMillis - lastDiagPrint) >= DIAG_PRINT_INTERVAL) {
+            lastDiagPrint = currentMillis;
+            Serial.print(F("[DIAG] RPM:"));
+            Serial.print(canBus.getRPM());
+            Serial.print(F(" SPD:"));
+            Serial.print(canBus.getSpeed());
+            Serial.print(F(" CAN:"));
+            Serial.println(canBus.hasRecentData() ? F("Active") : F("Idle"));
+        }
+    #endif
     
     // GPS is now updated during timed intervals only (see above)
     // This reduces SoftwareSerial interrupt overhead that interferes with USB Serial
