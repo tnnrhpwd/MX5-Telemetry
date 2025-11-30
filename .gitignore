@@ -125,3 +125,4 @@ docs/.doctrees/
 *.bak
 *.backup
 *~
+_codeql_detected_source_root
