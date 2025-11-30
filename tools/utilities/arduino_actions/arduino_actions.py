@@ -504,7 +504,7 @@ class ArduinoActionsApp:
         scrollbar.config(command=self.file_listbox.yview)
         
         # =================================================================
-        # LED TEST SECTION - Quick buttons for LED debugging
+        # LED TEST SECTION - RPM slider for LED debugging
         # =================================================================
         led_test_frame = tk.Frame(self.scrollable_frame, bg="#2a2a2a", relief=tk.FLAT, bd=0)
         led_test_frame.pack(pady=4, padx=12, fill=tk.X)
@@ -512,24 +512,42 @@ class ArduinoActionsApp:
         tk.Label(led_test_frame, text="💡 LED TEST", font=("Segoe UI", 9, "bold"), 
                 fg="#ff8800", bg="#2a2a2a").pack(side=tk.LEFT, padx=5)
         
-        # RPM test buttons
-        rpm_tests = [
-            ("IDLE", "RPM:800", "#004400"),
-            ("2500", "RPM:2500", "#006600"),
-            ("4000", "RPM:4000", "#888800"),
-            ("5500", "RPM:5500", "#aa6600"),
-            ("6500", "RPM:6500", "#cc4400"),
-            ("7000", "RPM:7000", "#ff0000"),
-            ("7500+", "RPM:7800", "#ff00ff"),
+        # RPM Slider
+        self.rpm_slider_value = tk.IntVar(value=0)
+        self.rpm_label = tk.Label(led_test_frame, text="RPM: 0", 
+                                  font=("Segoe UI", 9, "bold"), fg="#00ff00", bg="#2a2a2a",
+                                  width=10)
+        self.rpm_label.pack(side=tk.LEFT, padx=5)
+        
+        self.rpm_slider = tk.Scale(led_test_frame, from_=0, to=8000, orient=tk.HORIZONTAL,
+                                   variable=self.rpm_slider_value,
+                                   command=self.on_rpm_slider_change,
+                                   bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 7),
+                                   troughcolor="#1a1a1a", activebackground="#ff8800",
+                                   highlightthickness=0, bd=0, sliderlength=20,
+                                   length=200, showvalue=False, resolution=100)
+        self.rpm_slider.pack(side=tk.LEFT, padx=5)
+        
+        # Quick RPM preset buttons
+        preset_frame = tk.Frame(led_test_frame, bg="#2a2a2a")
+        preset_frame.pack(side=tk.LEFT, padx=5)
+        
+        rpm_presets = [
+            ("0", 0, "#333333"),
+            ("3K", 3000, "#006600"),
+            ("5K", 5000, "#888800"),
+            ("6K", 6000, "#cc4400"),
+            ("7K", 7000, "#ff0000"),
+            ("8K", 8000, "#ff00ff"),
         ]
         
-        for label, cmd, color in rpm_tests:
-            btn = tk.Button(led_test_frame, text=label, 
-                           command=lambda c=cmd: self.send_led_test(c),
-                           bg=color, fg="#ffffff", font=("Segoe UI", 8, "bold"),
-                           relief=tk.FLAT, bd=0, padx=6, pady=2,
+        for label, rpm, color in rpm_presets:
+            btn = tk.Button(preset_frame, text=label, 
+                           command=lambda r=rpm: self.set_rpm_slider(r),
+                           bg=color, fg="#ffffff", font=("Segoe UI", 7, "bold"),
+                           relief=tk.FLAT, bd=0, padx=4, pady=1,
                            cursor="hand2")
-            btn.pack(side=tk.LEFT, padx=2)
+            btn.pack(side=tk.LEFT, padx=1)
         
         # Separator
         tk.Label(led_test_frame, text="|", fg="#444444", bg="#2a2a2a").pack(side=tk.LEFT, padx=4)
@@ -1083,6 +1101,37 @@ class ArduinoActionsApp:
                 self.log_slave_console(f"⚠️ Failed to send LED test\n", "error")
         else:
             self.log_slave_console("⚠️ Slave not connected\n", "error")
+    
+    def on_rpm_slider_change(self, value):
+        """Handle RPM slider value change."""
+        rpm = int(float(value))
+        
+        # Update label with color based on RPM
+        if rpm < 1000:
+            color = "#888888"  # Gray for idle
+        elif rpm < 3000:
+            color = "#00ff00"  # Green
+        elif rpm < 5000:
+            color = "#88ff00"  # Yellow-green
+        elif rpm < 6000:
+            color = "#ffff00"  # Yellow
+        elif rpm < 6500:
+            color = "#ff8800"  # Orange
+        elif rpm < 7000:
+            color = "#ff4400"  # Red-orange
+        elif rpm < 7500:
+            color = "#ff0000"  # Red
+        else:
+            color = "#ff00ff"  # Magenta for redline
+        
+        self.rpm_label.config(text=f"RPM: {rpm}", fg=color)
+        
+        # Send the RPM command to the Slave
+        self.send_led_test(f"RPM:{rpm}")
+    
+    def set_rpm_slider(self, rpm):
+        """Set the RPM slider to a specific value."""
+        self.rpm_slider.set(rpm)
     
     def list_files(self):
         """List files on SD card."""
