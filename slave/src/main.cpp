@@ -38,7 +38,7 @@
 #define HAPTIC_PIN          3       // D3 for haptic motor (vibration feedback)
 #define LED_COUNT           20      // Number of LEDs in strip (adjust to your strip)
 #define SLAVE_SERIAL_BAUD   9600    // Baud rate for Master->Slave communication (bit-bang)
-#define ENABLE_HAPTIC       true    // Enable/disable haptic feedback
+#define ENABLE_HAPTIC       false   // DISABLED for debugging - set true to enable haptic feedback
 #define MIN_VOLTAGE_FOR_HAPTIC  4.7 // Minimum voltage (V) to enable haptic on startup
 
 // ============================================================================
