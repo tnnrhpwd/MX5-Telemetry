@@ -191,6 +191,10 @@ void setup() {
         cmdHandler.setDataLogger(&dataLogger);
     #endif
     
+    #if ENABLE_CAN_BUS
+        cmdHandler.setCANHandler(&canBus);
+    #endif
+    
     // LED control handled by LEDSlave class via bit-bang serial
     
     #if ENABLE_GPS

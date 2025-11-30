@@ -236,3 +236,123 @@ void CANHandler::cycleOBDRequests() {
     // DISABLED: Do NOT transmit on CAN bus - passive listening only!
     // Transmitting OBD-II requests can flood the bus and trigger CEL
 }
+
+bool CANHandler::runLoopbackTest() {
+    // ============================================================================
+    // LOOPBACK SELF-TEST
+    // ============================================================================
+    // Puts MCP2515 in loopback mode where TX is internally connected to RX.
+    // This verifies: SPI communication, MCP2515 chip, and internal logic.
+    // Does NOT transmit on actual CAN bus - safe to run while connected to car.
+    // ============================================================================
+    
+    Serial.println(F("\n=== CAN LOOPBACK TEST ==="));
+    
+    if (!initialized) {
+        Serial.println(F("FAIL: CAN not initialized"));
+        return false;
+    }
+    
+    // Step 1: Enter loopback mode
+    Serial.print(F("Setting loopback mode... "));
+    can.setMode(MCP_LOOPBACK);
+    delay(10);
+    Serial.println(F("OK"));
+    
+    // Step 2: Prepare test message
+    unsigned char testData[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0x12, 0x34};
+    unsigned long testId = 0x7FF;  // Use a safe test ID
+    
+    // Step 3: Send test message
+    Serial.print(F("Sending test msg ID=0x7FF... "));
+    byte sendResult = can.sendMsgBuf(testId, 0, 8, testData);
+    if (sendResult != CAN_OK) {
+        Serial.print(F("FAIL: send error="));
+        Serial.println(sendResult);
+        can.setMode(MCP_NORMAL);
+        return false;
+    }
+    Serial.println(F("OK"));
+    
+    // Step 4: Wait for message to loop back
+    Serial.print(F("Waiting for loopback... "));
+    unsigned long startWait = millis();
+    bool received = false;
+    
+    while (millis() - startWait < 100) {  // 100ms timeout
+        if (can.checkReceive() == CAN_MSGAVAIL) {
+            received = true;
+            break;
+        }
+        delay(1);
+    }
+    
+    if (!received) {
+        Serial.println(F("FAIL: no response (timeout)"));
+        can.setMode(MCP_NORMAL);
+        return false;
+    }
+    Serial.println(F("OK"));
+    
+    // Step 5: Read and verify the message
+    Serial.print(F("Verifying data... "));
+    unsigned long rxId;
+    unsigned char len = 0;
+    unsigned char rxBuf[8];
+    can.readMsgBuf(&rxId, &len, rxBuf);
+    
+    // Check ID
+    if (rxId != testId) {
+        Serial.print(F("FAIL: ID mismatch, got 0x"));
+        Serial.println(rxId, HEX);
+        can.setMode(MCP_NORMAL);
+        return false;
+    }
+    
+    // Check length
+    if (len != 8) {
+        Serial.print(F("FAIL: len mismatch, got "));
+        Serial.println(len);
+        can.setMode(MCP_NORMAL);
+        return false;
+    }
+    
+    // Check data
+    bool dataMatch = true;
+    for (uint8_t i = 0; i < 8; i++) {
+        if (rxBuf[i] != testData[i]) {
+            dataMatch = false;
+            break;
+        }
+    }
+    
+    if (!dataMatch) {
+        Serial.println(F("FAIL: data mismatch"));
+        Serial.print(F("  Sent: "));
+        for (uint8_t i = 0; i < 8; i++) {
+            if (testData[i] < 0x10) Serial.print('0');
+            Serial.print(testData[i], HEX);
+            Serial.print(' ');
+        }
+        Serial.println();
+        Serial.print(F("  Recv: "));
+        for (uint8_t i = 0; i < 8; i++) {
+            if (rxBuf[i] < 0x10) Serial.print('0');
+            Serial.print(rxBuf[i], HEX);
+            Serial.print(' ');
+        }
+        Serial.println();
+        can.setMode(MCP_NORMAL);
+        return false;
+    }
+    Serial.println(F("OK"));
+    
+    // Step 6: Return to normal mode
+    Serial.print(F("Restoring normal mode... "));
+    can.setMode(MCP_NORMAL);
+    delay(10);
+    Serial.println(F("OK"));
+    
+    Serial.println(F("=== LOOPBACK TEST PASSED ===\n"));
+    return true;
+}

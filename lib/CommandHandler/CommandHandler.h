@@ -20,6 +20,7 @@ enum SystemState {
 // Forward declarations
 class DataLogger;
 class GPSHandler;
+class CANHandler;
 
 class CommandHandler {
 public:
@@ -31,6 +32,7 @@ public:
     // Set references to other components
     void setDataLogger(DataLogger* logger) { dataLogger = logger; }
     void setGPSHandler(GPSHandler* handler) { gpsHandler = handler; }
+    void setCANHandler(CANHandler* handler) { canHandler = handler; }
     
     // Command processing
     void update();  // Check for and process incoming commands
@@ -55,6 +57,7 @@ private:
     uint8_t bufferIndex;
     DataLogger* dataLogger;
     GPSHandler* gpsHandler;
+    CANHandler* canHandler;
     bool dataReceived;  // Track if any USB data has been received
     
     // Command processors
@@ -65,6 +68,7 @@ private:
     void handleDump(const char* command);
     void handleRPM(const char* command);
     void handleLED(const char* command);
+    void handleLoopback();  // CAN loopback self-test
 };
 
 #endif // COMMAND_HANDLER_H

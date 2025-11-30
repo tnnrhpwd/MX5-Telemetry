@@ -45,6 +45,9 @@ public:
     uint16_t getErrorCount() const { return errorCount; }
     bool hasRecentData() const { return (millis() - lastDataUpdate) < 2000; }  // Data received within 2 sec
     
+    // Diagnostic
+    bool runLoopbackTest();  // Self-test: sends message to itself
+    
 private:
     MCP_CAN can;
     bool initialized;
