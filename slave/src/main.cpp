@@ -56,6 +56,7 @@ uint16_t currentRPM = 0;
 uint16_t currentSpeed = 0;
 bool errorMode = false;
 bool rainbowMode = false;  // Track if USB is connected
+bool usbTestMode = false;  // USB test mode - extends timeout for LED testing
 unsigned long lastAnimationUpdate = 0;
 uint16_t pepperPosition = 0;  // Changed to uint16_t to handle 0-255 range for rainbow
 bool flashState = false;
@@ -66,6 +67,7 @@ unsigned long hapticStartTime = 0;
 uint16_t hapticDuration = 0;
 unsigned long lastCommandTime = 0;          // Track when last command was received
 #define MASTER_TIMEOUT_MS 5000              // Enter error mode if no command for 5 seconds
+#define USB_TEST_TIMEOUT_MS 30000           // Extended timeout in USB test mode (30 seconds)
 #define INITIAL_WAIT_MS 3000                // Wait for master after startup before showing error
 
 // ============================================================================
@@ -575,12 +577,43 @@ void setup() {
 void loop() {
     unsigned long currentTime = millis();
     static unsigned long totalBytesReceived = 0;  // Track total bytes for diagnostics
+    static char usbBuffer[16];  // Separate buffer for USB commands
+    static uint8_t usbBufferIndex = 0;
     
+    // =======================================================================
+    // USB Serial Commands (for testing/debugging from Arduino Actions)
+    // =======================================================================
+    while (Serial.available() > 0) {
+        char c = Serial.read();
+        
+        if (c == '\n' || c == '\r') {
+            if (usbBufferIndex > 0) {
+                usbBuffer[usbBufferIndex] = '\0';
+                Serial.print("USB CMD: ");
+                Serial.println(usbBuffer);
+                processCommand(usbBuffer);
+                lastCommandTime = currentTime;  // Reset timeout on USB command too
+                usbTestMode = true;  // Enable extended timeout for USB testing
+                errorMode = false;   // Exit error mode when receiving USB commands
+                usbBufferIndex = 0;
+                
+                // Small delay to allow LED update before next command
+                delay(10);
+            }
+        } else if (c >= 32 && c <= 126 && usbBufferIndex < 15) {
+            usbBuffer[usbBufferIndex++] = c;
+        }
+    }
+    
+    // =======================================================================
+    // SoftwareSerial Commands (from Master Arduino via D2)
+    // =======================================================================
     // Read serial commands from master - check multiple times per loop for responsiveness
     for (int i = 0; i < 3; i++) {
         while (slaveSerial.available() > 0) {
             char c = slaveSerial.read();
             lastCommandTime = currentTime;  // Update last command time on ANY data
+            usbTestMode = false;  // Disable USB test mode when Master sends data
             totalBytesReceived++;  // Count bytes for diagnostics
             
             // Debug: print every byte received
@@ -605,23 +638,26 @@ void loop() {
         delayMicroseconds(500);  // Brief pause between checks
     }
     
-    // Timeout check: if no data received from master for MASTER_TIMEOUT_MS, enter error mode
-    // But only after the initial wait period has passed
-    if (!errorMode && (currentTime - lastCommandTime) > MASTER_TIMEOUT_MS) {
+    // Timeout check: if no data received for timeout period, enter error mode
+    // USB test mode uses extended timeout (30s) for LED testing without Master
+    unsigned long timeoutMs = usbTestMode ? USB_TEST_TIMEOUT_MS : MASTER_TIMEOUT_MS;
+    if (!errorMode && (currentTime - lastCommandTime) > timeoutMs) {
         // Only show error after initial startup wait
         if (currentTime > INITIAL_WAIT_MS) {
-            Serial.println("Master timeout - entering error mode");
+            Serial.println(usbTestMode ? "USB test timeout - entering error mode" : "Master timeout - entering error mode");
             errorMode = true;
             rainbowMode = false;
+            usbTestMode = false;
         }
     }
     
-    // Periodic diagnostic: print status every 5 seconds when in error mode
+    // Periodic diagnostic: print status every 5 seconds
     static unsigned long lastDiagTime = 0;
     if (currentTime - lastDiagTime >= 5000) {
         lastDiagTime = currentTime;
         Serial.print("Status: errorMode=");
         Serial.print(errorMode ? "YES" : "NO");
+        if (usbTestMode) Serial.print(" [USB TEST]");
         Serial.print(" bytesRx=");
         Serial.print(totalBytesReceived);
         Serial.print(" D2=");
