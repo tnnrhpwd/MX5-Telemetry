@@ -31,7 +31,20 @@ bool CANHandler::begin() {
     byte result = can.begin(MCP_ANY, CAN_SPEED, MCP_8MHZ);
     if (result == CAN_OK) {
         Serial.println(F("OK"));
-        Serial.print(F("Setting normal mode... "));
+        
+        // Set masks to 0 = accept all messages (no filtering)
+        can.init_Mask(0, 0, 0x00000000);
+        can.init_Mask(1, 0, 0x00000000);
+        can.init_Filt(0, 0, 0x00000000);
+        can.init_Filt(1, 0, 0x00000000);
+        can.init_Filt(2, 0, 0x00000000);
+        can.init_Filt(3, 0, 0x00000000);
+        can.init_Filt(4, 0, 0x00000000);
+        can.init_Filt(5, 0, 0x00000000);
+        Serial.println(F("Masks/filters set to accept ALL"));
+        
+        // Use NORMAL mode - ACKs frames but we don't transmit
+        Serial.print(F("Setting NORMAL mode... "));
         can.setMode(MCP_NORMAL);
         Serial.println(F("OK"));
         initialized = true;
@@ -53,16 +66,33 @@ void CANHandler::update() {
     
     checkCount++;
     
+    // Check INT pin state for debugging
+    static uint8_t intLowCount = 0;
+    if (digitalRead(CAN_INT_PIN) == LOW) {
+        intLowCount++;
+    }
+    
     if (millis() - lastStatusCheck > 2000) {
         lastStatusCheck = millis();
         byte errFlag = can.getError();
         byte status = can.checkReceive();
-        Serial.print(F("CAN status: checks="));
+        
+        // Read MCP2515 error counters - TEC=Transmit, REC=Receive
+        byte tec = can.errorCountTX();
+        byte rec = can.errorCountRX();
+        
+        Serial.print(F("CAN: chk="));
         Serial.print(checkCount);
-        Serial.print(F(" msgs="));
+        Serial.print(F(" INT="));
+        Serial.print(digitalRead(CAN_INT_PIN));
+        Serial.print(F(" msg="));
         Serial.print(msgAvailCount);
         Serial.print(F(" err=0x"));
         Serial.print(errFlag, HEX);
+        Serial.print(F(" TEC="));
+        Serial.print(tec);
+        Serial.print(F(" REC="));
+        Serial.print(rec);
         Serial.print(F(" rx="));
         Serial.println(status == CAN_MSGAVAIL ? F("AVAIL") : F("none"));
         checkCount = 0;
@@ -72,22 +102,11 @@ void CANHandler::update() {
     unsigned char len = 0;
     unsigned char rxBuf[8];
     
-    // ============================================================================
-    // DUAL-MODE CAN READING STRATEGY (as specified in requirements)
-    // ============================================================================
-    // Mode 1: Direct CAN monitoring (preferred) - fastest response
-    //         Listens for Mazda-specific CAN ID 0x201 containing raw RPM data
-    //         This provides the highest polling rate for accurate visual feedback
-    //
-    // Mode 2: OBD-II PID requests (fallback) - standard protocol
-    //         Requests PID 0x0C (Engine RPM) via standard OBD-II protocol
-    //         Used if direct CAN monitoring doesn't capture RPM data
-    // ============================================================================
+    // Try reading directly - readMsgBuf returns CAN_OK if message was available
+    byte readResult = can.readMsgBuf(&rxId, &len, rxBuf);
     
-    // Check if data is available
-    if (can.checkReceive() == CAN_MSGAVAIL) {
+    if (readResult == CAN_OK && len > 0) {
         msgAvailCount++;
-        can.readMsgBuf(&rxId, &len, rxBuf);
         
         // DEBUG: Print every CAN frame received (helps identify correct IDs)
         static unsigned long lastDebugPrint = 0;
