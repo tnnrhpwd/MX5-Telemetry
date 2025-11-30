@@ -53,12 +53,12 @@
 // ============================================================================
 // Enable/disable hardware modules (set to false to disable unused components)
 #define ENABLE_CAN_BUS      true     // MCP2515 CAN controller for OBD-II
-#define ENABLE_GPS          true    // GPS with dynamic enable/disable during logging
+#define ENABLE_GPS          false    // GPS DISABLED - saves flash for LED debugging
                                      // true = GPS enabled during RUNNING, disabled during USB commands
                                      // false = GPS completely disabled (no serial interference)
 #define ENABLE_LED_STRIP    false    // LED strip DISABLED (using external slave Arduino)
 #define ENABLE_LED_SLAVE    true     // Send LED commands to slave Arduino via Serial1 (TX pin 1)
-#define ENABLE_LOGGING      true     // SD card data logging
+#define ENABLE_LOGGING      false    // SD card logging DISABLED - saves flash for LED debugging
 
 // ============================================================================
 // TIMING CONFIGURATION (optimized for >20Hz RPM polling)
@@ -72,7 +72,7 @@
 // ============================================================================
 // LOG ROTATION (automatic new file creation) - Costs ~300 bytes flash
 // ============================================================================
-#define LOG_ROTATION_ENABLED  true    // Automatically create new file every N minutes
+#define LOG_ROTATION_ENABLED  false   // DISABLED to save flash space
 #define LOG_ROTATION_INTERVAL 600000  // Create new log file every 10 minutes
                                       // 600000 = 10 min, 1800000 = 30 min, 3600000 = 1 hour
 #define GPS_FILENAMES_ENABLED false   // Use GPS datetime for filenames (MMDD_HHMM.CSV)

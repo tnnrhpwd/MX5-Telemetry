@@ -29,6 +29,7 @@ private:
     uint16_t lastSpeed;
     bool lastError;    // Track error state to avoid spamming
     bool initialized;
+    unsigned long lastKeepalive;  // Track last send for keep-alive
 };
 
 #endif // LED_SLAVE_H

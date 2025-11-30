@@ -12,13 +12,14 @@
 // Bit-bang timing for 9600 baud
 // 1,000,000 us / 9600 baud = 104.166... us per bit
 // Using direct port manipulation to reduce overhead and improve timing accuracy
-#define BIT_DELAY_US 102  // Slightly reduced to compensate for instruction overhead
+// Increased slightly to 104us for better compatibility with SoftwareSerial
+#define BIT_DELAY_US 104
 
 // Direct port manipulation for D6 (PORTD bit 6) - much faster than digitalWrite
 #define TX_HIGH()  (PORTD |= (1 << 6))
 #define TX_LOW()   (PORTD &= ~(1 << 6))
 
-LEDSlave::LEDSlave() : lastRPM(65535), lastSpeed(65535), lastError(false), initialized(false) {}
+LEDSlave::LEDSlave() : lastRPM(65535), lastSpeed(65535), lastError(false), initialized(false), lastKeepalive(0) {}
 
 void LEDSlave::begin() {
     // Configure D6 as output for bit-bang TX
@@ -60,17 +61,19 @@ void LEDSlave::sendByte(uint8_t byte) {
 void LEDSlave::sendCommand(const char* cmd) {
     if (!initialized) return;
     
-    // Log to USB serial for debugging
-    Serial.print(F("LED->Slave: "));
-    Serial.println(cmd);
+    // Small delay before transmission to let any previous byte settle
+    delayMicroseconds(500);
     
     // Send each character via bit-bang to Slave
-    // Add small delay between bytes for receiver to process
+    // Add delay between bytes for receiver's SoftwareSerial to process
     while (*cmd) {
         sendByte(*cmd++);
-        delayMicroseconds(200);  // Inter-byte gap for SoftwareSerial buffer
+        delayMicroseconds(500);  // Increased inter-byte gap for SoftwareSerial reliability
     }
     sendByte('\n');  // End with newline
+    
+    // Small delay after transmission
+    delayMicroseconds(500);
 }
 
 void LEDSlave::updateRPM(uint16_t rpm) {
@@ -81,17 +84,25 @@ void LEDSlave::updateRPM(uint16_t rpm, uint16_t speed_kmh) {
     // Clear error state when receiving valid RPM data
     lastError = false;
     
-    // Only send if changed to reduce serial traffic
-    if (rpm != lastRPM) {
-        char cmd[16];
-        sprintf(cmd, "RPM:%u", rpm);
+    unsigned long now = millis();
+    bool needsKeepalive = (now - lastKeepalive) >= 3000;  // Keep-alive every 3 seconds
+    
+    // Send RPM if changed OR keep-alive needed
+    if (rpm != lastRPM || needsKeepalive) {
+        char cmd[12];
+        // Manual uint16 to string (avoids sprintf, saves ~500 bytes flash)
+        strcpy(cmd, "RPM:");
+        itoa(rpm, cmd + 4, 10);
         sendCommand(cmd);
         lastRPM = rpm;
+        lastKeepalive = now;
     }
     
+    // Send speed if changed (no keep-alive needed, RPM already sent)
     if (speed_kmh != lastSpeed) {
-        char cmd[16];
-        sprintf(cmd, "SPD:%u", speed_kmh);
+        char cmd[12];
+        strcpy(cmd, "SPD:");
+        itoa(speed_kmh, cmd + 4, 10);
         sendCommand(cmd);
         lastSpeed = speed_kmh;
     }
@@ -118,7 +129,8 @@ void LEDSlave::clear() {
 }
 
 void LEDSlave::setBrightness(uint8_t brightness) {
-    char cmd[16];
-    sprintf(cmd, "BRT:%u", brightness);
+    char cmd[10];
+    strcpy(cmd, "BRT:");
+    itoa(brightness, cmd + 4, 10);
     sendCommand(cmd);
 }
