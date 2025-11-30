@@ -18,7 +18,7 @@
 #define TX_HIGH()  (PORTD |= (1 << 6))
 #define TX_LOW()   (PORTD &= ~(1 << 6))
 
-LEDSlave::LEDSlave() : lastRPM(65535), lastSpeed(65535), initialized(false) {}
+LEDSlave::LEDSlave() : lastRPM(65535), lastSpeed(65535), lastError(false), initialized(false) {}
 
 void LEDSlave::begin() {
     // Configure D6 as output for bit-bang TX
@@ -78,6 +78,9 @@ void LEDSlave::updateRPM(uint16_t rpm) {
 }
 
 void LEDSlave::updateRPM(uint16_t rpm, uint16_t speed_kmh) {
+    // Clear error state when receiving valid RPM data
+    lastError = false;
+    
     // Only send if changed to reduce serial traffic
     if (rpm != lastRPM) {
         char cmd[16];
@@ -95,7 +98,11 @@ void LEDSlave::updateRPM(uint16_t rpm, uint16_t speed_kmh) {
 }
 
 void LEDSlave::updateRPMError() {
-    sendCommand("E");  // Single char: Error mode
+    // Only send error command once when entering error state
+    if (!lastError) {
+        sendCommand("E");  // Single char: Error mode
+        lastError = true;
+    }
 }
 
 void LEDSlave::updateRPMRainbow() {
@@ -107,6 +114,7 @@ void LEDSlave::clear() {
     // Set to invalid values so next updateRPM always sends
     lastRPM = 65535;
     lastSpeed = 65535;
+    lastError = false;
 }
 
 void LEDSlave::setBrightness(uint8_t brightness) {
