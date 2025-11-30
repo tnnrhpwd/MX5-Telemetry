@@ -13,9 +13,9 @@ CANHandler::CANHandler(uint8_t csPin)
       vehicleSpeed(0),
       throttlePosition(0),
       calculatedLoad(0),
-      coolantTemp(0),
-      intakeTemp(0),
-      barometric(101),  // Default 101 kPa (sea level)
+      coolantTemp(-40),   // Initialize to -40°C (OBD raw value 0) to indicate "no data"
+      intakeTemp(-40),    // Initialize to -40°C (OBD raw value 0) to indicate "no data"
+      barometric(0),      // Initialize to 0 kPa to indicate "no data" (valid range is ~70-110 kPa)
       timingAdvance(0),
       mafRate(0),
       shortFuelTrim(0),
