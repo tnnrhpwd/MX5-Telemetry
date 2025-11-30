@@ -25,9 +25,10 @@ def load_led_config(led_states_path=None):
     """
     if led_states_path is None:
         # Default path relative to this script
-        # Script is now in tools/LED_Simulator/, need to go up two levels
+        # Script is in tools/simulators/led_simulator/, need to go up three levels
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        tools_dir = os.path.dirname(script_dir)
+        simulators_dir = os.path.dirname(script_dir)
+        tools_dir = os.path.dirname(simulators_dir)
         project_root = os.path.dirname(tools_dir)
         led_states_path = os.path.join(project_root, 'lib', 'Config', 'LEDStates.h')
     
