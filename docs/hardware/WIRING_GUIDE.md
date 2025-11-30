@@ -92,15 +92,17 @@ Connect to ground rail:
 
 ### MCP2515 Module Wiring
 
-| MCP2515 Pin | Arduino Pin | Wire Color (suggested) |
-|-------------|-------------|------------------------|
-| VCC         | 5V          | Red                    |
-| GND         | GND         | Black                  |
-| CS          | D10         | Orange                 |
-| SO (MISO)   | D12         | Blue                   |
-| SI (MOSI)   | D11         | Green                  |
-| SCK         | D13         | Yellow                 |
-| INT         | (not used)  | -                      |
+| MCP2515 Pin | Arduino Pin | Wire Color (suggested) | Description |
+|-------------|-------------|------------------------|-------------|
+| VCC         | 5V          | Red                    | Power |
+| GND         | GND         | Black                  | Ground |
+| CS          | D10         | Orange                 | SPI Chip Select |
+| SO (MISO)   | D12         | Blue                   | SPI Data Out |
+| SI (MOSI)   | D11         | Green                  | SPI Data In |
+| SCK         | D13         | Yellow                 | SPI Clock |
+| INT         | D7          | White                  | **REQUIRED** - Interrupt signal |
+
+**⚠️ IMPORTANT: The INT pin MUST be connected for the MCP2515 to signal when CAN messages are available!**
 
 ### CAN Transceiver Connections
 

@@ -19,6 +19,7 @@
 // PIN DEFINITIONS
 // ============================================================================
 #define CAN_CS_PIN      10    // MCP2515 Chip Select (SPI)
+#define CAN_INT_PIN     7     // MCP2515 Interrupt Pin (ACTIVE LOW) - REQUIRED!
 #define SD_CS_PIN       4     // SD Card Chip Select (SPI)
 #define LED_DATA_PIN    5     // WS2812B Data Pin (D5 per wiring diagram)
 #define SLAVE_TX_PIN    6     // TX to LED Slave Arduino (connect to Slave D2)
@@ -35,7 +36,7 @@
 // HARDWARE CONFIGURATION
 // ============================================================================
 #define LED_COUNT       20    // Number of LEDs for dashboard RPM display
-#define CAN_SPEED       CAN_500KBPS  // Miata NC CAN bus speed
+#define CAN_SPEED       CAN_500KBPS  // MX-5 NC HS-CAN bus speed (OBD pins 6+14)
 #define SERIAL_BAUD     115200       // Serial monitor baud rate
 #define GPS_BAUD        9600         // GPS module baud rate
 
