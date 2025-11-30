@@ -339,6 +339,16 @@ void loop() {
                 }
             #endif
             
+            // Periodic diagnostic: log RPM/Speed every ~5 seconds (20 LED updates at 250ms each)
+            static uint8_t diagCounter = 0;
+            if (++diagCounter >= 20) {
+                diagCounter = 0;
+                Serial.print(F("CAN->LED: RPM="));
+                Serial.print(rpm);
+                Serial.print(F(" SPD="));
+                Serial.println(speed);
+            }
+            
             // Now send to LED slave (no other operations during this)
             if (showError) {
                 ledSlave.updateRPMError();
