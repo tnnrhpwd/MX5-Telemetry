@@ -4,15 +4,19 @@
  * ============================================================================
  * 
  * Dedicated LED strip controller that receives commands via SoftwareSerial
- * from the master Arduino (logger).
+ * from the master Arduino (logger) or via USB for simulator testing.
  * 
  * HARDWARE:
  * - Arduino Nano #2
  * - WS2812B LED Strip on Pin D5
- * - D2 (RX via SoftwareSerial) ← TX from Master Arduino (Pin 1) via diode
+ * - D2 (RX via SoftwareSerial) ← TX from Master Arduino (Pin D6) via bit-bang
  * - Shares GND with Master Arduino
  * 
- * SERIAL COMMANDS (9600 baud):
+ * SERIAL COMMANDS:
+ * - USB Serial: 115200 baud (for simulator/debugging)
+ * - SoftwareSerial D2: 9600 baud (from Master Arduino)
+ * 
+ * Commands:
  * - RPM:xxxx     Set RPM and update display (e.g., RPM:3500)
  * - SPD:xxx      Set speed in km/h (e.g., SPD:60)
  * - ERR          Show error state (red pepper animation)
@@ -20,7 +24,7 @@
  * - CLR          Clear all LEDs
  * - BRT:xxx      Set brightness 0-255 (e.g., BRT:128)
  * 
- * VERSION: 2.1.0 - Uses SoftwareSerial on D2 to avoid upload interference
+ * VERSION: 2.2.0 - Optimized for responsive LED updates
  * ============================================================================
  */
 

@@ -824,7 +824,8 @@ class LEDSimulator:
         self.arduino_connected = False
         self.arduino_port = None
         self.last_rpm_sent = -1  # Track last RPM sent to avoid flooding
-        self.last_led_send_time = 0  # Track last LED data send time (throttle to 20 Hz)
+        self.last_speed_sent = -1  # Track last speed sent to avoid flooding
+        self.last_led_send_time = 0  # Track last LED data send time (throttle to 50 Hz)
         self.current_led_pattern = [(0, 0, 0)] * LED_COUNT  # Store current LED colors for Arduino sync
         
         # Create UI
@@ -1296,7 +1297,7 @@ class LEDSimulator:
             spd = int(self.speed) if self.engine_running else 0
             
             # Only send if values have changed to reduce serial traffic
-            if rpm != self.last_rpm_sent or spd != getattr(self, 'last_speed_sent', -1):
+            if rpm != self.last_rpm_sent or spd != self.last_speed_sent:
                 # Send commands in master protocol format
                 rpm_cmd = f"RPM:{rpm}\n"
                 spd_cmd = f"SPD:{spd}\n"
