@@ -9,9 +9,9 @@
 // Slave Arduino listens on SoftwareSerial D2 at 9600 baud
 // ============================================================================
 
-// Bit-bang timing for 2400 baud (very slow = maximum reliability)
-// 1,000,000 us / 2400 baud = 416.67 us per bit
-#define BIT_DELAY_US 417
+// Bit-bang timing for 1200 baud (very slow = maximum reliability)
+// 1,000,000 us / 1200 baud = 833.33 us per bit
+#define BIT_DELAY_US 833
 
 // Direct port manipulation for D6 (PORTD bit 6) - much faster than digitalWrite
 #define TX_HIGH()  (PORTD |= (1 << 6))
