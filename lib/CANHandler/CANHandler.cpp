@@ -26,9 +26,9 @@ CANHandler::CANHandler(uint8_t csPin)
 }
 
 bool CANHandler::begin() {
-    // Initialize MCP2515 at 500kbps with 16MHz crystal
-    Serial.print(F("CAN init: MCP_ANY, 500KBPS, 16MHz... "));
-    byte result = can.begin(MCP_ANY, CAN_SPEED, MCP_16MHZ);
+    // Initialize MCP2515 at 500kbps with 8MHz crystal (WWZMDiB module)
+    Serial.print(F("CAN init: MCP_ANY, 500KBPS, 8MHz... "));
+    byte result = can.begin(MCP_ANY, CAN_SPEED, MCP_8MHZ);
     if (result == CAN_OK) {
         Serial.println(F("OK"));
         Serial.print(F("Setting normal mode... "));
