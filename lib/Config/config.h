@@ -66,7 +66,7 @@
 #define CAN_READ_INTERVAL    20      // Read CAN bus every 20ms (50Hz)
 #define GPS_READ_INTERVAL    100     // Read GPS every 100ms (10Hz)
 #define LOG_INTERVAL         200     // Log data every 200ms (5Hz)
-#define LED_UPDATE_INTERVAL  250     // Update LEDs every 250ms (4Hz) - heavily rate-limited
+#define LED_UPDATE_INTERVAL  50      // Update LEDs every 50ms (20Hz) - fast for responsive visuals
 #define STATUS_INTERVAL      1000    // Status update interval (1Hz)
 
 // ============================================================================

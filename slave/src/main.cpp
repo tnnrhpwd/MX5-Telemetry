@@ -597,8 +597,7 @@ void loop() {
                 errorMode = false;   // Exit error mode when receiving USB commands
                 usbBufferIndex = 0;
                 
-                // Small delay to allow LED update before next command
-                delay(10);
+                // No delay needed - let loop run immediately for responsive updates
             }
         } else if (c >= 32 && c <= 126 && usbBufferIndex < 15) {
             usbBuffer[usbBufferIndex++] = c;
@@ -670,6 +669,5 @@ void loop() {
     // Update haptic motor state
     updateHaptic();
     
-    // Minimal delay - SoftwareSerial has its own buffering
-    delayMicroseconds(500);
+    // No delay needed - loop runs at maximum speed for responsiveness
 }

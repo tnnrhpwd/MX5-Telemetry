@@ -65,10 +65,10 @@ void LEDSlave::sendCommand(const char* cmd) {
     Serial.println(cmd);
     
     // Send each character via bit-bang to Slave
-    // Add small delay between bytes for receiver to process
+    // Minimal delay between bytes - SoftwareSerial can handle back-to-back bytes
     while (*cmd) {
         sendByte(*cmd++);
-        delayMicroseconds(200);  // Inter-byte gap for SoftwareSerial buffer
+        delayMicroseconds(50);  // Reduced inter-byte gap for faster transmission
     }
     sendByte('\n');  // End with newline
 }

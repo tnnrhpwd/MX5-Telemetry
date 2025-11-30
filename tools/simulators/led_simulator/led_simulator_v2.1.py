@@ -1181,6 +1181,10 @@ class LEDSimulator:
     def toggle_speed_unit(self):
         """Toggle between km/h and mph."""
         self.use_mph = not self.use_mph
+        if self.use_mph:
+            self.unit_toggle_btn.config(text="mph", bg="#0066cc")
+        else:
+            self.unit_toggle_btn.config(text="km/h", bg="#00aa00")
     
     def refresh_ports(self):
         """Refresh the list of available serial ports."""
@@ -1236,12 +1240,13 @@ class LEDSimulator:
                 return
             
             try:
-                # Open serial connection
+                # Open serial connection at 115200 baud for fast LED updates
+                # This matches the slave Arduino's USB serial speed for direct connection
                 self.arduino_port = serial.Serial(
                     port=port_name,
-                    baudrate=9600,
-                    timeout=1,
-                    write_timeout=1,
+                    baudrate=115200,
+                    timeout=0.1,
+                    write_timeout=0.1,
                     rtscts=False,  # Disable hardware flow control
                     dsrdtr=False,  # Disable hardware flow control
                     xonxoff=False  # Disable software flow control
@@ -1267,76 +1272,41 @@ class LEDSimulator:
                 print(f"Connection error: {e}")
     
     def send_leds_to_arduino(self, led_pattern):
-        """Send master protocol commands to slave Arduino based on LED state analysis."""
+        """Send RPM and speed commands directly to slave Arduino via USB serial.
+        
+        The simulator sends actual RPM/speed values, letting the Arduino handle
+        the LED state logic. This is more efficient than analyzing LED patterns.
+        """
         if not self.arduino_connected or not self.arduino_port:
             return
         
-        # Rate limit to 20 Hz (50ms between updates) to avoid overwhelming Arduino's serial buffer
+        # Rate limit to 50 Hz (20ms between updates) for responsive LED changes
+        # This provides a good balance between responsiveness and avoiding buffer overflow
         import time
         current_time = time.time() * 1000  # milliseconds
-        if current_time - self.last_led_send_time < 50:
+        if current_time - self.last_led_send_time < 20:
             return  # Skip this update
         
         self.last_led_send_time = current_time
         
         try:
-            # Analyze LED pattern to determine state and generate RPM/SPD commands
-            # Count how many LEDs are lit (non-black)
-            lit_leds = sum(1 for r, g, b in led_pattern if (r > 0 or g > 0 or b > 0))
+            # Send actual simulator RPM and speed directly
+            # The slave Arduino will determine the appropriate LED state
+            rpm = int(self.rpm) if self.engine_running else 0
+            spd = int(self.speed) if self.engine_running else 0
             
-            # Determine dominant color to identify state
-            if lit_leds == 0:
-                rpm = 0
-                spd = 0
-            else:
-                # Sample the middle LED to determine state color
-                mid_idx = len(led_pattern) // 2
-                r, g, b = led_pattern[mid_idx]
+            # Only send if values have changed to reduce serial traffic
+            if rpm != self.last_rpm_sent or spd != getattr(self, 'last_speed_sent', -1):
+                # Send commands in master protocol format
+                rpm_cmd = f"RPM:{rpm}\n"
+                spd_cmd = f"SPD:{spd}\n"
                 
-                # Map LED states back to RPM values based on color and pattern
-                # STATE_0: Blue pepper (idle) - RPM ~500-800
-                if b > r and b > g:
-                    rpm = 650
-                    spd = 0
+                self.arduino_port.write(rpm_cmd.encode('utf-8'))
+                self.arduino_port.write(spd_cmd.encode('utf-8'))
+                self.arduino_port.flush()
                 
-                # STATE_1: Green bar (gas efficiency) - RPM ~1200-1800
-                elif g > r and g > b and lit_leds <= 4:
-                    rpm = 1500
-                    spd = 40
-                
-                # STATE_2: Yellow pulse (stall danger) - RPM ~800-1200
-                elif r > 100 and g > 100 and b < 50:
-                    rpm = 1000
-                    spd = 25
-                
-                # STATE_3: Green progressive bar (normal) - RPM ~1800-5700
-                elif g > r and g > b and lit_leds > 4:
-                    # Map lit LEDs to RPM range
-                    rpm = 1800 + int((lit_leds / 20.0) * (5700 - 1800))
-                    spd = 60
-                
-                # STATE_4: Yellow/orange bar + white flash (high RPM) - RPM ~5700-6900
-                elif (r > 200 and g > 100) or (r > 200 and g > 200 and b > 200):
-                    rpm = 5700 + int((lit_leds / 20.0) * (6900 - 5700))
-                    spd = 100
-                
-                # STATE_5: Red solid (rev limit) - RPM ~6900+
-                elif r > 200 and g < 50 and b < 50:
-                    rpm = 7200
-                    spd = 120
-                
-                # Default to normal driving range
-                else:
-                    rpm = 3000
-                    spd = 60
-            
-            # Send commands in master protocol format (RPM:xxxx\n, SPD:xxx\n)
-            rpm_cmd = f"RPM:{rpm}\n"
-            spd_cmd = f"SPD:{spd}\n"
-            
-            self.arduino_port.write(rpm_cmd.encode('utf-8'))
-            self.arduino_port.write(spd_cmd.encode('utf-8'))
-            self.arduino_port.flush()
+                self.last_rpm_sent = rpm
+                self.last_speed_sent = spd
         except Exception as e:
             self.log_console(f"⚠️ Error sending commands to Arduino: {e}")
             print(f"Error sending commands to Arduino: {e}")
@@ -1345,10 +1315,6 @@ class LEDSimulator:
             self.connect_btn.config(text="Connect", bg="#006600")
             self.connection_status_label.config(text="❌ Connection Lost", fg="#ff0000")
             self.log_console("❌ Arduino connection lost")
-        if self.use_mph:
-            self.unit_toggle_btn.config(text="mph", bg="#0066cc")
-        else:
-            self.unit_toggle_btn.config(text="km/h", bg="#00aa00")
     
     def check_for_stall(self):
         """Check if engine should stall due to low RPM without clutch."""
