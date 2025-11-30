@@ -460,29 +460,37 @@ void DataLogger::streamData(uint32_t timestamp, const GPSHandler& gps, const CAN
     
     Serial.print(gps.getSatellites());
     Serial.write(',');
-    Serial.print(can.getRPM());
-    Serial.write(',');
-    Serial.print(can.getSpeed());
-    Serial.write(',');
-    Serial.print(can.getThrottle());
-    Serial.write(',');
-    Serial.print(can.getCalculatedLoad());
-    Serial.write(',');
-    Serial.print(can.getCoolantTemp());
-    Serial.write(',');
-    Serial.print(can.getIntakeTemp());
-    Serial.write(',');
-    Serial.print(can.getBarometric());
-    Serial.write(',');
-    Serial.print(can.getTimingAdvance());
-    Serial.write(',');
-    Serial.print(can.getMAFRate());
-    Serial.write(',');
-    Serial.print(can.getShortFuelTrim());
-    Serial.write(',');
-    Serial.print(can.getLongFuelTrim());
-    Serial.write(',');
-    Serial.print(can.getO2Voltage(), 3);
+    
+    // Only output CAN data if connected and receiving data (consistent with logData behavior)
+    bool canDataValid = can.isInitialized() && can.hasRecentData();
+    if (canDataValid) {
+        Serial.print(can.getRPM());
+        Serial.write(',');
+        Serial.print(can.getSpeed());
+        Serial.write(',');
+        Serial.print(can.getThrottle());
+        Serial.write(',');
+        Serial.print(can.getCalculatedLoad());
+        Serial.write(',');
+        Serial.print(can.getCoolantTemp());
+        Serial.write(',');
+        Serial.print(can.getIntakeTemp());
+        Serial.write(',');
+        Serial.print(can.getBarometric());
+        Serial.write(',');
+        Serial.print(can.getTimingAdvance());
+        Serial.write(',');
+        Serial.print(can.getMAFRate());
+        Serial.write(',');
+        Serial.print(can.getShortFuelTrim());
+        Serial.write(',');
+        Serial.print(can.getLongFuelTrim());
+        Serial.write(',');
+        Serial.print(can.getO2Voltage(), 3);
+    } else {
+        // Output dashes for all CAN fields when not connected
+        Serial.print(F("-,-,-,-,-,-,-,-,-,-,-,-"));
+    }
     Serial.write(',');
     Serial.print(logStatus ? 1 : 0);
     Serial.write(',');
