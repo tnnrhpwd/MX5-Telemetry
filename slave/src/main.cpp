@@ -37,7 +37,7 @@
 #define SERIAL_RX_PIN       2       // D2 for SoftwareSerial RX (from master D6)
 #define HAPTIC_PIN          3       // D3 for haptic motor (vibration feedback)
 #define LED_COUNT           20      // Number of LEDs in strip (adjust to your strip)
-#define SLAVE_SERIAL_BAUD   9600    // Baud rate for Master->Slave communication (bit-bang)
+#define SLAVE_SERIAL_BAUD   2400    // Baud rate - very slow for maximum reliability
 #define ENABLE_HAPTIC       false   // DISABLED for debugging - set true to enable haptic feedback
 #define MIN_VOLTAGE_FOR_HAPTIC  4.7 // Minimum voltage (V) to enable haptic on startup
 
@@ -374,17 +374,17 @@ void processCommand(const char* cmd) {
         cmd += 4;  // Skip "LED:" prefix
     }
     
-    // RPM command: RPM:xxxx
-    if (strncmp(cmd, "RPM:", 4) == 0) {
-        currentRPM = atoi(cmd + 4);
+    // RPM command: R followed by number (e.g., R1234)
+    if (cmd[0] == 'R' && cmd[1] >= '0' && cmd[1] <= '9') {
+        currentRPM = atoi(cmd + 1);
         errorMode = false;
         rainbowMode = false;
         Serial.print("RPM set to: ");
         Serial.println(currentRPM);
     }
-    // Speed command: SPD:xxx
-    else if (strncmp(cmd, "SPD:", 4) == 0) {
-        currentSpeed = atoi(cmd + 4);
+    // Speed command: S followed by number (e.g., S123)
+    else if (cmd[0] == 'S' && cmd[1] >= '0' && cmd[1] <= '9') {
+        currentSpeed = atoi(cmd + 1);
         Serial.print("Speed set to: ");
         Serial.println(currentSpeed);
     }
@@ -394,36 +394,53 @@ void processCommand(const char* cmd) {
         rainbowMode = false;
         Serial.println("Error mode ON");
     }
-    // Rainbow error command: R
-    else if (strcmp(cmd, "R") == 0) {
+    // Rainbow/Wave mode command: W
+    else if (strcmp(cmd, "W") == 0) {
         errorMode = true;
         rainbowMode = true;
-        Serial.println("Rainbow error mode ON");
+        Serial.println("Rainbow mode ON");
     }
-    // Clear command: CLR
+    // Clear command: C
+    else if (strcmp(cmd, "C") == 0) {
+        strip.clear();
+        strip.show();
+        currentRPM = 0;
+        currentSpeed = 0;
+        errorMode = false;
+        rainbowMode = false;
+        Serial.println("LEDs cleared");
+    }
+    // Brightness command: B followed by number (e.g., B255)
+    else if (cmd[0] == 'B' && cmd[1] >= '0' && cmd[1] <= '9') {
+        uint8_t brightness = atoi(cmd + 1);
+        strip.setBrightness(brightness);
+        Serial.print("Brightness set to: ");
+        Serial.println(brightness);
+    }
+    // Haptic command: V followed by number (e.g., V100)
+    else if (cmd[0] == 'V' && cmd[1] >= '0' && cmd[1] <= '9') {
+        uint16_t duration = atoi(cmd + 1);
+        triggerHaptic(duration);
+        Serial.print("Haptic triggered: ");
+        Serial.print(duration);
+        Serial.println("ms");
+    }
+    // Legacy support for old commands
+    else if (strncmp(cmd, "RPM:", 4) == 0) {
+        currentRPM = atoi(cmd + 4);
+        errorMode = false;
+        rainbowMode = false;
+    }
+    else if (strncmp(cmd, "SPD:", 4) == 0) {
+        currentSpeed = atoi(cmd + 4);
+    }
     else if (strcmp(cmd, "CLR") == 0) {
         strip.clear();
         strip.show();
         currentRPM = 0;
         currentSpeed = 0;
-        errorMode = false;  // Clear also resets error mode
+        errorMode = false;
         rainbowMode = false;
-        Serial.println("LEDs cleared");
-    }
-    // Brightness command: BRT:xxx
-    else if (strncmp(cmd, "BRT:", 4) == 0) {
-        uint8_t brightness = atoi(cmd + 4);
-        strip.setBrightness(brightness);
-        Serial.print("Brightness set to: ");
-        Serial.println(brightness);
-    }
-    // Haptic command: VIB:xxx (vibrate for xxx milliseconds)
-    else if (strncmp(cmd, "VIB:", 4) == 0) {
-        uint16_t duration = atoi(cmd + 4);
-        triggerHaptic(duration);
-        Serial.print("Haptic triggered: ");
-        Serial.print(duration);
-        Serial.println("ms");
     }
 }
 
@@ -622,6 +639,12 @@ void loop() {
             Serial.print(" '");
             if (c >= 32 && c <= 126) Serial.print(c);
             Serial.println("'");
+            
+            // Start-of-message marker - reset buffer
+            if (c == '!') {
+                bufferIndex = 0;
+                continue;  // Don't add ! to buffer
+            }
             
             if (c == '\n' || c == '\r') {
                 if (bufferIndex > 0) {

@@ -325,23 +325,29 @@ void loop() {
         if (currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL && Serial.available() == 0) {
             lastLEDUpdate = currentMillis;
             
+            // Cache values before sending to avoid SPI during bit-bang
+            uint16_t rpm = 0;
+            uint16_t speed = 0;
+            bool showError = false;
+            
             #if ENABLE_CAN_BUS
-                // Show error state ONLY if CAN failed to initialize
                 if (!canBus.isInitialized()) {
-                    ledSlave.updateRPMError();  // Show error pattern
-                } else {
-                    // CAN initialized - show actual RPM data
-                    if (canBus.hasRecentData()) {
-                        // Real CAN data available - show actual values
-                        ledSlave.updateRPM(canBus.getRPM(), canBus.getSpeed());
-                    } else {
-                        // No CAN traffic (car off or ACC mode) - show idle state (RPM:0, SPD:0)
-                        ledSlave.updateRPM(0, 0);
-                    }
+                    showError = true;
+                } else if (canBus.hasRecentData()) {
+                    rpm = canBus.getRPM();
+                    speed = canBus.getSpeed();
                 }
-            #else
-                ledSlave.updateRPM(0, 0);  // Show idle state when CAN disabled
             #endif
+            
+            // Now send to LED slave (no other operations during this)
+            if (showError) {
+                ledSlave.updateRPMError();
+            } else {
+                ledSlave.updateRPM(rpm, speed);
+            }
+            
+            // Skip next CAN read cycle to avoid immediate SPI after bit-bang
+            lastCANRead = millis();
         }
     #endif
     

@@ -25,6 +25,7 @@ public:
 private:
     void sendCommand(const char* cmd);
     void sendByte(uint8_t byte);
+    void sendByteRaw(uint8_t byte);  // No interrupt handling - caller must manage
     uint16_t lastRPM;
     uint16_t lastSpeed;
     bool lastError;    // Track error state to avoid spamming
