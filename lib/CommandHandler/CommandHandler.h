@@ -69,6 +69,7 @@ private:
     void handleRPM(const char* command);
     void handleLED(const char* command);
     void handleLoopback();  // CAN loopback self-test
+    void handleCANTest();   // CAN two-Arduino test (Master sends to Slave)
 };
 
 #endif // COMMAND_HANDLER_H
