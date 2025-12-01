@@ -6,13 +6,14 @@
 // ============================================================================
 // This file defines the LED strip states with a mirrored progress bar.
 // These constants are shared between the Arduino code and Python simulator.
+// LED state is now PURELY RPM-based - speed has no effect on LED display.
 // ============================================================================
 // 
-// 🎨 STATE 0: IDLE/NEUTRAL (Speed = 0, not moving)
+// 🎨 STATE 0: IDLE/NEUTRAL - DEPRECATED (no longer used)
 // -------------------------------------------------
-// Visual: White LEDs sequentially pepper inward from edges to center
-// Purpose: Indicates vehicle is stationary (neutral/clutch engaged)
-// Pattern: ⚪ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ → ⚪ ⚪ ⚫ ⚫ ⚫ ⚫ ⚪ ⚪
+// Previously triggered when speed = 0. Now LED display is purely RPM-based
+// so you can see the proper RPM feedback when idling/revving while stationary.
+// The idle animation code remains for potential future use.
 //
 // 🎨 STATE 1: GAS EFFICIENCY ZONE (Optimal Cruising)
 // ---------------------------------------------------
@@ -52,9 +53,10 @@
 // ============================================================================
 
 // ============================================================================
-// State 0: Idle/Neutral (Vehicle Not Moving)
+// State 0: Idle/Neutral - DEPRECATED (no longer used)
+// Speed-based state detection has been removed. LED is now purely RPM-based.
 // ============================================================================
-#define STATE_0_SPEED_THRESHOLD 1        // Speed <= 1 km/h triggers this state
+#define STATE_0_SPEED_THRESHOLD 1        // Kept for backward compatibility
 
 // Animation parameters for inward pepper effect
 #define STATE_0_PEPPER_DELAY    80       // Milliseconds between each LED lighting
@@ -84,7 +86,7 @@
 // ============================================================================
 // State 2: Stall Danger Zone (Low RPM / Lugging)
 // ============================================================================
-#define STATE_2_RPM_MIN         750      // Minimum RPM for State 2
+#define STATE_2_RPM_MIN         0        // Minimum RPM for State 2 (car stalls below 750 anyway)
 #define STATE_2_RPM_MAX         1999     // Maximum RPM for State 2
 
 // Animation parameters for outward pulsing effect

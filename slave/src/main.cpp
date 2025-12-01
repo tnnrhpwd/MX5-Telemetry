@@ -338,14 +338,8 @@ void updateLEDDisplay() {
         return;
     }
     
-    // State 0: Idle/Neutral - show when:
-    // - Speed is 0 (stopped/stationary)
-    // - OR RPM is 0 (engine off but OBD-II connected and working)
-    // This gives visual confirmation that CAN communication is working
-    if (currentSpeed <= STATE_0_SPEED_THRESHOLD || currentRPM == 0) {
-        idleNeutralState();
-        return;
-    }
+    // LED display is now purely RPM-based (speed is irrelevant)
+    // This allows proper LED feedback when idling/revving while stationary
     
     // State 5: Rev Limit
     if (currentRPM >= STATE_5_RPM_MIN) {
