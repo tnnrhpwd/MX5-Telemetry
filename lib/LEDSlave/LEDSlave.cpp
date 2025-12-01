@@ -87,7 +87,7 @@ void LEDSlave::sendCommand(const char* cmd) {
 }
 
 void LEDSlave::updateRPM(uint16_t rpm) {
-    updateRPM(rpm, 0);  // Default: assume stationary (idle animation)
+    updateRPM(rpm, 0);  // Speed parameter is no longer used for LED state
 }
 
 void LEDSlave::updateRPM(uint16_t rpm, uint16_t speed_kmh) {

@@ -58,19 +58,17 @@ void LEDController::solidFill(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 void LEDController::updateRPM(uint16_t rpm) {
-    // Default: assume vehicle is moving (no speed check)
-    updateRPM(rpm, 1);  // Non-zero speed bypasses idle/neutral state
+    // Speed parameter is no longer used - LED state is purely RPM-based
+    updateRPM(rpm, 0);
 }
 
 void LEDController::updateRPM(uint16_t rpm, uint16_t speed_kmh) {
     // Skip update if LEDs disabled (avoids interrupt conflicts)
     if (!enabled) return;
     
-    // State 0: Idle/Neutral (speed = 0, not moving)
-    if (IS_STATE_0(speed_kmh)) {
-        idleNeutralState();
-        return;
-    }
+    // LED display is now purely RPM-based (speed parameter kept for API compatibility)
+    // This allows proper LED feedback when idling/revving while stationary
+    (void)speed_kmh;  // Unused - kept for backward compatibility
     
     // State 5: Rev Limit Cut (7200+ RPM)
     if (IS_STATE_5(rpm)) {
