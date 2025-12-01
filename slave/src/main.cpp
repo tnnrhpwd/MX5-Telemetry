@@ -810,14 +810,32 @@ void loop() {
             }
         }
         
-        // Periodic CAN status
+        // Periodic CAN status and broadcast
         if (currentTime - lastCanCheck >= 2000) {
             lastCanCheck = currentTime;
             byte errFlag = canBus.getError();
             Serial.print(F("CAN: msgs="));
             Serial.print(canMsgCount);
             Serial.print(F(" err=0x"));
-            Serial.println(errFlag, HEX);
+            Serial.print(errFlag, HEX);
+            
+            // Send periodic broadcast message (simulates car ECU sending data)
+            // Use standard OBD-II response ID 0x7E8 with fake RPM/speed data
+            static uint16_t fakeRPM = 1000;
+            static uint8_t fakeSpeed = 25;
+            
+            // Simulate RPM response (PID 0x0C)
+            unsigned char rpmData[8] = {0x04, 0x41, 0x0C, (uint8_t)(fakeRPM >> 2), (uint8_t)((fakeRPM << 6) & 0xFF), 0x00, 0x00, 0x00};
+            byte result = canBus.sendMsgBuf(0x7E8, 0, 8, rpmData);
+            
+            Serial.print(F(" TX:0x7E8="));
+            Serial.println(result == CAN_OK ? F("OK") : F("FAIL"));
+            
+            // Vary the fake data slightly
+            fakeRPM += 100;
+            if (fakeRPM > 6000) fakeRPM = 1000;
+            fakeSpeed += 5;
+            if (fakeSpeed > 120) fakeSpeed = 25;
         }
     }
     #endif
