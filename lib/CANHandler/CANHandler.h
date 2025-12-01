@@ -46,7 +46,8 @@ public:
     bool hasRecentData() const { return (millis() - lastDataUpdate) < 2000; }  // Data received within 2 sec
     
     // Diagnostic
-    bool runLoopbackTest();  // Self-test: sends message to itself
+    bool runLoopbackTest();      // Self-test: sends message to itself
+    bool runTwoArduinoTest();    // Two-Arduino test: sends to Slave, waits for response
     
 private:
     MCP_CAN can;

@@ -125,6 +125,107 @@ Connect to ground rail:
 4. **Test continuity** with multimeter
 5. **Connect SPI pins** to Arduino using Dupont wires
 
+## 🔗 Two-Arduino CAN Test Setup (Troubleshooting)
+
+If you're having trouble receiving CAN messages from your car, you can test your MCP2515 modules by connecting two Arduinos together. This verifies your CAN hardware works before connecting to the vehicle.
+
+### Hardware Required
+
+- 2x Arduino Nano
+- 2x MCP2515/TJA1050 CAN modules (same 8MHz or 16MHz crystal!)
+- USB cables to connect both Arduinos to your computer
+
+### Master Arduino (COM3) - CAN Module Wiring
+
+Same as normal operation:
+
+| MCP2515 Pin | Arduino Pin | Description |
+|-------------|-------------|-------------|
+| VCC         | 5V          | Power |
+| GND         | GND         | Ground |
+| CS          | D10         | SPI Chip Select |
+| SO (MISO)   | D12         | SPI Data Out |
+| SI (MOSI)   | D11         | SPI Data In |
+| SCK         | D13         | SPI Clock |
+| INT         | D7          | Interrupt |
+
+### Slave Arduino (COM4) - CAN Module Wiring
+
+| MCP2515 Pin | Arduino Pin | Description |
+|-------------|-------------|-------------|
+| VCC         | 5V          | Power |
+| GND         | GND         | Ground |
+| CS          | D10         | SPI Chip Select |
+| SO (MISO)   | D12         | SPI Data Out |
+| SI (MOSI)   | D11         | SPI Data In |
+| SCK         | D13         | SPI Clock |
+| INT         | D7          | Interrupt |
+
+### CAN Bus Connections Between Modules
+
+**Connect the two CAN modules together:**
+
+```
+Master MCP2515                    Slave MCP2515
+┌──────────────┐                  ┌──────────────┐
+│   TJA1050    │                  │   TJA1050    │
+│              │                  │              │
+│  CANH ───────┼──────────────────┤ CANH         │
+│              │                  │              │
+│  CANL ───────┼──────────────────┤ CANL         │
+│              │                  │              │
+│  GND ────────┼──────────────────┤ GND          │
+│              │                  │              │
+└──────────────┘                  └──────────────┘
+```
+
+**⚠️ IMPORTANT:**
+- CANH → CANH (NOT crossed!)
+- CANL → CANL (NOT crossed!)
+- Both modules share common GND
+- Short wires are fine for bench testing (no termination needed)
+
+### Testing Procedure
+
+1. **Flash firmware** to both Arduinos:
+   - Master: Upload Master firmware (PlatformIO: `pio run -d master -t upload`)
+   - Slave: Upload Slave firmware (PlatformIO: `pio run -d slave -t upload`)
+
+2. **Connect both to computer** via USB
+
+3. **Open Slave serial console** (COM4, 9600 baud):
+   - Send `CAN` to enable CAN test mode
+   - You should see: `CAN Test Mode: ENABLED`
+
+4. **Open Master serial console** (COM3, 115200 baud):
+   - Send `C` to run CAN test (or use "🔗 CAN TEST" button in Arduino Actions)
+
+5. **Expected Result (Success):**
+   ```
+   === TWO-ARDUINO CAN TEST ===
+   Sending to SLAVE ID=0x123... OK
+   Waiting for SLAVE response... received!
+     RX ID=0x456 len=8 data=41 43 4B 21 00 00 00 00
+   *** SLAVE RESPONSE RECEIVED! ***
+   Slave acknowledged our message!
+   
+   === TWO-ARDUINO TEST PASSED ===
+   ```
+
+6. **If test fails**, check:
+   - Slave is in CAN test mode (green LED will indicate test mode)
+   - CANH/CANL not swapped
+   - Both modules have same crystal frequency (8MHz or 16MHz)
+   - All SPI connections are solid
+
+### What This Test Proves
+
+If this test passes but car CAN still shows `msgs=0`:
+- Your MCP2515 modules work correctly
+- Your SPI connections are good
+- Your firmware is correct
+- **Issue is with car connection** (wiring, termination, or vehicle protocol)
+
 ## 💾 SD Card Module (WWZMDIB MicroSD Reader)
 
 ### WWZMDIB Module Overview

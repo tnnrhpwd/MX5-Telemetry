@@ -97,6 +97,7 @@ void CommandHandler::processCommand(const char* cmd) {
             case 'I': handleList(); return;        // I = LIST (lIst)
             case 'T': handleStatus(); return;      // T = STATUS (sTatus)
             case 'L': handleLoopback(); return;    // L = LOOPBACK test
+            case 'C': handleCANTest(); return;     // C = CAN two-Arduino test
         }
     }
     
@@ -275,6 +276,15 @@ void CommandHandler::handleLoopback() {
     // Run CAN loopback self-test
     if (canHandler) {
         canHandler->runLoopbackTest();
+    } else {
+        Serial.println(F("E: CAN not available"));
+    }
+}
+
+void CommandHandler::handleCANTest() {
+    // Run CAN two-Arduino test (Master sends to Slave)
+    if (canHandler) {
+        canHandler->runTwoArduinoTest();
     } else {
         Serial.println(F("E: CAN not available"));
     }

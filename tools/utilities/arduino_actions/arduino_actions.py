@@ -470,6 +470,13 @@ class ArduinoActionsApp:
                                       cursor="hand2", state=tk.DISABLED)
         self.loopback_btn.pack(side=tk.LEFT, padx=3)
         
+        self.cantest_btn = tk.Button(btn_row, text="🔗 CAN TEST", 
+                                      command=self.run_can_test,
+                                      bg="#cc6600", fg="#ffffff", font=("Segoe UI", 9, "bold"),
+                                      relief=tk.FLAT, bd=0, padx=12, pady=4,
+                                      cursor="hand2", state=tk.DISABLED)
+        self.cantest_btn.pack(side=tk.LEFT, padx=3)
+        
         # SD Card files (right side - expandable)
         sd_section = tk.Frame(cmd_sd_frame, bg="#2a2a2a")
         sd_section.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
@@ -918,6 +925,7 @@ class ArduinoActionsApp:
         self.stop_btn.config(state=tk.NORMAL)
         self.status_btn.config(state=tk.NORMAL)
         self.loopback_btn.config(state=tk.NORMAL)
+        self.cantest_btn.config(state=tk.NORMAL)
         self.list_btn.config(state=tk.NORMAL)
         self.dump_selected_btn.config(state=tk.NORMAL)
         
@@ -934,6 +942,7 @@ class ArduinoActionsApp:
         self.stop_btn.config(state=tk.DISABLED)
         self.status_btn.config(state=tk.DISABLED)
         self.loopback_btn.config(state=tk.DISABLED)
+        self.cantest_btn.config(state=tk.DISABLED)
         self.list_btn.config(state=tk.DISABLED)
         self.dump_selected_btn.config(state=tk.DISABLED)
         
@@ -1082,6 +1091,33 @@ class ArduinoActionsApp:
         else:
             self.log_master_console(f"⚠️ Failed to send: {command}\n", "error")
             self.error_count += 1
+    
+    def send_slave_command(self, command):
+        """Send command to Slave Arduino."""
+        if self.slave_arduino.is_connected:
+            if self.slave_arduino.send_command(command):
+                self.log_slave_console(f"→ {command}\n", "send")
+            else:
+                self.log_slave_console(f"⚠️ Failed to send: {command}\n", "error")
+        else:
+            self.log_slave_console("⚠️ Slave not connected\n", "error")
+    
+    def run_can_test(self):
+        """Run two-Arduino CAN test - enables CAN mode on Slave, then sends test from Master."""
+        # Step 1: Enable CAN test mode on Slave
+        if self.slave_arduino.is_connected:
+            self.log_slave_console("→ CAN (enabling CAN test mode)\n", "send")
+            self.slave_arduino.send_command("CAN")
+            time.sleep(0.5)  # Give Slave time to enable CAN mode
+        else:
+            self.log_master_console("⚠️ Slave not connected - connect both Arduinos first\n", "error")
+            return
+        
+        # Step 2: Send CAN test command to Master
+        if self.master_arduino.is_connected:
+            self.send_command("C")
+        else:
+            self.log_master_console("⚠️ Master not connected\n", "error")
     
     def send_led_test(self, led_command):
         """Send LED test command directly to Slave Arduino via USB."""

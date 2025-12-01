@@ -25,6 +25,8 @@
  */
 
 #include <Arduino.h>
+#include <SPI.h>
+#include <mcp_can.h>
 #include <SoftwareSerial.h>
 #include <Adafruit_NeoPixel.h>
 #include "LEDStates.h"
@@ -36,9 +38,12 @@
 #define LED_DATA_PIN        5       // D5 on Arduino #2
 #define SERIAL_RX_PIN       2       // D2 for SoftwareSerial RX (from master D6)
 #define HAPTIC_PIN          3       // D3 for haptic motor (vibration feedback)
+#define CAN_CS_PIN          10      // MCP2515 Chip Select (SPI) - same as Master
+#define CAN_INT_PIN         7       // MCP2515 Interrupt Pin - DIRECTLY connected to D7
 #define LED_COUNT           20      // Number of LEDs in strip (adjust to your strip)
 #define SLAVE_SERIAL_BAUD   1200    // Baud rate - very slow for maximum reliability
 #define ENABLE_HAPTIC       false   // DISABLED for debugging - set true to enable haptic feedback
+#define ENABLE_CAN_TEST     true    // Enable CAN bus testing with second MCP2515
 #define MIN_VOLTAGE_FOR_HAPTIC  4.7 // Minimum voltage (V) to enable haptic on startup
 
 // ============================================================================
@@ -47,6 +52,14 @@
 
 SoftwareSerial slaveSerial(SERIAL_RX_PIN, -1);  // RX on D2, no TX needed
 Adafruit_NeoPixel strip(LED_COUNT, LED_DATA_PIN, NEO_GRB + NEO_KHZ800);
+
+#if ENABLE_CAN_TEST
+MCP_CAN canBus(CAN_CS_PIN);
+bool canInitialized = false;
+bool canTestMode = false;  // When true, slave listens for CAN and responds
+unsigned long lastCanCheck = 0;
+unsigned long canMsgCount = 0;
+#endif
 
 // ============================================================================
 // STATE VARIABLES
@@ -425,6 +438,53 @@ void processCommand(const char* cmd) {
         Serial.print(duration);
         Serial.println("ms");
     }
+    // ========================================================================
+    // CAN TEST COMMANDS
+    // ========================================================================
+    #if ENABLE_CAN_TEST
+    // CAN: Enable CAN test mode
+    else if (strcmp(cmd, "CAN") == 0) {
+        if (canInitialized) {
+            canTestMode = !canTestMode;
+            Serial.print(F("CAN test mode: "));
+            Serial.println(canTestMode ? F("ENABLED") : F("DISABLED"));
+            if (canTestMode) {
+                Serial.println(F("Listening for CAN messages from Master..."));
+                Serial.println(F("Master should send 'C' command to transmit test"));
+                canMsgCount = 0;
+            }
+        } else {
+            Serial.println(F("CAN not initialized - check wiring"));
+        }
+    }
+    // CANSTAT: Show CAN status
+    else if (strcmp(cmd, "CANSTAT") == 0) {
+        Serial.println(F("\n=== SLAVE CAN STATUS ==="));
+        Serial.print(F("Initialized: "));
+        Serial.println(canInitialized ? F("YES") : F("NO"));
+        Serial.print(F("Test Mode: "));
+        Serial.println(canTestMode ? F("ENABLED") : F("DISABLED"));
+        Serial.print(F("Messages received: "));
+        Serial.println(canMsgCount);
+        if (canInitialized) {
+            byte errFlag = canBus.getError();
+            Serial.print(F("Error flags: 0x"));
+            Serial.println(errFlag, HEX);
+        }
+        Serial.println(F("========================\n"));
+    }
+    // CANSEND: Send a test message (for testing slave TX)
+    else if (strcmp(cmd, "CANSEND") == 0) {
+        if (canInitialized) {
+            unsigned char testData[8] = {0x53, 0x4C, 0x41, 0x56, 0x45, 0x21, 0x00, 0x00}; // "SLAVE!"
+            Serial.print(F("Sending test from SLAVE ID=0x456... "));
+            byte result = canBus.sendMsgBuf(0x456, 0, 8, testData);
+            Serial.println(result == CAN_OK ? F("OK") : F("FAILED"));
+        } else {
+            Serial.println(F("CAN not initialized"));
+        }
+    }
+    #endif
     // Legacy support for old commands
     else if (strncmp(cmd, "RPM:", 4) == 0) {
         currentRPM = atoi(cmd + 4);
@@ -584,6 +644,40 @@ void setup() {
     bufferIndex = 0;
     inputBuffer[0] = '\0';
     
+    // ========================================================================
+    // CAN BUS INITIALIZATION (for two-Arduino test)
+    // ========================================================================
+    #if ENABLE_CAN_TEST
+    Serial.println(F("\n--- CAN Bus Init ---"));
+    Serial.print(F("CAN init: MCP_ANY, 500KBPS, 8MHz... "));
+    
+    if (canBus.begin(MCP_ANY, CAN_500KBPS, MCP_8MHZ) == CAN_OK) {
+        Serial.println(F("OK"));
+        
+        // Set masks to accept all messages
+        canBus.init_Mask(0, 0, 0x00000000);
+        canBus.init_Mask(1, 0, 0x00000000);
+        canBus.init_Filt(0, 0, 0x00000000);
+        canBus.init_Filt(1, 0, 0x00000000);
+        canBus.init_Filt(2, 0, 0x00000000);
+        canBus.init_Filt(3, 0, 0x00000000);
+        canBus.init_Filt(4, 0, 0x00000000);
+        canBus.init_Filt(5, 0, 0x00000000);
+        
+        Serial.print(F("Setting NORMAL mode... "));
+        canBus.setMode(MCP_NORMAL);
+        Serial.println(F("OK"));
+        
+        canInitialized = true;
+        Serial.println(F("CAN: Ready for two-Arduino test"));
+        Serial.println(F("Send 'CAN' via USB to enable CAN test mode"));
+    } else {
+        Serial.println(F("FAILED!"));
+        Serial.println(F("CAN: Not available (check wiring)"));
+        canInitialized = false;
+    }
+    #endif
+    
     Serial.println("Waiting for master connection...");
 }
 
@@ -667,6 +761,66 @@ void loop() {
         }
         delayMicroseconds(500);  // Brief pause between checks
     }
+    
+    // =======================================================================
+    // CAN BUS MESSAGE HANDLING (two-Arduino test mode)
+    // =======================================================================
+    #if ENABLE_CAN_TEST
+    if (canInitialized && canTestMode) {
+        // Check for incoming CAN messages
+        if (canBus.checkReceive() == CAN_MSGAVAIL) {
+            unsigned long rxId;
+            unsigned char len = 0;
+            unsigned char rxBuf[8];
+            
+            canBus.readMsgBuf(&rxId, &len, rxBuf);
+            canMsgCount++;
+            
+            // Print received message
+            Serial.print(F("CAN RX: ID=0x"));
+            Serial.print(rxId, HEX);
+            Serial.print(F(" len="));
+            Serial.print(len);
+            Serial.print(F(" data="));
+            for (uint8_t i = 0; i < len && i < 8; i++) {
+                if (rxBuf[i] < 0x10) Serial.print('0');
+                Serial.print(rxBuf[i], HEX);
+                Serial.print(' ');
+            }
+            Serial.println();
+            
+            // If we receive test message from Master (ID 0x123), flash green and respond
+            if (rxId == 0x123) {
+                Serial.println(F("*** TEST MSG FROM MASTER ***"));
+                
+                // Flash LEDs green to indicate receipt
+                for (int i = 0; i < LED_COUNT; i++) {
+                    strip.setPixelColor(i, strip.Color(0, 255, 0));
+                }
+                strip.show();
+                delay(200);
+                strip.clear();
+                strip.show();
+                
+                // Send response back to Master (ID 0x456)
+                unsigned char respData[8] = {0x41, 0x43, 0x4B, rxBuf[0], rxBuf[1], rxBuf[2], 0x00, 0x00}; // "ACK" + echo
+                Serial.print(F("Sending ACK response ID=0x456... "));
+                byte result = canBus.sendMsgBuf(0x456, 0, 8, respData);
+                Serial.println(result == CAN_OK ? F("OK") : F("FAILED"));
+            }
+        }
+        
+        // Periodic CAN status
+        if (currentTime - lastCanCheck >= 2000) {
+            lastCanCheck = currentTime;
+            byte errFlag = canBus.getError();
+            Serial.print(F("CAN: msgs="));
+            Serial.print(canMsgCount);
+            Serial.print(F(" err=0x"));
+            Serial.println(errFlag, HEX);
+        }
+    }
+    #endif
     
     // Timeout check: if no data received for timeout period, enter error mode
     // USB test mode uses extended timeout (30s) for LED testing without Master
