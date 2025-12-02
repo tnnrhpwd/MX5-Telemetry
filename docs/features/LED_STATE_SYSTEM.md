@@ -102,6 +102,7 @@ RPM 4500 (100%): 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡   (yellow - f
 - **Smooth interpolation**: Colors blend seamlessly between zones
 - **Mirrored progress bar**: Symmetric growth from both edges
 - **Brightness**: Full intensity (255)
+- **Non-linear mapping**: Efficiency zones get more visual emphasis (3-4-3 LED distribution)
 - **Color calculation**: Linear interpolation between zone colors
 
 ---

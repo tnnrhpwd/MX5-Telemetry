@@ -29,15 +29,17 @@
 ├─────────────────────────────────────────────────────────────────┤
 │  Pattern: Smooth color gradient as bar grows inward             │
 │  Animation: Mirrored progress bar (inward growth)               │
+│  LED Distribution: Non-linear emphasis on efficiency zones      │
 │                                                                 │
-│  🔵 BLUE (2000-2500 RPM): Best MPG / Fuel Efficiency            │
-│     → Smooth transition to green                                │
-│  🟢 GREEN (2500-4000 RPM): Best Thermal Efficiency (Power/Gas)  │
-│     → Smooth transition to yellow                               │
-│  🟡 YELLOW (4000-4500 RPM): Approaching High RPM                │
+│  🔵 BLUE (2000-2500 RPM): Best MPG - LEDs 1-3 per side (30%)    │
+│     → 500 RPM range gets 3 LEDs (emphasized)                    │
+│  🟢 GREEN (2500-4000 RPM): Thermal Eff - LEDs 4-7 per side (40%)│
+│     → 1500 RPM range gets 4 LEDs (emphasized)                   │
+│  🟡 YELLOW (4000-4500 RPM): High RPM - LEDs 8-10 per side (30%) │
+│     → 500 RPM range gets 3 LEDs (compressed)                    │
 │                                                                 │
 │  Colors: Blue (0,100,255) → Green (0,255,0) → Yellow (255,255,0)│
-│  Purpose: Show RPM with efficiency zone awareness               │
+│  Purpose: Emphasize efficient driving zones visually            │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -74,41 +76,46 @@
 
 ## 🌈 Efficiency Gradient Visual Examples (2000-4500 RPM)
 
+**Non-linear LED mapping emphasizes MPG and thermal zones:**
+- 🔵 Blue zone (2000-2500): 30% of LEDs for 20% of RPM range
+- 🟢 Green zone (2500-4000): 40% of LEDs for 60% of RPM range  
+- 🟡 Yellow zone (4000-4500): 30% of LEDs for 20% of RPM range
+
 ```
-RPM 2000 (0%):   ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫
-                                    (empty)
+RPM 2000 (start): ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫
+                                    (empty - just entered zone)
 
-RPM 2250 (10%):  🔵 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🔵
-                                    (blue - best MPG)
+RPM 2250 (MPG):   🔵 🔵 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🔵 🔵
+                                    (blue - best MPG zone)
 
-RPM 2500 (20%):  🔵 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🔵
-                                    (transitioning blue→green)
+RPM 2500 (MPG→):  🔵 🔵 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🔵 🔵
+                                    (3 LEDs, transitioning to green)
 
-RPM 3000 (40%):  🟢 🟢 🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢 🟢 🟢
-                                    (green - best thermal efficiency)
+RPM 3000 (therm): 🔵 🔵 🟢 🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢 🟢 🔵 🔵
+                                    (green - thermal efficiency zone)
 
-RPM 3500 (60%):  🟢 🟢 🟢 🟢 🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢 🟢 🟢 🟢 🟢
-                                    (green - power band)
+RPM 3500 (therm): 🔵 🔵 🟢 🟢 🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢 🟢 🟢 🔵 🔵
+                                    (green - mid thermal zone)
 
-RPM 4000 (80%):  🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 ⚫ ⚫ ⚫ ⚫ 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡
-                                    (transitioning green→yellow)
+RPM 4000 (→yel):  🔵 🔵 🟢 🟢 🟢 🟢 🟡 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟡 🟢 🟢 🟢 🟢 🔵 🔵
+                                    (7 LEDs, transitioning to yellow)
 
-RPM 4500 (100%): 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡
-                                    (yellow - approaching high RPM)
+RPM 4500 (high):  🔵 🔵 🟢 🟢 🟢 🟢 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟢 🟢 🟢 🟢 🔵 🔵
+                                    (full bar - approaching shift zone)
 ```
 
 ## 📊 State Summary Table
 
-| State | Condition | Color | Animation | Purpose |
-|-------|-----------|-------|-----------|---------|
-| ⚪ Idle | Speed=0, RPM 0-800 | White | Pepper inward | Stationary, engine idling |
-| 🟠 Stall | Speed>0, RPM 0-1999 | Orange | Inverted bar | Low RPM warning while moving |
-| 🔵 MPG | RPM 2000-2500 | Blue→Green | Progress bar | Best fuel efficiency |
-| 🟢 Power | RPM 2500-4000 | Green→Yellow | Progress bar | Best thermal efficiency |
-| 🟡 High | RPM 4000-4500 | Yellow | Progress bar | Approaching shift zone |
+| State | Condition | Color | LEDs/side | Purpose |
+|-------|-----------|-------|-----------|---------||
+| ⚪ Idle | Speed=0, RPM 0-800 | White | Animated | Stationary, engine idling |
+| 🟠 Stall | Speed>0, RPM 0-1999 | Orange | 0-10 (inv) | Low RPM warning while moving |
+| 🔵 MPG | RPM 2000-2500 | Blue→Green | 0-3 (30%) | Best fuel efficiency |
+| 🟢 Thermal | RPM 2500-4000 | Green→Yellow | 3-7 (40%) | Best thermal efficiency |
+| 🟡 High | RPM 4000-4500 | Yellow | 7-10 (30%) | Approaching shift zone |
 | 🔴 Shift | RPM 4501-7199 | Red+Flash | Flash gap | Urgent shift warning |
-| 🛑 Limit | RPM 7200+ | Solid Red | Static | Rev limiter engaged |
-| ❌ Error | CAN failure | Red | Pepper inward | Communication error |
+| 🛑 Limit | RPM 7200+ | Solid Red | Full | Rev limiter engaged |
+| ❌ Error | CAN failure | Red | Animated | Communication error |
 
 ## 📝 Quick Modification Guide
 
