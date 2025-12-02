@@ -38,11 +38,13 @@
 #define LED_DATA_PIN        5       // D5 on Arduino #2
 #define SERIAL_RX_PIN       2       // D2 for SoftwareSerial RX (from master D6)
 #define HAPTIC_PIN          3       // D3 for haptic motor (vibration feedback)
+#define BRIGHTNESS_POT_PIN  A6      // A6 for brightness potentiometer (B10K-B100K)
 #define CAN_CS_PIN          10      // MCP2515 Chip Select (SPI) - same as Master
 #define CAN_INT_PIN         7       // MCP2515 Interrupt Pin - DIRECTLY connected to D7
 #define LED_COUNT           20      // Number of LEDs in strip (adjust to your strip)
 #define SLAVE_SERIAL_BAUD   1200    // Baud rate - very slow for maximum reliability
 #define ENABLE_HAPTIC       false   // DISABLED for debugging - set true to enable haptic feedback
+#define ENABLE_BRIGHTNESS_POT true  // Enable brightness potentiometer on A6
 #define ENABLE_CAN_TEST     true    // Enable CAN bus testing with second MCP2515
 #define MIN_VOLTAGE_FOR_HAPTIC  4.7 // Minimum voltage (V) to enable haptic on startup
 
@@ -78,6 +80,8 @@ uint8_t bufferIndex = 0;
 bool hapticActive = false;
 unsigned long hapticStartTime = 0;
 uint16_t hapticDuration = 0;
+uint8_t currentBrightness = 255;     // Current brightness from potentiometer
+unsigned long lastBrightnessRead = 0; // Debounce brightness reads
 unsigned long lastCommandTime = 0;          // Track when last command was received
 #define MASTER_TIMEOUT_MS 5000              // Enter error mode if no command for 5 seconds
 #define USB_TEST_TIMEOUT_MS 30000           // Extended timeout in USB test mode (30 seconds)
@@ -382,6 +386,30 @@ void updateHaptic() {
     if (hapticActive && (millis() - hapticStartTime >= hapticDuration)) {
         analogWrite(HAPTIC_PIN, 0);  // Turn off
         hapticActive = false;
+    }
+    #endif
+}
+
+// Read brightness from potentiometer and apply to LED strip
+void updateBrightness() {
+    #if ENABLE_BRIGHTNESS_POT
+    unsigned long currentTime = millis();
+    
+    // Only read every 50ms to avoid jitter and save CPU
+    if (currentTime - lastBrightnessRead >= 50) {
+        lastBrightnessRead = currentTime;
+        
+        // Read potentiometer (0-1023), INVERT (1023-value), map to brightness (0-255)
+        // Inversion: turning clockwise now increases brightness
+        int potValue = 1023 - analogRead(BRIGHTNESS_POT_PIN);
+        uint8_t newBrightness = map(potValue, 0, 1023, 0, 255);
+        
+        // Only update if brightness changed significantly (reduces flicker)
+        if (abs((int)newBrightness - (int)currentBrightness) > 2) {
+            currentBrightness = newBrightness;
+            strip.setBrightness(currentBrightness);
+            // Note: strip.show() will be called by the LED state functions
+        }
     }
     #endif
 }
@@ -967,6 +995,9 @@ void loop() {
     
     // Update LED display continuously
     updateLEDDisplay();
+    
+    // Update brightness from potentiometer
+    updateBrightness();
     
     // Update haptic motor state
     updateHaptic();
