@@ -190,11 +190,13 @@ Serial: 115200 baud
 
 ### Slave Arduino (led_slave)
 ```
-Source: src_slave/main.cpp
-Size: ~8KB flash, ~450 bytes RAM
+Source: slave/src/main.cpp
+Size: ~10KB flash, ~900 bytes RAM
 Libraries:
-  ✓ Adafruit NeoPixel only
-Serial: 9600 baud (RX from master)
+  ✓ Adafruit NeoPixel
+  ✓ SoftwareSerial
+Serial: 1200 baud (RX from master via D2)
+        115200 baud (USB debug output)
 LEDs: 20 LEDs on pin D5
 ```
 
@@ -210,15 +212,15 @@ LEDs: 20 LEDs on pin D5
 
 3. **Serial Monitor shortcuts**:
    - Master: 115200 baud for debugging
-   - Slave: 9600 baud for LED commands
+   - Slave: 115200 baud for USB debugging (inter-Arduino is 1200 baud)
 
 4. **Test before installing** in vehicle:
    - Master: Connect to USB, verify CAN/GPS/SD init
-   - Slave: Send RPM commands, verify LED response
+   - Slave: Send RPM commands via USB, verify LED response
 
 5. **Backup your configuration**:
    - `lib/Config/config.h` (master settings)
-   - `src_slave/main.cpp` (slave LED_COUNT)
+   - `slave/src/main.cpp` (slave LED_COUNT)
 
 ---
 

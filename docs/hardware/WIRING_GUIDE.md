@@ -312,7 +312,7 @@ The LED strip is controlled by a **separate Slave Arduino** to avoid interrupt c
 
 | Master Pin | Slave Pin | Description |
 |------------|-----------|-------------|
-| D6         | D2        | Serial data (9600 baud bit-bang) |
+| D6         | D2        | Serial data (1200 baud bit-bang) |
 | GND        | GND       | Common ground (REQUIRED) |
 
 ```
@@ -329,7 +329,8 @@ Master Arduino (Logger)         Slave Arduino (LED Controller)
 **IMPORTANT:**
 - Master uses **D6** (NOT D1/TX which is USB Serial)
 - Slave uses **D2** (SoftwareSerial RX)
-- Communication is **9600 baud** (bit-bang on Master, SoftwareSerial on Slave)
+- Communication is **1200 baud** (bit-bang on Master, SoftwareSerial on Slave)
+- Slow baud rate ensures reliability despite interrupt conflicts (CAN/GPS/SD)
 - **Common ground is essential** - without it, serial communication will fail!
 
 ### Power Considerations
@@ -585,7 +586,7 @@ Arduino D5 ───┬───┤ Gate         │
 
 - Check wire from **Master D6** to **Slave D2**
 - Verify **common ground** between both Arduinos
-- Confirm both use **9600 baud** (Master bit-bang, Slave SoftwareSerial)
+- Confirm both use **1200 baud** (Master bit-bang, Slave SoftwareSerial)
 - Master logs should show `LED->Slave: RPM:0`, `LED->Slave: SPD:0`, etc.
 - If Slave shows red error animation, it's not receiving valid commands
 - Connect Slave to USB Serial Monitor (115200) to see `RX:` debug output

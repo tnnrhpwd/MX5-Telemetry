@@ -5,8 +5,9 @@
 // ============================================================================
 // LED Slave Communication Implementation
 // ============================================================================
-// Uses bit-bang serial on D6 at 9600 baud to communicate with Slave Arduino
-// Slave Arduino listens on SoftwareSerial D2 at 9600 baud
+// Uses bit-bang serial on D6 at 1200 baud to communicate with Slave Arduino
+// Slave Arduino listens on SoftwareSerial D2 at 1200 baud
+// 1200 baud is slow but reliable - avoids corruption from interrupt conflicts
 // ============================================================================
 
 // Bit-bang timing for 1200 baud (very slow = maximum reliability)
