@@ -136,6 +136,37 @@
 #define MAZDA_RPM_CAN_ID 0x201       // Mazda-specific RPM CAN ID
 
 // ============================================================================
+// MAZDA NC MIATA CAN IDs - FOR FUTURE SNIFF FILTERING
+// ============================================================================
+// These are potential CAN IDs for Mazda NC Miata (2006-2015) HS-CAN bus.
+// Uncomment and verify with actual sniffing before use.
+// Note: CAN IDs and byte positions may vary by model year and region.
+// ============================================================================
+
+// --- ENGINE & POWERTRAIN ---
+// #define MAZDA_RPM_CAN_ID_ALT     0x201   // Engine RPM (alternative location)
+// #define MAZDA_SPEED_CAN_ID       0x201   // Vehicle Speed (often same frame as RPM)
+// #define MAZDA_THROTTLE_CAN_ID    0x201   // Throttle Position (may be in 0x201 or 0x240)
+// #define MAZDA_BRAKE_SW_CAN_ID    0x212   // Brake Switch On/Off
+// #define MAZDA_COOLANT_CAN_ID     0x240   // Engine Coolant Temperature
+// #define MAZDA_TIMING_CAN_ID      0x231   // Ignition Timing Advance
+// #define MAZDA_LOAD_CAN_ID        0x201   // Calculated Engine Load
+
+// --- CHASSIS & SAFETY (DSC/ABS) ---
+// #define MAZDA_STEERING_CAN_ID    0x081   // Steering Wheel Angle/Torque (DSC)
+// #define MAZDA_WHEEL_SPEED_CAN_ID 0x4B0   // Individual Wheel Speeds (ABS sensors)
+// #define MAZDA_WHEEL_FL_CAN_ID    0x4B0   // Front Left Wheel Speed
+// #define MAZDA_WHEEL_FR_CAN_ID    0x4B0   // Front Right Wheel Speed
+// #define MAZDA_WHEEL_RL_CAN_ID    0x4B0   // Rear Left Wheel Speed
+// #define MAZDA_WHEEL_RR_CAN_ID    0x4B0   // Rear Right Wheel Speed
+// #define MAZDA_BRAKE_PRESS_CAN_ID 0x212   // Brake Pressure (DSC system)
+
+// --- TRANSMISSION (Automatic only) ---
+// #define MAZDA_GEAR_POS_CAN_ID    0x231   // Current Gear Position
+// #define MAZDA_TRANS_TEMP_CAN_ID  0x240   // Transmission Fluid Temperature
+// #define MAZDA_SHIFT_CAN_ID       0x231   // Shift Solenoid Status
+
+// ============================================================================
 // ERROR THRESHOLDS
 // ============================================================================
 #define CAN_ERROR_THRESHOLD  100     // Reinitialize CAN after this many errors

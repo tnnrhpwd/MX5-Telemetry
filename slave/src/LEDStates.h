@@ -55,6 +55,7 @@
 // State 0: Idle/Neutral (Vehicle Not Moving)
 // ============================================================================
 #define STATE_0_SPEED_THRESHOLD 1        // Speed <= 1 km/h triggers this state
+#define STATE_0_RPM_MAX         800      // Max RPM for idle state (normal idle ~750-800)
 
 // Animation parameters for inward pepper effect
 #define STATE_0_PEPPER_DELAY    80       // Milliseconds between each LED lighting
@@ -66,45 +67,64 @@
 #define STATE_0_COLOR_B         255
 
 // ============================================================================
-// State 1: Gas Efficiency Zone (Optimal Cruising)
+// Normal Driving Zone: Blue-Green-Yellow Gradient Bar (2000-4500 RPM)
 // ============================================================================
-#define STATE_1_RPM_MIN         2000     // Minimum RPM for State 1
-#define STATE_1_RPM_MAX         2500     // Maximum RPM for State 1
+// Smooth color gradient based on efficiency zones:
+//   BLUE   (2000-2500 RPM): Best Absolute Gas Efficiency (MPG)
+//   GREEN  (2500-4000 RPM): Best Thermal Efficiency (Power-to-Gas)
+//   YELLOW (4000-4500 RPM): Approaching High RPM
+// ============================================================================
+#define NORMAL_RPM_MIN          2000     // Start of normal driving zone
+#define NORMAL_RPM_MAX          4500     // End of normal driving zone
 
-// Visual: Outermost 2 LEDs per side
-#define STATE_1_LEDS_PER_SIDE   2        // Number of LEDs lit on each edge
+// Efficiency zone RPM thresholds (for color interpolation)
+#define EFFICIENCY_BLUE_END     2500     // End of best MPG zone (blue)
+#define EFFICIENCY_GREEN_END    4000     // End of thermal efficiency zone (green)
+// Yellow continues from 4000 to NORMAL_RPM_MAX (4500)
 
-// Color definition (Green)
+// Color definitions for efficiency zones
+#define BLUE_COLOR_R            0
+#define BLUE_COLOR_G            100      // Slight green tint for visibility
+#define BLUE_COLOR_B            255
+
+#define GREEN_COLOR_R           0
+#define GREEN_COLOR_G           255
+#define GREEN_COLOR_B           0
+
+#define YELLOW_COLOR_R          255
+#define YELLOW_COLOR_G          255
+#define YELLOW_COLOR_B          0
+
+// Legacy defines kept for compatibility
+#define STATE_1_RPM_MIN         2000
+#define STATE_1_RPM_MAX         2500
+#define STATE_1_LEDS_PER_SIDE   2
 #define STATE_1_COLOR_R         0
 #define STATE_1_COLOR_G         255
 #define STATE_1_COLOR_B         0
-
-// ============================================================================
-// State 2: Stall Danger Zone (Low RPM / Lugging)
-// ============================================================================
-#define STATE_2_RPM_MIN         750      // Minimum RPM for State 2
-#define STATE_2_RPM_MAX         1999     // Maximum RPM for State 2
-
-// Animation parameters for outward pulsing effect
-#define STATE_2_PULSE_PERIOD    600      // Milliseconds per complete pulse cycle
+#define STATE_3_RPM_MIN         2501
+#define STATE_3_RPM_MAX         4500
+#define STATE_3_COLOR_R         255
+#define STATE_3_COLOR_G         255
+#define STATE_3_COLOR_B         0
 #define STATE_2_MIN_BRIGHTNESS  20       // Minimum brightness (0-255) during pulse
 #define STATE_2_MAX_BRIGHTNESS  200      // Maximum brightness (0-255) during pulse
 
 // Color definition (Orange)
 #define STATE_2_COLOR_R         255
 #define STATE_2_COLOR_G         80
-#define STATE_2_COLOR_B         0
-
-// ============================================================================
-// State 3: Normal Driving / Power Band (Mirrored Progress Bar)
-// ============================================================================
-#define STATE_3_RPM_MIN         2501     // Minimum RPM for State 3
-#define STATE_3_RPM_MAX         4500     // Maximum RPM for State 3
-
-// Color definition (Yellow)
-#define STATE_3_COLOR_R         255
-#define STATE_3_COLOR_G         255
 #define STATE_3_COLOR_B         0
+
+// ============================================================================
+// State 2: Stall Danger Zone (Low RPM / Lugging)
+// ============================================================================
+#define STATE_2_RPM_MIN         0        // Minimum RPM for State 2 (car stalls below 750 anyway)
+#define STATE_2_RPM_MAX         1999     // Maximum RPM for State 2
+
+// Color definition (Orange)
+#define STATE_2_COLOR_R         255
+#define STATE_2_COLOR_G         80
+#define STATE_2_COLOR_B         0
 
 // ============================================================================
 // State 4: High RPM / Shift Danger (Flashing Gap)
