@@ -1,13 +1,17 @@
 # MX5 Telemetry - Next Session To-Do List
 
 **Date Created:** December 1, 2025  
-**Status:** ✅ CAN Bus RPM LED circuit tested successfully on real car!
+**Last Updated:** December 2, 2025  
+**Status:** ✅ CAN Bus RPM LED circuit tested successfully on real car!  
+**LED Delay Fix:** ✅ Implemented (see [LED Timing and Performance](features/LED_TIMING_AND_PERFORMANCE.md))
 
 ---
 
 ## 🎯 Priority 1: Fix LED Update Speed (CRITICAL)
 
-The LEDs were only updating ~once every 3 seconds during real car testing. This needs to be the primary focus.
+### ✅ COMPLETED - December 2, 2025
+
+The LEDs were only updating ~once every 3 seconds during real car testing. **All fixes have been implemented.**
 
 ### ✅ Root Cause Identified (Dec 2, 2025)
 
@@ -28,27 +32,21 @@ Contributing factors:
 - RPM quantization (`rawRPM / 4`) means small fluctuations produce same integer
 - Debug Serial.print statements add minor delays
 
-### Action Items (Do These First!)
-- [ ] **FIX 1:** In `lib/LEDSlave/LEDSlave.cpp` - Remove the `rpm != lastRPM` check, always send RPM:
-  ```cpp
-  // Change line 99 from:
-  if (rpm != lastRPM || needsKeepalive) {
-  // To:
-  if (true) {  // Always send RPM for responsive LEDs
-  ```
-  
-- [ ] **FIX 2:** In `lib/Config/config.h` - Reduce LED_UPDATE_INTERVAL:
-  ```cpp
-  // Change line 72 from:
-  #define LED_UPDATE_INTERVAL  250   // 4Hz
-  // To:
-  #define LED_UPDATE_INTERVAL  100   // 10Hz (or 50 for 20Hz)
-  ```
+### Action Items ✅ ALL COMPLETED
+- [x] **FIX 1:** In `lib/LEDSlave/LEDSlave.cpp` - Always send RPM (removed caching)
+- [x] **FIX 2:** In `lib/Config/config.h` - Reduced LED_UPDATE_INTERVAL from 250ms to 100ms (10Hz)
+- [x] **FIX 3:** Added conditional debug mode - Serial.prints only run when USB active
 
-- [ ] **FIX 3 (Optional):** Remove debug Serial.print statements in CANHandler.cpp update() function to reduce overhead
+### Expected Performance After Fixes
+| Metric | Before | After |
+|--------|--------|-------|
+| Update Rate | ~0.3 Hz | **~6-10 Hz** |
+| Perceived Delay | ~3 seconds | **~100-170ms** |
+
+> **Note:** 1200 baud serial is intentionally slow for reliability. See [LED Timing and Performance](features/LED_TIMING_AND_PERFORMANCE.md) for details.
 
 ### Testing After Fix
-- [ ] Verify LED updates are now 10-20Hz on bench with simulated CAN
+- [ ] Verify LED updates are now 10Hz on bench with simulated CAN
 - [ ] Test in car - LEDs should now respond instantly to RPM changes
 
 ---

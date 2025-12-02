@@ -112,7 +112,7 @@ Pin Assignments:
 │  5V/GND ─────────┼──┼── Power Bus
 └──────────────────┘  │
                       │
-                      │ Serial Commands (9600 baud)
+                      │ Serial Commands (1200 baud)
                       │ Format: "RPM:3500\n"
                       │
                       ▼
@@ -212,17 +212,18 @@ Open Command Palette (`Ctrl+Shift+P`) and run:
 ### Test Slave Arduino
 
 1. Upload `led_slave` environment
-2. Open Serial Monitor at **9600 baud**
-3. Manually send test commands:
+2. Open Serial Monitor at **115200 baud** (USB debug output)
+3. Manually send test commands via USB:
    ```
-   RPM:1000
-   RPM:3000
-   RPM:5000
-   RPM:7000
-   ERR
-   CLR
+   R1000
+   R3000
+   R5000
+   R7000
+   E
+   C
    ```
 4. Observe LED patterns changing
+5. Debug mode auto-enables when you send USB commands
 
 ### Test Master → Slave Communication
 

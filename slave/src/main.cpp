@@ -12,7 +12,7 @@
  * - D2 (RX via SoftwareSerial) ← TX from Master Arduino (Pin 1) via diode
  * - Shares GND with Master Arduino
  * 
- * SERIAL COMMANDS (9600 baud):
+ * SERIAL COMMANDS (1200 baud from Master via D2):
  * - RPM:xxxx     Set RPM and update display (e.g., RPM:3500)
  * - SPD:xxx      Set speed in km/h (e.g., SPD:60)
  * - ERR          Show error state (red pepper animation)

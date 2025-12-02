@@ -52,6 +52,7 @@ Complete documentation for the MX5-Telemetry dual Arduino system, organized by c
 
 ### LED System ([features/](features/))
 - **[LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md)** - Complete LED animation documentation
+- **[LED_TIMING_AND_PERFORMANCE.md](features/LED_TIMING_AND_PERFORMANCE.md)** - ⚡ Update rate, latency, and performance tuning
 - **[LED_QUICKREF.md](features/LED_QUICKREF.md)** - Quick reference for LED states
 - **[LED_AUTO_SYNC.md](features/LED_AUTO_SYNC.md)** - Arduino/Python simulator sync
 - **[LED_SIMULATOR_ARDUINO_CONNECTION.md](features/LED_SIMULATOR_ARDUINO_CONNECTION.md)** - Simulator integration

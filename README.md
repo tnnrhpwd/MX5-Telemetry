@@ -12,7 +12,7 @@ A comprehensive embedded telemetry and data logging system for the 2008 Mazda Mi
 ### Dual Arduino Architecture
 - **🎯 Master Arduino (Telemetry Logger)**: Handles CAN bus communication, GPS tracking, SD card logging, and commands the slave
 - **⚡ Slave Arduino (LED Controller)**: Dedicated LED control for instant visual feedback with zero processing lag
-- **🔗 Serial Communication**: High-speed 115200 baud link between master and slave for synchronized operation
+- **🔗 Serial Communication**: 1200 baud bit-bang serial link (D6→D2) chosen for reliability over speed
 
 ### Core Capabilities
 - **Real-time CAN Bus Communication**: Reads engine data at 500 kbaud directly from the Miata's OBD-II port
@@ -635,24 +635,32 @@ Monitor at **115200 baud** in Serial Monitor.
 ### Timing Specifications
 
 #### Master Arduino (Telemetry Logger)
-- **CAN Bus Read Rate**: 20Hz (every 50ms)
-  - Sufficient for telemetry without overwhelming serial link
+- **CAN Bus Read Rate**: 50Hz (every 20ms)
+  - High-frequency polling for responsive RPM tracking
   
-- **GPS Update Rate**: 1Hz (every 1000ms)
-  - Standard GPS refresh rate, matches logging interval
+- **GPS Update Rate**: 10Hz (every 100ms)
+  - Fast updates when GPS enabled
   
-- **Data Logging Rate**: 1Hz (every 1000ms)
+- **Data Logging Rate**: 5Hz (every 200ms)
   - Balances data density with SD card write speed
   
-- **Slave Command Rate**: 10Hz (every 100ms)
-  - High-frequency updates for responsive LED display
+- **LED Update Rate**: 10Hz (every 100ms)
+  - Commands sent to slave for responsive display
 
 #### Slave Arduino (LED Controller)
-- **Serial Processing Rate**: ~10Hz (receives commands from master)
-  - 115200 baud ensures low latency
+- **Serial Receive**: 1200 baud (via SoftwareSerial)
+  - Intentionally slow for reliability with bit-bang serial
+  - Each message takes ~67ms to transmit
   
 - **LED Refresh Rate**: ~60Hz
   - Flicker-free visual feedback, independent of master
+
+#### End-to-End LED Update Latency
+- **Effective Update Rate**: ~6-10 Hz
+- **Total Latency**: ~100-170ms from CAN read to LED change
+- **Why 1200 baud?** Higher baud rates caused corruption due to interrupt conflicts on the Master (CAN/GPS/SD all use interrupts)
+
+> 📖 See [docs/features/LED_TIMING_AND_PERFORMANCE.md](docs/features/LED_TIMING_AND_PERFORMANCE.md) for detailed timing analysis
 
 ### Memory Usage
 
@@ -660,14 +668,14 @@ Approximate flash and RAM usage on ATmega328P:
 
 #### Master Arduino:
 ```
-Sketch uses 26,142 bytes (85%) of program storage space
-Global variables use 1,456 bytes (71%) of dynamic memory
+Flash: 25,034 bytes (81%)
+RAM: 1,584 bytes (77%)
 ```
 
 #### Slave Arduino:
 ```
-Sketch uses 8,234 bytes (26%) of program storage space
-Global variables use 448 bytes (21%) of dynamic memory
+Flash: 10,076 bytes (33%)
+RAM: 934 bytes (46%)
 ```
 
 **Benefits of Dual Arduino Architecture**:
