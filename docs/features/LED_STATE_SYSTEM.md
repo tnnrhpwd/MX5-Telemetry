@@ -4,12 +4,12 @@
 
 The MX5-Telemetry project uses a sophisticated **mirrored progress bar** LED system that provides intuitive visual feedback for different driving conditions. The progress bar grows from both edges **inward toward the center**, creating a symmetric visual that's easy to read peripherally while driving.
 
-This system is implemented consistently across both the Arduino hardware and the Python simulator, with 7 distinct states.
+The system features a **smooth color gradient** in the normal driving zone (2000-4500 RPM) that transitions through three efficiency zones: Blue (best MPG) → Green (best thermal efficiency) → Yellow (approaching high RPM).
 
-## 🎨 The Seven States
+## 🎨 The Six States
 
-### ⚪ State 0: Idle/Neutral (Speed = 0)
-**Purpose:** Visual confirmation that vehicle is stationary (not moving).
+### ⚪ Idle State (Speed = 0, RPM 0-800)
+**Purpose:** Visual confirmation that vehicle is stationary with engine idling.
 
 **Visual Pattern:**
 ```
@@ -23,126 +23,120 @@ This system is implemented consistently across both the Arduino hardware and the
 - **Hold**: 300ms at full center illumination
 - **Color**: Pure white (RGB: 255, 255, 255)
 - **Brightness**: 180 (out of 255)
-- **Speed threshold**: Activates when speed < 1 km/h
+- **Triggers when**: Speed ≤ 1 km/h AND RPM ≤ 800
 
 **When It Activates:**
 - Vehicle parked/stopped at traffic light
-- Clutch fully engaged (neutral)
-- Engine idling with no movement
+- Engine idling (~750 RPM)
+- Calm, non-intrusive visual while stationary
 
 ---
 
-### 🟢 State 1: Gas Efficiency Zone (2000-2500 RPM)
-**Purpose:** Subtle confirmation of optimal cruising range.
+### 🟠 Stall Danger (Speed > 0, RPM 0-1999)
+**Purpose:** Warning that engine is operating below optimal torque range while moving.
 
-**Visual Pattern (20 LEDs):**
+**Visual Pattern (INVERTED - more LEDs = lower RPM = more danger):**
 ```
-🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢
-```
-
-**Characteristics:**
-- **Minimal display**: Only outermost 2 LEDs per side illuminate
-- **Static**: No animation, steady glow
-- **Color**: Pure green (RGB: 0, 255, 0)
-- **Brightness**: 180 (comfortable for cruising)
-- **Mirrored**: 2 LEDs left edge + 2 LEDs right edge
-
-**When It Activates:**
-- Efficient highway cruising
-- Optimal torque range (2000-2500 RPM)
-- Best fuel economy zone
-
----
-
-### 🟠 State 2: Stall Danger (750-1999 RPM)
-**Purpose:** Warning that engine is operating below optimal torque range.
-
-**Visual Pattern:**
-```
-Start: ⚫ ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ ⚫
-  ↓ (pulse outward)
-Peak:  🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠
-  ↓ (fade back)
-Start: ⚫ ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ ⚫
+RPM 0:    🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 🟠 (FULL - maximum danger!)
+RPM 1000: 🟠 🟠 🟠 🟠 🟠 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟠 🟠 🟠 🟠 🟠 (half)
+RPM 1999: 🟠 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟠 (minimal - almost safe)
 ```
 
 **Characteristics:**
-- **Outward pulse**: Orange bars expand from center outward to edges
-- **Animation**: Smooth pulse using sine wave
-- **Period**: 600ms complete cycle
+- **Progressive bar (INVERTED)**: More LEDs lit = lower RPM = more danger
+- **Direction**: Bars shrink as RPM increases toward safe zone
 - **Color**: Orange (RGB: 255, 80, 0)
-- **Brightness range**: 20 (dim) to 200 (bright)
-- **Direction**: Center → Edges (opposite of normal progress bar)
+- **Brightness**: Full intensity (255)
+- **Only activates when moving**: Speed > 0 prevents false alarms at idle
 
 **When It Activates:**
-- Engine lugging (too low RPM for current gear)
-- Risk of stalling
+- Engine lugging (too low RPM for current gear) while driving
+- Risk of stalling while moving
 - Inefficient operation below torque curve
 
 ---
 
-### 🟡 State 3: Normal Driving / Power Band (2501-4500 RPM)
-**Purpose:** Main mirrored progress bar showing RPM progression.
+### 🔵🟢🟡 Normal Driving Zone (2000-4500 RPM) - Efficiency Gradient
+**Purpose:** Main driving zone with smooth color gradient showing efficiency zones.
 
-**Visual Pattern (at ~4000 RPM, mid-range):**
+The bar grows from edges inward, with color indicating which efficiency zone you're in:
+
+#### 🔵 Blue Zone (2000-2500 RPM) - Best MPG
+**Purpose:** Optimal fuel economy for highway cruising.
 ```
-🟡 🟡 🟡 🟡 🟡 ⚫ ⚫ ⚫ ⚫ 🟡 🟡 🟡 🟡 🟡
+🔵 🔵 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🔵 🔵
+```
+- **Color**: Blue (RGB: 0, 100, 255)
+- **Best for**: Highway cruising, maximum miles per gallon
+- **Smooth transition**: Blends into green as RPM increases
+
+#### 🟢 Green Zone (2500-4000 RPM) - Best Thermal Efficiency
+**Purpose:** Optimal power-to-fuel ratio, best thermal efficiency.
+```
+🟢 🟢 🟢 🟢 🟢 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🟢 🟢 🟢 🟢 🟢
+```
+- **Color**: Green (RGB: 0, 255, 0)
+- **Best for**: Spirited driving, optimal engine performance
+- **Smooth transition**: Blends from blue, blends into yellow
+
+#### 🟡 Yellow Zone (4000-4500 RPM) - Approaching High RPM
+**Purpose:** Nearing the shift danger zone.
+```
+🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡
+```
+- **Color**: Yellow (RGB: 255, 255, 0)
+- **Indication**: Approaching high RPM, prepare to shift soon
+
+**Visual Progression with Color Gradient:**
+```
+RPM 2000 (0%):   ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫   (empty)
+RPM 2250 (10%):  🔵 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🔵   (blue - best MPG)
+RPM 2500 (20%):  🔵 🟢 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟢 🔵   (blue→green transition)
+RPM 3000 (40%):  🟢 🟢 🟢 🟢 ⚫ ⚫ 🟢 🟢 🟢 🟢   (green - thermal efficiency)
+RPM 3500 (60%):  🟢 🟢 🟢 🟢 🟢 🟢 🟢 🟢 🟢 🟢   (green - power band)
+RPM 4000 (80%):  � 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 �   (green→yellow transition)
+RPM 4500 (100%): 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡   (yellow - full bar)
 ```
 
 **Characteristics:**
-- **Mirrored progress bar**: Bars grow inward from both edges toward center
-- **Symmetric**: Left side mirrors right side exactly
-- **Color**: Solid yellow (RGB: 255, 255, 0)
+- **Smooth interpolation**: Colors blend seamlessly between zones
+- **Mirrored progress bar**: Symmetric growth from both edges
 - **Brightness**: Full intensity (255)
-- **Progressive**: More LEDs light up as RPM increases
-- **Calculation**: Each side shows (RPM - 2501) / (4500 - 2501) percentage of LEDs
-
-**Visual Examples:**
-- **2501 RPM (0%)**: `⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫`
-- **3500 RPM (50%)**: `🟡 🟡 🟡 🟡 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🟡 🟡 🟡 🟡`
-- **4500 RPM (100%)**: `🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡`
-
-**When It Activates:**
-- Normal acceleration
-- Active driving in power band
-- Most common state during spirited driving
+- **Color calculation**: Linear interpolation between zone colors
 
 ---
 
-### 🔴 State 4: High RPM / Shift Danger (4501-7199 RPM)
+### 🔴 Shift Danger (4501-7199 RPM)
 **Purpose:** Urgent visual signal demanding immediate upshift.
 
 **Visual Pattern (at ~6000 RPM):**
 ```
 🟥 🟥 🟥 🟥 🟥 🟥 ✨ ✨ ✨ ✨ 🟥 🟥 🟥 🟥 🟥 🟥
-(✨ = rapid red/white/cyan flashing)
+(✨ = rapid red/white flashing)
 ```
 
 **Characteristics:**
 - **Dual behavior**: 
-  1. **Filled segments**: Turn solid red and continue growing inward
-  2. **Unfilled center gap**: Flashes violently red/white/cyan
+  1. **Filled segments**: Solid red, continue growing inward
+  2. **Unfilled center gap**: Flashes rapidly red/white
 - **Flash speed**: Accelerates as RPM increases
   - 4501 RPM: 150ms per flash
   - 7199 RPM: 40ms per flash (extremely fast)
-- **Flash colors**: Alternates between red (255,0,0), white (255,255,255), and cyan (0,255,255)
+- **Flash colors**: Alternates between red (255,0,0) and white (255,255,255)
 - **Brightness**: Maximum (255)
 - **Progressive**: Gap shrinks as RPM approaches redline
 
 **Visual Progression:**
-- **4501 RPM**: `🟥 🟥 ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ 🟥 🟥`
-- **5500 RPM**: `🟥 🟥 🟥 🟥 ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ 🟥 🟥 🟥 🟥`
-- **6500 RPM**: `🟥 🟥 🟥 🟥 🟥 🟥 ✨ ✨ ✨ ✨ 🟥 🟥 🟥 🟥 🟥 🟥`
-- **7000 RPM**: `🟥 🟥 🟥 🟥 🟥 🟥 🟥 ✨ ✨ 🟥 🟥 🟥 🟥 🟥 🟥 🟥`
-
-**When It Activates:**
-- High-RPM acceleration
-- Approaching optimal shift point
-- Prevents over-revving and engine damage
+```
+4501 RPM: 🟥 🟥 ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ 🟥 🟥 (large gap)
+5500 RPM: 🟥 🟥 🟥 🟥 ✨ ✨ ✨ ✨ ✨ ✨ ✨ ✨ 🟥 🟥 🟥 🟥 (medium gap)
+6500 RPM: 🟥 🟥 🟥 🟥 🟥 🟥 ✨ ✨ ✨ ✨ 🟥 🟥 🟥 🟥 🟥 🟥 (small gap)
+7000 RPM: 🟥 🟥 🟥 🟥 🟥 🟥 🟥 ✨ ✨ 🟥 🟥 🟥 🟥 🟥 🟥 🟥 (tiny gap)
+```
 
 ---
 
-### 🛑 State 5: Rev Limit Cut (7200+ RPM)
+### 🛑 Rev Limit (7200+ RPM)
 **Purpose:** Absolute maximum - engine at fuel cut limiter.
 
 **Visual Pattern (Full Strip):**
@@ -151,16 +145,10 @@ Start: ⚫ ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ ⚫
 ```
 
 **Characteristics:**
-- **Complete fill**: Mirrored bars have met at center
-- **Solid red**: All LEDs illuminated, no flashing
+- **Complete fill**: All LEDs solid red
+- **No animation**: Static display for maximum urgency
 - **Color**: Pure red (RGB: 255, 0, 0)
 - **Brightness**: Maximum (255)
-- **No animation**: Static display (urgency is in the solid red)
-
-**When It Activates:**
-- Engine at fuel cut (7200+ RPM)
-- ECU limiting RPM to prevent damage
-- Immediate shift required
 
 ---
 
@@ -173,54 +161,56 @@ Start: ⚫ ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ ⚫
 ```
 
 **Characteristics:**
-- **Sequential pepper animation**: Red LEDs light up one-by-one from edges inward
-- **Direction**: Outer edges → Center (same as State 0, but red)
+- **Sequential pepper animation**: Red LEDs light up from edges inward
 - **Timing**: 80ms delay between each LED
-- **Hold**: 300ms at full center illumination
 - **Color**: Pure red (RGB: 255, 0, 0)
-- **Brightness**: 200 (out of 255)
-- **Trigger**: No valid CAN data received
+- **Brightness**: 200
 
-**When It Activates:**
-- CAN bus disconnected
-- MCP2515 module failure
-- Vehicle communication error
-- Loose wiring to OBD-II port
+---
 
+## 📊 Complete State Summary
+
+| State | Condition | Color | Animation | Purpose |
+|-------|-----------|-------|-----------|---------|
+| ⚪ Idle | Speed=0, RPM≤800 | White | Pepper inward | Engine idling, stationary |
+| 🟠 Stall | Speed>0, RPM 0-1999 | Orange | Inverted bar | Stall warning while moving |
+| 🔵 MPG | RPM 2000-2500 | Blue | Progress bar | Best fuel efficiency |
+| 🟢 Thermal | RPM 2500-4000 | Green | Progress bar | Best thermal efficiency |
+| 🟡 High | RPM 4000-4500 | Yellow | Progress bar | Approaching shift zone |
+| 🔴 Shift | RPM 4501-7199 | Red+Flash | Flash gap | Urgent shift warning |
+| 🛑 Limit | RPM 7200+ | Solid Red | Static | Rev limiter engaged |
+| ❌ Error | CAN failure | Red | Pepper inward | Communication error |
 ---
 
 ## 📁 Implementation Files
 
-### Arduino (C++)
+### Arduino (C++) - Slave Controller
 
-1. **`lib/Config/LEDStates.h`**
-   - Central definition of all state constants (53 constants total)
-   - Single source of truth for ranges and colors
-   - Includes all 7 states: State 0-5 + Error state
-   - Helper macros for state detection
+1. **`slave/src/LEDStates.h`**
+   - LED state constants and thresholds
+   - Efficiency zone definitions (blue/green/yellow ranges)
+   - Color values for each state
 
-2. **`lib/LEDController/LEDController.h`**
-   - Class declarations for LED control
-   - State methods: `idleNeutralState()`, `gasEfficiencyState()`, `stallDangerState()`, `normalDrivingState()`, `highRPMShiftState()`, `revLimitState()`, `canErrorState()`
-   - Helper methods: `drawMirroredBar()`, `pepperInward()`, `pulseOutward()`
+2. **`slave/src/main.cpp`**
+   - Full LED state machine implementation
+   - Key functions:
+     - `updateLEDDisplay()`: Main state detection and dispatch
+     - `idleState()`: White pepper animation when stationary
+     - `stallDangerState()`: Inverted orange bar when moving at low RPM
+     - `normalDrivingState()`: Efficiency gradient (blue→green→yellow)
+     - `shiftDangerState()`: Red bar with flashing center
+     - `revLimitState()`: Solid red strip
+     - `canErrorState()`: Red pepper animation
+   - Helper functions:
+     - `getInterpolatedColor()`: Linear color blending
+     - `getEfficiencyColor()`: Calculate gradient color from RPM
 
-3. **`lib/LEDController/LEDController.cpp`**
-   - Full implementation of all seven states
-   - `updateRPM()` method determines state and calls appropriate function
-   - Animation timing and mirrored progress bar calculations
+### Configuration
 
-### Python Simulator
-
-1. **`tools/LED_Simulator/led_simulator_v2.1.py`**
-   - Mirrors Arduino logic exactly
-   - State constants loaded from Arduino header via parser
-   - Pattern functions: `get_state_0_pattern()` through `get_state_5_pattern()`, `get_error_pattern()`
-   - State detection: Checks speed and RPM thresholds to determine active state
-
-2. **`tools/LED_Simulator/parse_arduino_led_config.py`**
-   - Automatic synchronization tool
-   - Parses `LEDStates.h` and loads all 53 constants into Python
-   - Ensures Arduino and simulator always match
+1. **`lib/Config/config.h`**
+   - Master Arduino configuration
+   - CAN bus settings and OBD-II PIDs
+   - Commented Mazda NC CAN IDs for future use
 
 ---
 
@@ -228,154 +218,130 @@ Start: ⚫ ⚫ ⚫ 🟠 🟠 ⚫ ⚫ 🟠 🟠 ⚫ ⚫ ⚫
 
 ### Changing RPM Thresholds
 
-**Step 1: Edit `LEDStates.h` (Arduino)**
+**Edit `slave/src/LEDStates.h`:**
 ```cpp
-// Example: Adjust State 3 upper limit
-#define STATE_3_RPM_MAX         5000     // Was 4500
+// Efficiency zone thresholds
+#define EFFICIENCY_BLUE_END     2500     // Blue→Green transition
+#define EFFICIENCY_GREEN_END    4000     // Green→Yellow transition
+#define NORMAL_RPM_MAX          4500     // Yellow→Red transition
 ```
-
-**Step 2: Run Parser to Auto-Sync Simulator**
-```powershell
-python tools\LED_Simulator\parse_arduino_led_config.py
-```
-The simulator automatically loads the new values from the Arduino header file!
 
 ### Changing Colors
 
-**State 2 Orange → Different Color:**
-
-Arduino (`LEDStates.h`):
+**Edit `slave/src/LEDStates.h`:**
 ```cpp
-#define STATE_2_COLOR_R         200    // Less red
-#define STATE_2_COLOR_G         120    // More green
-#define STATE_2_COLOR_B         0      // No blue
+// Efficiency zone colors
+#define BLUE_COLOR_R            0
+#define BLUE_COLOR_G            100
+#define BLUE_COLOR_B            255
+
+#define GREEN_COLOR_R           0
+#define GREEN_COLOR_G           255
+#define GREEN_COLOR_B           0
+
+#define YELLOW_COLOR_R          255
+#define YELLOW_COLOR_G          255
+#define YELLOW_COLOR_B          0
 ```
 
-Run parser again to sync:
+### Building and Uploading
+
 ```powershell
-python tools\LED_Simulator\parse_arduino_led_config.py
-```
+# Build the slave firmware
+pio run -d slave
 
-### Changing Animation Speed
-
-**State 1 Pulse Speed:**
-
-Arduino (`LEDStates.h`):
-```cpp
-#define STATE_1_PULSE_PERIOD    1200   // Slower (was 800ms)
-```
-
-Python (`led_simulator_v2.1.py`):
-```python
-STATE_1_PULSE_PERIOD = 1200  # Match Arduino
-```
-
-**State 3 Chase Speed:**
-
-Arduino (`LEDStates.h`):
-```cpp
-#define STATE_3_CHASE_SPEED_MIN 200    // Slower start (was 120)
-#define STATE_3_CHASE_SPEED_MAX 60     // Slower peak (was 40)
-```
-
-Python (`led_simulator_v2.1.py`):
-```python
-STATE_3_CHASE_SPEED_MIN = 200  # Match Arduino
-STATE_3_CHASE_SPEED_MAX = 60   # Match Arduino
+# Upload to slave Arduino (adjust COM port as needed)
+pio run -d slave --target upload --upload-port COM4
 ```
 
 ---
 
 ## 🔄 Workflow for Making Changes
 
-1. **Test in Simulator First**
+1. **Edit Constants**
+   - Modify `slave/src/LEDStates.h` for thresholds/colors
+   - Modify `slave/src/main.cpp` for logic changes
+
+2. **Build and Test**
    ```powershell
-   cd tools
-   python led_simulator_v2.1.py
+   pio run -d slave --target upload --upload-port COM4
    ```
-   - Load your car configuration
-   - Start the engine
-   - Test RPM ranges with throttle controls
-   - Verify visual appearance
 
-2. **Update Arduino Code**
-   - Make changes to `LEDStates.h` first
-   - Rebuild the project
-   - Upload to Arduino
-
-3. **Sync Simulator**
-   - Update matching constants in `led_simulator_v2.1.py`
-   - Retest to ensure they match
-
-4. **Document Changes**
-   - Update this file if you add new states or major changes
-   - Update version numbers if appropriate
+3. **Verify Behavior**
+   - Connect to vehicle or use simulator
+   - Test each state transition
+   - Verify color gradients are smooth
 
 ---
 
 ## 🎯 Design Philosophy
 
-### Why Three States?
+### Why These States?
 
-1. **State 1 (Stall Danger)**: Prevents accidental engine stall, especially important for manual transmission
-2. **State 2 (Good Efficiency)**: Encourages efficient driving and provides clear RPM feedback
-3. **State 3 (High RPM/Shift)**: Urgent visual signal prevents engine damage and optimizes shift points
+1. **⚪ Idle**: Clear visual that system is working while stationary
+2. **🟠 Stall Danger**: Prevents accidental engine stall while moving (manual transmission)
+3. **🔵 MPG Zone**: Encourages fuel-efficient driving (2000-2500 RPM)
+4. **🟢 Thermal Efficiency**: Optimal engine power-to-fuel ratio (2500-4000 RPM)
+5. **🟡 High RPM**: Visual feedback approaching shift zone (4000-4500 RPM)
+6. **🔴 Shift Danger**: Urgent signal to upshift before damage (4501-7199 RPM)
+7. **🛑 Rev Limit**: Engine at fuel cut - immediate shift needed (7200+ RPM)
 
 ### Visual Design Principles
 
-- **Distinct patterns**: Each state uses a unique animation style
-- **Progressive urgency**: Calm → Active → Urgent
-- **Color psychology**: Orange (warning) → Green/Yellow (optimal) → Red (danger)
-- **Speed indicates intensity**: Faster animations at higher RPM in State 3
+- **Efficiency gradient**: Smooth blue→green→yellow teaches optimal driving habits
+- **Inverted stall bar**: More LEDs = more danger = lower RPM (intuitive)
+- **Progressive urgency**: Calm → Active → Urgent as RPM increases
+- **Color psychology**: Blue/Green (good) → Yellow (caution) → Red (danger)
 
-### Technical Considerations
+### Mazda MX-5 NC Specific
 
-- **Timing precision**: Both Arduino and Python use millisecond timing
-- **Brightness control**: Prevents eye strain at low RPM, maximum visibility at high RPM
-- **Smooth transitions**: Animations use sine waves and gradients for smooth visual flow
-- **CPU efficiency**: State checks use simple range comparisons, minimal overhead
+These thresholds are optimized for the Mazda MX-5 NC (2006-2015):
+- **2000-2500 RPM**: Best absolute MPG zone
+- **2500-4000 RPM**: Best thermal efficiency (power-to-fuel ratio)
+- **7200 RPM**: Factory fuel cut (rev limiter)
 
 ---
 
 ## 🐛 Troubleshooting
 
-### LEDs Not Matching Between Arduino and Simulator
+### LEDs Not Responding
 
-**Problem**: Colors or timing are different
+**Problem**: No LED output
 **Solution**: 
-- Check that constants in `LEDStates.h` match those in `led_simulator_v2.1.py`
-- Verify both are using the same LED_COUNT (30)
-- Ensure no custom modifications in one but not the other
+- Check wiring between Slave Arduino and WS2812B strip
+- Verify 5V power supply to LED strip
+- Check `LED_PIN` in `slave/src/main.cpp`
 
-### State 3 Chase Not Moving
+### Colors Not Correct
 
-**Problem**: White LEDs appear stuck
+**Problem**: Wrong colors in efficiency zone
 **Solution**:
-- Arduino: Check `millis()` is incrementing properly
-- Python: Verify `self.current_time_ms` is being updated in `update_simulation()`
-- Check chase speed constants aren't too high
+- Verify color constants in `slave/src/LEDStates.h`
+- Check `getInterpolatedColor()` function
+- Ensure RGB order matches your LED strip type
 
-### Pulse Animation Not Smooth
+### State Detection Issues
 
-**Problem**: State 1 flickers or jumps
+**Problem**: Wrong state displayed
 **Solution**:
-- Verify `STATE_1_PULSE_PERIOD` is reasonable (500-1500ms)
-- Check sine wave calculation in `getPulseBrightness()`
-- Ensure brightness range (min/max) allows visible variation
+- Check state priority order in `updateLEDDisplay()`
+- Verify RPM/Speed thresholds in `LEDStates.h`
+- Use Serial Monitor to debug incoming values
 
 ---
 
 ## 📊 State Comparison Table
 
-| State | RPM/Speed Range | Animation | Color | Brightness | Purpose |
-|-------|-----------------|-----------|-------|------------|---------|
-| 0 | Speed = 0 | Pepper Inward | White | 180 | Idle/Neutral |
-| 1 | 2000-2500 RPM | Static 2 LEDs/side | Green | 180 | Gas Efficiency |
-| 2 | 750-1999 RPM | Pulse Outward | Orange | 20-200 | Stall Warning |
-| 3 | 2501-4500 RPM | Mirrored Progress Bar | Yellow | 255 | Normal Driving |
-| 4 | 4501-7199 RPM | Bar + Flash Gap | Red + White/Cyan | 255 | Shift Danger |
-| 5 | 7200+ RPM | Full Solid | Red | 255 | Rev Limit |
-| Error | CAN Failure | Pepper Inward | Red | 200 | Communication Error |
+| State | Condition | Color | Animation | Purpose |
+|-------|-----------|-------|-----------|---------|
+| ⚪ Idle | Speed=0, RPM≤800 | White | Pepper inward | Stationary idle |
+| 🟠 Stall | Speed>0, RPM 0-1999 | Orange | Inverted bar | Stall warning |
+| 🔵 MPG | RPM 2000-2500 | Blue→Green | Progress bar | Best fuel economy |
+| 🟢 Thermal | RPM 2500-4000 | Green→Yellow | Progress bar | Best efficiency |
+| 🟡 High | RPM 4000-4500 | Yellow | Progress bar | Approaching shift |
+| 🔴 Shift | RPM 4501-7199 | Red+Flash | Flash gap | Shift urgently |
+| 🛑 Limit | RPM 7200+ | Solid Red | Static | Rev limiter |
+| ❌ Error | CAN Failure | Red | Pepper inward | Comms error |
 
 ---
 
@@ -383,24 +349,24 @@ STATE_3_CHASE_SPEED_MAX = 60   # Match Arduino
 
 Potential improvements to consider:
 
-1. **Configurable Patterns**: Allow users to select from multiple animation presets
-2. **RPM-based Brightness**: Auto-adjust brightness based on ambient light or time of day
-3. **Custom Colors**: User-defined color schemes via configuration file
-4. **Multi-car Profiles**: Different state ranges for different engines (turbo vs NA)
-5. **State Transition Effects**: Smooth crossfade between states
+1. **Night Mode**: Lower brightness for nighttime driving
+2. **Custom Colors**: User-configurable efficiency zone colors
+3. **Multi-car Profiles**: Different thresholds for turbo vs NA engines
+4. **Ambient Light Sensor**: Auto-adjust brightness based on conditions
+5. **Lap Timer Integration**: Flash patterns for personal best times
 
 ---
 
 ## 📝 Version History
 
-- **v3.0**: Complete mirrored progress bar system (7 states)
-  - State 0: Idle/Neutral (white pepper inward)
-  - State 1: Gas Efficiency (green static 2 LEDs/side)
-  - State 2: Stall Danger (orange pulse outward)
-  - State 3: Normal Driving (yellow mirrored bar)
-  - State 4: Shift Danger (red bar + flashing gap)
-  - State 5: Rev Limit (solid red full strip)
-  - Error State: CAN Error (red pepper inward)
+- **v4.0**: Efficiency Gradient System (Current)
+  - ⚪ Idle: White pepper animation (Speed=0, RPM≤800)
+  - 🟠 Stall Danger: Inverted orange bar (Speed>0, RPM 0-1999)
+  - 🔵🟢🟡 Efficiency Gradient: Smooth blue→green→yellow (RPM 2000-4500)
+  - 🔴 Shift Danger: Red bar + flashing center (RPM 4501-7199)
+  - 🛑 Rev Limit: Solid red (RPM 7200+)
+  - ❌ Error: Red pepper animation (CAN failure)
+- **v3.0**: Seven-state mirrored progress bar system
 - **v2.1**: Three-state system
 - **v2.0**: Two-state system (gradient + flash)
 - **v1.0**: Original single gradient implementation
@@ -409,11 +375,13 @@ Potential improvements to consider:
 
 ## 📧 Support
 
-If you modify the LED system and encounter issues:
+If you encounter issues:
 
 1. Check this documentation first
-2. Test in simulator before uploading to Arduino
-3. Verify all constants match between Arduino and Python
-4. Review the example code in `LEDController.cpp` and `led_simulator_v2.1.py`
+2. Review `slave/src/main.cpp` for logic
+3. Verify constants in `slave/src/LEDStates.h`
+4. Use Serial Monitor to debug values
 
-Remember: **The simulator should always mirror the Arduino behavior exactly!**
+---
+
+**🌈 Drive efficiently - keep those LEDs blue and green for best MPG!**

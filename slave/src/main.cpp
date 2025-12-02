@@ -174,26 +174,96 @@ void idleNeutralState() {
                     STATE_0_PEPPER_DELAY, STATE_0_HOLD_TIME);
 }
 
-void gasEfficiencyState() {
-    drawMirroredBar(STATE_1_LEDS_PER_SIDE, STATE_1_COLOR_R, STATE_1_COLOR_G, STATE_1_COLOR_B);
+// Helper function to interpolate between two colors
+void getInterpolatedColor(uint16_t rpm, uint16_t rpmMin, uint16_t rpmMax,
+                          uint8_t r1, uint8_t g1, uint8_t b1,
+                          uint8_t r2, uint8_t g2, uint8_t b2,
+                          uint8_t* rOut, uint8_t* gOut, uint8_t* bOut) {
+    if (rpm <= rpmMin) {
+        *rOut = r1; *gOut = g1; *bOut = b1;
+        return;
+    }
+    if (rpm >= rpmMax) {
+        *rOut = r2; *gOut = g2; *bOut = b2;
+        return;
+    }
+    // Linear interpolation
+    uint16_t range = rpmMax - rpmMin;
+    uint16_t pos = rpm - rpmMin;
+    *rOut = r1 + ((int16_t)(r2 - r1) * pos / range);
+    *gOut = g1 + ((int16_t)(g2 - g1) * pos / range);
+    *bOut = b1 + ((int16_t)(b2 - b1) * pos / range);
 }
 
-void stallDangerState() {
-    uint8_t brightness = getPulseBrightness(STATE_2_PULSE_PERIOD, 
-                                            STATE_2_MIN_BRIGHTNESS, 
-                                            STATE_2_MAX_BRIGHTNESS);
-    
-    solidFill(scaleColor(STATE_2_COLOR_R, brightness),
-              scaleColor(STATE_2_COLOR_G, brightness),
-              scaleColor(STATE_2_COLOR_B, brightness));
+// Get color for a specific RPM in the normal driving zone
+// Smooth gradient: Blue (2000-2500) -> Green (2500-4000) -> Yellow (4000-4500)
+void getEfficiencyColor(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
+    if (rpm <= EFFICIENCY_BLUE_END) {
+        // Blue zone (best MPG): 2000-2500 RPM
+        // Interpolate from pure blue to green-blue
+        getInterpolatedColor(rpm, NORMAL_RPM_MIN, EFFICIENCY_BLUE_END,
+                            BLUE_COLOR_R, BLUE_COLOR_G, BLUE_COLOR_B,
+                            GREEN_COLOR_R, GREEN_COLOR_G, GREEN_COLOR_B,
+                            r, g, b);
+    } else if (rpm <= EFFICIENCY_GREEN_END) {
+        // Green zone (best thermal efficiency): 2500-4000 RPM
+        // Interpolate from green to yellow-green
+        getInterpolatedColor(rpm, EFFICIENCY_BLUE_END, EFFICIENCY_GREEN_END,
+                            GREEN_COLOR_R, GREEN_COLOR_G, GREEN_COLOR_B,
+                            YELLOW_COLOR_R, YELLOW_COLOR_G, YELLOW_COLOR_B,
+                            r, g, b);
+    } else {
+        // Yellow zone (approaching high RPM): 4000-4500 RPM
+        // Stay yellow
+        *r = YELLOW_COLOR_R;
+        *g = YELLOW_COLOR_G;
+        *b = YELLOW_COLOR_B;
+    }
 }
 
+// Normal driving state with smooth blue-green-yellow gradient (2000-4500 RPM)
 void normalDrivingState(uint16_t rpm) {
-    uint16_t range = STATE_3_RPM_MAX - STATE_3_RPM_MIN;
-    uint16_t rpmInRange = rpm - STATE_3_RPM_MIN;
+    // Calculate how many LEDs should be lit based on RPM
+    uint16_t range = NORMAL_RPM_MAX - NORMAL_RPM_MIN;  // 4500 - 2000 = 2500
+    uint16_t rpmInRange = rpm - NORMAL_RPM_MIN;
     uint8_t ledsPerSide = map(rpmInRange, 0, range, 0, LED_COUNT / 2);
     
-    drawMirroredBar(ledsPerSide, STATE_3_COLOR_R, STATE_3_COLOR_G, STATE_3_COLOR_B);
+    // Get the color for current RPM
+    uint8_t r, g, b;
+    getEfficiencyColor(rpm, &r, &g, &b);
+    
+    // Draw the bar with the interpolated color
+    for (int i = 0; i < LED_COUNT; i++) {
+        bool isLit;
+        
+        if (i < LED_COUNT / 2) {
+            // Left side
+            isLit = (i < ledsPerSide);
+        } else {
+            // Right side
+            isLit = (i >= (LED_COUNT - ledsPerSide));
+        }
+        
+        if (isLit) {
+            strip.setPixelColor(i, strip.Color(r, g, b));
+        } else {
+            strip.setPixelColor(i, 0);
+        }
+    }
+    strip.show();
+}
+
+void stallDangerState(uint16_t rpm) {
+    // Progressive bar - INVERTED: more LEDs = lower RPM = more danger
+    // At RPM=0: full bar (maximum danger)
+    // At RPM=1999: minimal bar (almost safe)
+    uint16_t range = STATE_2_RPM_MAX - STATE_2_RPM_MIN;  // 1999 - 0 = 1999
+    uint16_t rpmInRange = rpm - STATE_2_RPM_MIN;         // rpm - 0 = rpm
+    
+    // Invert: at rpm=0 we want max LEDs, at rpm=1999 we want min LEDs
+    uint8_t ledsPerSide = map(range - rpmInRange, 0, range, 0, LED_COUNT / 2);
+    
+    drawMirroredBar(ledsPerSide, STATE_2_COLOR_R, STATE_2_COLOR_G, STATE_2_COLOR_B);
 }
 
 void highRPMShiftState(uint16_t rpm) {
@@ -338,33 +408,37 @@ void updateLEDDisplay() {
         return;
     }
     
-    // LED display is now purely RPM-based (speed is irrelevant)
-    // This allows proper LED feedback when idling/revving while stationary
-    
-    // State 5: Rev Limit
+    // State 5: Rev Limit (7200+ RPM) - HIGHEST PRIORITY
     if (currentRPM >= STATE_5_RPM_MIN) {
         revLimitState();
+        return;
     }
-    // State 4: High RPM
-    else if (currentRPM >= STATE_4_RPM_MIN && currentRPM <= STATE_4_RPM_MAX) {
+    
+    // State 4: High RPM Shift Warning (4501-7199 RPM)
+    if (currentRPM >= STATE_4_RPM_MIN) {
         highRPMShiftState(currentRPM);
+        return;
     }
-    // State 3: Normal Driving
-    else if (currentRPM >= STATE_3_RPM_MIN && currentRPM <= STATE_3_RPM_MAX) {
+    
+    // Normal Driving: Efficiency Gradient (2000-4500 RPM)
+    // Blue->Green->Yellow based on RPM - works at ANY speed
+    if (currentRPM >= NORMAL_RPM_MIN) {
         normalDrivingState(currentRPM);
+        return;
     }
-    // State 2: Stall Danger
-    else if (currentRPM >= STATE_2_RPM_MIN && currentRPM <= STATE_2_RPM_MAX) {
-        stallDangerState();
+    
+    // Below 2000 RPM - behavior depends on speed:
+    
+    // Stall Danger: ONLY when moving (speed > 0) and RPM 0-1999
+    // Progressive orange bar - more LEDs = lower RPM = more danger
+    if (currentSpeed > STATE_0_SPEED_THRESHOLD) {
+        stallDangerState(currentRPM);
+        return;
     }
-    // State 1: Gas Efficiency
-    else if (currentRPM >= STATE_1_RPM_MIN && currentRPM <= STATE_1_RPM_MAX) {
-        gasEfficiencyState();
-    }
-    else {
-        strip.clear();
-        strip.show();
-    }
+    
+    // Idle State: Speed=0 AND RPM below 2000
+    // White pepper animation when sitting still
+    idleNeutralState();
 }
 
 // ============================================================================
