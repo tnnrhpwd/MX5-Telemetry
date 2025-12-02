@@ -9,20 +9,47 @@
 
 The LEDs were only updating ~once every 3 seconds during real car testing. This needs to be the primary focus.
 
-### Investigation Tasks
-- [ ] Profile the main loop to identify bottlenecks
-- [ ] Check if SD card writes are blocking LED updates
-- [ ] Check if GPS parsing is blocking the main loop
-- [ ] Measure actual CAN message receive rate vs LED update rate
-- [ ] Test with Serial debug output disabled (Serial.print can be slow)
+### ✅ Root Cause Identified (Dec 2, 2025)
 
-### Potential Fixes
-- [ ] Move LED updates to interrupt-driven or higher priority
-- [ ] Reduce/eliminate SD card write frequency
-- [ ] Buffer CAN data and update LEDs on every loop iteration
-- [ ] Remove GPS polling from main loop
-- [ ] Optimize `updateRPMLEDs()` function - avoid unnecessary calculations
-- [ ] Consider using `millis()` throttling only for slow operations, not LED updates
+The 3-second delay is caused by **RPM caching in LEDSlave.cpp**:
+
+```cpp
+// In LEDSlave::updateRPM() - line 93-107
+if (rpm != lastRPM || needsKeepalive) {  // Only sends if RPM changed!
+    sendCommand(cmd);
+    lastRPM = rpm;
+}
+```
+
+**Problem:** When RPM stays the same (e.g., idling at 800 RPM, or cruising at steady RPM), the master skips sending updates. It only sends a "keep-alive" every **3 seconds**.
+
+Contributing factors:
+- `LED_UPDATE_INTERVAL = 250ms` (config.h line 72) - limits updates to 4Hz max
+- RPM quantization (`rawRPM / 4`) means small fluctuations produce same integer
+- Debug Serial.print statements add minor delays
+
+### Action Items (Do These First!)
+- [ ] **FIX 1:** In `lib/LEDSlave/LEDSlave.cpp` - Remove the `rpm != lastRPM` check, always send RPM:
+  ```cpp
+  // Change line 99 from:
+  if (rpm != lastRPM || needsKeepalive) {
+  // To:
+  if (true) {  // Always send RPM for responsive LEDs
+  ```
+  
+- [ ] **FIX 2:** In `lib/Config/config.h` - Reduce LED_UPDATE_INTERVAL:
+  ```cpp
+  // Change line 72 from:
+  #define LED_UPDATE_INTERVAL  250   // 4Hz
+  // To:
+  #define LED_UPDATE_INTERVAL  100   // 10Hz (or 50 for 20Hz)
+  ```
+
+- [ ] **FIX 3 (Optional):** Remove debug Serial.print statements in CANHandler.cpp update() function to reduce overhead
+
+### Testing After Fix
+- [ ] Verify LED updates are now 10-20Hz on bench with simulated CAN
+- [ ] Test in car - LEDs should now respond instantly to RPM changes
 
 ---
 
