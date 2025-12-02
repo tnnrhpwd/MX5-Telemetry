@@ -94,18 +94,12 @@ void LEDSlave::updateRPM(uint16_t rpm, uint16_t speed_kmh) {
     // Clear error state when receiving valid RPM data
     lastError = false;
     
-    unsigned long now = millis();
-    bool needsKeepalive = (now - lastKeepalive) >= 3000;  // Keep-alive every 3 seconds
-    
-    // Send RPM if changed OR keep-alive needed
-    if (rpm != lastRPM || needsKeepalive) {
-        char cmd[8];
-        cmd[0] = 'R';  // Short prefix: R1234 instead of RPM:1234
-        itoa(rpm, cmd + 1, 10);
-        sendCommand(cmd);
-        lastRPM = rpm;
-        lastKeepalive = now;
-    }
+    // Always send RPM for responsive LEDs (removed caching that caused 3-second delays)
+    char cmd[8];
+    cmd[0] = 'R';  // Short prefix: R1234 instead of RPM:1234
+    itoa(rpm, cmd + 1, 10);
+    sendCommand(cmd);
+    lastRPM = rpm;
     
     // Send speed if changed (no keep-alive needed, RPM already sent)
     if (speed_kmh != lastSpeed) {
