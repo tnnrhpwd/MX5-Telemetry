@@ -83,9 +83,12 @@ uint16_t hapticDuration = 0;
 uint8_t currentBrightness = 255;     // Current brightness from potentiometer
 unsigned long lastBrightnessRead = 0; // Debounce brightness reads
 unsigned long lastCommandTime = 0;          // Track when last command was received
+unsigned long lastUSBActivity = 0;          // Track when last USB command was received
+bool debugMode = false;                     // Only enable verbose serial when USB recently active
 #define MASTER_TIMEOUT_MS 5000              // Enter error mode if no command for 5 seconds
 #define USB_TEST_TIMEOUT_MS 30000           // Extended timeout in USB test mode (30 seconds)
 #define INITIAL_WAIT_MS 3000                // Wait for master after startup before showing error
+#define DEBUG_MODE_TIMEOUT_MS 10000         // Disable debug output 10 seconds after last USB command
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -505,8 +508,10 @@ void updateLEDDisplay() {
 // ============================================================================
 
 void processCommand(const char* cmd) {
-    Serial.print("CMD: ");
-    Serial.println(cmd);
+    if (debugMode) {
+        Serial.print("CMD: ");
+        Serial.println(cmd);
+    }
     
     // Commands from Master are prefixed with "LED:"
     // Strip the prefix if present
@@ -519,26 +524,30 @@ void processCommand(const char* cmd) {
         currentRPM = atoi(cmd + 1);
         errorMode = false;
         rainbowMode = false;
-        Serial.print("RPM set to: ");
-        Serial.println(currentRPM);
+        if (debugMode) {
+            Serial.print("RPM set to: ");
+            Serial.println(currentRPM);
+        }
     }
     // Speed command: S followed by number (e.g., S123)
     else if (cmd[0] == 'S' && cmd[1] >= '0' && cmd[1] <= '9') {
         currentSpeed = atoi(cmd + 1);
-        Serial.print("Speed set to: ");
-        Serial.println(currentSpeed);
+        if (debugMode) {
+            Serial.print("Speed set to: ");
+            Serial.println(currentSpeed);
+        }
     }
     // Error mode command: E
     else if (strcmp(cmd, "E") == 0) {
         errorMode = true;
         rainbowMode = false;
-        Serial.println("Error mode ON");
+        if (debugMode) Serial.println("Error mode ON");
     }
     // Rainbow/Wave mode command: W
     else if (strcmp(cmd, "W") == 0) {
         errorMode = true;
         rainbowMode = true;
-        Serial.println("Rainbow mode ON");
+        if (debugMode) Serial.println("Rainbow mode ON");
     }
     // Clear command: C
     else if (strcmp(cmd, "C") == 0) {
@@ -548,22 +557,26 @@ void processCommand(const char* cmd) {
         currentSpeed = 0;
         errorMode = false;
         rainbowMode = false;
-        Serial.println("LEDs cleared");
+        if (debugMode) Serial.println("LEDs cleared");
     }
     // Brightness command: B followed by number (e.g., B255)
     else if (cmd[0] == 'B' && cmd[1] >= '0' && cmd[1] <= '9') {
         uint8_t brightness = atoi(cmd + 1);
         strip.setBrightness(brightness);
-        Serial.print("Brightness set to: ");
-        Serial.println(brightness);
+        if (debugMode) {
+            Serial.print("Brightness set to: ");
+            Serial.println(brightness);
+        }
     }
     // Haptic command: V followed by number (e.g., V100)
     else if (cmd[0] == 'V' && cmd[1] >= '0' && cmd[1] <= '9') {
         uint16_t duration = atoi(cmd + 1);
         triggerHaptic(duration);
-        Serial.print("Haptic triggered: ");
-        Serial.print(duration);
-        Serial.println("ms");
+        if (debugMode) {
+            Serial.print("Haptic triggered: ");
+            Serial.print(duration);
+            Serial.println("ms");
+        }
     }
     // ========================================================================
     // CAN TEST COMMANDS
@@ -834,6 +847,11 @@ void loop() {
         if (c == '\n' || c == '\r') {
             if (usbBufferIndex > 0) {
                 usbBuffer[usbBufferIndex] = '\0';
+                
+                // Enable debug mode when USB command received
+                lastUSBActivity = currentTime;
+                debugMode = true;
+                
                 Serial.print("USB CMD: ");
                 Serial.println(usbBuffer);
                 processCommand(usbBuffer);
@@ -850,6 +868,12 @@ void loop() {
         }
     }
     
+    // Auto-disable debug mode after timeout (saves CPU when running standalone)
+    if (debugMode && (currentTime - lastUSBActivity) > DEBUG_MODE_TIMEOUT_MS) {
+        debugMode = false;
+        Serial.println("Debug mode disabled (USB timeout)");
+    }
+    
     // =======================================================================
     // SoftwareSerial Commands (from Master Arduino via D2)
     // =======================================================================
@@ -861,20 +885,24 @@ void loop() {
             usbTestMode = false;  // Disable USB test mode when Master sends data
             totalBytesReceived++;  // Count bytes for diagnostics
             
-            // Debug: print every byte received
-            Serial.print("RX: ");
-            Serial.print((int)c);
-            Serial.print(" '");
-            if (c >= 32 && c <= 126) Serial.print(c);
-            Serial.println("'");
+            // Debug: print every byte received (only when USB debug active)
+            if (debugMode) {
+                Serial.print("RX: ");
+                Serial.print((int)c);
+                Serial.print(" '");
+                if (c >= 32 && c <= 126) Serial.print(c);
+                Serial.println("'");
+            }
             
             // Start-of-message marker - process previous command and reset buffer
             if (c == '!') {
                 // Process whatever was in the buffer before resetting
                 if (bufferIndex > 0) {
                     inputBuffer[bufferIndex] = '\0';
-                    Serial.print("Processing: ");
-                    Serial.println(inputBuffer);
+                    if (debugMode) {
+                        Serial.print("Processing: ");
+                        Serial.println(inputBuffer);
+                    }
                     processCommand(inputBuffer);
                 }
                 bufferIndex = 0;
@@ -884,8 +912,10 @@ void loop() {
             if (c == '\n' || c == '\r') {
                 if (bufferIndex > 0) {
                     inputBuffer[bufferIndex] = '\0';
-                    Serial.print("Processing: ");
-                    Serial.println(inputBuffer);
+                    if (debugMode) {
+                        Serial.print("Processing: ");
+                        Serial.println(inputBuffer);
+                    }
                     processCommand(inputBuffer);
                     bufferIndex = 0;
                 }
@@ -980,19 +1010,22 @@ void loop() {
     if (!errorMode && (currentTime - lastCommandTime) > timeoutMs) {
         // Only show error after initial startup wait
         if (currentTime > INITIAL_WAIT_MS) {
-            Serial.println(usbTestMode ? "USB test timeout - entering error mode" : "Master timeout - entering error mode");
+            if (debugMode) {
+                Serial.println(usbTestMode ? "USB test timeout - entering error mode" : "Master timeout - entering error mode");
+            }
             errorMode = true;
             rainbowMode = false;
             usbTestMode = false;
         }
     }
     
-    // Periodic diagnostic: print status every 5 seconds
+    // Periodic diagnostic: print status every 5 seconds (only in debug mode)
     static unsigned long lastDiagTime = 0;
-    if (currentTime - lastDiagTime >= 5000) {
+    if (debugMode && (currentTime - lastDiagTime >= 5000)) {
         lastDiagTime = currentTime;
         Serial.print("Status: errorMode=");
         Serial.print(errorMode ? "YES" : "NO");
+        Serial.print(" debugMode=ON");
         if (usbTestMode) Serial.print(" [USB TEST]");
         Serial.print(" bytesRx=");
         Serial.print(totalBytesReceived);
