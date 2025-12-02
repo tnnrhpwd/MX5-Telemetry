@@ -347,10 +347,38 @@ LED strips draw significant current:
 | LED Strip Data | D5 | 470Ω resistor recommended |
 | LED Strip 5V | Buck Converter OUT+ | Use thick wire (18-20 AWG) |
 | LED Strip GND | Common GND | Shared with Arduino GND |
+| Brightness Pot | A6 | B10K-B100K potentiometer (center wiper) |
+| Brightness Pot VCC | 5V | Potentiometer outer leg |
+| Brightness Pot GND | GND | Potentiometer outer leg |
 | Haptic Motor + | D3 | Optional vibration feedback |
 | Haptic Motor - | GND | |
 | Master TX | D2 | SoftwareSerial RX |
 | Master GND | GND | Common ground |
+
+### Brightness Potentiometer Wiring
+
+Use a **B20K linear potentiometer** for smooth brightness control:
+
+```
+        Potentiometer (B20K)
+            ┌───────────┐
+     5V ────┤ 1         │
+            │     ◯     │ ← Knob
+     A6 ────┤ 2 (wiper) │
+            │           │
+    GND ────┤ 3         │
+            └───────────┘
+
+Slave Arduino A6 ◄──── Potentiometer Center Pin (Wiper)
+Slave Arduino 5V ◄──── Potentiometer Left Pin
+Slave Arduino GND ◄─── Potentiometer Right Pin
+```
+
+**Notes:**
+- B20K recommended (any B5K to B100K linear taper works)
+- Turn clockwise = brighter, counter-clockwise = dimmer
+- Minimum brightness is 10 (never fully off for safety)
+- A6 is analog-only on Arduino Nano (no digital function conflict)
 
 ### Wiring Diagram
 
@@ -363,6 +391,11 @@ Slave Arduino D5 ──[470Ω]───────► LED Strip Data In
 Master-Slave Connection:
 Master D6 ──────────────────────► Slave D2
 Master GND ─────────────────────► Slave GND
+
+Brightness Potentiometer (B10K-B100K):
+Pot Pin 1 (outer) ──────────────► Slave 5V
+Pot Pin 2 (wiper) ──────────────► Slave A6
+Pot Pin 3 (outer) ──────────────► Slave GND
 
 LED Strip Power:
     Add 1000µF capacitor across 5V and GND near strip
