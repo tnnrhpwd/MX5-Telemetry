@@ -221,12 +221,43 @@ void getEfficiencyColor(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
     }
 }
 
+// Calculate LED position for efficiency zones with emphasis on MPG and thermal zones
+// Returns 0 to maxLeds based on RPM, with non-linear mapping:
+//   LEDs 0-2 (3 LEDs): MPG zone 2000-2500 RPM (30% of LEDs for 20% of range)
+//   LEDs 3-6 (4 LEDs): Thermal zone 2500-4000 RPM (40% of LEDs for 60% of range)  
+//   LEDs 7-9 (3 LEDs): Yellow zone 4000-4500 RPM (30% of LEDs for 20% of range)
+uint8_t getEfficiencyLedCount(uint16_t rpm, uint8_t maxLeds) {
+    // MPG zone: 2000-2500 RPM → LEDs 0-2 (first 30% of LEDs)
+    if (rpm <= EFFICIENCY_BLUE_END) {
+        uint16_t rpmInZone = rpm - NORMAL_RPM_MIN;  // 0 to 500
+        uint16_t zoneRange = EFFICIENCY_BLUE_END - NORMAL_RPM_MIN;  // 500
+        uint8_t zoneLeds = (maxLeds * 3) / 10;  // 30% = 3 LEDs per side
+        return map(rpmInZone, 0, zoneRange, 0, zoneLeds);
+    }
+    // Thermal zone: 2500-4000 RPM → LEDs 3-6 (next 40% of LEDs)
+    else if (rpm <= EFFICIENCY_GREEN_END) {
+        uint16_t rpmInZone = rpm - EFFICIENCY_BLUE_END;  // 0 to 1500
+        uint16_t zoneRange = EFFICIENCY_GREEN_END - EFFICIENCY_BLUE_END;  // 1500
+        uint8_t mpgLeds = (maxLeds * 3) / 10;  // 3 LEDs from MPG zone
+        uint8_t zoneLeds = (maxLeds * 4) / 10;  // 40% = 4 LEDs for thermal
+        return mpgLeds + map(rpmInZone, 0, zoneRange, 0, zoneLeds);
+    }
+    // Yellow zone: 4000-4500 RPM → LEDs 7-9 (last 30% of LEDs)
+    else {
+        uint16_t rpmInZone = rpm - EFFICIENCY_GREEN_END;  // 0 to 500
+        uint16_t zoneRange = NORMAL_RPM_MAX - EFFICIENCY_GREEN_END;  // 500
+        uint8_t mpgLeds = (maxLeds * 3) / 10;  // 3 LEDs from MPG zone
+        uint8_t thermalLeds = (maxLeds * 4) / 10;  // 4 LEDs from thermal zone
+        uint8_t zoneLeds = maxLeds - mpgLeds - thermalLeds;  // remaining ~3 LEDs
+        return mpgLeds + thermalLeds + map(rpmInZone, 0, zoneRange, 0, zoneLeds);
+    }
+}
+
 // Normal driving state with smooth blue-green-yellow gradient (2000-4500 RPM)
+// Uses non-linear LED mapping to emphasize MPG and thermal efficiency zones
 void normalDrivingState(uint16_t rpm) {
-    // Calculate how many LEDs should be lit based on RPM
-    uint16_t range = NORMAL_RPM_MAX - NORMAL_RPM_MIN;  // 4500 - 2000 = 2500
-    uint16_t rpmInRange = rpm - NORMAL_RPM_MIN;
-    uint8_t ledsPerSide = map(rpmInRange, 0, range, 0, LED_COUNT / 2);
+    // Calculate LEDs per side using non-linear efficiency mapping
+    uint8_t ledsPerSide = getEfficiencyLedCount(rpm, LED_COUNT / 2);
     
     // Get the color for current RPM
     uint8_t r, g, b;
