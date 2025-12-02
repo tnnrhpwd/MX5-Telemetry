@@ -97,7 +97,7 @@ void CommandHandler::processCommand(const char* cmd) {
             case 'I': handleList(); return;        // I = LIST (lIst)
             case 'T': handleStatus(); return;      // T = STATUS (sTatus)
             case 'L': handleLoopback(); return;    // L = LOOPBACK test
-            case 'C': handleCANTest(); return;     // C = CAN two-Arduino test
+            // case 'C': handleCANTest(); return;  // C = CAN two-Arduino test (DISABLED for car safety)
         }
     }
     

@@ -45,7 +45,7 @@
 #define SLAVE_SERIAL_BAUD   1200    // Baud rate - very slow for maximum reliability
 #define ENABLE_HAPTIC       false   // DISABLED for debugging - set true to enable haptic feedback
 #define ENABLE_BRIGHTNESS_POT true  // Enable brightness potentiometer on A6
-#define ENABLE_CAN_TEST     true    // Enable CAN bus testing with second MCP2515
+#define ENABLE_CAN_TEST     false   // DISABLED - set true only for bench testing with 2 Arduinos
 #define MIN_VOLTAGE_FOR_HAPTIC  4.7 // Minimum voltage (V) to enable haptic on startup
 
 // ============================================================================
@@ -685,6 +685,13 @@ void setup() {
     // Each rainbow cycle = ~1.92 seconds (256 phases × 15ms), 3 cycles = ~5.76 seconds total
     for (int cycle = 0; cycle < 3; cycle++) {  // 3 complete rainbow cycles
         for (int phase = 0; phase < 256; phase += 2) {  // Color wheel rotation
+            #if ENABLE_BRIGHTNESS_POT
+            // Read brightness from potentiometer during startup animation
+            int potValue = 1023 - analogRead(BRIGHTNESS_POT_PIN);
+            uint8_t brightness = map(potValue, 0, 1023, 0, 255);
+            strip.setBrightness(brightness);
+            #endif
+            
             #if ENABLE_HAPTIC
             // Check voltage every 10 phases to detect voltage sag from motor
             if (hapticEnabled && (phase % 10 == 0)) {
