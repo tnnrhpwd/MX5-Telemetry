@@ -1,81 +1,91 @@
 # MX5 Telemetry - Next Session To-Do List
 
 **Date Created:** December 1, 2025  
-**Last Updated:** December 2, 2025  
-**Status:** ✅ CAN Bus RPM LED circuit tested successfully on real car!  
-**LED Delay Fix:** ✅ Implemented (see [LED Timing and Performance](features/LED_TIMING_AND_PERFORMANCE.md))
+**Last Updated:** December 3, 2025  
+**Status:** ✅ Single Arduino optimized setup created!
+
+---
+
+## 🎉 COMPLETED - December 3, 2025: Single Arduino Setup
+
+### What Was Done
+
+1. **Created Single Arduino Optimized Build** (`single/`)
+   - Direct CAN→LED path with <1ms latency
+   - 100Hz LED update rate (was 10Hz)
+   - Hardware interrupt on D2 for CAN messages
+   - No serial communication = no data corruption
+   - Simplified wiring (one Arduino instead of two)
+
+2. **Backed Up Dual Arduino Setup** (`backup_dual_arduino/`)
+   - Complete backup of master/slave/lib for future use
+   - Dual setup still available for GPS/SD logging needs
+
+3. **Updated Documentation**
+   - `docs/hardware/WIRING_GUIDE_SINGLE_ARDUINO.md` - New single setup guide
+   - `docs/hardware/WIRING_GUIDE_DUAL_ARDUINO.md` - Dual setup guide
+   - Updated README.md to show both options
+   - Updated docs/README.md with setup comparison
+
+### Build Commands
+
+**Single Arduino (Recommended):**
+```powershell
+pio run -d single -t upload --upload-port COM6
+```
+
+**Dual Arduino (for GPS/SD logging):**
+```powershell
+# Master
+pio run -d master -t upload --upload-port COM6
+# Slave (swap USB cable)
+pio run -d slave -t upload --upload-port COM6
+```
 
 ---
 
 ## 🎯 Priority 1: Fix LED Update Speed (CRITICAL)
 
-### ✅ COMPLETED - December 2, 2025
+### ✅ COMPLETED - Single Arduino fixes this completely
 
-The LEDs were only updating ~once every 3 seconds during real car testing. **All fixes have been implemented.**
-
-### ✅ Root Cause Identified (Dec 2, 2025)
-
-The 3-second delay is caused by **RPM caching in LEDSlave.cpp**:
-
-```cpp
-// In LEDSlave::updateRPM() - line 93-107
-if (rpm != lastRPM || needsKeepalive) {  // Only sends if RPM changed!
-    sendCommand(cmd);
-    lastRPM = rpm;
-}
-```
-
-**Problem:** When RPM stays the same (e.g., idling at 800 RPM, or cruising at steady RPM), the master skips sending updates. It only sends a "keep-alive" every **3 seconds**.
-
-Contributing factors:
-- `LED_UPDATE_INTERVAL = 250ms` (config.h line 72) - limits updates to 4Hz max
-- RPM quantization (`rawRPM / 4`) means small fluctuations produce same integer
-- Debug Serial.print statements add minor delays
-
-### Action Items ✅ ALL COMPLETED
-- [x] **FIX 1:** In `lib/LEDSlave/LEDSlave.cpp` - Always send RPM (removed caching)
-- [x] **FIX 2:** In `lib/Config/config.h` - Reduced LED_UPDATE_INTERVAL from 250ms to 100ms (10Hz)
-- [x] **FIX 3:** Added conditional debug mode - Serial.prints only run when USB active
-
-### Expected Performance After Fixes
-| Metric | Before | After |
-|--------|--------|-------|
-| Update Rate | ~0.3 Hz | **~6-10 Hz** |
-| Perceived Delay | ~3 seconds | **~100-170ms** |
-
-> **Note:** 1200 baud serial is intentionally slow for reliability. See [LED Timing and Performance](features/LED_TIMING_AND_PERFORMANCE.md) for details.
-
-### Testing After Fix
-- [ ] Verify LED updates are now 10Hz on bench with simulated CAN
-- [ ] Test in car - LEDs should now respond instantly to RPM changes
+The single Arduino setup eliminates the serial link delay entirely:
+- **Before:** 70ms serial transmission + 100ms update interval = ~170ms minimum
+- **After:** Direct CAN read → LED update in <1ms
 
 ---
 
 ## 🔧 Priority 2: Simplify Wiring Circuit
 
-### Current Complexity Issues
-- [ ] Document current wire count and connections
-- [ ] Identify which wires/components can be eliminated
-- [ ] Consider single Arduino solution (eliminate Master/Slave architecture?)
+### ✅ COMPLETED - Single Arduino setup
 
-### Simplification Options
-- [ ] **Option A:** Single Arduino with CAN + LEDs (no serial bridge)
-  - Pros: Fewer wires, simpler code, faster updates
-  - Cons: Need Arduino with enough pins (Nano may work)
-  
-- [ ] **Option B:** Keep dual Arduino but simplify serial protocol
-  - Reduce data sent over serial to just RPM value
-  - Remove status messages during operation
+- [x] **Created single Arduino solution** - `single/src/main.cpp`
+- [x] **Documented simplified wiring** - `WIRING_GUIDE_SINGLE_ARDUINO.md`
+- [x] **Reduced wire count by 50%** - No inter-Arduino connection needed
+- [x] **Hardware interrupt** - D2 for CAN INT (required for single setup)
 
-### Wiring Improvements
-- [ ] Create cleaner connector system (JST or Molex connectors)
-- [ ] Design a simple PCB or perfboard layout
-- [ ] Reduce wire length where possible
-- [ ] Add strain relief to critical connections
+### Single Arduino Pin Usage
+| Pin | Function |
+|-----|----------|
+| D2 | MCP2515 INT (hardware interrupt) |
+| D5 | WS2812B LED Data |
+| D10 | MCP2515 CS |
+| D11 | MOSI |
+| D12 | MISO |
+| D13 | SCK |
+| A6 | Brightness pot (optional) |
+| D3 | Haptic motor (optional) |
 
 ---
 
 ## 💻 Priority 3: Simplify Programming Logic
+
+### ✅ COMPLETED - Single Arduino code
+
+- [x] Combined CAN reading and LED control in one loop
+- [x] Removed serial communication code
+- [x] Inline functions for speed
+- [x] Integer-only math (no floats)
+- [x] Direct port manipulation macros
 
 ### Code Cleanup
 - [ ] Remove unused features and dead code

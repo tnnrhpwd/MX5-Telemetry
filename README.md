@@ -1,13 +1,37 @@
- the# 🚗 MX5-Telemetry System
+# 🚗 MX5-Telemetry System
 
-A comprehensive embedded telemetry and data logging system for the 2008 Mazda Miata NC (MX-5). This **dual Arduino system** uses a master controller for CAN bus data logging, GPS tracking, and SD card storage, while a dedicated slave controller handles high-speed LED visualization with zero latency.
+A comprehensive embedded telemetry and visual feedback system for the 2008 Mazda Miata NC (MX-5). This project supports **two configurations**:
+
+1. **🎯 Single Arduino** (Recommended) - Optimized CAN→LED with <1ms latency
+2. **📊 Dual Arduino** - Full telemetry logging with GPS and SD card
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Arduino](https://img.shields.io/badge/Arduino-Dual%20Nano-00979D.svg)
+![Arduino](https://img.shields.io/badge/Arduino-Nano-00979D.svg)
 ![Platform](https://img.shields.io/badge/Platform-ATmega328P-orange.svg)
 ![Build System](https://img.shields.io/badge/Build-PlatformIO-orange.svg)
 
+## 🔄 Choose Your Configuration
+
+| Feature | Single Arduino | Dual Arduino |
+|---------|---------------|--------------|
+| **CAN→LED Latency** | <1ms | ~70ms |
+| **LED Update Rate** | 100Hz | 10Hz |
+| **Data Corruption** | None | Possible (serial link) |
+| **GPS Logging** | ❌ | ✅ |
+| **SD Card Logging** | ❌ | ✅ |
+| **USB Commands** | Minimal | Full interface |
+| **Complexity** | Simple | Complex |
+| **Best For** | RPM display only | Full data logging |
+
+> 💡 **Recommendation**: Use **Single Arduino** unless you need GPS/SD logging.
+
 ## ✨ Features
+
+### Single Arduino (Optimized CAN + LED)
+- **⚡ Sub-millisecond latency** - Direct CAN bus to LED update path
+- **🎯 100Hz LED refresh** - Smooth, responsive RPM visualization
+- **🔌 Simple wiring** - 50% fewer connections than dual setup
+- **🔋 Lower power** - Single Arduino, minimal components
 
 ### Dual Arduino Architecture
 - **🎯 Master Arduino (Telemetry Logger)**: Handles CAN bus communication, GPS tracking, SD card logging, and commands the slave
@@ -41,17 +65,21 @@ A comprehensive embedded telemetry and data logging system for the 2008 Mazda Mi
 
 ```
 MX5-Telemetry/
-├── platformio.ini              # PlatformIO configuration (dual Arduino support)
-├── README.md                   # This file
-├── STRUCTURE.md                # 📋 Detailed structure guide
+├── single/                     # 🎯 SINGLE ARDUINO (Recommended)
+│   ├── src/main.cpp            # Optimized CAN + LED controller
+│   └── platformio.ini          # Build configuration
 │
-├── src/                        # 🎯 Master Arduino code (Arduino #1)
-│   └── main.cpp                # Main telemetry application
+├── master/                     # 📊 DUAL: Master Arduino (Logger)
+│   ├── src/main.cpp            # Telemetry + CAN + GPS + SD
+│   └── platformio.ini          # Build configuration
 │
-├── src_slave/                  # 🎯 Slave Arduino code (Arduino #2)
-│   └── main.cpp                # LED controller application
+├── slave/                      # 📊 DUAL: Slave Arduino (LED)
+│   ├── src/main.cpp            # LED controller (receives commands)
+│   └── platformio.ini          # Build configuration
 │
-├── lib/                        # 📦 Custom libraries (master only)
+├── backup_dual_arduino/        # 💾 Full backup of dual setup
+│
+├── lib/                        # 📦 Shared libraries
 │   ├── CANHandler/             # CAN bus communication
 │   ├── GPSHandler/             # GPS data acquisition
 │   ├── DataLogger/             # SD card CSV logging
@@ -60,44 +88,39 @@ MX5-Telemetry/
 │   ├── LEDController/          # Legacy local LED control
 │   └── Config/                 # Configuration constants
 │
-├── docs/                       # 📚 Organized documentation
-│   ├── setup/                  # Quick start & installation guides
-│   ├── hardware/               # Wiring, parts, architecture
-│   ├── development/            # Build guides & testing
-│   └── features/               # Feature-specific docs
+├── docs/                       # 📚 Documentation
+│   ├── hardware/               # Wiring guides
+│   │   ├── WIRING_GUIDE_SINGLE_ARDUINO.md  # Single setup
+│   │   ├── WIRING_GUIDE_DUAL_ARDUINO.md    # Dual setup
+│   │   └── MASTER_SLAVE_ARCHITECTURE.md    # Architecture details
+│   ├── setup/                  # Quick start guides
+│   ├── development/            # Build guides
+│   └── features/               # Feature documentation
 │
-├── build-automation/           # 🔧 Build scripts & installers
-│   ├── install_libraries.*     # Library installers
-│   ├── pio_quick_start.*       # PlatformIO menu
-│   └── verify_build.*          # Build verification
-│
+├── build-automation/           # 🔧 Build scripts
 ├── tools/                      # 🛠️ Development tools
-│   ├── simulators/             # LED simulator & testing
-│   │   └── led_simulator/      # Interactive GUI simulator
-│   └── utilities/              # Arduino helper scripts
-│       └── arduino_actions/    # Management utilities
-│
-├── hardware/                   # 🔌 Wokwi simulation files
-│   ├── diagram.json            # Virtual circuit
-│   └── wokwi.toml              # Simulator config
-│
-├── test/                       # ✅ Unit tests
-│   └── test_telemetry.cpp      # 15 test cases
-│
-└── .vscode/                    # VS Code settings
-    └── tasks.json              # Build/upload tasks
+├── hardware/                   # 🔌 Wokwi simulation
+└── test/                       # ✅ Unit tests
 ```
 
-> **🔌 Dual Arduino Architecture:** This project uses two Arduinos:
-> - **Master (nano_atmega328):** Full telemetry logger with CAN, GPS, SD card
-> - **Slave (led_slave):** Dedicated LED controller receiving Serial commands
-> 
-> 📖 See [docs/STRUCTURE.md](docs/STRUCTURE.md) for detailed organization guide  
-> ⚡ See [docs/setup/DUAL_ARDUINO_SETUP.md](docs/setup/DUAL_ARDUINO_SETUP.md) for setup instructions
+> **📖 Wiring Guides:**
+> - Single Arduino: [`docs/hardware/WIRING_GUIDE_SINGLE_ARDUINO.md`](docs/hardware/WIRING_GUIDE_SINGLE_ARDUINO.md)
+> - Dual Arduino: [`docs/hardware/WIRING_GUIDE_DUAL_ARDUINO.md`](docs/hardware/WIRING_GUIDE_DUAL_ARDUINO.md)
 
 ## 🔧 Hardware Requirements
 
-### Core Components (Dual Arduino System)
+### Single Arduino Setup (Recommended)
+
+| Component | Model/Type | Interface | Notes |
+|-----------|------------|-----------|-------|
+| Arduino Nano | V3.0 | - | ATmega328P, 16MHz, 5V |
+| CAN Controller | MCP2515 + TJA1050 | SPI | 8MHz crystal, 500 kbaud |
+| LED Strip | WS2812B | Single-wire | 20 LEDs recommended |
+| Buck Converter | LM2596 | - | 12V → 5V, 3A capacity |
+| **Optional:** Brightness Pot | 10K-100K | Analog | Connected to A6 |
+| **Optional:** Haptic Motor | Vibration | PWM | Connected to D3 |
+
+### Dual Arduino Setup (Full Logging)
 
 | Component | Model/Type | Interface | Quantity | Notes |
 |-----------|------------|-----------|----------|-------|

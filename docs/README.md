@@ -1,6 +1,17 @@
 # 📚 MX5-Telemetry Documentation
 
-Complete documentation for the MX5-Telemetry dual Arduino system.
+Complete documentation for the MX5-Telemetry system.
+
+---
+
+## 🔄 Choose Your Setup
+
+| Setup | Best For | Guide |
+|-------|----------|-------|
+| **🎯 Single Arduino** | RPM display only, fastest response | [WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) |
+| **📊 Dual Arduino** | Full logging with GPS & SD card | [WIRING_GUIDE_DUAL_ARDUINO.md](hardware/WIRING_GUIDE_DUAL_ARDUINO.md) |
+
+> 💡 **Recommendation:** Use Single Arduino unless you need GPS/SD logging.
 
 ---
 
@@ -8,8 +19,8 @@ Complete documentation for the MX5-Telemetry dual Arduino system.
 
 | Document | Description |
 |----------|-------------|
-| [**BUILD_AND_UPLOAD.md**](BUILD_AND_UPLOAD.md) | ⭐ **Start here!** Build and flash both Arduinos |
-| [setup/DUAL_ARDUINO_SETUP.md](setup/DUAL_ARDUINO_SETUP.md) | Detailed dual-Arduino configuration |
+| [**BUILD_AND_UPLOAD.md**](BUILD_AND_UPLOAD.md) | ⭐ **Start here!** Build and flash Arduinos |
+| [setup/DUAL_ARDUINO_SETUP.md](setup/DUAL_ARDUINO_SETUP.md) | Dual-Arduino configuration |
 | [setup/OUTDOOR_TEST_QUICKSTART.md](setup/OUTDOOR_TEST_QUICKSTART.md) | Field testing checklist |
 
 ---
@@ -18,9 +29,11 @@ Complete documentation for the MX5-Telemetry dual Arduino system.
 
 | Document | Description |
 |----------|-------------|
-| [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Pin assignments and wiring diagrams |
+| [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) | **Recommended** - Simple single Arduino wiring |
+| [hardware/WIRING_GUIDE_DUAL_ARDUINO.md](hardware/WIRING_GUIDE_DUAL_ARDUINO.md) | Dual Arduino wiring for full logging |
+| [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Legacy detailed pin assignments |
 | [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) | Bill of materials (~$80-140) |
-| [hardware/MASTER_SLAVE_ARCHITECTURE.md](hardware/MASTER_SLAVE_ARCHITECTURE.md) | System architecture explanation |
+| [hardware/MASTER_SLAVE_ARCHITECTURE.md](hardware/MASTER_SLAVE_ARCHITECTURE.md) | Dual Arduino architecture |
 
 ---
 
