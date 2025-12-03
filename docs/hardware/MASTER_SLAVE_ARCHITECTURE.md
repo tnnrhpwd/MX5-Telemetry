@@ -1,5 +1,20 @@
 # Master + Slave Architecture
 
+> ⚠️ **Note:** This describes the **dual Arduino** setup. For simpler RPM→LED display, see the recommended **[Single Arduino Setup](WIRING_GUIDE_SINGLE_ARDUINO.md)**.
+
+## When to Use Dual Arduino
+
+Choose this setup when you need:
+- ✅ GPS position logging
+- ✅ SD card data recording  
+- ✅ USB command interface
+- ✅ Full telemetry data capture
+
+For **RPM display only**, the [Single Arduino](WIRING_GUIDE_SINGLE_ARDUINO.md) is better:
+- ⚡ <1ms latency (vs ~70ms with serial)
+- 🔌 Simpler wiring
+- 🚫 No data corruption risk
+
 ## Overview
 
 The MX5-Telemetry system uses a **two-Arduino architecture** to eliminate SD card/LED interrupt conflicts:
