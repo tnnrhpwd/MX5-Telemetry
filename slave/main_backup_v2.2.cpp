@@ -594,20 +594,6 @@ void rainbowErrorState() {
 }
 
 void updateLEDDisplay() {
-    // ========================================================================
-    // NEW SIMPLIFIED LED LOGIC v3.0
-    // ========================================================================
-    // - Startup: Rainbow animation (handled in setup())
-    // - Speed: IGNORED (backup - Master still sends it but we don't use it)
-    // - RPM 0: Blue LED on first position each side (idle indicator)
-    // - RPM 1-6200: Linear gradient bar from blue to red
-    //   - 1-1999 RPM: Blue zone
-    //   - 2000-2999 RPM: Green zone  
-    //   - 3000-4499 RPM: Yellow zone
-    //   - 4500-5499 RPM: Orange zone
-    //   - 5500-6200 RPM: Red zone
-    // ========================================================================
-    
     if (errorMode) {
         // Show rainbow if explicitly commanded by master
         if (rainbowMode) {
@@ -618,65 +604,44 @@ void updateLEDDisplay() {
         return;
     }
     
-    // RPM = 0: Show single blue LED on each edge (idle/engine off indicator)
-    if (currentRPM == 0) {
-        strip.clear();
-        strip.setPixelColor(0, strip.Color(0, 0, 255));                    // First LED blue
-        strip.setPixelColor(LED_COUNT - 1, strip.Color(0, 0, 255));        // Last LED blue
-        strip.show();
+    // State 5: Rev Limit (7200+ RPM) - HIGHEST PRIORITY
+    if (currentRPM >= STATE_5_RPM_MIN) {
+        revLimitState();
         return;
     }
     
-    // RPM 1-6200+: Linear gradient bar from edges toward center
-    // Calculate how many LEDs per side based on RPM (linear mapping)
-    const uint16_t MAX_RPM = 6200;
-    uint16_t clampedRPM = min(currentRPM, MAX_RPM);
-    
-    // Linear mapping: RPM 1 = 1 LED per side, RPM 6200 = all LEDs (LED_COUNT/2 per side)
-    uint8_t ledsPerSide = map(clampedRPM, 1, MAX_RPM, 1, LED_COUNT / 2);
-    ledsPerSide = constrain(ledsPerSide, 1, LED_COUNT / 2);
-    
-    // Determine color based on RPM zone
-    uint8_t r, g, b;
-    
-    if (currentRPM < 2000) {
-        // Blue zone (1-1999 RPM)
-        r = 0; g = 0; b = 255;
-    } else if (currentRPM < 3000) {
-        // Green zone (2000-2999 RPM)
-        r = 0; g = 255; b = 0;
-    } else if (currentRPM < 4500) {
-        // Yellow zone (3000-4499 RPM)
-        r = 255; g = 255; b = 0;
-    } else if (currentRPM < 5500) {
-        // Orange zone (4500-5499 RPM)
-        r = 255; g = 128; b = 0;
-    } else {
-        // Red zone (5500+ RPM)
-        r = 255; g = 0; b = 0;
+    // State 4: High RPM Shift Warning (4501-7199 RPM)
+    if (currentRPM >= STATE_4_RPM_MIN) {
+        highRPMShiftState(currentRPM);
+        return;
     }
     
-    // Draw mirrored bar from edges toward center
-    for (int i = 0; i < LED_COUNT; i++) {
-        bool isLit = false;
-        
-        // Left side: LEDs 0 to ledsPerSide-1
-        if (i < ledsPerSide) {
-            isLit = true;
-        }
-        // Right side: LEDs (LED_COUNT - ledsPerSide) to LED_COUNT-1
-        else if (i >= (LED_COUNT - ledsPerSide)) {
-            isLit = true;
-        }
-        
-        if (isLit) {
-            strip.setPixelColor(i, strip.Color(r, g, b));
-        } else {
-            strip.setPixelColor(i, 0);
-        }
+    // Normal Driving: Efficiency Gradient (2000-4500 RPM)
+    // Blue->Green->Yellow based on RPM - works at ANY speed
+    if (currentRPM >= NORMAL_RPM_MIN) {
+        normalDrivingState(currentRPM);
+        return;
     }
     
-    strip.show();
+    // Below 2000 RPM - behavior depends on speed:
+    
+    // Stall Danger: ONLY when moving (speed > 0) and RPM 0-1999
+    // Progressive orange bar - more LEDs = lower RPM = more danger
+    if (currentSpeed > STATE_0_SPEED_THRESHOLD) {
+        stallDangerState(currentRPM);
+        return;
+    }
+    
+    // Standby State: RPM=0 AND Speed=0
+    // Scanner/Cylon effect indicates waiting for CAN data or engine off
+    if (currentRPM == 0) {
+        standbyState();
+        return;
+    }
+    
+    // Idle State: Speed=0 AND RPM 1-1999 (engine running but stationary)
+    // White progressive inward bar - more LEDs as RPM increases
+    idleNeutralState(currentRPM);
 }
 
 // ============================================================================
