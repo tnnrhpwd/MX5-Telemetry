@@ -6,29 +6,61 @@ The MX5-Telemetry project uses a sophisticated **mirrored progress bar** LED sys
 
 The system features a **smooth color gradient** in the normal driving zone (2000-4500 RPM) that transitions through three efficiency zones: Blue (best MPG) → Green (best thermal efficiency) → Yellow (approaching high RPM).
 
-## 🎨 The Six States
+## 🎨 The Seven States
 
-### ⚪ Idle State (Speed = 0, RPM 0-800)
-**Purpose:** Visual confirmation that vehicle is stationary with engine idling.
+### 🔴 Standby State (Speed = 0, RPM = 0) - NEW!
+**Purpose:** Indicates system is waiting for data - CAN bus not connected OR engine off.
 
-**Visual Pattern:**
+**Visual Pattern (Cylon Scanner Effect):**
 ```
-⚪ → ⚪ ⚪ → ⚪ ⚪ ⚪ → ⚪ ⚪ ⚪ ⚪ → ... → ALL ⚪ (center)
+Frame 1: 🔴 ● ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🔴
+Frame 2: 🔴 🔴 ● ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🔴 🔴
+  ...    (scanner sweeps across strip)
+```
+*Note: 🔴 = dim breathing red background, ● = bright white-red scanner head*
+
+**Characteristics:**
+- **Scanner effect**: Single bright dot sweeps back and forth across the strip
+- **Breathing background**: Dim red glow pulses slowly (3-second cycle)
+- **Scanner head**: Bright white-red (RGB: 255, 60, 30)
+- **Scanner trail**: Red gradient fading 3 LEDs behind the head
+- **Speed**: 50ms per position update (smooth motion)
+- **Triggers when**: Speed = 0 km/h AND RPM = 0
+
+**When It Activates:**
+- System powered on but CAN bus not yet connected
+- Engine is off (ignition on but not started)
+- CAN communication lost (reverts to this state)
+- Futuristic "standby/sleep" visual while waiting
+
+---
+
+### ⚪ Idle State (Speed = 0, RPM 1-1999)
+**Purpose:** Visual indication of RPM while stationary - shows engine breathing/revving.
+
+**Visual Pattern (Progressive Inward Bar):**
+```
+RPM 100:  ⚪ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚪ (1 LED per side)
+RPM 500:  ⚪ ⚪ ⚪ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚪ ⚪ ⚪ (~3 LEDs)
+RPM 1000: ⚪ ⚪ ⚪ ⚪ ⚪ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚪ ⚪ ⚪ ⚪ ⚪ (~5 LEDs)
+RPM 1500: ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ (~7 LEDs)
+RPM 2000: ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ ⚪ (FULL - 10 per side)
 ```
 
 **Characteristics:**
-- **Sequential pepper animation**: White LEDs light up one-by-one from edges inward
-- **Direction**: Outer edges → Center
-- **Timing**: 80ms delay between each LED
-- **Hold**: 300ms at full center illumination
+- **Progressive bar**: White LEDs grow inward from edges as RPM increases
+- **Direction**: Outer edges → Center (mirrored on both sides)
+- **Linear scale**: LEDs scale from 1 (RPM=1) to full (RPM=2000)
+- **Gradient brightness**: Brighter at edges, dims toward center for depth effect
 - **Color**: Pure white (RGB: 255, 255, 255)
-- **Brightness**: 180 (out of 255)
-- **Triggers when**: Speed ≤ 1 km/h AND RPM ≤ 800
+- **Brightness**: 180 (out of 255) at edges, fades to ~40% at innermost lit LED
+- **Triggers when**: Speed = 0 km/h AND RPM 1-1999
 
 **When It Activates:**
-- Vehicle parked/stopped at traffic light
-- Engine idling (~750 RPM)
-- Calm, non-intrusive visual while stationary
+- Vehicle parked/stopped at traffic light with engine running
+- Engine idling (~750 RPM) or being revved while stationary
+- Shows "breathing" visual feedback as RPM fluctuates at idle
+- Provides instant feedback when blipping throttle while stopped
 
 ---
 
@@ -153,19 +185,29 @@ RPM 4500 (100%): 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡   (yellow - f
 
 ---
 
-### ❌ Error State: CAN Bus Read Error
-**Purpose:** Visual indication of communication failure with vehicle.
+### ❌ Error State: Communication/Master Timeout
+**Purpose:** Visual indication of communication failure - triggered by master timeout or explicit error command.
 
-**Visual Pattern:**
+**Visual Pattern (Dual Scanner with Urgent Pulse):**
 ```
-🔴 → 🔴 🔴 → 🔴 🔴 🔴 → 🔴 🔴 🔴 🔴 → ... → ALL 🔴 (center)
+Frame 1: ● 🔴 🔴 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🔴 🔴 ● 
+Frame 2: 🔴 ● 🔴 🔴 ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ ⚫ 🔴 🔴 ● 🔴
+  ...    (scanners sweep inward then outward from both edges)
 ```
+*Note: ● = bright white scanner head, 🔴 = red gradient trail, ⚫ = pulsing dim red*
 
 **Characteristics:**
-- **Sequential pepper animation**: Red LEDs light up from edges inward
-- **Timing**: 80ms delay between each LED
-- **Color**: Pure red (RGB: 255, 0, 0)
-- **Brightness**: 200
+- **Dual scanner**: White scanner heads sweep inward/outward from both edges (mirrored)
+- **Fast urgent pulse**: Background pulses rapidly (500ms cycle) for urgency
+- **Scanner cycle**: 1.2 seconds per full in-out sweep
+- **Scanner head**: Bright white flash (RGB: 255, 255, 255)
+- **Scanner trail**: Red gradient fading 2 LEDs behind head
+- **Background**: Pulsing dim red (~20-60 brightness)
+
+**When It Activates:**
+- Master Arduino stops sending updates for 5+ seconds
+- Explicit error command (`E`) received from master
+- Indicates something needs attention
 
 ---
 
@@ -173,14 +215,15 @@ RPM 4500 (100%): 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡   (yellow - f
 
 | State | Condition | Color | Animation | Purpose |
 |-------|-----------|-------|-----------|---------|
-| ⚪ Idle | Speed=0, RPM≤800 | White | Pepper inward | Engine idling, stationary |
+| 🔴 Standby | Speed=0, RPM=0 | Dim Red | Scanner sweep | Waiting for CAN/engine |
+| ⚪ Idle | Speed=0, RPM 1-1999 | White | Progress bar | Engine running, stationary |
 | 🟠 Stall | Speed>0, RPM 0-1999 | Orange | Inverted bar | Stall warning while moving |
 | 🔵 MPG | RPM 2000-2500 | Blue | Progress bar | Best fuel efficiency |
 | 🟢 Thermal | RPM 2500-4000 | Green | Progress bar | Best thermal efficiency |
 | 🟡 High | RPM 4000-4500 | Yellow | Progress bar | Approaching shift zone |
 | 🔴 Shift | RPM 4501-7199 | Red+Flash | Flash gap | Urgent shift warning |
 | 🛑 Limit | RPM 7200+ | Solid Red | Static | Rev limiter engaged |
-| ❌ Error | CAN failure | Red | Pepper inward | Communication error |
+| ❌ Error | Master timeout | Red | Dual scanner | Communication error |
 ---
 
 ## 📁 Implementation Files

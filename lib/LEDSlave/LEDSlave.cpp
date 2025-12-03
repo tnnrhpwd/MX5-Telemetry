@@ -112,6 +112,20 @@ void LEDSlave::updateRPM(uint16_t rpm, uint16_t speed_kmh) {
     }
 }
 
+void LEDSlave::updateSpeed(uint16_t speed_kmh) {
+    // Send speed update (useful for idle state detection)
+    char cmd[8];
+    cmd[0] = 'S';  // Short prefix: S123
+    itoa(speed_kmh, cmd + 1, 10);
+    sendCommand(cmd);
+    lastSpeed = speed_kmh;
+}
+
+void LEDSlave::startWave() {
+    // Start wave/rainbow animation
+    sendCommand("W");
+}
+
 void LEDSlave::updateRPMError() {
     // Only send error command once when entering error state
     if (!lastError) {

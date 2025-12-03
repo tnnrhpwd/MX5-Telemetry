@@ -1,83 +1,97 @@
-# 📚 MX5-Telemetry Documentation Index
+# 📚 MX5-Telemetry Documentation
 
-Complete documentation for the MX5-Telemetry dual Arduino system, organized by category for easy navigation.
-
----
-
-## 📖 Essential Documentation
-
-### Repository Organization
-- **[STRUCTURE.md](STRUCTURE.md)** - Complete repository structure guide and navigation
-- **[PLATFORMIO_VERIFICATION.md](PLATFORMIO_VERIFICATION.md)** - PlatformIO dual Arduino setup verification
-- **[REORGANIZATION_SUMMARY.md](REORGANIZATION_SUMMARY.md)** - Recent structural changes and migration guide
+Complete documentation for the MX5-Telemetry dual Arduino system.
 
 ---
 
 ## 🚀 Getting Started
 
-### Quick Setup (Start Here!)
-1. **[QUICK_START.md](setup/QUICK_START.md)** - 30-minute rapid deployment guide
-2. **[DUAL_ARDUINO_SETUP.md](setup/DUAL_ARDUINO_SETUP.md)** - Master/slave Arduino configuration
-3. **[WIRING_GUIDE.md](hardware/WIRING_GUIDE.md)** - Hardware assembly instructions
-
-### Setup Guides ([setup/](setup/))
-- **[QUICK_REFERENCE.md](setup/QUICK_REFERENCE.md)** - Command reference card
-- **[LIBRARY_INSTALL_GUIDE.md](setup/LIBRARY_INSTALL_GUIDE.md)** - Library installation troubleshooting
-- **[OUTDOOR_TEST_QUICKSTART.md](setup/OUTDOOR_TEST_QUICKSTART.md)** - Field testing guide
+| Document | Description |
+|----------|-------------|
+| [**BUILD_AND_UPLOAD.md**](BUILD_AND_UPLOAD.md) | ⭐ **Start here!** Build and flash both Arduinos |
+| [setup/DUAL_ARDUINO_SETUP.md](setup/DUAL_ARDUINO_SETUP.md) | Detailed dual-Arduino configuration |
+| [setup/OUTDOOR_TEST_QUICKSTART.md](setup/OUTDOOR_TEST_QUICKSTART.md) | Field testing checklist |
 
 ---
 
 ## 🔧 Hardware
 
-### Physical Assembly ([hardware/](hardware/))
-- **[WIRING_GUIDE.md](hardware/WIRING_GUIDE.md)** - Step-by-step wiring instructions
-- **[PARTS_LIST.md](hardware/PARTS_LIST.md)** - Bill of materials (~$80-140)
-- **[MASTER_SLAVE_ARCHITECTURE.md](hardware/MASTER_SLAVE_ARCHITECTURE.md)** - Dual Arduino design rationale
+| Document | Description |
+|----------|-------------|
+| [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Pin assignments and wiring diagrams |
+| [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) | Bill of materials (~$80-140) |
+| [hardware/MASTER_SLAVE_ARCHITECTURE.md](hardware/MASTER_SLAVE_ARCHITECTURE.md) | System architecture explanation |
+
+---
+
+## ✨ Features
+
+### LED System
+| Document | Description |
+|----------|-------------|
+| [features/LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md) | Complete LED state documentation |
+| [features/LED_TIMING_AND_PERFORMANCE.md](features/LED_TIMING_AND_PERFORMANCE.md) | Update rate and latency analysis |
+| [features/LED_SIMULATOR_ARDUINO_CONNECTION.md](features/LED_SIMULATOR_ARDUINO_CONNECTION.md) | Python simulator setup |
+| [features/LED_SIMULATOR_TROUBLESHOOTING.md](features/LED_SIMULATOR_TROUBLESHOOTING.md) | Simulator debugging |
+
+### GPS & Logging
+| Document | Description |
+|----------|-------------|
+| [features/GPS_TROUBLESHOOTING.md](features/GPS_TROUBLESHOOTING.md) | GPS fix issues |
+| [features/COMPREHENSIVE_DATA_LOGGING.md](features/COMPREHENSIVE_DATA_LOGGING.md) | Data logging system |
+| [features/LOG_ROTATION_FEATURE.md](features/LOG_ROTATION_FEATURE.md) | Log file management |
+| [features/AUTO_START_FEATURE.md](features/AUTO_START_FEATURE.md) | Automatic logging startup |
 
 ---
 
 ## 💻 Development
 
-### Build & Test ([development/](development/))
-- **[PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md)** - PlatformIO setup and testing
-- **[BUILD_GUIDE.md](development/BUILD_GUIDE.md)** - Building and uploading firmware
-- **[BUILD_ARCHITECTURE.md](development/BUILD_ARCHITECTURE.md)** - Code architecture overview
-- **[DATA_ANALYSIS.md](development/DATA_ANALYSIS.md)** - CSV data visualization tools
-- **[REQUIREMENTS_COMPLIANCE.md](development/REQUIREMENTS_COMPLIANCE.md)** - Requirements verification
-- **[CLEANUP_GUIDE.md](development/CLEANUP_GUIDE.md)** - Code cleanup history
+| Document | Description |
+|----------|-------------|
+| [development/PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md) | PlatformIO deep-dive (CLI, simulation) |
+| [development/BUILD_ARCHITECTURE.md](development/BUILD_ARCHITECTURE.md) | Code architecture |
+| [development/DATA_ANALYSIS.md](development/DATA_ANALYSIS.md) | CSV data visualization |
+| [development/CLEANUP_GUIDE.md](development/CLEANUP_GUIDE.md) | Code cleanup notes |
 
 ---
 
-## ✨ Features & Troubleshooting
+## 📋 Session Notes
 
-### LED System ([features/](features/))
-- **[LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md)** - Complete LED animation documentation
-- **[LED_TIMING_AND_PERFORMANCE.md](features/LED_TIMING_AND_PERFORMANCE.md)** - ⚡ Update rate, latency, and performance tuning
-- **[LED_QUICKREF.md](features/LED_QUICKREF.md)** - Quick reference for LED states
-- **[LED_AUTO_SYNC.md](features/LED_AUTO_SYNC.md)** - Arduino/Python simulator sync
-- **[LED_SIMULATOR_ARDUINO_CONNECTION.md](features/LED_SIMULATOR_ARDUINO_CONNECTION.md)** - Simulator integration
-- **[LED_SIMULATOR_TROUBLESHOOTING.md](features/LED_SIMULATOR_TROUBLESHOOTING.md)** - Simulator debugging
-
-### GPS System ([features/](features/))
-- **[GPS_TROUBLESHOOTING.md](features/GPS_TROUBLESHOOTING.md)** - GPS fix issues
-- **[STATUS_AND_GPS_EXPLAINED.md](features/STATUS_AND_GPS_EXPLAINED.md)** - GPS status indicators
-
-### Data Logging ([features/](features/))
-- **[COMPREHENSIVE_DATA_LOGGING.md](features/COMPREHENSIVE_DATA_LOGGING.md)** - Logging system details
-- **[LOG_ROTATION_FEATURE.md](features/LOG_ROTATION_FEATURE.md)** - Log file management
-- **[AUTO_START_FEATURE.md](features/AUTO_START_FEATURE.md)** - Automatic startup
-- **[RUNAWAY_LOGGING_PREVENTION.md](features/RUNAWAY_LOGGING_PREVENTION.md)** - Safety features
+| Document | Description |
+|----------|-------------|
+| [TODO_NEXT_SESSION.md](TODO_NEXT_SESSION.md) | Current tasks and progress |
 
 ---
 
 ## 📦 Archive
 
-Historical documentation (for reference only):
+Old/superseded documentation kept for historical reference:
 
-- **[archive/](archive/)** - Legacy documentation including changelogs, bug fix summaries, and historical notes
-  - `CHANGELOG_V3.md` - Version 3 changelog
-  - `UPDATE_SUMMARY.md` - Update history
-  - `HANG_FIX_SUMMARY.md`, `TIMEOUT_FIX_SUMMARY.md` - Historical bug fixes
+| Document | Superseded By |
+|----------|---------------|
+| archive/FLASH_ARDUINOS.md | BUILD_AND_UPLOAD.md |
+| archive/UPLOAD_GUIDE.md | BUILD_AND_UPLOAD.md |
+| archive/BUILD_GUIDE.md | BUILD_AND_UPLOAD.md |
+| archive/QUICK_START.md | BUILD_AND_UPLOAD.md |
+| archive/QUICK_REFERENCE.md | BUILD_AND_UPLOAD.md |
+| archive/LED_QUICKREF.md | LED_STATE_SYSTEM.md |
+| archive/LED_AUTO_SYNC.md | (outdated) |
+| archive/STRUCTURE.md | (one-time setup) |
+| archive/PLATFORMIO_VERIFICATION.md | (one-time setup) |
+| archive/REORGANIZATION_SUMMARY.md | (one-time setup) |
+
+---
+
+## Quick Commands
+
+```powershell
+# Build both Arduinos
+pio run -d master; pio run -d slave
+
+# Upload both (adjust COM ports)
+pio run -d master --target upload --upload-port COM3
+pio run -d slave --target upload --upload-port COM4
+```
   - `THREE_STATE_SUMMARY.md` - Historical feature summary
   - `PROJECT_INTEGRATION_SUMMARY.md` - Integration notes
 

@@ -10,7 +10,7 @@
 // ============================================================================
 
 CommandHandler::CommandHandler()
-    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr), canHandler(nullptr), dataReceived(false) {
+    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr), canHandler(nullptr), dataReceived(false), ledSpeed(50), lastUSBLedCommand(0) {
     inputBuffer[0] = '\0';
 }
 
@@ -262,14 +262,80 @@ void CommandHandler::handleDump(const char* command) {
     setState(STATE_IDLE);
 }
 
-void CommandHandler::handleRPM(const char* /* command */) {
-    // RPM handling removed - LED control moved to slave Arduino
-    // Master no longer processes simulator RPM commands
+void CommandHandler::handleRPM(const char* command) {
+    // RPM command from USB - relay to LED Slave for testing
+    // Format: RPM:3500 or R3500
+    // Extract RPM value and relay to slave
+    extern LEDSlave ledSlave;
+    
+    uint16_t rpm = 0;
+    if (strncmp(command, "RPM:", 4) == 0 || strncmp(command, "rpm:", 4) == 0) {
+        rpm = atoi(command + 4);
+    } else if ((command[0] == 'R' || command[0] == 'r') && command[1] >= '0' && command[1] <= '9') {
+        rpm = atoi(command + 1);
+    }
+    
+    // Relay to Slave (use simulated speed of 50 to exit idle state)
+    ledSlave.updateRPM(rpm, 50);
+    Serial.print(F("LED: RPM="));
+    Serial.println(rpm);
 }
 
-void CommandHandler::handleLED(const char* /* command */) {
-    // LED handling removed - LED control moved to slave Arduino
-    // Master no longer processes simulator LED commands
+void CommandHandler::handleLED(const char* command) {
+    // LED command from USB - relay to LED Slave for testing
+    // Format: LED:<subcmd> where subcmd matches slave commands
+    // Examples: LED:R3500, LED:S60, LED:C, LED:E, LED:W, LED:B128
+    extern LEDSlave ledSlave;
+    
+    // Mark USB LED override active - this suppresses CAN->LED updates
+    lastUSBLedCommand = millis();
+    
+    const char* subcmd = command + 4;  // Skip "LED:" prefix
+    
+    // Parse the sub-command and relay appropriately
+    if (subcmd[0] == 'R' && subcmd[1] >= '0' && subcmd[1] <= '9') {
+        // RPM command: R<rpm> - use tracked speed for proper LED state
+        uint16_t rpm = atoi(subcmd + 1);
+        ledSlave.updateRPM(rpm, ledSpeed);  // Use tracked speed for LED state
+        Serial.print(F("LED: R"));
+        Serial.print(rpm);
+        Serial.print(F(" S"));
+        Serial.println(ledSpeed);
+    }
+    else if (subcmd[0] == 'S' && subcmd[1] >= '0' && subcmd[1] <= '9') {
+        // Speed command: S<speed> - track for subsequent RPM commands
+        ledSpeed = atoi(subcmd + 1);
+        ledSlave.updateSpeed(ledSpeed);
+        Serial.print(F("LED: S"));
+        Serial.println(ledSpeed);
+    }
+    else if (subcmd[0] == 'C' && (subcmd[1] == '\0' || subcmd[1] == '\r' || subcmd[1] == '\n')) {
+        // Clear command
+        ledSlave.clear();
+        Serial.println(F("LED: Clear"));
+    }
+    else if (subcmd[0] == 'E' && (subcmd[1] == '\0' || subcmd[1] == '\r' || subcmd[1] == '\n')) {
+        // Error mode
+        ledSlave.updateRPMError();
+        Serial.println(F("LED: Error mode"));
+    }
+    else if (subcmd[0] == 'W' && (subcmd[1] == '\0' || subcmd[1] == '\r' || subcmd[1] == '\n')) {
+        // Wave/rainbow mode
+        ledSlave.startWave();
+        Serial.println(F("LED: Wave mode"));
+    }
+    else if (subcmd[0] == 'B' && subcmd[1] >= '0' && subcmd[1] <= '9') {
+        // Brightness command: B<value>
+        uint8_t brightness = atoi(subcmd + 1);
+        ledSlave.setBrightness(brightness);
+        Serial.print(F("LED: B"));
+        Serial.println(brightness);
+    }
+    else {
+        // Unknown sub-command
+        Serial.print(F("LED: Unknown cmd: "));
+        Serial.println(subcmd);
+    }
 }
 
 void CommandHandler::handleLoopback() {

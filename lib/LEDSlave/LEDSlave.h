@@ -17,8 +17,10 @@ public:
     void begin();
     void updateRPM(uint16_t rpm);
     void updateRPM(uint16_t rpm, uint16_t speed_kmh);
+    void updateSpeed(uint16_t speed_kmh);  // Send speed-only update
     void updateRPMError();
     void updateRPMRainbow();  // Rainbow pattern for error display
+    void startWave();  // Start wave/rainbow animation
     void clear();
     void setBrightness(uint8_t brightness);
     

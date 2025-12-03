@@ -6,7 +6,8 @@
 
 CANHandler::CANHandler(uint8_t csPin) 
     : can(csPin), 
-      initialized(false), 
+      initialized(false),
+      quietMode(false),
       errorCount(0),
       lastDataUpdate(0),
       currentRPM(0),
@@ -81,20 +82,23 @@ void CANHandler::update() {
         byte tec = can.errorCountTX();
         byte rec = can.errorCountRX();
         
-        Serial.print(F("CAN: chk="));
-        Serial.print(checkCount);
-        Serial.print(F(" INT="));
-        Serial.print(digitalRead(CAN_INT_PIN));
-        Serial.print(F(" msg="));
-        Serial.print(msgAvailCount);
-        Serial.print(F(" err=0x"));
-        Serial.print(errFlag, HEX);
-        Serial.print(F(" TEC="));
-        Serial.print(tec);
-        Serial.print(F(" REC="));
-        Serial.print(rec);
-        Serial.print(F(" rx="));
-        Serial.println(status == CAN_MSGAVAIL ? F("AVAIL") : F("none"));
+        // Only print diagnostics if not in quiet mode (USB LED override)
+        if (!quietMode) {
+            Serial.print(F("CAN: chk="));
+            Serial.print(checkCount);
+            Serial.print(F(" INT="));
+            Serial.print(digitalRead(CAN_INT_PIN));
+            Serial.print(F(" msg="));
+            Serial.print(msgAvailCount);
+            Serial.print(F(" err=0x"));
+            Serial.print(errFlag, HEX);
+            Serial.print(F(" TEC="));
+            Serial.print(tec);
+            Serial.print(F(" REC="));
+            Serial.print(rec);
+            Serial.print(F(" rx="));
+            Serial.println(status == CAN_MSGAVAIL ? F("AVAIL") : F("none"));
+        }
         checkCount = 0;
     }
     

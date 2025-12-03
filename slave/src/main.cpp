@@ -176,9 +176,48 @@ uint8_t scaleColor(uint8_t color, uint8_t brightness) {
 // LED STATE FUNCTIONS
 // ============================================================================
 
-void idleNeutralState() {
-    pepperAnimation(STATE_0_COLOR_R, STATE_0_COLOR_G, STATE_0_COLOR_B, 
-                    STATE_0_PEPPER_DELAY, STATE_0_HOLD_TIME);
+void idleNeutralState(uint16_t rpm) {
+    // Progressive white inward bar based on RPM (0-2000)
+    // Always shows at least 1 LED per side (even at RPM=0)
+    // Full bar at RPM=2000
+    
+    // Calculate LEDs per side: linear from 1 (at RPM 0) to LED_COUNT/2 (at RPM 2000)
+    // Formula: ledsPerSide = 1 + (rpm / 2000) * (LED_COUNT/2 - 1)
+    uint8_t maxLedsPerSide = LED_COUNT / 2;  // 10 for 20 LED strip
+    uint8_t ledsPerSide;
+    
+    if (rpm >= 2000) {
+        ledsPerSide = maxLedsPerSide;
+    } else {
+        // Linear scale: 1 LED at RPM=0, maxLedsPerSide LEDs at RPM=2000
+        // Additional LEDs beyond the first = (rpm / 2000) * (maxLedsPerSide - 1)
+        ledsPerSide = 1 + ((uint32_t)rpm * (maxLedsPerSide - 1)) / 2000;
+    }
+    
+    // Draw the mirrored white bar with brightness gradient (brighter at edges)
+    for (int i = 0; i < LED_COUNT; i++) {
+        // Calculate distance from nearest edge
+        int distanceFromEdge = (i < LED_COUNT / 2) ? i : LED_COUNT - 1 - i;
+        
+        if (distanceFromEdge < ledsPerSide) {
+            // Calculate brightness: brightest at edge (index 0), dimmer toward center
+            // Creates a nice gradient effect
+            uint8_t brightness = STATE_0_BRIGHTNESS;
+            if (ledsPerSide > 1) {
+                // Gradient from full brightness at edge to ~40% at innermost lit LED
+                uint8_t fadeAmount = (distanceFromEdge * 100) / ledsPerSide;  // 0-100%
+                brightness = STATE_0_BRIGHTNESS - (fadeAmount * STATE_0_BRIGHTNESS * 60 / 100 / 100);
+            }
+            
+            uint8_t r = (STATE_0_COLOR_R * brightness) / 255;
+            uint8_t g = (STATE_0_COLOR_G * brightness) / 255;
+            uint8_t b = (STATE_0_COLOR_B * brightness) / 255;
+            strip.setPixelColor(i, strip.Color(r, g, b));
+        } else {
+            strip.setPixelColor(i, 0);
+        }
+    }
+    strip.show();
 }
 
 // Helper function to interpolate between two colors
@@ -418,8 +457,103 @@ void updateBrightness() {
 }
 
 void errorState() {
-    pepperAnimation(ERROR_COLOR_R, ERROR_COLOR_G, ERROR_COLOR_B, 
-                    ERROR_PEPPER_DELAY, ERROR_HOLD_TIME);
+    // Futuristic error animation - single Cylon scanner bouncing back and forth
+    // More urgent version of standbyState with faster speed and red color
+    unsigned long currentTime = millis();
+    
+    // Scanner position - bounces back and forth across the strip (faster than standby)
+    static int8_t errorScanDirection = 1;
+    static uint8_t errorScanPosition = 0;
+    
+    // Update scanner position every 30ms for faster, more urgent motion
+    if (currentTime - lastAnimationUpdate >= 30) {
+        lastAnimationUpdate = currentTime;
+        
+        errorScanPosition += errorScanDirection;
+        
+        // Bounce at edges
+        if (errorScanPosition >= LED_COUNT - 1) {
+            errorScanPosition = LED_COUNT - 1;
+            errorScanDirection = -1;
+        } else if (errorScanPosition <= 0) {
+            errorScanPosition = 0;
+            errorScanDirection = 1;
+        }
+    }
+    
+    // Urgent pulsing background (faster 400ms cycle)
+    float pulsePhase = (float)(currentTime % 400) / 400.0;
+    uint8_t baseBrightness = 20 + 30 * sin(pulsePhase * 2.0 * PI);  // 0-50 range
+    
+    // Draw the effect
+    for (int i = 0; i < LED_COUNT; i++) {
+        // Calculate distance from scanner head
+        int distFromScanner = abs(i - errorScanPosition);
+        
+        if (distFromScanner == 0) {
+            // Scanner head - bright white-red flash
+            strip.setPixelColor(i, strip.Color(255, 80, 40));
+        } else if (distFromScanner <= 4) {
+            // Scanner trail/glow - red gradient fading behind (longer trail than standby)
+            uint8_t trailBrightness = 220 - (distFromScanner * 50);
+            strip.setPixelColor(i, strip.Color(trailBrightness, trailBrightness / 8, 0));
+        } else {
+            // Background - pulsing dim red
+            strip.setPixelColor(i, strip.Color(baseBrightness, 0, 0));
+        }
+    }
+    
+    strip.show();
+}
+
+// Futuristic standby/scanner animation for when RPM=0 and Speed=0
+// Creates a "Cylon" scanner effect with breathing background - indicates system waiting for data
+void standbyState() {
+    unsigned long currentTime = millis();
+    
+    // Scanner position - bounces back and forth across the strip
+    static int8_t scanDirection = 1;
+    static uint8_t scanPosition = 0;
+    
+    // Update scanner position every 50ms for smooth motion
+    if (currentTime - lastAnimationUpdate >= 50) {
+        lastAnimationUpdate = currentTime;
+        
+        scanPosition += scanDirection;
+        
+        // Bounce at edges (with slight inset for visual appeal)
+        if (scanPosition >= LED_COUNT - 1) {
+            scanPosition = LED_COUNT - 1;
+            scanDirection = -1;
+        } else if (scanPosition <= 0) {
+            scanPosition = 0;
+            scanDirection = 1;
+        }
+    }
+    
+    // Breathing base brightness (slow pulse 3 second cycle)
+    float breathPhase = (float)(currentTime % 3000) / 3000.0;
+    uint8_t baseBrightness = 15 + 15 * sin(breathPhase * 2.0 * PI);  // 0-30 range (very dim)
+    
+    // Draw the effect
+    for (int i = 0; i < LED_COUNT; i++) {
+        // Calculate distance from scanner head
+        int distFromScanner = abs(i - scanPosition);
+        
+        if (distFromScanner == 0) {
+            // Scanner head - bright white-red
+            strip.setPixelColor(i, strip.Color(255, 60, 30));
+        } else if (distFromScanner <= 3) {
+            // Scanner trail/glow - red gradient fading behind
+            uint8_t trailBrightness = 180 - (distFromScanner * 55);
+            strip.setPixelColor(i, strip.Color(trailBrightness, trailBrightness / 6, 0));
+        } else {
+            // Background breathing glow - very dim red
+            strip.setPixelColor(i, strip.Color(baseBrightness, 0, 0));
+        }
+    }
+    
+    strip.show();
 }
 
 void rainbowErrorState() {
@@ -498,9 +632,16 @@ void updateLEDDisplay() {
         return;
     }
     
-    // Idle State: Speed=0 AND RPM below 2000
-    // White pepper animation when sitting still
-    idleNeutralState();
+    // Standby State: RPM=0 AND Speed=0
+    // Scanner/Cylon effect indicates waiting for CAN data or engine off
+    if (currentRPM == 0) {
+        standbyState();
+        return;
+    }
+    
+    // Idle State: Speed=0 AND RPM 1-1999 (engine running but stationary)
+    // White progressive inward bar - more LEDs as RPM increases
+    idleNeutralState(currentRPM);
 }
 
 // ============================================================================
