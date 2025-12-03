@@ -53,13 +53,13 @@
 // ============================================================================
 
 // ============================================================================
-// State 0: Idle/Neutral (Vehicle Not Moving, Engine Idling)
-// Speed=0 AND RPM 0-800 triggers white pepper animation
+// State 0: Idle/Neutral (Vehicle Not Moving, RPM 0-2000)
+// Progressive white inward bar - more LEDs as RPM increases
+// Always shows at least 1 LED per side even at RPM=0
 // ============================================================================
 #define STATE_0_SPEED_THRESHOLD 1        // Speed <= 1 km/h triggers this state
-#define STATE_0_RPM_MAX         800      // Max RPM for idle state (normal idle ~750-800)
 
-// Animation parameters for inward pepper effect
+// Animation parameters (kept for backward compatibility)
 #define STATE_0_PEPPER_DELAY    80       // Milliseconds between each LED lighting
 #define STATE_0_HOLD_TIME       300      // Milliseconds to hold full pattern before repeating
 

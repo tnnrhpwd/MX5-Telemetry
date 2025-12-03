@@ -300,6 +300,9 @@ void loop() {
     // Only update if CAN was successfully initialized
     // ========================================================================
     #if ENABLE_CAN_BUS
+        // Suppress CAN diagnostics during USB LED override (Arduino Actions testing)
+        canBus.setQuietMode(cmdHandler.isUSBLedOverrideActive());
+        
         if (canBus.isInitialized() && currentMillis - lastCANRead >= CAN_READ_INTERVAL) {
             lastCANRead = currentMillis;
             canBus.update();
@@ -323,10 +326,16 @@ void loop() {
     // ========================================================================
     // LED VISUAL FEEDBACK (Send commands to slave Arduino)
     // Always show real RPM from CAN bus when available, regardless of logging state
+    // UNLESS USB is actively sending LED commands (testing mode)
     // ========================================================================
     #if ENABLE_LED_SLAVE
+        // Skip CAN->LED updates if USB is overriding (Arduino Actions testing)
+        if (cmdHandler.isUSBLedOverrideActive()) {
+            // USB is controlling LEDs - skip CAN updates but keep timing alive
+            lastLEDUpdate = currentMillis;
+        }
         // Send RPM updates to slave Arduino at reduced rate
-        if (currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL && Serial.available() == 0) {
+        else if (currentMillis - lastLEDUpdate >= LED_UPDATE_INTERVAL && Serial.available() == 0) {
             lastLEDUpdate = currentMillis;
             
             // Cache values before sending to avoid SPI during bit-bang

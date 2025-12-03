@@ -44,6 +44,7 @@ public:
     bool isInitialized() const { return initialized; }
     uint16_t getErrorCount() const { return errorCount; }
     bool hasRecentData() const { return (millis() - lastDataUpdate) < 2000; }  // Data received within 2 sec
+    void setQuietMode(bool quiet) { quietMode = quiet; }  // Suppress diagnostic printing
     
     // Diagnostic
     bool runLoopbackTest();      // Self-test: sends message to itself
@@ -52,6 +53,7 @@ public:
 private:
     MCP_CAN can;
     bool initialized;
+    bool quietMode;  // When true, suppress diagnostic Serial output
     uint16_t errorCount;
     unsigned long lastDataUpdate;  // Track when data was last received
     

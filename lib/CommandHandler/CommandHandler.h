@@ -59,6 +59,17 @@ private:
     GPSHandler* gpsHandler;
     CANHandler* canHandler;
     bool dataReceived;  // Track if any USB data has been received
+    uint16_t ledSpeed;  // Track last speed for LED commands (simulates CAN state)
+    unsigned long lastUSBLedCommand;  // Timestamp of last USB LED command (for override mode)
+    
+    // USB LED override - when USB is controlling LEDs, suppress CAN->LED updates
+    static const unsigned long USB_LED_OVERRIDE_TIMEOUT = 10000;  // 10 seconds
+    
+public:
+    // Check if USB is currently overriding LED control (recent USB LED command)
+    bool isUSBLedOverrideActive() const {
+        return (millis() - lastUSBLedCommand) < USB_LED_OVERRIDE_TIMEOUT;
+    }
     
     // Command processors
     void processCommand(const char* command);

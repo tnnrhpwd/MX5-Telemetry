@@ -518,13 +518,32 @@ class ArduinoActionsApp:
         scrollbar.config(command=self.file_listbox.yview)
         
         # =================================================================
-        # LED TEST SECTION - RPM slider for LED debugging
+        # LED TEST SECTION - RPM/Speed simulation (mimics real CAN data flow)
         # =================================================================
         led_test_frame = tk.Frame(self.scrollable_frame, bg="#2a2a2a", relief=tk.FLAT, bd=0)
         led_test_frame.pack(pady=4, padx=12, fill=tk.X)
         
-        tk.Label(led_test_frame, text="💡 LED TEST", font=("Segoe UI", 9, "bold"), 
+        tk.Label(led_test_frame, text="🚗 RPM SIMULATOR", font=("Segoe UI", 9, "bold"), 
                 fg="#ff8800", bg="#2a2a2a").pack(side=tk.LEFT, padx=5)
+        
+        # Route indicator (Master→Slave vs Direct to Slave)
+        # Default to "master" to simulate real CAN bus data flow
+        self.route_mode = tk.StringVar(value="master")  # "master" or "slave"
+        
+        route_frame = tk.Frame(led_test_frame, bg="#2a2a2a")
+        route_frame.pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(route_frame, text="Direct→Slave", variable=self.route_mode, value="slave",
+                      bg="#2a2a2a", fg="#ff8800", selectcolor="#1a1a1a",
+                      activebackground="#2a2a2a", activeforeground="#ff8800",
+                      font=("Segoe UI", 7)).pack(side=tk.LEFT)
+        tk.Radiobutton(route_frame, text="Master→Slave", variable=self.route_mode, value="master",
+                      bg="#2a2a2a", fg="#00aaff", selectcolor="#1a1a1a", 
+                      activebackground="#2a2a2a", activeforeground="#00aaff",
+                      font=("Segoe UI", 7)).pack(side=tk.LEFT)
+        
+        # Separator
+        tk.Label(led_test_frame, text="|", fg="#444444", bg="#2a2a2a").pack(side=tk.LEFT, padx=4)
         
         # RPM Slider
         self.rpm_slider_value = tk.IntVar(value=0)
@@ -541,6 +560,22 @@ class ArduinoActionsApp:
                                    highlightthickness=0, bd=0, sliderlength=20,
                                    length=200, showvalue=False, resolution=100)
         self.rpm_slider.pack(side=tk.LEFT, padx=5)
+        
+        # Speed slider (affects LED state - idle vs driving)
+        self.speed_slider_value = tk.IntVar(value=50)  # Default 50 km/h to exit idle
+        self.speed_label = tk.Label(led_test_frame, text="SPD: 50", 
+                                    font=("Segoe UI", 8), fg="#00aaff", bg="#2a2a2a",
+                                    width=8)
+        self.speed_label.pack(side=tk.LEFT, padx=2)
+        
+        self.speed_slider = tk.Scale(led_test_frame, from_=0, to=200, orient=tk.HORIZONTAL,
+                                     variable=self.speed_slider_value,
+                                     command=self.on_speed_slider_change,
+                                     bg="#3a3a3a", fg="#ffffff", font=("Segoe UI", 7),
+                                     troughcolor="#1a1a1a", activebackground="#00aaff",
+                                     highlightthickness=0, bd=0, sliderlength=15,
+                                     length=80, showvalue=False, resolution=10)
+        self.speed_slider.pack(side=tk.LEFT, padx=2)
         
         # Quick RPM preset buttons
         preset_frame = tk.Frame(led_test_frame, bg="#2a2a2a")
@@ -566,16 +601,16 @@ class ArduinoActionsApp:
         # Separator
         tk.Label(led_test_frame, text="|", fg="#444444", bg="#2a2a2a").pack(side=tk.LEFT, padx=4)
         
-        # Special commands
+        # Special commands (using new short format)
         special_tests = [
-            ("CLR", "CLR", "#333333"),
-            ("SPD:60", "SPD:60", "#0066aa"),
-            ("SPD:120", "SPD:120", "#0088cc"),
+            ("CLR", "C", "#333333"),       # Clear command
+            ("ERR", "E", "#aa0000"),        # Error mode
+            ("WAVE", "W", "#6600aa"),       # Rainbow wave
         ]
         
         for label, cmd, color in special_tests:
             btn = tk.Button(led_test_frame, text=label, 
-                           command=lambda c=cmd: self.send_led_test(c),
+                           command=lambda c=cmd: self.send_led_command(c),
                            bg=color, fg="#ffffff", font=("Segoe UI", 8, "bold"),
                            relief=tk.FLAT, bd=0, padx=6, pady=2,
                            cursor="hand2")
@@ -1120,59 +1155,91 @@ class ArduinoActionsApp:
             self.log_master_console("⚠️ Master not connected\n", "error")
     
     def send_led_test(self, led_command):
-        """Send LED test command directly to Slave Arduino via USB."""
-        # Rate limit to prevent buffer overflow on Arduino
-        current_time = time.time()
-        if hasattr(self, '_last_led_test_time'):
-            elapsed = current_time - self._last_led_test_time
-            if elapsed < 0.3:  # Minimum 300ms between LED test commands
-                self.log_slave_console(f"⚠️ Too fast! Wait a moment...\n", "error")
-                return
-        self._last_led_test_time = current_time
+        """Legacy function - redirects to send_led_command."""
+        self.send_led_command(led_command)
+    
+    def send_led_command(self, cmd):
+        """
+        Send LED command to Slave Arduino.
         
-        # Send directly to Slave (not through Master) to avoid firmware size issues
-        if self.slave_arduino.is_connected:
-            # For RPM commands, also send a speed > 1 to avoid idle state
-            # (LED logic shows idle when speed <= 1, regardless of RPM)
-            if led_command.startswith("RPM:"):
-                # Send speed first to exit idle state
-                self.slave_arduino.send_command("SPD:50")
-                self.log_slave_console(f"→ SPD:50 (exit idle)\n", "status")
-                time.sleep(0.2)  # Wait for Slave to process before sending RPM
-            
-            if self.slave_arduino.send_command(led_command):
-                self.log_slave_console(f"→ {led_command}\n", "cmd")
-            else:
-                self.log_slave_console(f"⚠️ Failed to send LED test\n", "error")
+        Uses the same short command format as the Master Arduino:
+        - R<rpm>   : Set RPM (e.g., R3500)
+        - S<speed> : Set speed in km/h (e.g., S60)
+        - C        : Clear LEDs
+        - E        : Error mode
+        - W        : Wave/rainbow mode
+        - B<val>   : Set brightness (e.g., B128)
+        
+        Routes through Master if route_mode is "master", otherwise direct to Slave.
+        """
+        # Rate limit to simulate real update rate (~100ms between updates)
+        current_time = time.time()
+        if hasattr(self, '_last_led_cmd_time'):
+            elapsed = current_time - self._last_led_cmd_time
+            if elapsed < 0.1:  # 100ms minimum between commands (10Hz like real system)
+                return  # Silently skip - this mimics real rate limiting
+        self._last_led_cmd_time = current_time
+        
+        route = self.route_mode.get() if hasattr(self, 'route_mode') else "slave"
+        
+        if route == "master" and self.master_arduino.is_connected:
+            # Route through Master - Master will relay to Slave via 1200 baud serial
+            # This is the most accurate simulation of real operation
+            # Master accepts: LED:<cmd> format for LED control
+            self.master_arduino.send_command(f"LED:{cmd}")
+            self.log_master_console(f"→ LED:{cmd} (relaying to Slave)\n", "cmd")
+        elif self.slave_arduino.is_connected:
+            # Direct to Slave via USB (faster, good for testing)
+            # Slave accepts same short commands as from Master
+            self.slave_arduino.send_command(cmd)
+            self.log_slave_console(f"→ {cmd}\n", "cmd")
         else:
-            self.log_slave_console("⚠️ Slave not connected\n", "error")
+            self.log_slave_console("⚠️ No Arduino connected\n", "error")
     
     def on_rpm_slider_change(self, value):
-        """Handle RPM slider value change."""
+        """Handle RPM slider value change - simulates CAN bus RPM data."""
         rpm = int(float(value))
         
-        # Update label with color based on RPM
-        if rpm < 1000:
-            color = "#888888"  # Gray for idle
-        elif rpm < 3000:
-            color = "#00ff00"  # Green
-        elif rpm < 5000:
-            color = "#88ff00"  # Yellow-green
-        elif rpm < 6000:
-            color = "#ffff00"  # Yellow
+        # Update label with color based on RPM zone (matches LED state colors)
+        if rpm == 0:
+            color = "#666666"  # Gray for off
+            zone = "OFF"
+        elif rpm < 2000:
+            color = "#ff8800"  # Orange for stall danger
+            zone = "STALL"
+        elif rpm < 2500:
+            color = "#0066ff"  # Blue for MPG zone
+            zone = "MPG"
+        elif rpm < 4000:
+            color = "#00ff00"  # Green for thermal efficiency
+            zone = "POWER"
+        elif rpm < 4500:
+            color = "#ffff00"  # Yellow for approaching high RPM
+            zone = "HIGH"
         elif rpm < 6500:
-            color = "#ff8800"  # Orange
-        elif rpm < 7000:
-            color = "#ff4400"  # Red-orange
-        elif rpm < 7500:
-            color = "#ff0000"  # Red
+            color = "#ff8800"  # Orange for shift zone
+            zone = "SHIFT"
+        elif rpm < 7200:
+            color = "#ff0000"  # Red for near redline
+            zone = "DANGER"
         else:
             color = "#ff00ff"  # Magenta for redline
+            zone = "REDLINE"
         
-        self.rpm_label.config(text=f"RPM: {rpm}", fg=color)
+        self.rpm_label.config(text=f"RPM:{rpm}", fg=color)
         
-        # Send the RPM command to the Slave
-        self.send_led_test(f"RPM:{rpm}")
+        # Send RPM using short format (same as Master sends to Slave)
+        self.send_led_command(f"R{rpm}")
+    
+    def on_speed_slider_change(self, value):
+        """Handle speed slider value change - affects idle vs driving state."""
+        speed = int(float(value))
+        
+        # Update speed label
+        self.speed_label.config(text=f"SPD:{speed}")
+        
+        # Send speed using short format
+        self.send_led_command(f"S{speed}")
     
     def set_rpm_slider(self, rpm):
         """Set the RPM slider to a specific value."""

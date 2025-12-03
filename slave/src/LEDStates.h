@@ -52,12 +52,13 @@
 // ============================================================================
 
 // ============================================================================
-// State 0: Idle/Neutral (Vehicle Not Moving)
+// State 0: Idle/Neutral (Vehicle Not Moving, RPM 0-2000)
+// Progressive white inward bar - more LEDs as RPM increases
+// Always shows at least 1 LED per side even at RPM=0
 // ============================================================================
 #define STATE_0_SPEED_THRESHOLD 1        // Speed <= 1 km/h triggers this state
-#define STATE_0_RPM_MAX         800      // Max RPM for idle state (normal idle ~750-800)
 
-// Animation parameters for inward pepper effect
+// Animation parameters (kept for backward compatibility)
 #define STATE_0_PEPPER_DELAY    80       // Milliseconds between each LED lighting
 #define STATE_0_HOLD_TIME       300      // Milliseconds to hold full pattern before repeating
 
@@ -65,6 +66,7 @@
 #define STATE_0_COLOR_R         255
 #define STATE_0_COLOR_G         255
 #define STATE_0_COLOR_B         255
+#define STATE_0_BRIGHTNESS      180      // Brightness for idle state white LEDs
 
 // ============================================================================
 // Normal Driving Zone: Blue-Green-Yellow Gradient Bar (2000-4500 RPM)
