@@ -61,14 +61,30 @@ private:
     bool dataReceived;  // Track if any USB data has been received
     uint16_t ledSpeed;  // Track last speed for LED commands (simulates CAN state)
     unsigned long lastUSBLedCommand;  // Timestamp of last USB LED command (for override mode)
+    unsigned long lastUSBActivity;    // Timestamp of last USB command (any type)
+    bool debugMode;                   // Only enable verbose serial when USB recently active
     
     // USB LED override - when USB is controlling LEDs, suppress CAN->LED updates
     static const unsigned long USB_LED_OVERRIDE_TIMEOUT = 10000;  // 10 seconds
+    static const unsigned long DEBUG_MODE_TIMEOUT = 15000;        // 15 seconds - silence debug output
     
 public:
     // Check if USB is currently overriding LED control (recent USB LED command)
     bool isUSBLedOverrideActive() const {
         return (millis() - lastUSBLedCommand) < USB_LED_OVERRIDE_TIMEOUT;
+    }
+    
+    // Check if debug mode is active (USB command received recently)
+    bool isDebugModeActive() const {
+        return debugMode && (millis() - lastUSBActivity) < DEBUG_MODE_TIMEOUT;
+    }
+    
+    // Update debug mode state (call from main loop)
+    void updateDebugMode() {
+        if (debugMode && (millis() - lastUSBActivity) > DEBUG_MODE_TIMEOUT) {
+            Serial.println(F("Debug mode disabled (USB timeout)"));
+            debugMode = false;
+        }
     }
     
     // Command processors

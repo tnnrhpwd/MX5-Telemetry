@@ -84,11 +84,11 @@ uint8_t currentBrightness = 255;     // Current brightness from potentiometer
 unsigned long lastBrightnessRead = 0; // Debounce brightness reads
 unsigned long lastCommandTime = 0;          // Track when last command was received
 unsigned long lastUSBActivity = 0;          // Track when last USB command was received
-bool debugMode = false;                     // Only enable verbose serial when USB recently active
+bool debugMode = false;                     // Only enable verbose serial when USB recently active (starts OFF)
 #define MASTER_TIMEOUT_MS 5000              // Enter error mode if no command for 5 seconds
 #define USB_TEST_TIMEOUT_MS 30000           // Extended timeout in USB test mode (30 seconds)
 #define INITIAL_WAIT_MS 3000                // Wait for master after startup before showing error
-#define DEBUG_MODE_TIMEOUT_MS 10000         // Disable debug output 10 seconds after last USB command
+#define DEBUG_MODE_TIMEOUT_MS 15000         // Disable debug output 15 seconds after last USB command
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -102,6 +102,7 @@ float readVcc();
 // HELPER FUNCTIONS
 // ============================================================================
 
+/* COMMENTED OUT - Not used in new LED logic v3.0
 void pepperAnimation(uint8_t r, uint8_t g, uint8_t b, uint16_t delay, uint16_t holdTime) {
     unsigned long currentTime = millis();
     
@@ -142,6 +143,7 @@ void pepperAnimation(uint8_t r, uint8_t g, uint8_t b, uint16_t delay, uint16_t h
     
     strip.show();
 }
+*/
 
 void solidFill(uint8_t r, uint8_t g, uint8_t b) {
     for (int i = 0; i < LED_COUNT; i++) {
@@ -150,6 +152,7 @@ void solidFill(uint8_t r, uint8_t g, uint8_t b) {
     strip.show();
 }
 
+/* COMMENTED OUT - Not used in new LED logic v3.0
 void drawMirroredBar(uint8_t ledsPerSide, uint8_t r, uint8_t g, uint8_t b) {
     for (int i = 0; i < LED_COUNT; i++) {
         if (i < ledsPerSide || i >= (LED_COUNT - ledsPerSide)) {
@@ -171,11 +174,13 @@ uint8_t getPulseBrightness(uint16_t period, uint8_t minBright, uint8_t maxBright
 uint8_t scaleColor(uint8_t color, uint8_t brightness) {
     return (uint16_t)color * brightness / 255;
 }
+*/
 
 // ============================================================================
 // LED STATE FUNCTIONS
 // ============================================================================
 
+/* COMMENTED OUT - Not used in new LED logic v3.0
 void idleNeutralState(uint16_t rpm) {
     // Progressive white inward bar based on RPM (0-2000)
     // Always shows at least 1 LED per side (even at RPM=0)
@@ -382,6 +387,7 @@ void revLimitState() {
     }
     #endif
 }
+*/
 
 // Read Arduino Vcc (5V rail voltage) using internal 1.1V reference
 // Returns voltage in volts (e.g., 4.85)
@@ -506,6 +512,7 @@ void errorState() {
     strip.show();
 }
 
+/* COMMENTED OUT - Not used in new LED logic v3.0
 // Futuristic standby/scanner animation for when RPM=0 and Speed=0
 // Creates a "Cylon" scanner effect with breathing background - indicates system waiting for data
 void standbyState() {
@@ -555,6 +562,7 @@ void standbyState() {
     
     strip.show();
 }
+*/
 
 void rainbowErrorState() {
     unsigned long currentTime = millis();
@@ -828,16 +836,24 @@ void setup() {
     // Initialize hardware Serial for debug output (won't interfere with SoftwareSerial)
     Serial.begin(115200);
     
-    // Send identification immediately
+    // Debug mode starts OFF - only enabled when USB command is received
+    // This prevents startup log spam when running standalone
+    debugMode = false;
+    lastUSBActivity = 0;
+    
+    // Send identification immediately (always print this regardless of debug mode)
     Serial.println("LED Slave v2.2 (Haptic+Diag)");
     Serial.print("RX Pin: D");
     Serial.println(SERIAL_RX_PIN);
     
     // Quick diagnostic: read pin state before SoftwareSerial takes over
+    // Only print if debug mode is on (which it won't be at startup anymore)
     pinMode(SERIAL_RX_PIN, INPUT_PULLUP);
     int pinState = digitalRead(SERIAL_RX_PIN);
-    Serial.print("D2 initial state (should be HIGH): ");
-    Serial.println(pinState == HIGH ? "HIGH (OK)" : "LOW (Check wiring!)");
+    if (debugMode) {
+        Serial.print("D2 initial state (should be HIGH): ");
+        Serial.println(pinState == HIGH ? "HIGH (OK)" : "LOW (Check wiring!)");
+    }
     
     // Check supply voltage before enabling haptic
     float vcc = readVcc();
@@ -868,7 +884,7 @@ void setup() {
     }
     
     // Futuristic rainbow startup sequence - wave towards center with haptic sync
-    Serial.println("Starting rainbow startup sequence...");
+    if (debugMode) Serial.println("Starting rainbow startup sequence...");
     
     // Rainbow wave converging to center from both edges with synchronized haptic revs
     // Each rainbow cycle = ~1.92 seconds (256 phases × 15ms), 3 cycles = ~5.76 seconds total
@@ -886,9 +902,11 @@ void setup() {
             if (hapticEnabled && (phase % 10 == 0)) {
                 float currentVcc = readVcc();
                 if (currentVcc < MIN_VOLTAGE_FOR_HAPTIC) {
-                    Serial.print("Voltage dropped to ");
-                    Serial.print(currentVcc, 2);
-                    Serial.println("V - disabling haptic");
+                    if (debugMode) {
+                        Serial.print("Voltage dropped to ");
+                        Serial.print(currentVcc, 2);
+                        Serial.println("V - disabling haptic");
+                    }
                     analogWrite(HAPTIC_PIN, 0);
                     hapticEnabled = false;
                 }
@@ -1001,7 +1019,7 @@ void setup() {
     }
     #endif
     
-    Serial.println("Waiting for master connection...");
+    if (debugMode) Serial.println("Waiting for master connection...");
 }
 
 // ============================================================================
@@ -1046,8 +1064,8 @@ void loop() {
     
     // Auto-disable debug mode after timeout (saves CPU when running standalone)
     if (debugMode && (currentTime - lastUSBActivity) > DEBUG_MODE_TIMEOUT_MS) {
-        debugMode = false;
         Serial.println("Debug mode disabled (USB timeout)");
+        debugMode = false;
     }
     
     // =======================================================================
