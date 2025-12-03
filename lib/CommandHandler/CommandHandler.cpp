@@ -10,7 +10,7 @@
 // ============================================================================
 
 CommandHandler::CommandHandler()
-    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr), canHandler(nullptr), dataReceived(false), ledSpeed(50), lastUSBLedCommand(0) {
+    : currentState(STATE_IDLE), bufferIndex(0), dataLogger(nullptr), gpsHandler(nullptr), canHandler(nullptr), dataReceived(false), ledSpeed(50), lastUSBLedCommand(0), lastUSBActivity(0), debugMode(false) {
     inputBuffer[0] = '\0';
 }
 
@@ -19,6 +19,8 @@ void CommandHandler::begin() {
     bufferIndex = 0;
     inputBuffer[0] = '\0';
     dataReceived = false;
+    debugMode = false;  // Start with debug output disabled
+    lastUSBActivity = 0;
 }
 
 void CommandHandler::update() {
@@ -32,6 +34,13 @@ void CommandHandler::update() {
     while (Serial.available() > 0 && charsRead < 64) {  // Limit chars per update
         // Mark that we've received USB data (prevents auto-start)
         dataReceived = true;
+        
+        // Enable debug mode and track USB activity time
+        lastUSBActivity = millis();
+        if (!debugMode) {
+            debugMode = true;
+            Serial.println(F("Debug mode enabled"));
+        }
         
         char c = Serial.read();
         charsRead++;

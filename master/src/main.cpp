@@ -234,6 +234,9 @@ void loop() {
     // ========================================================================
     cmdHandler.update();
     
+    // Update debug mode state (auto-disable after 15s of no USB activity)
+    cmdHandler.updateDebugMode();
+    
     // Call again to catch any data that arrived during first call
     if (Serial.available() > 0) {
         cmdHandler.update();
@@ -353,13 +356,16 @@ void loop() {
             #endif
             
             // Periodic diagnostic: log RPM/Speed every ~5 seconds (20 LED updates at 250ms each)
+            // Only print when debug mode is active (USB recently used)
             static uint8_t diagCounter = 0;
             if (++diagCounter >= 20) {
                 diagCounter = 0;
-                Serial.print(F("CAN->LED: RPM="));
-                Serial.print(rpm);
-                Serial.print(F(" SPD="));
-                Serial.println(speed);
+                if (cmdHandler.isDebugModeActive()) {
+                    Serial.print(F("CAN->LED: RPM="));
+                    Serial.print(rpm);
+                    Serial.print(F(" SPD="));
+                    Serial.println(speed);
+                }
             }
             
             // Now send to LED slave (no other operations during this)
