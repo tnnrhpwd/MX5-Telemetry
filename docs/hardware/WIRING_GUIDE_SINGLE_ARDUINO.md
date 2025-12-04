@@ -86,47 +86,56 @@ This guide covers the **single Arduino setup** - the simplest and most responsiv
 |-------------|-------------|------------|-------------|
 | VCC | 5V | Red | Power supply |
 | GND | GND | Black | Ground |
-| CS | D10 | Orange | SPI Chip Select |
+| CS | D10 | Yellow | SPI Chip Select |
 | SO (MISO) | D12 | Blue | SPI Data Out |
 | SI (MOSI) | D11 | Green | SPI Data In |
-| SCK | D13 | Yellow | SPI Clock |
-| **INT** | **D2** | **White** | **Interrupt (REQUIRED!)** |
+| SCK | D13 | White | SPI Clock |
+| **INT** | **D2** | **Yellow/White** | **Interrupt (REQUIRED!)** |
+
+> 💡 **Tip**: Use striped tape or heat shrink to differentiate wires of the same color (e.g., mark the INT wire with tape to distinguish from CS).
 
 ⚠️ **CRITICAL**: The INT pin MUST be connected to D2 for hardware interrupt support!
 
 ### WS2812B LED Strip → Arduino
 
-| LED Pin | Connection | Notes |
-|---------|------------|-------|
-| 5V | Buck Converter OUT+ | Direct to buck converter for high current |
-| GND | Common Ground | Shared with Arduino |
-| DIN | Arduino D5 | Data signal |
+| LED Pin | Connection | Wire Color | Notes |
+|---------|------------|------------|-------|
+| 5V | Buck Converter OUT+ | Red | Direct to buck converter for high current |
+| GND | Common Ground | Black | Shared with Arduino |
+| DIN | Arduino D5 | Green | Data signal |
 
 ### OBD-II Port Connections
+
+| OBD-II Pin | Connection | Wire Color | Description |
+|------------|------------|------------|-------------|
+| Pin 6 | MCP2515 CANH | Blue | CAN High signal |
+| Pin 14 | MCP2515 CANL | White | CAN Low signal |
+| Pin 5 | Common Ground | Black | Ground reference |
+| Pin 16 | Buck Converter IN+ | Red | 12V power supply |
 
 ```
        OBD-II Female Connector (looking at pins)
    ┌─────────────────────┐
-   │  8  7  6  5  4  3  2  1 │  Pin 6:  CAN-H → MCP2515 CANH
-   │    16 15 14 13 12 11 10 9│  Pin 14: CAN-L → MCP2515 CANL
-   └─────────────────────┘     Pin 5:  GND   → Common Ground
-                               Pin 16: 12V   → Buck Converter IN+
+   │  8  7  6  5  4  3  2  1 │  Pin 6:  CAN-H (Blue)  → MCP2515 CANH
+   │    16 15 14 13 12 11 10 9│  Pin 14: CAN-L (White) → MCP2515 CANL
+   └─────────────────────┘     Pin 5:  GND (Black)    → Common Ground
+                               Pin 16: 12V (Red)      → Buck Converter IN+
 ```
 
 ### Optional: Brightness Potentiometer
 
-| Pot Pin | Connection |
-|---------|------------|
-| Left | GND |
-| Middle (Wiper) | Arduino A6 |
-| Right | 5V |
+| Pot Pin | Connection | Wire Color |
+|---------|------------|------------|
+| Left | GND | Black |
+| Middle (Wiper) | Arduino A6 | Yellow |
+| Right | 5V | Red |
 
 ### Optional: Haptic Motor
 
-| Motor | Connection |
-|-------|------------|
-| + | Arduino D3 (PWM) |
-| - | GND |
+| Motor | Connection | Wire Color |
+|-------|------------|------------|
+| + | Arduino D3 (PWM) | Blue |
+| - | GND | Black |
 
 ## ⚡ Power System
 
@@ -140,13 +149,13 @@ This guide covers the **single Arduino setup** - the simplest and most responsiv
 
 2. **Power distribution:**
    ```
-   Buck 5V OUT+ ──┬── Arduino 5V
-                  ├── MCP2515 VCC
-                  └── WS2812B 5V (high current)
+   Buck 5V OUT+ ──┬── Arduino 5V      (Red)
+                  ├── MCP2515 VCC     (Red)
+                  └── WS2812B 5V      (Red)
    
-   Buck GND OUT- ──┬── Arduino GND
-                   ├── MCP2515 GND
-                   └── WS2812B GND
+   Buck GND OUT- ──┬── Arduino GND    (Black)
+                   ├── MCP2515 GND    (Black)
+                   └── WS2812B GND    (Black)
    ```
 
 ## 🔧 Assembly Steps
@@ -157,25 +166,29 @@ This guide covers the **single Arduino setup** - the simplest and most responsiv
 3. **Adjust output to 5.0V before connecting Arduino!**
 
 ### Step 2: Wire MCP2515 Module
-1. Connect SPI pins (D10, D11, D12, D13)
-2. **Connect INT to D2** (hardware interrupt)
-3. Connect VCC to 5V rail
-4. Connect GND to ground rail
+1. Connect SPI pins:
+   - CS → D10 (Yellow)
+   - MOSI → D11 (Green)
+   - MISO → D12 (Blue)
+   - SCK → D13 (White)
+2. **Connect INT to D2** (Yellow - mark with tape to distinguish from CS)
+3. Connect VCC to 5V rail (Red)
+4. Connect GND to ground rail (Black)
 
 ### Step 3: Wire LED Strip
-1. Connect 5V directly to buck converter (not through Arduino)
-2. Connect GND to ground rail
-3. Connect DIN to Arduino D5
+1. Connect 5V directly to buck converter (Red - not through Arduino)
+2. Connect GND to ground rail (Black)
+3. Connect DIN to Arduino D5 (Green)
 
 ### Step 4: Connect to OBD-II
-1. Connect CAN-H (pin 6) to MCP2515 CANH
-2. Connect CAN-L (pin 14) to MCP2515 CANL
-3. Connect 12V (pin 16) through fuse to buck converter
-4. Connect GND (pin 5) to ground rail
+1. Connect CAN-H (pin 6) to MCP2515 CANH (Blue)
+2. Connect CAN-L (pin 14) to MCP2515 CANL (White)
+3. Connect 12V (pin 16) through fuse to buck converter (Red)
+4. Connect GND (pin 5) to ground rail (Black)
 
 ### Step 5: Optional Components
-- Wire brightness pot to A6
-- Wire haptic motor to D3
+- Wire brightness pot to A6 (Yellow signal, Red/Black for power)
+- Wire haptic motor to D3 (Blue signal, Black ground)
 
 ## 🧪 Testing
 

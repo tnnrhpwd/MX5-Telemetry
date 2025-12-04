@@ -336,35 +336,52 @@ inline void updateBrightness() {
 // ============================================================================
 
 void startupAnimation() {
+    // Ensure full brightness for startup (ignore pot during animation)
+    strip.setBrightness(255);
+    
+    // Quick green flash to show LEDs are working
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        strip.setPixelColor(i, strip.Color(0, 255, 0));
+    }
+    strip.show();
+    delay(200);
+    
     // Rainbow wave from edges to center
-    for (uint8_t cycle = 0; cycle < 3; cycle++) {
-        for (uint16_t phase = 0; phase < 256; phase += 4) {
-            #if ENABLE_BRIGHTNESS
-            int potValue = 1023 - analogRead(BRIGHTNESS_POT_PIN);
-            strip.setBrightness(potValue >> 2);
-            #endif
-            
+    for (uint8_t cycle = 0; cycle < 2; cycle++) {
+        for (uint16_t phase = 0; phase < 256; phase += 8) {
             for (uint8_t i = 0; i < LED_COUNT; i++) {
                 int distFromCenter = abs((int)i - (LED_COUNT / 2));
                 uint16_t hue = ((uint32_t)distFromCenter * 65536L / (LED_COUNT / 2) + phase * 256) & 0xFFFF;
                 strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(hue, 255, 255)));
             }
             strip.show();
-            delay(10);
+            delay(15);
         }
     }
     
-    // Fade out
-    for (int brightness = 255; brightness >= 0; brightness -= 8) {
-        strip.setBrightness(brightness);
+    // Fade to blue idle state (shows it's ready)
+    for (int step = 0; step < 20; step++) {
+        for (uint8_t i = 0; i < LED_COUNT; i++) {
+            if (i == 0 || i == LED_COUNT - 1) {
+                // Edge LEDs fade to blue
+                uint8_t blue = (step * 255) / 20;
+                strip.setPixelColor(i, strip.Color(0, 0, blue));
+            } else {
+                // Middle LEDs fade out
+                uint8_t brightness = 255 - (step * 255 / 20);
+                strip.setPixelColor(i, strip.Color(brightness/4, brightness/4, brightness/4));
+            }
+        }
         strip.show();
-        delay(8);
+        delay(30);
     }
     
-    // Reset
-    strip.setBrightness(255);
+    // End with blue edge LEDs (idle state)
     strip.clear();
+    strip.setPixelColor(0, strip.Color(0, 0, 255));
+    strip.setPixelColor(LED_COUNT - 1, strip.Color(0, 0, 255));
     strip.show();
+    delay(500);
 }
 
 // ============================================================================
