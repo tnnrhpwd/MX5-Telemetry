@@ -121,6 +121,11 @@ uint8_t errorScanPosition = 0;
 int8_t errorScanDirection = 1;
 unsigned long lastErrorAnimation = 0;
 
+// Error display debounce - only show error after continuous timeout
+bool displayErrorMode = false;  // Actually show error animation
+unsigned long errorStartTime = 0;  // When error condition started
+#define ERROR_DEBOUNCE_MS 3000  // 3 seconds before showing error animation
+
 // ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
@@ -181,13 +186,18 @@ inline void readCANMessages() {
     // Read all available messages
     while (canBus.checkReceive() == CAN_MSGAVAIL) {
         if (canBus.readMsgBuf(&rxId, &len, rxBuf) == CAN_OK) {
+            // Any valid CAN message received - reset timeout and clear ALL error flags
+            lastCANData = millis();
+            errorMode = false;
+            displayErrorMode = false;  // Immediately stop error animation
+            
             // Parse Mazda RPM message (ID 0x201)
             // Format: bytes 0-1 = RPM * 4 (big endian)
-            if (rxId == MAZDA_RPM_CAN_ID && len >= 2) {
+            // Mask out extended ID flag (bit 31) for comparison
+            unsigned long canId = rxId & 0x7FFFFFFF;
+            if (canId == MAZDA_RPM_CAN_ID && len >= 2) {
                 uint16_t rawRPM = ((uint16_t)rxBuf[0] << 8) | rxBuf[1];
                 currentRPM = rawRPM >> 2;  // Divide by 4 using bit shift
-                lastCANData = millis();
-                errorMode = false;
             }
         }
     }
@@ -220,7 +230,7 @@ inline void getRPMColor(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
 
 // Main LED update - inline for maximum speed
 inline void updateLEDs() {
-    if (errorMode) {
+    if (displayErrorMode) {
         updateErrorAnimation();
         return;
     }
@@ -447,13 +457,23 @@ void loop() {
     }
     
     // ========================================================================
-    // TIMEOUT CHECK - Enter error mode if no CAN data
+    // TIMEOUT CHECK - Enter error mode if no CAN data (with debounce)
     // ========================================================================
-    if (!errorMode && canInitialized && (nowMs - lastCANData > TIMEOUT_MS)) {
-        errorMode = true;
-        #if ENABLE_SERIAL_DEBUG
-        Serial.println(F("CAN timeout!"));
-        #endif
+    if (canInitialized && (nowMs - lastCANData > TIMEOUT_MS)) {
+        if (!errorMode) {
+            errorMode = true;
+            errorStartTime = nowMs;  // Start debounce timer
+        }
+        // Only show error animation after debounce period (3 seconds)
+        if (!displayErrorMode && (nowMs - errorStartTime >= ERROR_DEBOUNCE_MS)) {
+            displayErrorMode = true;
+            #if ENABLE_SERIAL_DEBUG
+            Serial.println(F("Error display ON"));
+            #endif
+        }
+    } else {
+        errorMode = false;
+        displayErrorMode = false;
     }
     
     // ========================================================================
