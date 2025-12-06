@@ -2,12 +2,14 @@
 
 This guide is for users who have **two ESP32-S3 round display modules** and want to:
 1. **Clone** the firmware from an existing working device (Module A)
-2. **Flash** it to a new device (Module B)
-3. Optionally **redevelop** the source code for customization
+2. **Redevelop** the source code to understand and customize the firmware
+3. **Flash** the rebuilt firmware to a new device (Module B)
+
+> **Note**: If you're cloning a device, you likely don't have the original source code. This workflow helps you extract the firmware, reverse engineer it, and rebuild equivalent source code that you can then modify and maintain.
 
 ---
 
-## 🎯 Workflow: Clone → (Redevelop) → Flash
+## 🎯 Workflow: Clone → Redevelop → Flash
 
 ### Step 1: Backup Firmware from Module A (Source)
 
@@ -26,22 +28,11 @@ This creates a complete backup in `display/firmware_backup/<timestamp>/` contain
 - `device_info.txt` - Chip ID and MAC address
 - `flash_info.txt` - Flash manufacturer info
 
-### Step 2: Flash Firmware to Module B (Target)
+### Step 2: Reverse Engineer & Redevelop the Source Code
 
-Disconnect Module A and connect **Module B** (your new/blank device):
+Since you're working with a binary backup and likely don't have the original source code, you'll need to reverse engineer the firmware to understand how it works, then rebuild equivalent source code that you can modify and maintain.
 
-```powershell
-# Flash the backed-up firmware to Module B
-.\scripts\flash_firmware.ps1
-```
-
-Select the backup you just created when prompted. That's it - Module B now has the same firmware as Module A!
-
-### Step 3: Reverse Engineer & Redevelop the Source Code
-
-If you want to **modify** the firmware (not just clone it), you'll need to reconstruct the source code from the binary. This is a complex process, but here's a practical approach:
-
-#### 3.1 Analyze the Binary Structure
+#### 2.1 Analyze the Binary Structure
 
 First, examine what's in the firmware:
 
@@ -54,7 +45,7 @@ python -m gen_esp32part partition_table.bin
 partitiontool.py partition_table.bin
 ```
 
-#### 3.2 Extract and Identify Components
+#### 2.2 Extract and Identify Components
 
 ```powershell
 # The application binary starts at 0x10000
@@ -68,7 +59,7 @@ Look for clues in the strings dump:
 - WiFi SSIDs, URLs, or configuration values
 - Version strings
 
-#### 3.3 Identify the Display Driver & Libraries
+#### 2.3 Identify the Display Driver & Libraries
 
 Common ESP32-S3 round display libraries leave signatures:
 
@@ -80,7 +71,7 @@ Common ESP32-S3 round display libraries leave signatures:
 | Arduino_GFX | `Arduino_GFX`, `GFX_` |
 | Adafruit_GFX | `Adafruit_GFX` |
 
-#### 3.4 Use Ghidra or IDA for Deeper Analysis
+#### 2.4 Use Ghidra or IDA for Deeper Analysis
 
 For serious reverse engineering:
 
@@ -97,7 +88,7 @@ For serious reverse engineering:
    - Identify library calls by their patterns
    - Map out the display initialization sequence
 
-#### 3.5 Reconstruct the Source Code
+#### 2.5 Reconstruct the Source Code
 
 Based on your analysis, rebuild `display/src/main.cpp`:
 
@@ -112,7 +103,7 @@ Based on your analysis, rebuild `display/src/main.cpp`:
 // 4. Match any communication protocols (WiFi, BLE, Serial)
 ```
 
-#### 3.6 Iterative Comparison
+#### 2.6 Iterative Comparison
 
 After each change, compare your build to the original:
 
@@ -129,7 +120,7 @@ The comparison tool will show which memory regions differ. Focus on:
 - **NVS differences** = Configuration/calibration data (expected to differ)
 - **SPIFFS/LittleFS differences** = Asset files (fonts, images)
 
-#### 3.7 Extract Assets (Fonts, Images)
+#### 2.7 Extract Assets (Fonts, Images)
 
 If the firmware includes custom assets:
 
@@ -141,7 +132,7 @@ python -m esptool --port COM5 read_flash 0x610000 0x1F0000 spiffs.bin
 mkspiffs -u extracted_files -b 4096 -p 256 -s 0x1F0000 spiffs.bin
 ```
 
-#### 3.8 Match Compiler Settings
+#### 2.8 Match Compiler Settings
 
 For near-identical binaries, match the build configuration:
 
@@ -155,7 +146,7 @@ build_flags =
 
 Different optimization levels produce very different binaries even from identical source.
 
-#### 3.9 Document What You Learn
+#### 2.9 Document What You Learn
 
 Create a file `display/docs/REVERSE_ENGINEERING_NOTES.md` to track:
 - Identified functions and their addresses
@@ -164,24 +155,26 @@ Create a file `display/docs/REVERSE_ENGINEERING_NOTES.md` to track:
 - UI element descriptions
 - Communication protocols found
 
-### Step 4: Upload Modified Source Code to Module B
+### Step 3: Flash the Rebuilt Firmware to Module B
 
-Once you've reconstructed or modified the source code, build and flash it:
+Once you've reconstructed and customized the source code, build and flash it to your target device:
 
 ```powershell
+# Connect Module B (your target device)
+
 # Build the project
 pio run -d display
 
-# Connect Module B (target device) and upload
+# Upload to Module B
 pio run -d display --target upload
 
 # Monitor serial output to verify it works
 pio device monitor -b 115200
 ```
 
-#### Compare Your Build to the Original
+#### Verify Your Build Against the Original
 
-To verify your source code produces similar results:
+To confirm your source code produces equivalent functionality:
 
 ```powershell
 # Backup the firmware you just uploaded
