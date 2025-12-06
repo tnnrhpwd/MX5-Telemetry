@@ -125,3 +125,9 @@ docs/.doctrees/
 *.bak
 *.backup
 *~
+
+# ============================================================================
+# ESP32-S3 Display Module
+# ============================================================================
+# Firmware backups (can be large, keep local only)
+display/firmware_backup/

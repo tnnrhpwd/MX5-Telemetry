@@ -1,0 +1,16 @@
+# Display module local files
+
+# Firmware backups (can be large)
+firmware_backup/
+
+# PlatformIO build files
+.pio/
+
+# IDE files
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.log
