@@ -14,15 +14,16 @@ Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Ro
 
 ## Hardware Components
 
-| Component | Purpose | Status |
-|-----------|---------|--------|
-| Raspberry Pi 4B | HDMI output to Pioneer AVH-W4500NEX | ✅ Have |
-| ESP32-S3 Round Display | 1.85" gauge display | 🔲 Need |
-| Arduino Nano | RPM LED strip controller | ✅ Have |
-| MCP2515 Module x2 | CAN bus readers (HS + MS) | 🔲 Need |
-| Pioneer AVH-W4500NEX | Head unit with HDMI input | ✅ Have |
-| WS2812B LED Strip | RPM shift light (20 LEDs) | ✅ Have |
-| OBD-II Breakout | Access CAN bus pins | 🔲 Need |
+| Component | Purpose | Docs |
+|-----------|---------|------|
+| Raspberry Pi 4B | HDMI output to Pioneer AVH-W4500NEX | - |
+| ESP32-S3 Round Display | 1.85" gauge display (new CAN hub) | - |
+| Arduino Nano | RPM LED strip controller | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| MCP2515 Module x2 | CAN bus readers (HS + MS) for ESP32-S3 | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| Pioneer AVH-W4500NEX | Head unit with HDMI input | - |
+| WS2812B LED Strip | RPM shift light (20 LEDs) | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| OBD-II Breakout | Access CAN bus pins | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| LM2596 Buck Converter | 12V → 5V power | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
 
 ---
 
@@ -214,6 +215,158 @@ HS-CAN (500kbps)                    MS-CAN (125kbps)
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Existing Arduino LED RPM System
+
+> ⚠️ **This system already exists and is working!** See `docs/hardware/WIRING_GUIDE.md` for detailed setup instructions.
+
+The Arduino Nano RPM LED controller is already implemented in this repo. In the new integrated system, instead of reading CAN directly, it will receive RPM data via Serial from the ESP32-S3 hub.
+
+### Arduino Nano Pin Configuration
+
+From `lib/Config/config.h`:
+
+| Pin | Function | Connection |
+|-----|----------|------------|
+| **D5** | LED Data | WS2812B Data In |
+| **D10** | CAN CS | MCP2515 CS (current) → **Not needed in new design** |
+| **D7** | CAN INT | MCP2515 INT (current) → **Not needed in new design** |
+| **D11** | SPI MOSI | MCP2515 SI (current) → **Not needed in new design** |
+| **D12** | SPI MISO | MCP2515 SO (current) → **Not needed in new design** |
+| **D13** | SPI SCK | MCP2515 SCK (current) → **Not needed in new design** |
+| **D2** | Serial RX | **NEW: ESP32-S3 GPIO 43 (TX)** |
+| **5V** | Power | VCC from buck converter |
+| **GND** | Ground | Common ground |
+
+### LED Configuration
+
+From `lib/Config/config.h`:
+
+```cpp
+#define LED_COUNT 20           // 20x WS2812B LEDs
+#define LED_BRIGHTNESS 50      // 0-255 default brightness
+#define LED_FADE_SPEED 15      // Fade animation speed
+```
+
+### RPM Thresholds
+
+From `lib/Config/config.h`:
+
+```cpp
+#define RPM_IDLE        800    // Below this = idle
+#define RPM_MIN_DISPLAY 1000   // Start lighting LEDs
+#define RPM_MAX         7000   // Full LED bar
+#define RPM_SHIFT       6500   // Shift light flash
+#define RPM_REDLINE     7200   // Redline warning
+```
+
+### WS2812B LED Strip Wiring
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       WS2812B LED STRIP WIRING                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Arduino Nano             WS2812B Strip (20 LEDs)                          │
+│   ═══════════════          ═══════════════════════                          │
+│                                                                              │
+│   D5 (LED Data) ──────────→ DIN (Data In)                                   │
+│   5V ─────────────────────→ VCC (through 100µF cap)                         │
+│   GND ────────────────────→ GND                                             │
+│                                                                              │
+│   ⚠️  Add 330Ω resistor between D5 and DIN for signal protection            │
+│   ⚠️  Add 100µF capacitor across VCC/GND near first LED                      │
+│   ⚠️  20 LEDs @ max brightness can draw ~1.2A - ensure adequate power        │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Arduino Integration: Current vs New Design
+
+**CURRENT DESIGN** (standalone, reads CAN directly):
+```
+                     MCP2515
+                   ┌─────────┐
+    OBD-II HS-CAN ─┤ CAN H/L │
+                   └────┬────┘
+                        │ SPI (D10-D13)
+                        ▼
+                  ┌───────────┐
+                  │  Arduino  │
+                  │   Nano    │
+                  └─────┬─────┘
+                        │ D5
+                        ▼
+                  ┌───────────┐
+                  │ WS2812B   │
+                  │ LED Strip │
+                  └───────────┘
+```
+
+**NEW DESIGN** (receives RPM from ESP32-S3):
+```
+                  ┌──────────────┐
+    OBD-II ─────→ │   ESP32-S3   │ ←── Reads CAN directly
+                  │    HUB       │
+                  └──────┬───────┘
+                         │ Serial (GPIO 43 TX)
+                         ▼
+                  ┌───────────┐
+                  │  Arduino  │ ←── Simplified code (no CAN library needed)
+                  │   Nano    │
+                  │   D2 RX   │
+                  └─────┬─────┘
+                        │ D5
+                        ▼
+                  ┌───────────┐
+                  │ WS2812B   │
+                  │ LED Strip │
+                  └───────────┘
+```
+
+### Benefits of New Architecture
+
+1. **Simplified Arduino Code**: Remove MCP2515/CAN library, just read serial
+2. **Freed SPI Pins**: D10-D13 available for other uses
+3. **Single CAN Tap**: ESP32-S3 handles all CAN reading
+4. **Reduced Wiring**: No need for Arduino's MCP2515 module
+5. **Lower Cost**: One less MCP2515 module required
+
+### Serial Protocol (ESP32-S3 → Arduino)
+
+Simple format for RPM transmission:
+```
+RPM:3500\n    // Send RPM value with newline terminator
+```
+
+Arduino parsing example:
+```cpp
+// Simplified Arduino code (no CAN library)
+void loop() {
+    if (Serial.available()) {
+        String data = Serial.readStringUntil('\n');
+        if (data.startsWith("RPM:")) {
+            currentRPM = data.substring(4).toInt();
+            updateLEDs(currentRPM);
+        }
+    }
+}
+```
+
+### Migration Path
+
+| Step | Action | Status |
+|------|--------|--------|
+| 1 | Keep current Arduino code working | ✅ Working |
+| 2 | Add Serial receive to Arduino | ⬜ TODO |
+| 3 | Remove MCP2515 code from Arduino | ⬜ TODO |
+| 4 | Program ESP32-S3 to forward RPM | ⬜ TODO |
+| 5 | Disconnect Arduino's MCP2515 | ⬜ TODO |
+| 6 | Connect ESP32-S3 TX → Arduino D2 | ⬜ TODO |
+
+---
 
 ### Complete Physical Wiring
 
@@ -563,15 +716,20 @@ HS-CAN (500kbps)                    MS-CAN (125kbps)
 
 ## Parts List
 
-| Item | Qty | Est. Cost | Link |
-|------|-----|-----------|------|
-| MCP2515 CAN Module | 2 | $10 | Amazon/AliExpress |
+| Item | Qty | Est. Cost | Notes |
+|------|-----|-----------|-------|
+| MCP2515 CAN Module | 2 | $10 | For ESP32-S3 (HS + MS CAN) |
 | ESP32-S3 1.85" Round Display | 1 | $25 | Waveshare/AliExpress |
-| OBD-II Breakout/Splitter | 1 | $15 | Amazon |
-| Jumper Wires (M-F, M-M) | 1 pack | $8 | Amazon |
-| 12V to 5V 3A Buck Converter | 1 | $8 | Amazon |
-| Project Enclosure | 1 | $10 | Amazon |
-| **Total Estimated** | | **~$76** | |
+| OBD-II Breakout/Splitter | 1 | $15 | Access CAN bus pins |
+| Jumper Wires (M-F, M-M) | 1 pack | $8 | Various connections |
+| LM2596 Buck Converter | 1 | $8 | 12V → 5V 3A (already in use) |
+| Project Enclosure | 1 | $10 | Mount electronics |
+| **Already Owned** | | | |
+| Arduino Nano | 1 | - | ✅ Existing |
+| WS2812B LED Strip (20) | 1 | - | ✅ Existing |
+| MCP2515 CAN Module | 1 | - | ✅ Existing (can repurpose for ESP32) |
+| Raspberry Pi 4B | 1 | - | ✅ Existing |
+| **Total New Parts** | | **~$66** | |
 
 ---
 
