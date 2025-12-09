@@ -6,7 +6,8 @@ Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Ro
 
 ### Goals
 - Display telemetry data on ESP32-S3 round LCD (gauges, RPM, speed)
-- Display apps/media on Raspberry Pi via HDMI to Pioneer head unit
+- Display telemetry data on Raspberry Pi via HDMI to Pioneer head unit
+- Display tire pressure from BLE TPMS sensors on both displays
 - Control both devices using stock MX5 steering wheel buttons (no touch needed)
 - Read vehicle data from HS-CAN and MS-CAN buses
 
@@ -24,6 +25,7 @@ Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Ro
 | WS2812B LED Strip | RPM shift light (20 LEDs) | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
 | OBD-II Breakout | Access CAN bus pins | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
 | LM2596 Buck Converter | 12V → 5V power | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| BLE TPMS Sensors (4x) | Tire pressure + temp | Cap-mounted, BLE broadcast ✅ Ordered |
 
 ---
 
@@ -62,11 +64,27 @@ Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Ro
 
 ## System Architecture
 
+### Why Raspberry Pi as Hub (Not ESP32-S3)
+
+The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usable), while the Pi has **26+ GPIO pins**. This makes the Pi the better choice for CAN bus hub:
+
+| Factor | ESP32-S3 as Hub | Pi as Hub ✅ |
+|--------|-----------------|-------------|
+| Available GPIO | ~6-10 pins | 26+ pins |
+| CAN Processing | Limited CPU | Plenty of power |
+| Connection to displays | WiFi (laggy) | Wired UART (fast) |
+| Complexity | ESP does everything | Distributed, simpler |
+| BLE TPMS | Built-in BLE ✅ | Need USB dongle |
+
+> **Decision**: Pi reads CAN buses and distributes data via wired serial to ESP32-S3 and Arduino.
+> ESP32-S3 handles BLE TPMS (built-in Bluetooth) and forwards to Pi.
+
 ### Block Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        MX5 NC CAN BUS ARCHITECTURE                           │
+│                    MX5 NC TELEMETRY ARCHITECTURE                             │
+│                      (Raspberry Pi as Main Hub)                              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -87,28 +105,46 @@ Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Ro
 │   │ MCP2515  │                    │ MCP2515  │                              │
 │   │ #1 (HS)  │                    │ #2 (MS)  │                              │
 │   └────┬─────┘                    └────┬─────┘                              │
-│        │                               │                                     │
+│        │ SPI (shared bus)              │ SPI (shared bus)                   │
 │        └───────────┬───────────────────┘                                     │
 │                    │                                                         │
 │                    ▼                                                         │
-│          ┌─────────────────────┐                                             │
-│          │      ESP32-S3       │                                             │
-│          │     MAIN HUB        │                                             │
-│          │                     │                                             │
-│          │  • Reads HS-CAN     │                                             │
-│          │  • Reads MS-CAN     │                                             │
-│          │  • Round LCD Display│                                             │
-│          │  • Forwards to Pi   │                                             │
-│          │  • Forwards to LED  │                                             │
-│          └──────┬───────┬──────┘                                             │
-│                 │       │                                                    │
-│     Serial/UART │       │ WiFi/Serial                                       │
-│     (RPM only)  │       │ (All data + buttons)                              │
-│                 ▼       ▼                                                    │
-│        ┌────────────┐  ┌────────────┐                                       │
-│        │Arduino Nano│  │Raspberry Pi│                                       │
-│        │  RPM LEDs  │  │   HDMI     │──────▶ Pioneer AVH-W4500NEX           │
-│        └────────────┘  └────────────┘                                       │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                    RASPBERRY PI 4B (MAIN HUB)                        │   │
+│   │                                                                      │   │
+│   │  • Reads HS-CAN (RPM, Speed, Throttle, Temps, Gear)                 │   │
+│   │  • Reads MS-CAN (Steering Wheel Buttons, Cruise, Body)              │   │
+│   │  • Receives BLE TPMS data from ESP32-S3                             │   │
+│   │  • Distributes data to ESP32-S3 and Arduino via Serial              │   │
+│   │  • Displays telemetry on HDMI → Pioneer AVH-W4500NEX                │   │
+│   │  • Handles button commands for Pi apps                              │   │
+│   │                                                                      │   │
+│   └────────┬────────────────────────────────┬───────────────────────────┘   │
+│            │                                │                                │
+│            │ Serial/UART                    │ HDMI                           │
+│            │ (GPIO 14/15)                   │                                │
+│            ▼                                ▼                                │
+│   ┌─────────────────────┐         ┌─────────────────────┐                   │
+│   │     ESP32-S3        │         │  Pioneer AVH-W4500  │                   │
+│   │   Round Display     │         │    (800x480)        │                   │
+│   │                     │         └─────────────────────┘                   │
+│   │  • Receives data    │                                                    │
+│   │    from Pi (Serial) │                                                    │
+│   │  • BLE TPMS Rx      │◄──────── BLE TPMS Cap Sensors (x4)                │
+│   │  • Round LCD gauge  │                                                    │
+│   │  • Forwards TPMS    │                                                    │
+│   │    to Pi (Serial)   │                                                    │
+│   └──────────┬──────────┘                                                    │
+│              │ Serial (pass-through or separate)                             │
+│              ▼                                                               │
+│   ┌─────────────────────┐                                                    │
+│   │    Arduino Nano     │                                                    │
+│   │     RPM LEDs        │                                                    │
+│   │                     │                                                    │
+│   │  • Receives RPM     │                                                    │
+│   │    from Pi/ESP      │                                                    │
+│   │  • Drives WS2812B   │                                                    │
+│   └─────────────────────┘                                                    │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -116,81 +152,127 @@ Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Ro
 ### Data Flow
 
 ```
-HS-CAN (500kbps)                    MS-CAN (125kbps)
-════════════════                    ════════════════
-• RPM                               • Steering Wheel Buttons
-• Vehicle Speed                     • Cruise Control Buttons
-• Throttle Position                 • Door Status
-• Engine Temp                       • Lights Status
-• Gear Position                     • Climate Control
-
-        │                                  │
-        └──────────────┬───────────────────┘
-                       │
-                       ▼
-             ┌─────────────────────┐
-             │      ESP32-S3       │
-             │    (MAIN HUB)       │
-             └─────────┬───────────┘
-                       │
-        ┌──────────────┼──────────────┐
-        │              │              │
-        ▼              ▼              ▼
-  ┌──────────┐  ┌──────────┐  ┌──────────┐
-  │  LOCAL   │  │ ARDUINO  │  │    PI    │
-  │ DISPLAY  │  │  (LED)   │  │  (HDMI)  │
-  ├──────────┤  ├──────────┤  ├──────────┤
-  │ RPM Gauge│  │ RPM only │  │ All Data │
-  │ Speed    │  │ via UART │  │ + SWC    │
-  │ Buttons  │  │          │  │ Commands │
-  │ (React)  │  │          │  │ via WiFi │
-  └──────────┘  └──────────┘  └──────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              DATA FLOW                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   HS-CAN (500kbps)              MS-CAN (125kbps)         BLE (2.4GHz)       │
+│   ════════════════              ════════════════         ═══════════        │
+│   • RPM                         • Steering Buttons       • Tire Pressure    │
+│   • Vehicle Speed               • Cruise Buttons         • Tire Temp        │
+│   • Throttle Position           • Door Status            • Battery Level    │
+│   • Engine Temp                 • Lights Status                             │
+│   • Gear Position               • Climate Control                           │
+│           │                            │                        │           │
+│           │                            │                        │           │
+│           ▼                            ▼                        ▼           │
+│   ┌──────────────────────────────────────────┐    ┌─────────────────────┐  │
+│   │           RASPBERRY PI 4B                │    │     ESP32-S3        │  │
+│   │              (CAN HUB)                   │◄───│   (BLE TPMS Rx)     │  │
+│   │                                          │    │                     │  │
+│   │  MCP2515 #1 ─── SPI ───┐                │    │  Built-in BLE scans │  │
+│   │  MCP2515 #2 ─── SPI ───┴─► CAN Parser   │    │  for TPMS sensors   │  │
+│   │                             │            │    │                     │  │
+│   │                             ▼            │    │  Sends TPMS data    │  │
+│   │                    ┌────────────────┐   │    │  to Pi via Serial   │  │
+│   │                    │  Data Manager  │   │    └──────────┬──────────┘  │
+│   │                    │  + Button Mgr  │   │               │             │
+│   │                    └───────┬────────┘   │               │ Serial      │
+│   │                            │            │◄──────────────┘ (TPMS)      │
+│   └────────────┬───────────────┼────────────┘                             │
+│                │               │                                           │
+│        HDMI    │    Serial     │   Serial                                  │
+│                │   (telemetry) │   (RPM)                                   │
+│                ▼               ▼               ▼                           │
+│   ┌────────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
+│   │    Pioneer     │  │    ESP32-S3     │  │  Arduino Nano   │            │
+│   │   AVH-W4500    │  │  Round Display  │  │   RPM LEDs      │            │
+│   │   (800x480)    │  │                 │  │                 │            │
+│   ├────────────────┤  ├─────────────────┤  ├─────────────────┤            │
+│   │ • Full UI      │  │ • RPM Gauge     │  │ • WS2812B LEDs  │            │
+│   │ • Maps         │  │ • Speed         │  │ • Shift light   │            │
+│   │ • Music        │  │ • TPMS          │  │ • Color sweep   │            │
+│   │ • Telemetry    │  │ • Temps         │  │                 │            │
+│   │ • Settings     │  │                 │  │                 │            │
+│   └────────────────┘  └─────────────────┘  └─────────────────┘            │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Wiring Diagrams
 
-### ESP32-S3 Pin Assignments
+### Raspberry Pi 4B Pin Assignments (CAN Hub)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      ESP32-S3 WIRING DIAGRAM                                 │
+│                    RASPBERRY PI 4B WIRING DIAGRAM                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   ESP32-S3 Pin      │  Connection                                           │
+│   Pi GPIO Pin       │  Connection                                           │
 │   ══════════════════│══════════════════════════════════════                 │
 │                     │                                                        │
-│   --- MCP2515 #1 (HS-CAN) via SPI Bus 1 ---                                 │
-│   GPIO 12 (SCK)     │  MCP2515 #1 SCK                                       │
-│   GPIO 11 (MOSI)    │  MCP2515 #1 SI                                        │
-│   GPIO 13 (MISO)    │  MCP2515 #1 SO                                        │
-│   GPIO 10 (CS1)     │  MCP2515 #1 CS                                        │
-│   GPIO 9  (INT1)    │  MCP2515 #1 INT                                       │
+│   --- Power ---                                                              │
+│   5V (Pin 2,4)      │  From LM2596 Buck Converter                           │
+│   GND (Pin 6,9,etc) │  Common Ground                                        │
 │                     │                                                        │
-│   --- MCP2515 #2 (MS-CAN) via SPI Bus 2 ---                                 │
-│   GPIO 36 (SCK2)    │  MCP2515 #2 SCK                                       │
-│   GPIO 35 (MOSI2)   │  MCP2515 #2 SI                                        │
-│   GPIO 37 (MISO2)   │  MCP2515 #2 SO                                        │
-│   GPIO 34 (CS2)     │  MCP2515 #2 CS                                        │
-│   GPIO 38 (INT2)    │  MCP2515 #2 INT                                       │
+│   --- MCP2515 CAN Modules (Shared SPI Bus) ---                              │
+│   GPIO 10 (MOSI)    │  MCP2515 #1 SI + MCP2515 #2 SI                        │
+│   GPIO 9  (MISO)    │  MCP2515 #1 SO + MCP2515 #2 SO                        │
+│   GPIO 11 (SCLK)    │  MCP2515 #1 SCK + MCP2515 #2 SCK                      │
+│   GPIO 8  (CE0)     │  MCP2515 #1 CS (HS-CAN)                               │
+│   GPIO 7  (CE1)     │  MCP2515 #2 CS (MS-CAN)                               │
+│   GPIO 25           │  MCP2515 #1 INT (HS-CAN)                              │
+│   GPIO 24           │  MCP2515 #2 INT (MS-CAN)                              │
 │                     │                                                        │
-│   --- Serial to Arduino (RPM LED) ---                                       │
-│   GPIO 43 (TX)      │  Arduino D2 (RX via SoftwareSerial)                   │
-│   GPIO 44 (RX)      │  Arduino D3 (TX) [optional feedback]                  │
+│   --- Serial to ESP32-S3 (Telemetry + TPMS) ---                             │
+│   GPIO 14 (TXD)     │  ESP32-S3 RX (receive telemetry from Pi)              │
+│   GPIO 15 (RXD)     │  ESP32-S3 TX (send TPMS data to Pi)                   │
 │                     │                                                        │
-│   --- Serial/WiFi to Raspberry Pi ---                                       │
-│   GPIO 17 (TX2)     │  Pi GPIO 15 (RXD) [or use WiFi]                       │
-│   GPIO 18 (RX2)     │  Pi GPIO 14 (TXD) [or use WiFi]                       │
+│   --- Serial to Arduino (RPM only) --- [Optional: via ESP32]                │
+│   GPIO 0  (TXD1)*   │  Arduino D2 (SoftwareSerial RX)                       │
+│   GPIO 1  (RXD1)*   │  Arduino D3 (optional feedback)                       │
+│   * Or route through ESP32-S3                                                │
 │                     │                                                        │
-│   --- Display (already wired on module) ---                                 │
-│   Internal SPI      │  GC9A01 LCD                                           │
-│   Internal I2C      │  Touch FT5x06                                         │
+│   --- HDMI ---                                                               │
+│   HDMI Port         │  Pioneer AVH-W4500NEX (800x480)                       │
 │                     │                                                        │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### MCP2515 Module Connections
+### ESP32-S3 Round Display Pin Assignments (Simplified)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 ESP32-S3 ROUND DISPLAY WIRING (SIMPLIFIED)                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   The ESP32-S3 round display module has LIMITED exposed GPIOs.              │
+│   In this architecture, it only needs:                                       │
+│                                                                              │
+│   ESP32-S3 Pin      │  Connection                                           │
+│   ══════════════════│══════════════════════════════════════                 │
+│                     │                                                        │
+│   --- Power ---                                                              │
+│   5V / VIN          │  From LM2596 Buck Converter (shared with Pi)          │
+│   GND               │  Common Ground                                        │
+│                     │                                                        │
+│   --- Serial to Raspberry Pi ---                                            │
+│   TX (GPIO 43)      │  Pi GPIO 15 (RXD) - Send TPMS data to Pi              │
+│   RX (GPIO 44)      │  Pi GPIO 14 (TXD) - Receive telemetry from Pi         │
+│                     │                                                        │
+│   --- Built-in (no external wiring) ---                                     │
+│   Internal SPI      │  GC9A01 1.85" Round LCD (360x360)                     │
+│   Internal I2C      │  Touch Controller (FT5x06)                            │
+│   Internal BLE      │  BLE TPMS Sensor Reception (no wiring needed!)        │
+│                     │                                                        │
+│   ✅ Total external connections: Power (2) + Serial (2) = 4 wires only!    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### MCP2515 Module Connections (to Raspberry Pi)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -200,18 +282,19 @@ HS-CAN (500kbps)                    MS-CAN (125kbps)
 │   MCP2515 #1 (HS-CAN)          MCP2515 #2 (MS-CAN)                          │
 │   ═══════════════════          ═══════════════════                          │
 │                                                                              │
-│   VCC ──── 3.3V                VCC ──── 3.3V                                │
-│   GND ──── GND                 GND ──── GND                                 │
-│   CS  ──── GPIO 10             CS  ──── GPIO 34                             │
-│   SO  ──── GPIO 13             SO  ──── GPIO 37                             │
-│   SI  ──── GPIO 11             SI  ──── GPIO 35                             │
-│   SCK ──── GPIO 12             SCK ──── GPIO 36                             │
-│   INT ──── GPIO 9              INT ──── GPIO 38                             │
+│   VCC ──── Pi 3.3V (Pin 1)     VCC ──── Pi 3.3V (Pin 1)                     │
+│   GND ──── Pi GND (Pin 6)      GND ──── Pi GND (Pin 6)                      │
+│   CS  ──── Pi GPIO 8 (CE0)     CS  ──── Pi GPIO 7 (CE1)                     │
+│   SO  ──── Pi GPIO 9 (MISO)    SO  ──── Pi GPIO 9 (MISO)  [shared]          │
+│   SI  ──── Pi GPIO 10 (MOSI)   SI  ──── Pi GPIO 10 (MOSI) [shared]          │
+│   SCK ──── Pi GPIO 11 (SCLK)   SCK ──── Pi GPIO 11 (SCLK) [shared]          │
+│   INT ──── Pi GPIO 25          INT ──── Pi GPIO 24                          │
 │                                                                              │
 │   CANH ─── OBD Pin 6           CANH ─── OBD Pin 3                           │
 │   CANL ─── OBD Pin 14          CANL ─── OBD Pin 11                          │
 │                                                                              │
 │   ⚠️  120Ω terminator usually not needed when tapping OBD port              │
+│   ⚠️  Both MCP2515 share SPI bus (MISO, MOSI, SCLK) but have separate CS    │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -718,18 +801,19 @@ void loop() {
 
 | Item | Qty | Est. Cost | Notes |
 |------|-----|-----------|-------|
-| MCP2515 CAN Module | 2 | $10 | For ESP32-S3 (HS + MS CAN) |
+| MCP2515 CAN Module | 2 | $10 | For Raspberry Pi (HS + MS CAN) |
 | ESP32-S3 1.85" Round Display | 1 | $25 | Waveshare/AliExpress |
 | OBD-II Breakout/Splitter | 1 | $15 | Access CAN bus pins |
 | Jumper Wires (M-F, M-M) | 1 pack | $8 | Various connections |
 | LM2596 Buck Converter | 1 | $8 | 12V → 5V 3A (already in use) |
 | Project Enclosure | 1 | $10 | Mount electronics |
+| BLE TPMS Sensors | 4 | $30 | ✅ Ordered - cap-mounted |
 | **Already Owned** | | | |
 | Arduino Nano | 1 | - | ✅ Existing |
 | WS2812B LED Strip (20) | 1 | - | ✅ Existing |
-| MCP2515 CAN Module | 1 | - | ✅ Existing (can repurpose for ESP32) |
+| MCP2515 CAN Module | 1 | - | ✅ Existing (can repurpose) |
 | Raspberry Pi 4B | 1 | - | ✅ Existing |
-| **Total New Parts** | | **~$66** | |
+| **Total New Parts** | | **~$96** | |
 
 ---
 
@@ -759,9 +843,108 @@ void loop() {
 
 ---
 
+## BLE TPMS Integration
+
+### Overview
+
+The 2008 MX5 NC uses **Direct TPMS** with 315MHz RF sensors - these only send low-pressure warnings to the gauge cluster, **not actual PSI values on CAN bus**. To get real tire pressure data, we use aftermarket **BLE TPMS cap sensors**.
+
+### Hardware
+
+| Item | Details |
+|------|--------|
+| Sensors | 4x BLE TPMS external cap sensors (ordered) |
+| Receiver | ESP32-S3 built-in Bluetooth (no extra hardware!) |
+| Protocol | BLE advertisement broadcast |
+
+### BLE TPMS Protocol (Decoded)
+
+These sensors broadcast manufacturer data in BLE advertisements:
+
+```
+Manufacturer Data: 000180EACA108A78E36D0000E60A00005B00
+                   │  │  │     │       │       │  └─ Alarm (00=OK)
+                   │  │  │     │       │       └──── Battery %
+                   │  │  │     │       └──────────── Temperature (°C)
+                   │  │  │     └──────────────────── Pressure (kPa)
+                   │  │  └────────────────────────── Sensor Address
+                   │  └───────────────────────────── Address Prefix  
+                   └──────────────────────────────── Sensor # (80-83)
+```
+
+### Data Extraction
+
+```cpp
+// Pressure (bytes 8-11) - Little Endian
+long pressureRaw = byte8 | (byte9 << 8) | (byte10 << 16) | (byte11 << 24);
+float pressure_kPa = pressureRaw / 1000.0;
+float pressure_psi = pressure_kPa * 0.145038;
+
+// Temperature (bytes 12-15) - Little Endian  
+long tempRaw = byte12 | (byte13 << 8) | (byte14 << 16) | (byte15 << 24);
+float temp_C = tempRaw / 100.0;
+
+// Battery (byte 16)
+int battery_percent = byte16;
+```
+
+### ESP32-S3 TPMS Code (Example)
+
+```cpp
+#include <BLEDevice.h>
+#include <BLEScan.h>
+
+BLEScan* pBLEScan;
+
+class TPMSCallback : public BLEAdvertisedDeviceCallbacks {
+    void onResult(BLEAdvertisedDevice device) {
+        if (device.haveName() && device.getName() == "BR") {
+            // This is a TPMS sensor
+            std::string mfgData = device.getManufacturerData();
+            if (mfgData.length() >= 18) {
+                uint8_t sensorNum = mfgData[2] - 0x80;  // 0-3
+                // Extract pressure, temp, battery...
+                // Send to Pi via Serial
+            }
+        }
+    }
+};
+
+void setup() {
+    Serial.begin(115200);  // To Raspberry Pi
+    BLEDevice::init("");
+    pBLEScan = BLEDevice::getScan();
+    pBLEScan->setAdvertisedDeviceCallbacks(new TPMSCallback());
+    pBLEScan->setActiveScan(true);
+}
+
+void loop() {
+    pBLEScan->start(5, false);  // Scan for 5 seconds
+    delay(1000);
+}
+```
+
+### Serial Protocol (ESP32-S3 → Pi)
+
+```
+TPMS:0,32.5,25.3,95\n    // Tire 0: 32.5 PSI, 25.3°C, 95% battery
+TPMS:1,31.8,24.1,92\n    // Tire 1: 31.8 PSI, 24.1°C, 92% battery
+TPMS:2,33.1,26.0,88\n    // Tire 2: 33.1 PSI, 26.0°C, 88% battery
+TPMS:3,32.9,25.8,90\n    // Tire 3: 32.9 PSI, 25.8°C, 90% battery
+```
+
+### Resources
+
+- GitHub: `ra6070/BLE-TPMS` - ESP32 Arduino code
+- GitHub: `andi38/TPMS` - Protocol documentation
+- GitHub: `bkbilly/tpms_ble` - Home Assistant integration
+
+---
+
 ## Notes & Ideas
 
 - Consider adding voice control via ESP32-S3's speech recognition
 - Could add lap timer functionality with GPS module
 - Bluetooth OBD adapter as backup/alternative to wired CAN
 - Android Auto via OpenAuto Pro as future enhancement
+- TPMS alerts: flash LED strip or beep when tire pressure low
