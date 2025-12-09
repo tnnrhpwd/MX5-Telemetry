@@ -62,6 +62,97 @@ Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Ro
 
 ---
 
+## Available Diagnostic Data
+
+All data below can be displayed on **both** the ESP32-S3 round display and the Pi/Pioneer screen.
+
+### HS-CAN Data (500 kbps) - Engine/Drivetrain
+
+| CAN ID | Data | Bytes | Scale/Formula | Display Ideas |
+|--------|------|-------|---------------|---------------|
+| `0x201` | **RPM** | 0,1 | Direct value | Tachometer, shift light |
+| `0x201` | **Vehicle Speed** | 4,5 | X/100 km/h | Speedometer |
+| `0x201` | **Accelerator Position** | 6 | 0-200 (200=100%) | Throttle bar |
+| `0x228` | **Gear Position** | 0 | Bit flags (see below) | Gear indicator |
+| `0x231` | **Gear (Alt)** | 0 | Bits 4-7 = gear | Gear indicator |
+| `0x190` | **Brake Active** | 2, bit 6 | 0x40 = braking | Brake indicator |
+| `0x205` | **Brake Active (Alt)** | 2, bit 6 | 0x40 = braking | Brake light |
+| `0x4B0` | **Wheel Speed FL** | 0,1 | (X-10000)/100 km/h | Individual wheel speeds |
+| `0x4B0` | **Wheel Speed FR** | 2,3 | (X-10000)/100 km/h | Traction display |
+| `0x4B0` | **Wheel Speed RL** | 4,5 | (X-10000)/100 km/h | Slip detection |
+| `0x4B0` | **Wheel Speed RR** | 6,7 | (X-10000)/100 km/h | |
+| `0x4DA` | **Steering Angle** | 0,1 | (X-32768)/10 degrees | Steering indicator |
+| `0x420` | **Coolant Temp** | 0 | Temperature | Temp gauge |
+| `0x4F2` | **Odometer** | 1,2 | Total km/miles | Trip computer |
+
+#### Gear Position Decoding (0x228 Byte 0)
+
+| Bit | Value | Meaning |
+|-----|-------|--------|
+| 0 | 0x01 | Park/Off |
+| 1 | 0x02 | Reverse |
+| 2 | 0x04 | Forward/Drive |
+| 4 | 0x10 | 1st Gear |
+| 5 | 0x20 | 2nd Gear |
+| 6 | 0x40 | 3rd Gear |
+| 7 | 0x80 | 4th Gear |
+
+*Note: 5th and 6th gear likely in Byte 1*
+
+### MS-CAN Data (125 kbps) - Body/Accessories
+
+| CAN ID | Data | Bytes | Description | Display Ideas |
+|--------|------|-------|-------------|---------------|
+| `0x240` | **SWC Audio Buttons** | 0 | See button table above | UI navigation |
+| `0x250` | **SWC Cruise Buttons** | 0 | See button table above | UI navigation |
+| `0x265` | **Turn Signals** | 0, bits 5-6 | L=0x20, R=0x40 | Blinker indicators |
+| `0x400` | **Average Speed** | 0,1 | km/h | Trip computer |
+| `0x400` | **Instant Fuel Consumption** | 2,3 | X/10 L/100km | Economy gauge |
+| `0x400` | **Average Fuel Consumption** | 3,4 | X/10 L/100km | Economy display |
+| `0x400` | **Distance Remaining** | 5,6 | km to empty | Range indicator |
+| `0x430` | **Fuel Level** | 0 | X/2.55 = % | Fuel gauge |
+| `0x433` | **Outside Temp** | 2 | X/4 °C | Temp display |
+| `0x433` | **Headlights On** | 4 | Bit flags | Light indicators |
+| `0x433` | **High Beams** | 3, bit 6 | 0x40 = on | Light indicators |
+| `0x433` | **A/C Running** | 3, bit 3 | 0x08 = on | Climate display |
+
+### BLE TPMS Data (via ESP32-S3)
+
+| Data | Source | Display Ideas |
+|------|--------|---------------|
+| **Tire Pressure FL** | BLE sensor | 4-corner TPMS display |
+| **Tire Pressure FR** | BLE sensor | Low pressure warning |
+| **Tire Pressure RL** | BLE sensor | Color-coded pressures |
+| **Tire Pressure RR** | BLE sensor | |
+| **Tire Temp FL-RR** | BLE sensor | Temp warnings |
+| **TPMS Battery %** | BLE sensor | Low battery alert |
+
+### Display Screen Ideas
+
+#### ESP32-S3 Round Display (360x360)
+
+| Screen | Data Shown |
+|--------|------------|
+| **RPM Gauge** | RPM (large), Gear, Shift indicator |
+| **Speedometer** | Speed, Gear, Turn signals |
+| **TPMS View** | 4-corner tire pressures + temps |
+| **Temps** | Coolant, Outside temp, Oil (if available) |
+| **G-Force** | Calculated from wheel speed deltas |
+| **Economy** | Instant MPG, Average MPG, Range |
+
+#### Pioneer AVH-W4500 (800x480)
+
+| Screen | Data Shown |
+|--------|------------|
+| **Dashboard** | RPM bar, Speed, Gear, Temps |
+| **TPMS Full** | 4 tires with PSI, temp, battery |
+| **Trip Computer** | Avg speed, fuel economy, range, odometer |
+| **Performance** | 0-60 timer, G-force, lap timer |
+| **Diagnostics** | All raw CAN values, error codes |
+| **Settings** | Shift light RPM, units, brightness |
+
+---
+
 ## System Architecture
 
 ### Why Raspberry Pi as Hub (Not ESP32-S3)
@@ -76,8 +167,9 @@ The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usab
 | Complexity | ESP does everything | Distributed, simpler |
 | BLE TPMS | Built-in BLE ✅ | Need USB dongle |
 
-> **Decision**: Pi reads CAN buses and distributes data via wired serial to ESP32-S3 and Arduino.
-> ESP32-S3 handles BLE TPMS (built-in Bluetooth) and forwards to Pi.
+> **Decision**: Pi reads CAN buses (including SWC buttons) and distributes ALL data via wired serial to ESP32-S3 and Arduino.
+> ESP32-S3 handles BLE TPMS (built-in Bluetooth) and forwards TPMS to Pi.
+> **Both displays receive SWC button events** so both can respond to steering wheel controls.
 
 ### Block Diagram
 
@@ -149,54 +241,55 @@ The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usab
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow
+### Data Flow (Bidirectional Serial)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              DATA FLOW                                       │
+│                    BIDIRECTIONAL SERIAL DATA FLOW                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   HS-CAN (500kbps)              MS-CAN (125kbps)         BLE (2.4GHz)       │
-│   ════════════════              ════════════════         ═══════════        │
-│   • RPM                         • Steering Buttons       • Tire Pressure    │
-│   • Vehicle Speed               • Cruise Buttons         • Tire Temp        │
-│   • Throttle Position           • Door Status            • Battery Level    │
-│   • Engine Temp                 • Lights Status                             │
-│   • Gear Position               • Climate Control                           │
-│           │                            │                        │           │
-│           │                            │                        │           │
-│           ▼                            ▼                        ▼           │
-│   ┌──────────────────────────────────────────┐    ┌─────────────────────┐  │
-│   │           RASPBERRY PI 4B                │    │     ESP32-S3        │  │
-│   │              (CAN HUB)                   │◄───│   (BLE TPMS Rx)     │  │
-│   │                                          │    │                     │  │
-│   │  MCP2515 #1 ─── SPI ───┐                │    │  Built-in BLE scans │  │
-│   │  MCP2515 #2 ─── SPI ───┴─► CAN Parser   │    │  for TPMS sensors   │  │
-│   │                             │            │    │                     │  │
-│   │                             ▼            │    │  Sends TPMS data    │  │
-│   │                    ┌────────────────┐   │    │  to Pi via Serial   │  │
-│   │                    │  Data Manager  │   │    └──────────┬──────────┘  │
-│   │                    │  + Button Mgr  │   │               │             │
-│   │                    └───────┬────────┘   │               │ Serial      │
-│   │                            │            │◄──────────────┘ (TPMS)      │
-│   └────────────┬───────────────┼────────────┘                             │
-│                │               │                                           │
-│        HDMI    │    Serial     │   Serial                                  │
-│                │   (telemetry) │   (RPM)                                   │
-│                ▼               ▼               ▼                           │
-│   ┌────────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
-│   │    Pioneer     │  │    ESP32-S3     │  │  Arduino Nano   │            │
-│   │   AVH-W4500    │  │  Round Display  │  │   RPM LEDs      │            │
-│   │   (800x480)    │  │                 │  │                 │            │
-│   ├────────────────┤  ├─────────────────┤  ├─────────────────┤            │
-│   │ • Full UI      │  │ • RPM Gauge     │  │ • WS2812B LEDs  │            │
-│   │ • Maps         │  │ • Speed         │  │ • Shift light   │            │
-│   │ • Music        │  │ • TPMS          │  │ • Color sweep   │            │
-│   │ • Telemetry    │  │ • Temps         │  │                 │            │
-│   │ • Settings     │  │                 │  │                 │            │
-│   └────────────────┘  └─────────────────┘  └─────────────────┘            │
-│                                                                            │
-└────────────────────────────────────────────────────────────────────────────┘
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                     RASPBERRY PI 4B (CAN HUB)                        │   │
+│   │                                                                      │   │
+│   │  INPUTS:                          OUTPUTS:                           │   │
+│   │  ├─ MCP2515 #1 (HS-CAN 500k)      ├─► ESP32-S3 (Serial TX)          │   │
+│   │  │  • RPM, Speed, Throttle        │   • All CAN telemetry            │   │
+│   │  │  • Temps, Gear, Brake          │   • SWC button events ◄──────┐  │   │
+│   │  │  • Wheel Speeds, Steering      │                              │  │   │
+│   │  │                                ├─► Arduino (Serial TX)        │  │   │
+│   │  ├─ MCP2515 #2 (MS-CAN 125k)      │   • RPM only                 │  │   │
+│   │  │  • SWC Buttons ────────────────┼───────────────────────────────┘  │   │
+│   │  │  • Cruise Control              │                                  │   │
+│   │  │  • Lights, Doors, Climate      ├─► Pioneer (HDMI)                │   │
+│   │  │  • Fuel Level/Consumption      │   • Full UI display              │   │
+│   │  │                                │                                  │   │
+│   │  └─ ESP32-S3 (Serial RX) ◄────────┼─── TPMS data from ESP32         │   │
+│   │     • Tire Pressure (x4)          │                                  │   │
+│   │     • Tire Temp (x4)              │                                  │   │
+│   │     • TPMS Battery %              │                                  │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                        ESP32-S3 ROUND DISPLAY                        │   │
+│   │                                                                      │   │
+│   │  INPUTS:                          OUTPUTS:                           │   │
+│   │  ├─ Pi (Serial RX)                ├─► Pi (Serial TX)                │   │
+│   │  │  • All CAN telemetry           │   • TPMS data only              │   │
+│   │  │  • SWC button events ──────────┼─► Round LCD Display             │   │
+│   │  │    (to control ESP UI)         │   • Gauges, TPMS, Alerts        │   │
+│   │  │                                │                                  │   │
+│   │  └─ BLE (built-in)                └─► Arduino (optional pass-thru)  │   │
+│   │     • TPMS cap sensors (x4)           • RPM for LEDs                │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   SUMMARY:                                                                   │
+│   ═══════                                                                    │
+│   Pi → ESP32:  All CAN data + SWC buttons (so ESP can navigate its UI)      │
+│   ESP32 → Pi:  TPMS data only (ESP has built-in BLE)                        │
+│   Pi → Arduino: RPM only (for LED strip)                                     │
+│   BOTH DISPLAYS: Show all data (CAN + TPMS) and respond to SWC buttons      │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
