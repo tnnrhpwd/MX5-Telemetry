@@ -17,10 +17,10 @@ Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Ro
 
 | Component | Purpose | Docs |
 |-----------|---------|------|
-| Raspberry Pi 4B | HDMI output to Pioneer AVH-W4500NEX | - |
-| ESP32-S3 Round Display | 1.85" gauge display (new CAN hub) | - |
-| Arduino Nano | RPM LED strip controller | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
-| MCP2515 Module x2 | CAN bus readers (HS + MS) for ESP32-S3 | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| Raspberry Pi 4B | CAN hub + HDMI output to Pioneer AVH-W4500NEX | - |
+| ESP32-S3 Round Display | 1.85" gauge display + BLE TPMS receiver | - |
+| Arduino Nano | RPM LED strip controller (direct CAN) | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| MCP2515 Module x3 | Pi (HS + MS), Arduino (HS) - hardwired for reliability | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
 | Pioneer AVH-W4500NEX | Head unit with HDMI input | - |
 | WS2812B LED Strip | RPM shift light (20 LEDs) | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
 | OBD-II Breakout | Access CAN bus pins | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
@@ -167,16 +167,33 @@ The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usab
 | Complexity | ESP does everything | Distributed, simpler |
 | BLE TPMS | Built-in BLE ✅ | Need USB dongle |
 
-> **Decision**: Pi reads CAN buses (including SWC buttons) and distributes ALL data via wired serial to ESP32-S3 and Arduino.
+> **Decision**: Pi reads both CAN buses (HS + MS) and distributes data via wired serial to ESP32-S3.
+> Arduino Nano **keeps its own MCP2515** connected directly to HS-CAN for reliable RPM reading.
 > ESP32-S3 handles BLE TPMS (built-in Bluetooth) and forwards TPMS to Pi.
 > **Both displays receive SWC button events** so both can respond to steering wheel controls.
+
+### Why Arduino Keeps Direct CAN (Not Serial)
+
+Serial communication is prone to **EMI corruption** in automotive environments:
+
+| Connection | Distance | Environment | Risk |
+|------------|----------|-------------|------|
+| **Pi ↔ ESP32** | ~10-30cm (same enclosure) | Low EMI, cabin | **LOW** ✅ |
+| **Pi → Arduino** | ~1-2m (dash to engine bay) | High EMI (ignition, alternator) | **HIGH** ⚠️ |
+
+**Arduino stays on direct CAN because:**
+1. **RPM is time-critical** - Shift light needs <50ms latency
+2. **Long wire run** - Through firewall, near spark plug wires
+3. **High EMI zone** - Ignition coils, alternator, injectors
+4. **Already working** - Current setup is proven reliable
+5. **CAN is differential** - Inherently noise-resistant vs single-ended serial
 
 ### Block Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    MX5 NC TELEMETRY ARCHITECTURE                             │
-│                      (Raspberry Pi as Main Hub)                              │
+│                  (Pi as Hub, Arduino Direct CAN for RPM)                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -191,61 +208,71 @@ The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usab
 │   ════════════════════════        ════════════════════════                  │
 │      HS-CAN BUS (500k)               MS-CAN BUS (125k)                      │
 │   ════════════════════════        ════════════════════════                  │
-│         │                                │                                   │
-│         ▼                                ▼                                   │
-│   ┌──────────┐                    ┌──────────┐                              │
-│   │ MCP2515  │                    │ MCP2515  │                              │
-│   │ #1 (HS)  │                    │ #2 (MS)  │                              │
-│   └────┬─────┘                    └────┬─────┘                              │
-│        │ SPI (shared bus)              │ SPI (shared bus)                   │
-│        └───────────┬───────────────────┘                                     │
-│                    │                                                         │
-│                    ▼                                                         │
+│         │         │                      │                                   │
+│         │         │                      ▼                                   │
+│         │         │               ┌──────────┐                              │
+│         │         │               │ MCP2515  │                              │
+│         │         │               │ #2 (MS)  │──── Pi GPIO 7 (CE1)          │
+│         │         │               └────┬─────┘                              │
+│         │         │                    │ SPI                                │
+│         ▼         ▼                    │                                    │
+│   ┌──────────┐  ┌──────────┐           │                                    │
+│   │ MCP2515  │  │ MCP2515  │           │                                    │
+│   │ #1 (HS)  │  │ #3 (HS)  │           │                                    │
+│   │ for Pi   │  │ Arduino  │           │                                    │
+│   └────┬─────┘  └────┬─────┘           │                                    │
+│        │ SPI         │ SPI             │                                    │
+│        │ Pi GPIO 8   │ Nano D10        │                                    │
+│        │             │                 │                                    │
+│        ▼             ▼                 ▼                                    │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
 │   │                    RASPBERRY PI 4B (MAIN HUB)                        │   │
 │   │                                                                      │   │
 │   │  • Reads HS-CAN (RPM, Speed, Throttle, Temps, Gear)                 │   │
 │   │  • Reads MS-CAN (Steering Wheel Buttons, Cruise, Body)              │   │
 │   │  • Receives BLE TPMS data from ESP32-S3                             │   │
-│   │  • Distributes data to ESP32-S3 and Arduino via Serial              │   │
+│   │  • Sends all data to ESP32-S3 via Serial (short, shielded cable)    │   │
 │   │  • Displays telemetry on HDMI → Pioneer AVH-W4500NEX                │   │
 │   │  • Handles button commands for Pi apps                              │   │
 │   │                                                                      │   │
-│   └────────┬────────────────────────────────┬───────────────────────────┘   │
-│            │                                │                                │
-│            │ Serial/UART                    │ HDMI                           │
-│            │ (GPIO 14/15)                   │                                │
-│            ▼                                ▼                                │
-│   ┌─────────────────────┐         ┌─────────────────────┐                   │
-│   │     ESP32-S3        │         │  Pioneer AVH-W4500  │                   │
-│   │   Round Display     │         │    (800x480)        │                   │
-│   │                     │         └─────────────────────┘                   │
+│   └────────┬────────────────────────────┬───────────────────────────────┘   │
+│            │                            │                                    │
+│            │ Serial/UART                │ HDMI                               │
+│            │ (GPIO 14/15)               │                                    │
+│            │ ~20cm shielded             │                                    │
+│            ▼                            ▼                                    │
+│   ┌─────────────────────┐     ┌─────────────────────┐                       │
+│   │     ESP32-S3        │     │  Pioneer AVH-W4500  │                       │
+│   │   Round Display     │     │    (800x480)        │                       │
+│   │                     │     └─────────────────────┘                       │
 │   │  • Receives data    │                                                    │
 │   │    from Pi (Serial) │                                                    │
 │   │  • BLE TPMS Rx      │◄──────── BLE TPMS Cap Sensors (x4)                │
 │   │  • Round LCD gauge  │                                                    │
 │   │  • Forwards TPMS    │                                                    │
 │   │    to Pi (Serial)   │                                                    │
-│   └──────────┬──────────┘                                                    │
-│              │ Serial (pass-through or separate)                             │
-│              ▼                                                               │
+│   │  • NO CAN MODULE    │                                                    │
+│   └─────────────────────┘                                                    │
+│                                                                              │
 │   ┌─────────────────────┐                                                    │
-│   │    Arduino Nano     │                                                    │
-│   │     RPM LEDs        │                                                    │
+│   │    Arduino Nano     │◄──────── MCP2515 #3 (DIRECT HS-CAN)               │
+│   │     RPM LEDs        │          (separate from Pi, EMI-resistant)        │
 │   │                     │                                                    │
-│   │  • Receives RPM     │                                                    │
-│   │    from Pi/ESP      │                                                    │
+│   │  • Reads RPM direct │                                                    │
+│   │    from HS-CAN      │                                                    │
 │   │  • Drives WS2812B   │                                                    │
+│   │  • NO SERIAL needed │                                                    │
 │   └─────────────────────┘                                                    │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow (Bidirectional Serial)
+### Data Flow (Hybrid: CAN + Serial)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    BIDIRECTIONAL SERIAL DATA FLOW                            │
+│                    HYBRID DATA FLOW (CAN + Serial)                           │
+│              Arduino: Direct CAN | ESP32: Serial from Pi                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -255,10 +282,10 @@ The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usab
 │   │  ├─ MCP2515 #1 (HS-CAN 500k)      ├─► ESP32-S3 (Serial TX)          │   │
 │   │  │  • RPM, Speed, Throttle        │   • All CAN telemetry            │   │
 │   │  │  • Temps, Gear, Brake          │   • SWC button events ◄──────┐  │   │
-│   │  │  • Wheel Speeds, Steering      │                              │  │   │
-│   │  │                                ├─► Arduino (Serial TX)        │  │   │
-│   │  ├─ MCP2515 #2 (MS-CAN 125k)      │   • RPM only                 │  │   │
-│   │  │  • SWC Buttons ────────────────┼───────────────────────────────┘  │   │
+│   │  │  • Wheel Speeds, Steering      │   (short cable, low EMI)     │  │   │
+│   │  │                                │                              │  │   │
+│   │  ├─ MCP2515 #2 (MS-CAN 125k)      │                              │  │   │
+│   │  │  • SWC Buttons ────────────────┼──────────────────────────────┘  │   │
 │   │  │  • Cruise Control              │                                  │   │
 │   │  │  • Lights, Doors, Climate      ├─► Pioneer (HDMI)                │   │
 │   │  │  • Fuel Level/Consumption      │   • Full UI display              │   │
@@ -271,6 +298,7 @@ The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usab
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
 │   │                        ESP32-S3 ROUND DISPLAY                        │   │
+│   │                         (NO CAN - Serial Only)                       │   │
 │   │                                                                      │   │
 │   │  INPUTS:                          OUTPUTS:                           │   │
 │   │  ├─ Pi (Serial RX)                ├─► Pi (Serial TX)                │   │
@@ -278,16 +306,32 @@ The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usab
 │   │  │  • SWC button events ──────────┼─► Round LCD Display             │   │
 │   │  │    (to control ESP UI)         │   • Gauges, TPMS, Alerts        │   │
 │   │  │                                │                                  │   │
-│   │  └─ BLE (built-in)                └─► Arduino (optional pass-thru)  │   │
-│   │     • TPMS cap sensors (x4)           • RPM for LEDs                │   │
+│   │  └─ BLE (built-in)                │                                  │   │
+│   │     • TPMS cap sensors (x4)       │                                  │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                    ARDUINO NANO (DIRECT HS-CAN)                      │   │
+│   │                     (Independent, EMI-Resistant)                     │   │
+│   │                                                                      │   │
+│   │  INPUTS:                          OUTPUTS:                           │   │
+│   │  └─ MCP2515 #3 (HS-CAN 500k)      └─► WS2812B LED Strip             │   │
+│   │     • RPM (0x201)                     • 20 LEDs, shift light         │   │
+│   │     • Direct from OBD-II              • <1ms CAN-to-LED latency      │   │
+│   │     • No serial dependency            • Works even if Pi offline     │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 │   SUMMARY:                                                                   │
 │   ═══════                                                                    │
-│   Pi → ESP32:  All CAN data + SWC buttons (so ESP can navigate its UI)      │
-│   ESP32 → Pi:  TPMS data only (ESP has built-in BLE)                        │
-│   Pi → Arduino: RPM only (for LED strip)                                     │
-│   BOTH DISPLAYS: Show all data (CAN + TPMS) and respond to SWC buttons      │
+│   Pi → ESP32:  All CAN data + SWC buttons (short serial, ~20cm)             │
+│   ESP32 → Pi:  TPMS data only (BLE reception)                               │
+│   Arduino:     DIRECT HS-CAN via MCP2515 #3 (no serial, no corruption)      │
+│                                                                              │
+│   WHY ARDUINO USES DIRECT CAN:                                               │
+│   • RPM timing critical (<50ms for shift light)                             │
+│   • Long wire run through high-EMI engine bay                               │
+│   • CAN differential signaling resists noise                                │
+│   • Already working and proven reliable                                      │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -396,46 +440,59 @@ The ESP32-S3 round display modules have **limited exposed GPIO pins** (6-10 usab
 
 ## Existing Arduino LED RPM System
 
-> ⚠️ **This system already exists and is working!** See `docs/hardware/WIRING_GUIDE.md` for detailed setup instructions.
+> ✅ **This system already exists and is working!** See `docs/hardware/WIRING_GUIDE.md` and `arduino/src/main.cpp` for full implementation.
 
-The Arduino Nano RPM LED controller is already implemented in this repo. In the new integrated system, instead of reading CAN directly, it will receive RPM data via Serial from the ESP32-S3 hub.
+The Arduino Nano RPM LED controller reads directly from HS-CAN via its own MCP2515 module. **This design is kept unchanged** because serial communication over long distances in automotive environments is prone to EMI corruption.
 
 ### Arduino Nano Pin Configuration
 
-From `lib/Config/config.h`:
+From `arduino/src/main.cpp` (current working setup):
 
 | Pin | Function | Connection |
 |-----|----------|------------|
-| **D5** | LED Data | WS2812B Data In |
-| **D10** | CAN CS | MCP2515 CS (current) → **Not needed in new design** |
-| **D7** | CAN INT | MCP2515 INT (current) → **Not needed in new design** |
-| **D11** | SPI MOSI | MCP2515 SI (current) → **Not needed in new design** |
-| **D12** | SPI MISO | MCP2515 SO (current) → **Not needed in new design** |
-| **D13** | SPI SCK | MCP2515 SCK (current) → **Not needed in new design** |
-| **D2** | Serial RX | **NEW: ESP32-S3 GPIO 43 (TX)** |
-| **5V** | Power | VCC from buck converter |
+| **D2** | CAN INT | MCP2515 INT (hardware interrupt for fast response) |
+| **D5** | LED Data | WS2812B Data In (330Ω resistor recommended) |
+| **D10** | CAN CS | MCP2515 CS (SPI chip select) |
+| **D11** | SPI MOSI | MCP2515 SI |
+| **D12** | SPI MISO | MCP2515 SO |
+| **D13** | SPI SCK | MCP2515 SCK |
+| **5V** | Power | VCC from LM2596 buck converter |
 | **GND** | Ground | Common ground |
 
 ### LED Configuration
 
-From `lib/Config/config.h`:
+From `arduino/src/main.cpp`:
 
 ```cpp
-#define LED_COUNT 20           // 20x WS2812B LEDs
-#define LED_BRIGHTNESS 50      // 0-255 default brightness
-#define LED_FADE_SPEED 15      // Fade animation speed
+#define LED_COUNT           20      // Number of LEDs in strip
+#define LED_DATA_PIN        5       // WS2812B Data Pin
+#define ENABLE_BRIGHTNESS   true    // Potentiometer brightness control
 ```
 
-### RPM Thresholds
+### RPM Thresholds (Color Zones)
 
-From `lib/Config/config.h`:
+From `arduino/src/main.cpp`:
 
 ```cpp
-#define RPM_IDLE        800    // Below this = idle
-#define RPM_MIN_DISPLAY 1000   // Start lighting LEDs
-#define RPM_MAX         7000   // Full LED bar
-#define RPM_SHIFT       6500   // Shift light flash
-#define RPM_REDLINE     7200   // Redline warning
+// RPM thresholds for LED color zones
+#define RPM_ZONE_BLUE       2000    // 0-1999: Blue (idle/low)
+#define RPM_ZONE_GREEN      3000    // 2000-2999: Green (eco)
+#define RPM_ZONE_YELLOW     4500    // 3000-4499: Yellow (normal)
+#define RPM_ZONE_ORANGE     5500    // 4500-5499: Orange (spirited)
+#define RPM_MAX             6200    // 5500+: Red (high RPM)
+#define RPM_REDLINE         6800    // Trigger haptic pulse (optional)
+```
+
+### CAN Configuration
+
+From `arduino/src/main.cpp`:
+
+```cpp
+#define CAN_CS_PIN          10      // MCP2515 Chip Select (SPI)
+#define CAN_INT_PIN         2       // MCP2515 Interrupt (MUST be D2 for INT0)
+#define CAN_SPEED           CAN_500KBPS  // MX-5 NC HS-CAN bus speed
+#define CAN_CRYSTAL         MCP_8MHZ     // MCP2515 crystal frequency
+#define MAZDA_RPM_CAN_ID    0x201   // Engine RPM broadcast ID
 ```
 
 ### WS2812B LED Strip Wiring
@@ -459,88 +516,82 @@ From `lib/Config/config.h`:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Arduino Integration: Current vs New Design
+### Arduino Architecture (FINAL - Direct CAN)
 
-**CURRENT DESIGN** (standalone, reads CAN directly):
+**KEEPING DIRECT CAN** (proven reliable, EMI-resistant):
 ```
-                     MCP2515
+                     MCP2515 #3
                    ┌─────────┐
-    OBD-II HS-CAN ─┤ CAN H/L │
+    OBD-II HS-CAN ─┤ CAN H/L │◄── Differential signaling resists EMI
                    └────┬────┘
-                        │ SPI (D10-D13)
+                        │ SPI (D10-D13) + INT (D2)
                         ▼
                   ┌───────────┐
-                  │  Arduino  │
+                  │  Arduino  │◄── Hardware interrupt for <1ms latency
                   │   Nano    │
                   └─────┬─────┘
                         │ D5
                         ▼
                   ┌───────────┐
-                  │ WS2812B   │
+                  │ WS2812B   │◄── 20 LEDs, color-coded by RPM zone
                   │ LED Strip │
                   └───────────┘
 ```
 
-**NEW DESIGN** (receives RPM from ESP32-S3):
-```
-                  ┌──────────────┐
-    OBD-II ─────→ │   ESP32-S3   │ ←── Reads CAN directly
-                  │    HUB       │
-                  └──────┬───────┘
-                         │ Serial (GPIO 43 TX)
-                         ▼
-                  ┌───────────┐
-                  │  Arduino  │ ←── Simplified code (no CAN library needed)
-                  │   Nano    │
-                  │   D2 RX   │
-                  └─────┬─────┘
-                        │ D5
-                        ▼
-                  ┌───────────┐
-                  │ WS2812B   │
-                  │ LED Strip │
-                  └───────────┘
-```
+### Why NOT Serial for Arduino
 
-### Benefits of New Architecture
+| Factor | Serial from Pi/ESP | Direct CAN ✅ |
+|--------|-------------------|---------------|
+| Distance | 1-2m through engine bay | Same |
+| EMI Resistance | Poor (single-ended) | **Excellent (differential)** |
+| Latency | Variable, buffered | **<1ms with interrupt** |
+| Reliability | Prone to corruption | **Proven working** |
+| Independence | Needs Pi running | **Works standalone** |
+| Complexity | Need checksums, retries | **Simple, direct** |
 
-1. **Simplified Arduino Code**: Remove MCP2515/CAN library, just read serial
-2. **Freed SPI Pins**: D10-D13 available for other uses
-3. **Single CAN Tap**: ESP32-S3 handles all CAN reading
-4. **Reduced Wiring**: No need for Arduino's MCP2515 module
-5. **Lower Cost**: One less MCP2515 module required
+### Benefits of Keeping Direct CAN
 
-### Serial Protocol (ESP32-S3 → Arduino)
+1. **EMI Resistant**: CAN differential signaling rejects ignition noise
+2. **Time Critical**: Hardware interrupt gives <1ms CAN-to-LED latency
+3. **Independent**: LEDs work even if Pi/ESP32 are offline
+4. **Proven**: Current code is tested and working in-car
+5. **No Protocol Overhead**: Direct RPM parsing, no serial framing
 
-Simple format for RPM transmission:
-```
-RPM:3500\n    // Send RPM value with newline terminator
-```
+### Arduino CAN Message Parsing
 
-Arduino parsing example:
+From `arduino/src/main.cpp`:
 ```cpp
-// Simplified Arduino code (no CAN library)
-void loop() {
-    if (Serial.available()) {
-        String data = Serial.readStringUntil('\n');
-        if (data.startsWith("RPM:")) {
-            currentRPM = data.substring(4).toInt();
-            updateLEDs(currentRPM);
+// Fast inline CAN message reading - optimized for RPM extraction
+inline void readCANMessages() {
+    unsigned long rxId;
+    uint8_t len;
+    uint8_t rxBuf[8];
+    
+    while (canBus.checkReceive() == CAN_MSGAVAIL) {
+        if (canBus.readMsgBuf(&rxId, &len, rxBuf) == CAN_OK) {
+            lastCANData = millis();
+            errorMode = false;
+            
+            // Parse Mazda RPM message (ID 0x201)
+            // Format: bytes 0-1 = RPM * 4 (big endian)
+            unsigned long canId = rxId & 0x7FFFFFFF;
+            if (canId == MAZDA_RPM_CAN_ID && len >= 2) {
+                uint16_t rawRPM = ((uint16_t)rxBuf[0] << 8) | rxBuf[1];
+                currentRPM = rawRPM >> 2;  // Divide by 4 using bit shift
+            }
         }
     }
 }
 ```
 
-### Migration Path
+### No Migration Needed!
 
-| Step | Action | Status |
-|------|--------|--------|
-| 1 | Keep current Arduino code working | ✅ Working |
-| 2 | Add Serial receive to Arduino | ⬜ TODO |
-| 3 | Remove MCP2515 code from Arduino | ⬜ TODO |
-| 4 | Program ESP32-S3 to forward RPM | ⬜ TODO |
-| 5 | Disconnect Arduino's MCP2515 | ⬜ TODO |
-| 6 | Connect ESP32-S3 TX → Arduino D2 | ⬜ TODO |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Arduino Nano | ✅ Keep as-is | Direct CAN, proven working |
+| MCP2515 for Arduino | ✅ Keep | Already wired to HS-CAN |
+| Arduino Code | ✅ Keep | `arduino/src/main.cpp` unchanged |
+| WS2812B LEDs | ✅ Keep | 20 LEDs on D5 |
 
 ---
 
@@ -549,6 +600,7 @@ void loop() {
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         COMPLETE WIRING DIAGRAM                              │
+│                    (3x MCP2515: Pi×2, Arduino×1)                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │                              OBD-II Connector                                │
@@ -563,28 +615,56 @@ void loop() {
 │                               │  │     │  │                                  │
 │          MS-CAN H (Pin 3) ────┘  │     │  └──── HS-CAN L (Pin 14)           │
 │          MS-CAN L (Pin 11) ──────┘     └─────── HS-CAN H (Pin 6)            │
-│                    │                              │                          │
-│                    ▼                              ▼                          │
-│            ┌──────────────┐               ┌──────────────┐                  │
-│            │  MCP2515 #2  │               │  MCP2515 #1  │                  │
-│            │   MS-CAN     │               │   HS-CAN     │                  │
-│            │   125kbps    │               │   500kbps    │                  │
-│            └──────┬───────┘               └──────┬───────┘                  │
-│                   │ SPI                          │ SPI                       │
-│                   └──────────────┬───────────────┘                           │
-│                                  ▼                                           │
-│                    ┌─────────────────────────────┐                           │
-│                    │        ESP32-S3             │                           │
-│                    │      Round Display          │                           │
-│                    └──────┬──────────────┬──────┘                           │
-│                           │              │                                   │
-│              ┌────────────┘              └────────────┐                      │
-│              ▼                                        ▼                      │
-│    ┌───────────────────┐                  ┌───────────────────┐             │
-│    │   Arduino Nano    │                  │   Raspberry Pi    │             │
-│    │   D2 ←── ESP TX   │                  │   WiFi/Serial     │             │
-│    │   D5 ──→ WS2812B  │                  │   HDMI ──→ AVH    │             │
-│    └───────────────────┘                  └───────────────────┘             │
+│                    │                        │        │                       │
+│                    │                        │        │                       │
+│                    ▼                        │        │                       │
+│            ┌──────────────┐                 │        │                       │
+│            │  MCP2515 #2  │                 │        │                       │
+│            │   MS-CAN     │                 │        │                       │
+│            │   125kbps    │                 │        │                       │
+│            │  → Pi CE1    │                 │        │                       │
+│            └──────┬───────┘                 │        │                       │
+│                   │                         ▼        ▼                       │
+│                   │                  ┌──────────────────────┐                │
+│                   │                  │      HS-CAN BUS      │                │
+│                   │                  │    (multi-tap OK)    │                │
+│                   │                  └───────┬────────┬─────┘                │
+│                   │                          │        │                      │
+│                   │                          ▼        ▼                      │
+│                   │                   ┌──────────┐  ┌──────────┐            │
+│                   │                   │ MCP2515  │  │ MCP2515  │            │
+│                   │                   │ #1 (HS)  │  │ #3 (HS)  │            │
+│                   │                   │  → Pi    │  │→ Arduino │            │
+│                   │                   │   CE0    │  │   D10    │            │
+│                   │                   └────┬─────┘  └────┬─────┘            │
+│                   │                        │             │                   │
+│                   └────────────┬───────────┘             │                   │
+│                                │                         │                   │
+│                                ▼                         │                   │
+│                    ┌───────────────────────┐             │                   │
+│                    │    RASPBERRY PI 4B    │             │                   │
+│                    │      (CAN Hub)        │             │                   │
+│                    │                       │             │                   │
+│                    │  SPI: MCP2515 #1,#2   │             │                   │
+│                    │  UART: → ESP32-S3     │             │                   │
+│                    │  HDMI: → Pioneer      │             │                   │
+│                    └───────────┬───────────┘             │                   │
+│                                │                         │                   │
+│                    ┌───────────┴───────────┐             │                   │
+│                    │                       │             │                   │
+│                    ▼                       ▼             ▼                   │
+│         ┌─────────────────┐    ┌─────────────────┐  ┌───────────────┐       │
+│         │    ESP32-S3     │    │ Pioneer AVH     │  │ Arduino Nano  │       │
+│         │  Round Display  │    │   W4500NEX      │  │   RPM LEDs    │       │
+│         │                 │    │   (800x480)     │  │               │       │
+│         │ Serial from Pi  │    │  HDMI from Pi   │  │ Direct HS-CAN │       │
+│         │ BLE TPMS Rx     │    │                 │  │ MCP2515 #3    │       │
+│         │ No CAN module   │    │                 │  │ D5 → WS2812B  │       │
+│         └─────────────────┘    └─────────────────┘  └───────────────┘       │
+│                 ▲                                                            │
+│                 │                                                            │
+│         BLE TPMS Sensors (x4)                                               │
+│         (cap-mounted, wireless)                                             │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -902,11 +982,19 @@ void loop() {
 | Project Enclosure | 1 | $10 | Mount electronics |
 | BLE TPMS Sensors | 4 | $30 | ✅ Ordered - cap-mounted |
 | **Already Owned** | | | |
-| Arduino Nano | 1 | - | ✅ Existing |
+| Arduino Nano | 1 | - | ✅ Existing (keeps direct CAN) |
 | WS2812B LED Strip (20) | 1 | - | ✅ Existing |
-| MCP2515 CAN Module | 1 | - | ✅ Existing (can repurpose) |
+| MCP2515 CAN Module | 1 | - | ✅ Existing (stays with Arduino for HS-CAN) |
 | Raspberry Pi 4B | 1 | - | ✅ Existing |
 | **Total New Parts** | | **~$96** | |
+
+### MCP2515 Module Allocation
+
+| Module | Connected To | CAN Bus | Purpose |
+|--------|--------------|---------|--------|
+| MCP2515 #1 | Pi GPIO 8 (CE0) | HS-CAN (500k) | RPM, Speed, Temps, Gear |
+| MCP2515 #2 | Pi GPIO 7 (CE1) | MS-CAN (125k) | SWC Buttons, Body data |
+| MCP2515 #3 | Arduino D10 | HS-CAN (500k) | RPM only (shift light) |
 
 ---
 
