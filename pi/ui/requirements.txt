@@ -1,0 +1,4 @@
+# MX5 Telemetry - Raspberry Pi Display Requirements
+# Install with: pip3 install -r requirements.txt
+
+pygame>=2.0.0
