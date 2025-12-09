@@ -88,14 +88,16 @@ class ButtonEvent(Enum):
 
 class Screen(Enum):
     """Unified screens for both displays"""
-    RPM_SPEED = 0
-    TPMS = 1
-    ENGINE = 2
-    GFORCE = 3
-    SETTINGS = 4
+    OVERVIEW = 0
+    RPM_SPEED = 1
+    TPMS = 2
+    ENGINE = 3
+    GFORCE = 4
+    SETTINGS = 5
 
 
 SCREEN_NAMES = {
+    Screen.OVERVIEW: "Overview",
     Screen.RPM_SPEED: "RPM / Speed",
     Screen.TPMS: "Tire Pressure",
     Screen.ENGINE: "Engine",
@@ -154,7 +156,7 @@ class CombinedSimulator:
         self.pi_surface = pygame.Surface((PI_WIDTH, PI_HEIGHT))
         
         # Unified state - BOTH displays show same screen
-        self.current_screen = Screen.RPM_SPEED
+        self.current_screen = Screen.OVERVIEW
         self.sleeping = False
         self.demo_mode = True
         self.demo_rpm_dir = 1
@@ -286,7 +288,7 @@ class CombinedSimulator:
             self.adjust_setting(-1)
         elif button == ButtonEvent.ON_OFF:
             if items[self.settings_selection][0] == "Back":
-                self.current_screen = Screen.RPM_SPEED
+                self.current_screen = Screen.OVERVIEW
                 self.settings_edit_mode = False
             else:
                 self.settings_edit_mode = not self.settings_edit_mode
@@ -294,7 +296,7 @@ class CombinedSimulator:
             if self.settings_edit_mode:
                 self.settings_edit_mode = False
             else:
-                self.current_screen = Screen.RPM_SPEED
+                self.current_screen = Screen.OVERVIEW
     
     def get_settings_items(self):
         """Return list of (name, value, unit) tuples"""
@@ -407,6 +409,7 @@ class CombinedSimulator:
         
         # Render current screen
         renderers = {
+            Screen.OVERVIEW: self.render_esp32_overview,
             Screen.RPM_SPEED: self.render_esp32_rpm_speed,
             Screen.TPMS: self.render_esp32_tpms,
             Screen.ENGINE: self.render_esp32_engine,
@@ -429,6 +432,7 @@ class CombinedSimulator:
         
         # Render current screen
         renderers = {
+            Screen.OVERVIEW: self.render_pi_overview,
             Screen.RPM_SPEED: self.render_pi_rpm_speed,
             Screen.TPMS: self.render_pi_tpms,
             Screen.ENGINE: self.render_pi_engine,
@@ -462,6 +466,65 @@ class CombinedSimulator:
     # -------------------------------------------------------------------------
     # ESP32 SCREENS (Compact)
     # -------------------------------------------------------------------------
+    
+    def render_esp32_overview(self):
+        """Overview screen - Gear + key alerts + mini TPMS"""
+        center = ESP32_SIZE // 2
+        
+        # Get any alerts
+        alerts = self.get_alerts()
+        
+        # Big gear in center-top
+        gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
+        rpm_color = self.get_rpm_color(self.telemetry.rpm)
+        gear_txt = self.font_huge.render(gear, True, rpm_color)
+        self.esp32_surface.blit(gear_txt, gear_txt.get_rect(center=(center, 70)))
+        
+        # Speed below gear
+        speed = self.telemetry.speed_kmh
+        if self.settings.use_mph:
+            speed = int(speed * 0.621371)
+        unit = "MPH" if self.settings.use_mph else "KMH"
+        speed_txt = self.font_medium.render(f"{speed} {unit}", True, COLOR_WHITE)
+        self.esp32_surface.blit(speed_txt, speed_txt.get_rect(center=(center, 120)))
+        
+        # Mini TPMS (4 small boxes)
+        tire_y = 165
+        tire_size = 45
+        positions = [(center - 55, tire_y), (center + 55, tire_y),
+                     (center - 55, tire_y + 55), (center + 55, tire_y + 55)]
+        
+        for i, (x, y) in enumerate(positions):
+            psi = self.telemetry.tire_pressure[i]
+            if psi < self.settings.tire_low_psi:
+                color = COLOR_RED
+            elif psi > self.settings.tire_high_psi:
+                color = COLOR_YELLOW
+            else:
+                color = COLOR_GREEN
+            
+            pygame.draw.rect(self.esp32_surface, color, 
+                           (x - tire_size//2, y - 15, tire_size, 30), 2, border_radius=4)
+            txt = self.font_tiny.render(f"{psi:.0f}", True, color)
+            self.esp32_surface.blit(txt, txt.get_rect(center=(x, y)))
+        
+        # Alert section at bottom
+        alert_y = 280
+        if alerts:
+            # Show first alert (most critical)
+            alert_txt, alert_color = alerts[0]
+            pygame.draw.rect(self.esp32_surface, alert_color, 
+                           (30, alert_y - 5, ESP32_SIZE - 60, 28), border_radius=5)
+            txt = self.font_tiny.render(alert_txt, True, (0, 0, 0))
+            self.esp32_surface.blit(txt, txt.get_rect(center=(center, alert_y + 8)))
+            
+            # Alert count if more
+            if len(alerts) > 1:
+                count_txt = self.font_tiny.render(f"+{len(alerts)-1} more", True, COLOR_YELLOW)
+                self.esp32_surface.blit(count_txt, count_txt.get_rect(center=(center, alert_y + 30)))
+        else:
+            txt = self.font_tiny.render("ALL SYSTEMS OK", True, COLOR_GREEN)
+            self.esp32_surface.blit(txt, txt.get_rect(center=(center, alert_y + 8)))
     
     def render_esp32_rpm_speed(self):
         center = ESP32_SIZE // 2
@@ -655,6 +718,165 @@ class CombinedSimulator:
     # PI SCREENS (Detailed)
     # -------------------------------------------------------------------------
     
+    def render_pi_overview(self):
+        """Overview screen with gear, TPMS, key engine data, and alerts"""
+        alerts = self.get_alerts()
+        
+        # Left column: Gear + Speed + Key Info
+        left_x = 50
+        
+        # Gear (large)
+        rpm_color = self.get_rpm_color(self.telemetry.rpm)
+        gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
+        txt = self.pi_font_huge.render(gear, True, rpm_color)
+        self.pi_surface.blit(txt, txt.get_rect(center=(left_x + 80, 100)))
+        
+        # Speed below gear (convert based on setting)
+        speed = self.telemetry.speed_kmh
+        if self.settings.use_mph:
+            speed = int(speed * 0.621371)
+        unit = "MPH" if self.settings.use_mph else "KMH"
+        txt = self.pi_font_large.render(f"{speed:.0f}", True, COLOR_WHITE)
+        self.pi_surface.blit(txt, txt.get_rect(center=(left_x + 80, 180)))
+        txt = self.font_small.render(unit, True, COLOR_GRAY)
+        self.pi_surface.blit(txt, txt.get_rect(center=(left_x + 80, 210)))
+        
+        # RPM bar under speed
+        rpm_pct = min(1.0, self.telemetry.rpm / self.settings.redline_rpm)
+        bar_y = 240
+        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, (left_x, bar_y, 160, 20), border_radius=5)
+        pygame.draw.rect(self.pi_surface, rpm_color, (left_x, bar_y, int(160 * rpm_pct), 20), border_radius=5)
+        txt = self.font_tiny.render(f"{self.telemetry.rpm} RPM", True, COLOR_WHITE)
+        self.pi_surface.blit(txt, txt.get_rect(center=(left_x + 80, bar_y + 10)))
+        
+        # Key values (coolant, oil, fuel, voltage)
+        values_y = 280
+        value_h = 40
+        values = [
+            ("COOLANT", f"{self.telemetry.coolant_temp_f:.0f}°F", 
+             COLOR_RED if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f else COLOR_GREEN),
+            ("OIL", f"{self.telemetry.oil_temp_f:.0f}°F",
+             COLOR_RED if self.telemetry.oil_temp_f >= self.settings.oil_warn_f else COLOR_GREEN),
+            ("FUEL", f"{self.telemetry.fuel_level_percent:.0f}%",
+             COLOR_RED if self.telemetry.fuel_level_percent < 10 else 
+             COLOR_YELLOW if self.telemetry.fuel_level_percent < 20 else COLOR_GREEN),
+            ("VOLTS", f"{self.telemetry.voltage:.1f}V",
+             COLOR_RED if self.telemetry.voltage < 12.0 else
+             COLOR_YELLOW if self.telemetry.voltage < 12.5 else COLOR_GREEN),
+        ]
+        for i, (label, val, color) in enumerate(values):
+            y = values_y + i * value_h
+            txt = self.font_tiny.render(label, True, COLOR_GRAY)
+            self.pi_surface.blit(txt, (left_x, y))
+            txt = self.font_small.render(val, True, color)
+            self.pi_surface.blit(txt, (left_x + 80, y - 2))
+        
+        # Center: TPMS diagram
+        tpms_cx, tpms_cy = 360, 200
+        box_w, box_h = 60, 80
+        gap = 80  # Gap between tires
+        
+        # Draw car outline (simple)
+        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, 
+                        (tpms_cx - 30, tpms_cy - 90, 60, 180), border_radius=10)
+        
+        # Tire positions: index, dx, dy, name
+        tire_positions = [
+            (0, -gap, -50, "FL"),
+            (1, gap, -50, "FR"),
+            (2, -gap, 50, "RL"),
+            (3, gap, 50, "RR"),
+        ]
+        
+        for idx, dx, dy, name in tire_positions:
+            psi = self.telemetry.tire_pressure[idx]
+            temp = self.telemetry.tire_temp[idx]
+            x = tpms_cx + dx - box_w//2
+            y = tpms_cy + dy - box_h//2
+            
+            # Color based on pressure
+            if psi < self.settings.tire_low_psi:
+                color = COLOR_RED
+            elif psi > self.settings.tire_high_psi:
+                color = COLOR_YELLOW
+            else:
+                color = COLOR_GREEN
+            
+            # Box
+            pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, (x, y, box_w, box_h), border_radius=5)
+            pygame.draw.rect(self.pi_surface, color, (x, y, box_w, box_h), 2, border_radius=5)
+            
+            # Label
+            txt = self.font_tiny.render(name, True, COLOR_GRAY)
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 12)))
+            
+            # Pressure (large)
+            txt = self.font_small.render(f"{psi:.0f}", True, color)
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 35)))
+            
+            # Temp
+            txt = self.font_tiny.render(f"{temp:.0f}°F", True, COLOR_GRAY)
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 60)))
+        
+        # TPMS label
+        txt = self.font_small.render("TPMS", True, COLOR_WHITE)
+        self.pi_surface.blit(txt, txt.get_rect(center=(tpms_cx, tpms_cy + 120)))
+        
+        # Right column: Alerts panel
+        alerts_x = 500
+        alerts_y = 40
+        alerts_w = 280
+        alerts_h = 400
+        
+        # Alerts panel background
+        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, 
+                        (alerts_x, alerts_y, alerts_w, alerts_h), border_radius=10)
+        
+        # Header
+        header_color = COLOR_RED if alerts else COLOR_GREEN
+        pygame.draw.rect(self.pi_surface, header_color, 
+                        (alerts_x, alerts_y, alerts_w, 40), 
+                        border_top_left_radius=10, border_top_right_radius=10)
+        header_text = "⚠ ALERTS" if alerts else "✓ ALL SYSTEMS OK"
+        txt = self.font_medium.render(header_text, True, COLOR_WHITE)
+        self.pi_surface.blit(txt, txt.get_rect(center=(alerts_x + alerts_w//2, alerts_y + 20)))
+        
+        if alerts:
+            # Show alerts
+            alert_y = alerts_y + 55
+            for i, (alert_text, alert_color) in enumerate(alerts[:8]):  # Max 8 alerts
+                # Alert background
+                pygame.draw.rect(self.pi_surface, (40, 40, 40),
+                               (alerts_x + 10, alert_y, alerts_w - 20, 35), border_radius=5)
+                # Alert indicator
+                pygame.draw.rect(self.pi_surface, alert_color,
+                               (alerts_x + 10, alert_y, 4, 35), border_radius=2)
+                # Alert text
+                txt = self.font_small.render(alert_text, True, alert_color)
+                self.pi_surface.blit(txt, (alerts_x + 22, alert_y + 8))
+                alert_y += 42
+            
+            # Show count if more alerts
+            if len(alerts) > 8:
+                txt = self.font_tiny.render(f"+ {len(alerts) - 8} more alerts", True, COLOR_GRAY)
+                self.pi_surface.blit(txt, txt.get_rect(center=(alerts_x + alerts_w//2, alert_y + 10)))
+        else:
+            # No alerts - show status checks
+            check_y = alerts_y + 60
+            checks = [
+                ("Tire Pressures", True),
+                ("Coolant Temp", True),
+                ("Oil Temp", True),
+                ("Fuel Level", self.telemetry.fuel_level_percent >= 15),
+                ("Voltage", self.telemetry.voltage >= 12.0),
+            ]
+            for label, ok in checks:
+                color = COLOR_GREEN if ok else COLOR_YELLOW
+                symbol = "✓" if ok else "!"
+                txt = self.font_small.render(f"{symbol} {label}", True, color)
+                self.pi_surface.blit(txt, (alerts_x + 20, check_y))
+                check_y += 35
+
     def render_pi_rpm_speed(self):
         # Left side: Big RPM gauge
         gauge_cx, gauge_cy = 200, 280
@@ -1021,6 +1243,39 @@ class CombinedSimulator:
         if rpm < 6000: return COLOR_ORANGE
         return COLOR_RED
     
+    def get_alerts(self):
+        """Check telemetry values and return list of (alert_text, color) tuples"""
+        alerts = []
+        
+        # Tire pressure alerts (check each tire)
+        tire_names = ['FL', 'FR', 'RL', 'RR']
+        for i, name in enumerate(tire_names):
+            psi = self.telemetry.tire_pressure[i]
+            if psi < self.settings.tire_low_psi:
+                alerts.append((f"LOW TIRE {name}: {psi:.0f} PSI", COLOR_RED))
+            elif psi > self.settings.tire_high_psi:
+                alerts.append((f"HIGH TIRE {name}: {psi:.0f} PSI", COLOR_YELLOW))
+        
+        # Coolant temperature
+        if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f:
+            alerts.append((f"COOLANT HIGH: {self.telemetry.coolant_temp_f:.0f}°F", COLOR_RED))
+        
+        # Oil temperature
+        if self.telemetry.oil_temp_f >= self.settings.oil_warn_f:
+            alerts.append((f"OIL TEMP HIGH: {self.telemetry.oil_temp_f:.0f}°F", COLOR_RED))
+        
+        # Fuel level
+        if self.telemetry.fuel_level_percent < 15:
+            alerts.append((f"LOW FUEL: {self.telemetry.fuel_level_percent:.0f}%", COLOR_YELLOW))
+        
+        # Voltage
+        if self.telemetry.voltage < 12.0:
+            alerts.append((f"LOW VOLTAGE: {self.telemetry.voltage:.1f}V", COLOR_RED))
+        elif self.telemetry.voltage < 12.5:
+            alerts.append((f"VOLTAGE WARN: {self.telemetry.voltage:.1f}V", COLOR_YELLOW))
+        
+        return alerts
+    
     def draw_arc(self, surface, cx, cy, radius, thickness, start_angle, end_angle, color):
         """Draw an arc using pixel plotting"""
         for angle in range(int(start_angle), int(end_angle) + 1, 2):
@@ -1043,7 +1298,7 @@ if __name__ == "__main__":
     print()
     print("BOTH displays show the SAME screen - synchronized!")
     print()
-    print("Screens: RPM/Speed → TPMS → Engine → G-Force → Settings")
+    print("Screens: Overview → RPM/Speed → TPMS → Engine → G-Force → Settings")
     print()
     print("Navigation:")
     print("  ↑ / W     = Previous screen (RES+)")
