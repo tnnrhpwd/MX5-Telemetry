@@ -7,6 +7,11 @@ BOTH displays show the SAME screen and are controlled SIMULTANEOUSLY.
 
 The ESP32 shows a compact view, while the Pi shows extended info.
 
+Hardware Notes:
+    - ESP32-S3 with 1.85" GC9A01 round LCD (360x360)
+    - Built-in QMI8658 IMU (6-axis accelerometer + gyroscope) for G-Force
+    - No additional hardware needed for G-Force calculation
+
 Screens (synchronized):
     1. RPM/Speed     - Primary driving data
     2. TPMS          - Tire pressure and temps
@@ -56,20 +61,24 @@ CONTROL_PANEL_WIDTH = 200
 WINDOW_WIDTH = ESP32_SIZE + PI_WIDTH + CONTROL_PANEL_WIDTH + WINDOW_PADDING * 4
 WINDOW_HEIGHT = max(ESP32_SIZE, PI_HEIGHT) + 80
 
-# Colors
-COLOR_BG = (20, 20, 30)
-COLOR_BG_DARK = (15, 15, 20)
-COLOR_WHITE = (255, 255, 255)
-COLOR_GRAY = (128, 128, 128)
-COLOR_DARK_GRAY = (64, 64, 64)
-COLOR_RED = (255, 60, 60)
-COLOR_GREEN = (60, 255, 60)
-COLOR_BLUE = (60, 120, 255)
-COLOR_YELLOW = (255, 255, 60)
-COLOR_ORANGE = (255, 165, 0)
-COLOR_CYAN = (0, 255, 255)
-COLOR_ACCENT = (0, 150, 255)
-COLOR_PURPLE = (180, 100, 255)
+# Modern Color Palette
+COLOR_BG = (12, 12, 18)           # Deep dark background
+COLOR_BG_DARK = (8, 8, 12)        # Even darker
+COLOR_BG_CARD = (22, 22, 32)      # Card/panel background
+COLOR_BG_ELEVATED = (32, 32, 45)  # Elevated elements
+COLOR_WHITE = (245, 245, 250)     # Soft white
+COLOR_GRAY = (140, 140, 160)      # Muted gray
+COLOR_DARK_GRAY = (55, 55, 70)    # Dark elements
+COLOR_RED = (255, 70, 85)         # Modern red
+COLOR_GREEN = (50, 215, 130)      # Modern green (mint)
+COLOR_BLUE = (65, 135, 255)       # Bright blue
+COLOR_YELLOW = (255, 210, 60)     # Warm yellow
+COLOR_ORANGE = (255, 140, 50)     # Vibrant orange
+COLOR_CYAN = (50, 220, 255)       # Bright cyan
+COLOR_ACCENT = (100, 140, 255)    # Primary accent (blue-purple)
+COLOR_PURPLE = (175, 130, 255)    # Soft purple
+COLOR_PINK = (255, 100, 180)      # Accent pink
+COLOR_TEAL = (45, 200, 190)       # Teal accent
 
 # =============================================================================
 # ENUMS AND DATA
@@ -468,34 +477,46 @@ class CombinedSimulator:
     # -------------------------------------------------------------------------
     
     def render_esp32_overview(self):
-        """Overview screen - Gear + key alerts + mini TPMS"""
+        """Overview screen - Gear + key alerts + mini TPMS with temps"""
         center = ESP32_SIZE // 2
         
         # Get any alerts
         alerts = self.get_alerts()
         
-        # Big gear in center-top
+        # Subtle radial gradient background effect (dark center ring)
+        pygame.draw.circle(self.esp32_surface, COLOR_BG_CARD, (center, center), 160)
+        pygame.draw.circle(self.esp32_surface, COLOR_BG, (center, center), 100)
+        
+        # Big gear in center-top with glow effect
         gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
         rpm_color = self.get_rpm_color(self.telemetry.rpm)
-        gear_txt = self.font_huge.render(gear, True, rpm_color)
-        self.esp32_surface.blit(gear_txt, gear_txt.get_rect(center=(center, 70)))
         
-        # Speed below gear
+        # Gear glow
+        glow_surf = pygame.Surface((80, 80), pygame.SRCALPHA)
+        pygame.draw.circle(glow_surf, (*rpm_color[:3], 40), (40, 40), 35)
+        self.esp32_surface.blit(glow_surf, (center - 40, 25))
+        
+        gear_txt = self.font_large.render(gear, True, rpm_color)
+        self.esp32_surface.blit(gear_txt, gear_txt.get_rect(center=(center, 60)))
+        
+        # Speed below gear with unit
         speed = self.telemetry.speed_kmh
         if self.settings.use_mph:
             speed = int(speed * 0.621371)
         unit = "MPH" if self.settings.use_mph else "KMH"
-        speed_txt = self.font_medium.render(f"{speed} {unit}", True, COLOR_WHITE)
-        self.esp32_surface.blit(speed_txt, speed_txt.get_rect(center=(center, 120)))
+        speed_txt = self.font_small.render(f"{speed} {unit}", True, COLOR_WHITE)
+        self.esp32_surface.blit(speed_txt, speed_txt.get_rect(center=(center, 105)))
         
-        # Mini TPMS (4 small boxes)
-        tire_y = 165
-        tire_size = 45
-        positions = [(center - 55, tire_y), (center + 55, tire_y),
-                     (center - 55, tire_y + 55), (center + 55, tire_y + 55)]
+        # Mini TPMS (4 boxes with PSI + Temp) - compact
+        tire_y = 150
+        box_w, box_h = 48, 38
+        positions = [(center - 52, tire_y), (center + 52, tire_y),
+                     (center - 52, tire_y + 45), (center + 52, tire_y + 45)]
         
         for i, (x, y) in enumerate(positions):
             psi = self.telemetry.tire_pressure[i]
+            temp = self.telemetry.tire_temp[i]
+            
             if psi < self.settings.tire_low_psi:
                 color = COLOR_RED
             elif psi > self.settings.tire_high_psi:
@@ -503,44 +524,75 @@ class CombinedSimulator:
             else:
                 color = COLOR_GREEN
             
+            # Modern rounded box with subtle fill
+            pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, 
+                           (x - box_w//2, y - box_h//2, box_w, box_h), border_radius=6)
             pygame.draw.rect(self.esp32_surface, color, 
-                           (x - tire_size//2, y - 15, tire_size, 30), 2, border_radius=4)
-            txt = self.font_tiny.render(f"{psi:.0f}", True, color)
+                           (x - box_w//2, y - box_h//2, box_w, box_h), 2, border_radius=6)
+            
+            # PSI and Temp on same line
+            txt = self.font_tiny.render(f"{psi:.0f}/{temp:.0f}°", True, color)
             self.esp32_surface.blit(txt, txt.get_rect(center=(x, y)))
         
-        # Alert section at bottom
-        alert_y = 280
+        # Alert section at bottom - within bounds
+        alert_y = 260
         if alerts:
-            # Show first alert (most critical)
             alert_txt, alert_color = alerts[0]
-            pygame.draw.rect(self.esp32_surface, alert_color, 
-                           (30, alert_y - 5, ESP32_SIZE - 60, 28), border_radius=5)
-            txt = self.font_tiny.render(alert_txt, True, (0, 0, 0))
-            self.esp32_surface.blit(txt, txt.get_rect(center=(center, alert_y + 8)))
             
-            # Alert count if more
+            pygame.draw.rect(self.esp32_surface, alert_color, 
+                           (40, alert_y, ESP32_SIZE - 80, 26), border_radius=6)
+            txt = self.font_tiny.render(alert_txt, True, COLOR_BG)
+            self.esp32_surface.blit(txt, txt.get_rect(center=(center, alert_y + 13)))
+            
             if len(alerts) > 1:
-                count_txt = self.font_tiny.render(f"+{len(alerts)-1} more", True, COLOR_YELLOW)
-                self.esp32_surface.blit(count_txt, count_txt.get_rect(center=(center, alert_y + 30)))
+                count_txt = self.font_tiny.render(f"+{len(alerts)-1}", True, COLOR_YELLOW)
+                self.esp32_surface.blit(count_txt, count_txt.get_rect(center=(center, alert_y + 38)))
         else:
-            txt = self.font_tiny.render("ALL SYSTEMS OK", True, COLOR_GREEN)
-            self.esp32_surface.blit(txt, txt.get_rect(center=(center, alert_y + 8)))
+            pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, 
+                           (40, alert_y, ESP32_SIZE - 80, 26), border_radius=6)
+            pygame.draw.rect(self.esp32_surface, COLOR_GREEN, 
+                           (40, alert_y, ESP32_SIZE - 80, 26), 2, border_radius=6)
+            txt = self.font_tiny.render("✓ ALL OK", True, COLOR_GREEN)
+            self.esp32_surface.blit(txt, txt.get_rect(center=(center, alert_y + 13)))
     
     def render_esp32_rpm_speed(self):
         center = ESP32_SIZE // 2
         
-        # RPM arc
+        # Background ring effect
+        pygame.draw.circle(self.esp32_surface, COLOR_BG_CARD, (center, center), 155)
+        pygame.draw.circle(self.esp32_surface, COLOR_BG, (center, center), 120)
+        
+        # RPM arc - modern thick arc with glow
         radius = 145
-        thickness = 16
+        thickness = 20
+        
+        # Background arc
         self.draw_arc(self.esp32_surface, center, center, radius, thickness, 135, 405, COLOR_DARK_GRAY)
         
+        # RPM fill arc with gradient effect
         rpm_pct = self.telemetry.rpm / self.settings.redline_rpm
         rpm_angle = min(270, max(0, rpm_pct * 270))
         rpm_color = self.get_rpm_color(self.telemetry.rpm)
+        
+        # Draw filled arc
         self.draw_arc(self.esp32_surface, center, center, radius, thickness, 135, 135 + rpm_angle, rpm_color)
         
-        # Gear in center
+        # Shift indicator ring (glowing when active)
+        if self.telemetry.rpm >= self.settings.shift_rpm:
+            pygame.draw.circle(self.esp32_surface, COLOR_RED, (center, 35), 12)
+            # Glow effect
+            glow = pygame.Surface((40, 40), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (255, 70, 85, 80), (20, 20), 18)
+            self.esp32_surface.blit(glow, (center - 20, 15))
+        
+        # Gear in center with glow
         gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
+        
+        # Gear glow
+        glow_surf = pygame.Surface((90, 90), pygame.SRCALPHA)
+        pygame.draw.circle(glow_surf, (*rpm_color[:3], 35), (45, 45), 40)
+        self.esp32_surface.blit(glow_surf, (center - 45, center - 60))
+        
         gear_txt = self.font_huge.render(gear, True, rpm_color)
         self.esp32_surface.blit(gear_txt, gear_txt.get_rect(center=(center, center - 15)))
         
@@ -555,20 +607,27 @@ class CombinedSimulator:
         unit_txt = self.font_tiny.render(unit, True, COLOR_GRAY)
         self.esp32_surface.blit(unit_txt, unit_txt.get_rect(center=(center, center + 65)))
         
-        # RPM digits at top
-        rpm_txt = self.font_small.render(f"{self.telemetry.rpm}", True, rpm_color)
-        self.esp32_surface.blit(rpm_txt, rpm_txt.get_rect(center=(center, 45)))
+        # RPM digits at bottom of arc
+        rpm_txt = self.font_small.render(f"{self.telemetry.rpm} RPM", True, COLOR_GRAY)
+        self.esp32_surface.blit(rpm_txt, rpm_txt.get_rect(center=(center, ESP32_SIZE - 45)))
     
     def render_esp32_tpms(self):
         center = ESP32_SIZE // 2
         
-        # Title
+        # Modern title with accent line
         txt = self.font_small.render("TPMS", True, COLOR_WHITE)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 40)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 35)))
+        pygame.draw.line(self.esp32_surface, COLOR_ACCENT, (center - 40, 52), (center + 40, 52), 2)
+        
+        # Car outline (modern minimal)
+        car_w, car_h = 70, 120
+        car_rect = pygame.Rect(center - car_w//2, center - car_h//2 + 10, car_w, car_h)
+        pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, car_rect, border_radius=12)
+        pygame.draw.rect(self.esp32_surface, COLOR_DARK_GRAY, car_rect, 2, border_radius=12)
         
         # 4 tire positions (car outline style)
-        positions = [(center - 60, center - 40), (center + 60, center - 40),
-                     (center - 60, center + 60), (center + 60, center + 60)]
+        positions = [(center - 70, center - 35), (center + 70, center - 35),
+                     (center - 70, center + 65), (center + 70, center + 65)]
         labels = ["FL", "FR", "RL", "RR"]
         
         for i, (x, y) in enumerate(positions):
@@ -583,79 +642,118 @@ class CombinedSimulator:
             else:
                 color = COLOR_GREEN
             
-            # Tire box
-            pygame.draw.rect(self.esp32_surface, COLOR_DARK_GRAY, (x - 35, y - 25, 70, 50), border_radius=5)
-            pygame.draw.rect(self.esp32_surface, color, (x - 35, y - 25, 70, 50), 2, border_radius=5)
+            # Modern tire card
+            box_w, box_h = 68, 58
+            pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, 
+                           (x - box_w//2, y - box_h//2, box_w, box_h), border_radius=10)
             
-            # PSI
-            psi_txt = self.font_small.render(f"{psi:.1f}", True, color)
-            self.esp32_surface.blit(psi_txt, psi_txt.get_rect(center=(x, y - 5)))
+            # Colored accent bar on left
+            pygame.draw.rect(self.esp32_surface, color, 
+                           (x - box_w//2, y - box_h//2, 4, box_h), 
+                           border_top_left_radius=10, border_bottom_left_radius=10)
             
-            # Label
+            # Label (small, top)
             lbl = self.font_tiny.render(labels[i], True, COLOR_GRAY)
-            self.esp32_surface.blit(lbl, lbl.get_rect(center=(x, y + 15)))
+            self.esp32_surface.blit(lbl, lbl.get_rect(center=(x + 2, y - 18)))
+            
+            # PSI (large)
+            psi_txt = self.font_small.render(f"{psi:.1f}", True, color)
+            self.esp32_surface.blit(psi_txt, psi_txt.get_rect(center=(x + 2, y + 2)))
+            
+            # Temp (small)
+            temp_txt = self.font_tiny.render(f"{temp:.0f}°F", True, COLOR_GRAY)
+            self.esp32_surface.blit(temp_txt, temp_txt.get_rect(center=(x + 2, y + 20)))
     
     def render_esp32_engine(self):
         center = ESP32_SIZE // 2
         
-        # Title
+        # Modern title with accent line
         txt = self.font_small.render("ENGINE", True, COLOR_WHITE)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 40)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 35)))
+        pygame.draw.line(self.esp32_surface, COLOR_ACCENT, (center - 50, 52), (center + 50, 52), 2)
         
-        # Coolant temp (left)
+        # Coolant (left card)
         coolant = self.telemetry.coolant_temp_f
-        cool_color = COLOR_RED if coolant > self.settings.coolant_warn_f else COLOR_GREEN
+        cool_color = COLOR_RED if coolant > self.settings.coolant_warn_f else COLOR_TEAL
+        
+        # Card background
+        pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, (30, 70, 100, 75), border_radius=12)
+        pygame.draw.rect(self.esp32_surface, cool_color, (30, 70, 4, 75), 
+                        border_top_left_radius=12, border_bottom_left_radius=12)
         
         txt = self.font_tiny.render("COOLANT", True, COLOR_GRAY)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center - 70, 80)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(80, 85)))
         txt = self.font_medium.render(f"{coolant}°", True, cool_color)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center - 70, 115)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(80, 118)))
         
-        # Oil temp (right)
+        # Oil (right card)
         oil = self.telemetry.oil_temp_f
         oil_color = COLOR_RED if oil > self.settings.oil_warn_f else COLOR_GREEN
         
+        pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, (ESP32_SIZE - 130, 70, 100, 75), border_radius=12)
+        pygame.draw.rect(self.esp32_surface, oil_color, (ESP32_SIZE - 130, 70, 4, 75),
+                        border_top_left_radius=12, border_bottom_left_radius=12)
+        
         txt = self.font_tiny.render("OIL", True, COLOR_GRAY)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center + 70, 80)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(ESP32_SIZE - 80, 85)))
         txt = self.font_medium.render(f"{oil}°", True, oil_color)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center + 70, 115)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(ESP32_SIZE - 80, 118)))
         
-        # Fuel gauge (center bottom)
+        # Fuel gauge (center - circular progress)
         fuel = self.telemetry.fuel_level_percent
-        fuel_color = COLOR_RED if fuel < 15 else COLOR_WHITE
+        fuel_color = COLOR_RED if fuel < 15 else (COLOR_YELLOW if fuel < 25 else COLOR_GREEN)
         
+        fuel_cx, fuel_cy = center, 210
+        fuel_r = 55
+        
+        # Background circle
+        pygame.draw.circle(self.esp32_surface, COLOR_BG_CARD, (fuel_cx, fuel_cy), fuel_r)
+        pygame.draw.circle(self.esp32_surface, COLOR_DARK_GRAY, (fuel_cx, fuel_cy), fuel_r, 3)
+        
+        # Fuel arc
+        fuel_angle = int(360 * fuel / 100)
+        self.draw_arc(self.esp32_surface, fuel_cx, fuel_cy, fuel_r - 5, 8, -90, -90 + fuel_angle, fuel_color)
+        
+        # Fuel percentage in center
+        txt = self.font_medium.render(f"{int(fuel)}%", True, fuel_color)
+        self.esp32_surface.blit(txt, txt.get_rect(center=(fuel_cx, fuel_cy - 5)))
         txt = self.font_tiny.render("FUEL", True, COLOR_GRAY)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 180)))
-        txt = self.font_large.render(f"{int(fuel)}%", True, fuel_color)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 220)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(fuel_cx, fuel_cy + 20)))
         
-        # Fuel bar
-        bar_w = 120
-        bar_h = 12
-        bar_x = center - bar_w // 2
-        bar_y = 250
-        pygame.draw.rect(self.esp32_surface, COLOR_DARK_GRAY, (bar_x, bar_y, bar_w, bar_h), border_radius=3)
-        fill_w = int(bar_w * fuel / 100)
-        pygame.draw.rect(self.esp32_surface, fuel_color, (bar_x, bar_y, fill_w, bar_h), border_radius=3)
+        # Voltage at bottom
+        voltage = self.telemetry.voltage
+        volt_color = COLOR_RED if voltage < 12.0 else (COLOR_YELLOW if voltage < 13.0 else COLOR_GREEN)
+        
+        pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, (center - 60, 280, 120, 35), border_radius=8)
+        txt = self.font_tiny.render(f"⚡ {voltage:.1f}V", True, volt_color)
+        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 297)))
     
     def render_esp32_gforce(self):
         center = ESP32_SIZE // 2
         
-        # Title
+        # Modern title with accent line
         txt = self.font_small.render("G-FORCE", True, COLOR_WHITE)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 40)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 35)))
+        pygame.draw.line(self.esp32_surface, COLOR_ACCENT, (center - 55, 52), (center + 55, 52), 2)
         
-        # G-ball background
-        ball_center = (center, center + 20)
-        ball_radius = 100
-        pygame.draw.circle(self.esp32_surface, COLOR_DARK_GRAY, ball_center, ball_radius)
-        pygame.draw.circle(self.esp32_surface, COLOR_GRAY, ball_center, ball_radius, 1)
+        # G-ball background with modern gradient rings
+        ball_center = (center, center + 15)
+        ball_radius = 105
+        
+        # Outer glow ring
+        pygame.draw.circle(self.esp32_surface, COLOR_BG_CARD, ball_center, ball_radius + 8)
+        pygame.draw.circle(self.esp32_surface, COLOR_BG, ball_center, ball_radius)
+        
+        # Grid circles (0.5G, 1G, 1.5G)
+        for g, alpha in [(0.5, 40), (1.0, 60), (1.5, 80)]:
+            r = int(g * 60)
+            pygame.draw.circle(self.esp32_surface, COLOR_DARK_GRAY, ball_center, r, 1)
         
         # Crosshairs
-        pygame.draw.line(self.esp32_surface, COLOR_GRAY, 
+        pygame.draw.line(self.esp32_surface, COLOR_DARK_GRAY, 
                         (ball_center[0] - ball_radius, ball_center[1]),
                         (ball_center[0] + ball_radius, ball_center[1]), 1)
-        pygame.draw.line(self.esp32_surface, COLOR_GRAY,
+        pygame.draw.line(self.esp32_surface, COLOR_DARK_GRAY,
                         (ball_center[0], ball_center[1] - ball_radius),
                         (ball_center[0], ball_center[1] + ball_radius), 1)
         
@@ -667,123 +765,209 @@ class CombinedSimulator:
         # Clamp to circle
         dx, dy = gx - ball_center[0], gy - ball_center[1]
         dist = math.sqrt(dx*dx + dy*dy)
-        if dist > ball_radius - 10:
-            scale = (ball_radius - 10) / dist
+        if dist > ball_radius - 12:
+            scale = (ball_radius - 12) / dist
             gx = ball_center[0] + int(dx * scale)
             gy = ball_center[1] + int(dy * scale)
+        
+        # G-ball with glow
+        glow = pygame.Surface((50, 50), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*COLOR_ACCENT[:3], 80), (25, 25), 20)
+        self.esp32_surface.blit(glow, (gx - 25, gy - 25))
         
         pygame.draw.circle(self.esp32_surface, COLOR_ACCENT, (gx, gy), 12)
         pygame.draw.circle(self.esp32_surface, COLOR_WHITE, (gx, gy), 12, 2)
         
-        # G values
-        txt = self.font_tiny.render(f"LAT: {self.telemetry.g_lateral:+.2f}G", True, COLOR_WHITE)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center, ESP32_SIZE - 60)))
-        txt = self.font_tiny.render(f"LON: {self.telemetry.g_longitudinal:+.2f}G", True, COLOR_WHITE)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center, ESP32_SIZE - 40)))
+        # Combined G value (bottom)
+        combined = math.sqrt(self.telemetry.g_lateral**2 + self.telemetry.g_longitudinal**2)
+        
+        # G readout cards at bottom - fit within circle
+        y = ESP32_SIZE - 80
+        card_w = 85
+        
+        # Lateral
+        pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, (35, y, card_w, 35), border_radius=6)
+        txt = self.font_tiny.render(f"LAT {self.telemetry.g_lateral:+.1f}", True, COLOR_CYAN)
+        self.esp32_surface.blit(txt, txt.get_rect(center=(35 + card_w//2, y + 17)))
+        
+        # Longitudinal
+        pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, (center - card_w//2, y, card_w, 35), border_radius=6)
+        txt = self.font_tiny.render(f"LON {self.telemetry.g_longitudinal:+.1f}", True, COLOR_PURPLE)
+        self.esp32_surface.blit(txt, txt.get_rect(center=(center, y + 17)))
+        
+        # Combined (right)
+        pygame.draw.rect(self.esp32_surface, COLOR_BG_CARD, (ESP32_SIZE - 35 - card_w, y, card_w, 35), border_radius=6)
+        txt = self.font_tiny.render(f"{combined:.1f}G", True, COLOR_ACCENT)
+        self.esp32_surface.blit(txt, txt.get_rect(center=(ESP32_SIZE - 35 - card_w//2, y + 17)))
     
     def render_esp32_settings(self):
         center = ESP32_SIZE // 2
         
-        # Title
+        # Modern title with accent line
         txt = self.font_small.render("SETTINGS", True, COLOR_WHITE)
-        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 40)))
+        self.esp32_surface.blit(txt, txt.get_rect(center=(center, 50)))
+        pygame.draw.line(self.esp32_surface, COLOR_ACCENT, (center - 60, 68), (center + 60, 68), 2)
         
         items = self.get_settings_items()
-        start_y = 75
+        sel = self.settings_selection
         
-        for i, (name, value, unit) in enumerate(items):
-            y = start_y + i * 38
+        # Show only: previous, selected, next (3 visible items max)
+        # This fits better in the circular display
+        visible_indices = []
+        if sel > 0:
+            visible_indices.append(sel - 1)
+        visible_indices.append(sel)
+        if sel < len(items) - 1:
+            visible_indices.append(sel + 1)
+        
+        # Position indicators (arrows showing more items above/below)
+        if sel > 0:
+            txt = self.font_tiny.render("▲", True, COLOR_GRAY)
+            self.esp32_surface.blit(txt, txt.get_rect(center=(center, 85)))
+        
+        # Calculate vertical positions - center the visible items
+        item_h = 50
+        total_h = len(visible_indices) * item_h
+        start_y = center - total_h // 2 + 20
+        
+        for slot, idx in enumerate(visible_indices):
+            name, value, unit = items[idx]
+            y = start_y + slot * item_h
+            is_selected = idx == sel
             
-            # Highlight selected
-            if i == self.settings_selection:
-                pygame.draw.rect(self.esp32_surface, (40, 40, 60), 
-                               (30, y - 5, ESP32_SIZE - 60, 32), border_radius=5)
+            # Card background - wider for selected
+            card_margin = 45 if is_selected else 55
+            bg_color = COLOR_BG_ELEVATED if is_selected else COLOR_BG_CARD
+            card_h = 42 if is_selected else 36
+            
+            pygame.draw.rect(self.esp32_surface, bg_color, 
+                           (card_margin, y, ESP32_SIZE - card_margin * 2, card_h), border_radius=10)
+            
+            if is_selected:
+                # Selection indicator bar
+                pygame.draw.rect(self.esp32_surface, COLOR_ACCENT, 
+                               (card_margin, y, 4, card_h), 
+                               border_top_left_radius=10, border_bottom_left_radius=10)
                 if self.settings_edit_mode:
+                    # Edit mode glow
                     pygame.draw.rect(self.esp32_surface, COLOR_ACCENT,
-                                   (30, y - 5, ESP32_SIZE - 60, 32), 2, border_radius=5)
+                                   (card_margin, y, ESP32_SIZE - card_margin * 2, card_h), 2, border_radius=10)
             
-            color = COLOR_WHITE if i == self.settings_selection else COLOR_GRAY
+            color = COLOR_WHITE if is_selected else COLOR_GRAY
+            font = self.font_small if is_selected else self.font_tiny
             
             # Name on left
-            txt = self.font_tiny.render(name, True, color)
-            self.esp32_surface.blit(txt, (45, y))
+            txt = font.render(name, True, color)
+            self.esp32_surface.blit(txt, (card_margin + 12, y + (card_h - txt.get_height()) // 2))
             
             # Value on right
             if value != "":
                 val_str = f"{value}{unit}"
-                txt = self.font_tiny.render(val_str, True, COLOR_ACCENT if i == self.settings_selection else COLOR_WHITE)
-                self.esp32_surface.blit(txt, (ESP32_SIZE - 45 - txt.get_width(), y))
+                val_color = COLOR_ACCENT if is_selected else COLOR_WHITE
+                txt = font.render(val_str, True, val_color)
+                self.esp32_surface.blit(txt, (ESP32_SIZE - card_margin - 12 - txt.get_width(), y + (card_h - txt.get_height()) // 2))
+        
+        # Down arrow if more items below
+        if sel < len(items) - 1:
+            txt = self.font_tiny.render("▼", True, COLOR_GRAY)
+            self.esp32_surface.blit(txt, txt.get_rect(center=(center, ESP32_SIZE - 85)))
+        
+        # Item counter
+        txt = self.font_tiny.render(f"{sel + 1}/{len(items)}", True, COLOR_DARK_GRAY)
+        self.esp32_surface.blit(txt, txt.get_rect(center=(center, ESP32_SIZE - 60)))
     
     # -------------------------------------------------------------------------
     # PI SCREENS (Detailed)
     # -------------------------------------------------------------------------
     
     def render_pi_overview(self):
-        """Overview screen with gear, TPMS, key engine data, and alerts"""
+        """Overview screen with gear, TPMS, key engine data, and alerts - Modern UI"""
+        # Note: Title bar is 50px, content area is y=55 to y=480 (425px available)
         alerts = self.get_alerts()
+        TOP = 55  # Below title bar
         
-        # Left column: Gear + Speed + Key Info
-        left_x = 50
+        # Left panel: Gear + Speed + RPM
+        left_panel_x = 20
+        left_panel_w = 180
         
-        # Gear (large)
+        # Gear card with glow
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, 
+                        (left_panel_x, TOP, left_panel_w, 150), border_radius=14)
+        
         rpm_color = self.get_rpm_color(self.telemetry.rpm)
         gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
-        txt = self.pi_font_huge.render(gear, True, rpm_color)
-        self.pi_surface.blit(txt, txt.get_rect(center=(left_x + 80, 100)))
         
-        # Speed below gear (convert based on setting)
+        # Gear glow effect
+        glow = pygame.Surface((90, 90), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*rpm_color[:3], 50), (45, 45), 40)
+        self.pi_surface.blit(glow, (left_panel_x + left_panel_w//2 - 45, TOP + 5))
+        
+        txt = self.pi_font_large.render(gear, True, rpm_color)
+        self.pi_surface.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 55)))
+        
+        # Speed below gear
         speed = self.telemetry.speed_kmh
         if self.settings.use_mph:
             speed = int(speed * 0.621371)
         unit = "MPH" if self.settings.use_mph else "KMH"
-        txt = self.pi_font_large.render(f"{speed:.0f}", True, COLOR_WHITE)
-        self.pi_surface.blit(txt, txt.get_rect(center=(left_x + 80, 180)))
-        txt = self.font_small.render(unit, True, COLOR_GRAY)
-        self.pi_surface.blit(txt, txt.get_rect(center=(left_x + 80, 210)))
+        txt = self.font_medium.render(f"{speed:.0f} {unit}", True, COLOR_WHITE)
+        self.pi_surface.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 120)))
         
-        # RPM bar under speed
+        # RPM bar card
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, 
+                        (left_panel_x, TOP + 160, left_panel_w, 40), border_radius=10)
         rpm_pct = min(1.0, self.telemetry.rpm / self.settings.redline_rpm)
-        bar_y = 240
-        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, (left_x, bar_y, 160, 20), border_radius=5)
-        pygame.draw.rect(self.pi_surface, rpm_color, (left_x, bar_y, int(160 * rpm_pct), 20), border_radius=5)
-        txt = self.font_tiny.render(f"{self.telemetry.rpm} RPM", True, COLOR_WHITE)
-        self.pi_surface.blit(txt, txt.get_rect(center=(left_x + 80, bar_y + 10)))
+        bar_x, bar_y = left_panel_x + 12, TOP + 172
+        bar_w = left_panel_w - 24
+        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, (bar_x, bar_y, bar_w, 12), border_radius=6)
+        pygame.draw.rect(self.pi_surface, rpm_color, (bar_x, bar_y, int(bar_w * rpm_pct), 12), border_radius=6)
+        txt = self.font_tiny.render(f"{self.telemetry.rpm} RPM", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 188)))
         
-        # Key values (coolant, oil, fuel, voltage)
-        values_y = 280
-        value_h = 40
+        # Key values grid (2x2) - compact
         values = [
-            ("COOLANT", f"{self.telemetry.coolant_temp_f:.0f}°F", 
-             COLOR_RED if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f else COLOR_GREEN),
-            ("OIL", f"{self.telemetry.oil_temp_f:.0f}°F",
+            ("COOL", f"{self.telemetry.coolant_temp_f:.0f}°", 
+             COLOR_RED if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f else COLOR_TEAL),
+            ("OIL", f"{self.telemetry.oil_temp_f:.0f}°",
              COLOR_RED if self.telemetry.oil_temp_f >= self.settings.oil_warn_f else COLOR_GREEN),
             ("FUEL", f"{self.telemetry.fuel_level_percent:.0f}%",
              COLOR_RED if self.telemetry.fuel_level_percent < 10 else 
              COLOR_YELLOW if self.telemetry.fuel_level_percent < 20 else COLOR_GREEN),
-            ("VOLTS", f"{self.telemetry.voltage:.1f}V",
+            ("VOLT", f"{self.telemetry.voltage:.1f}V",
              COLOR_RED if self.telemetry.voltage < 12.0 else
-             COLOR_YELLOW if self.telemetry.voltage < 12.5 else COLOR_GREEN),
+             COLOR_YELLOW if self.telemetry.voltage < 13.0 else COLOR_GREEN),
         ]
+        
+        card_w, card_h = 85, 50
         for i, (label, val, color) in enumerate(values):
-            y = values_y + i * value_h
+            col = i % 2
+            row = i // 2
+            x = left_panel_x + col * (card_w + 10)
+            y = TOP + 210 + row * (card_h + 6)
+            
+            pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (x, y, card_w, card_h), border_radius=8)
+            pygame.draw.rect(self.pi_surface, color, (x, y, 3, card_h), 
+                           border_top_left_radius=8, border_bottom_left_radius=8)
+            
             txt = self.font_tiny.render(label, True, COLOR_GRAY)
-            self.pi_surface.blit(txt, (left_x, y))
+            self.pi_surface.blit(txt, (x + 10, y + 5))
             txt = self.font_small.render(val, True, color)
-            self.pi_surface.blit(txt, (left_x + 80, y - 2))
+            self.pi_surface.blit(txt, (x + 10, y + 22))
         
-        # Center: TPMS diagram
-        tpms_cx, tpms_cy = 360, 200
-        box_w, box_h = 60, 80
-        gap = 80  # Gap between tires
+        # Center: TPMS diagram with modern styling
+        tpms_cx, tpms_cy = 340, TOP + 160
         
-        # Draw car outline (simple)
-        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, 
-                        (tpms_cx - 30, tpms_cy - 90, 60, 180), border_radius=10)
+        # Modern car outline
+        car_w, car_h = 55, 100
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, 
+                        (tpms_cx - car_w//2, tpms_cy - car_h//2, car_w, car_h), border_radius=12)
         
-        # Tire positions: index, dx, dy, name
+        # Tire cards - compact
+        box_w, box_h = 60, 65
+        gap = 70
         tire_positions = [
-            (0, -gap, -50, "FL"),
-            (1, gap, -50, "FR"),
+            (0, -gap, -30, "FL"),
+            (1, gap, -30, "FR"),
             (2, -gap, 50, "RL"),
             (3, gap, 50, "RR"),
         ]
@@ -794,7 +978,6 @@ class CombinedSimulator:
             x = tpms_cx + dx - box_w//2
             y = tpms_cy + dy - box_h//2
             
-            # Color based on pressure
             if psi < self.settings.tire_low_psi:
                 color = COLOR_RED
             elif psi > self.settings.tire_high_psi:
@@ -802,66 +985,50 @@ class CombinedSimulator:
             else:
                 color = COLOR_GREEN
             
-            # Box
-            pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, (x, y, box_w, box_h), border_radius=5)
-            pygame.draw.rect(self.pi_surface, color, (x, y, box_w, box_h), 2, border_radius=5)
+            # Tire card
+            pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (x, y, box_w, box_h), border_radius=10)
+            pygame.draw.rect(self.pi_surface, color, (x, y, 3, box_h), 
+                           border_top_left_radius=10, border_bottom_left_radius=10)
             
-            # Label
             txt = self.font_tiny.render(name, True, COLOR_GRAY)
-            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 12)))
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 10)))
             
-            # Pressure (large)
             txt = self.font_small.render(f"{psi:.0f}", True, color)
-            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 35)))
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 32)))
             
-            # Temp
-            txt = self.font_tiny.render(f"{temp:.0f}°F", True, COLOR_GRAY)
-            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 60)))
+            txt = self.font_tiny.render(f"{temp:.0f}°", True, COLOR_GRAY)
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + box_w//2, y + 52)))
         
-        # TPMS label
-        txt = self.font_small.render("TPMS", True, COLOR_WHITE)
-        self.pi_surface.blit(txt, txt.get_rect(center=(tpms_cx, tpms_cy + 120)))
+        # Right panel: Alerts
+        alerts_x = 490
+        alerts_y = TOP
+        alerts_w = 290
+        alerts_h = PI_HEIGHT - TOP - 10
         
-        # Right column: Alerts panel
-        alerts_x = 500
-        alerts_y = 40
-        alerts_w = 280
-        alerts_h = 400
-        
-        # Alerts panel background
-        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, 
-                        (alerts_x, alerts_y, alerts_w, alerts_h), border_radius=10)
+        # Panel background
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, 
+                        (alerts_x, alerts_y, alerts_w, alerts_h), border_radius=14)
         
         # Header
         header_color = COLOR_RED if alerts else COLOR_GREEN
         pygame.draw.rect(self.pi_surface, header_color, 
-                        (alerts_x, alerts_y, alerts_w, 40), 
-                        border_top_left_radius=10, border_top_right_radius=10)
-        header_text = "⚠ ALERTS" if alerts else "✓ ALL SYSTEMS OK"
+                        (alerts_x, alerts_y, alerts_w, 45), 
+                        border_top_left_radius=14, border_top_right_radius=14)
+        header_text = "⚠ ALERTS" if alerts else "✓ ALL OK"
         txt = self.font_medium.render(header_text, True, COLOR_WHITE)
-        self.pi_surface.blit(txt, txt.get_rect(center=(alerts_x + alerts_w//2, alerts_y + 20)))
+        self.pi_surface.blit(txt, txt.get_rect(center=(alerts_x + alerts_w//2, alerts_y + 22)))
         
         if alerts:
-            # Show alerts
             alert_y = alerts_y + 55
-            for i, (alert_text, alert_color) in enumerate(alerts[:8]):  # Max 8 alerts
-                # Alert background
-                pygame.draw.rect(self.pi_surface, (40, 40, 40),
-                               (alerts_x + 10, alert_y, alerts_w - 20, 35), border_radius=5)
-                # Alert indicator
+            for i, (alert_text, alert_color) in enumerate(alerts[:8]):
+                pygame.draw.rect(self.pi_surface, COLOR_BG_ELEVATED,
+                               (alerts_x + 10, alert_y, alerts_w - 20, 38), border_radius=6)
                 pygame.draw.rect(self.pi_surface, alert_color,
-                               (alerts_x + 10, alert_y, 4, 35), border_radius=2)
-                # Alert text
+                               (alerts_x + 10, alert_y, 3, 38), border_radius=2)
                 txt = self.font_small.render(alert_text, True, alert_color)
-                self.pi_surface.blit(txt, (alerts_x + 22, alert_y + 8))
-                alert_y += 42
-            
-            # Show count if more alerts
-            if len(alerts) > 8:
-                txt = self.font_tiny.render(f"+ {len(alerts) - 8} more alerts", True, COLOR_GRAY)
-                self.pi_surface.blit(txt, txt.get_rect(center=(alerts_x + alerts_w//2, alert_y + 10)))
+                self.pi_surface.blit(txt, (alerts_x + 20, alert_y + 10))
+                alert_y += 45
         else:
-            # No alerts - show status checks
             check_y = alerts_y + 60
             checks = [
                 ("Tire Pressures", True),
@@ -872,98 +1039,139 @@ class CombinedSimulator:
             ]
             for label, ok in checks:
                 color = COLOR_GREEN if ok else COLOR_YELLOW
+                pygame.draw.rect(self.pi_surface, COLOR_BG_ELEVATED,
+                               (alerts_x + 10, check_y, alerts_w - 20, 38), border_radius=6)
                 symbol = "✓" if ok else "!"
-                txt = self.font_small.render(f"{symbol} {label}", True, color)
-                self.pi_surface.blit(txt, (alerts_x + 20, check_y))
-                check_y += 35
+                txt = self.font_small.render(f"{symbol}  {label}", True, color)
+                self.pi_surface.blit(txt, (alerts_x + 20, check_y + 10))
+                check_y += 45
 
     def render_pi_rpm_speed(self):
-        # Left side: Big RPM gauge
-        gauge_cx, gauge_cy = 200, 280
-        gauge_r = 170
+        TOP = 55  # Below title bar
+        
+        # Left side: Big RPM gauge with modern styling
+        gauge_cx, gauge_cy = 220, 275
+        gauge_r = 160
+        
+        # Outer glow ring
+        pygame.draw.circle(self.pi_surface, COLOR_BG_CARD, (gauge_cx, gauge_cy), gauge_r + 12)
+        pygame.draw.circle(self.pi_surface, COLOR_BG, (gauge_cx, gauge_cy), gauge_r - 5)
         
         # RPM arc background
-        self.draw_arc(self.pi_surface, gauge_cx, gauge_cy, gauge_r, 25, 135, 405, COLOR_DARK_GRAY)
+        self.draw_arc(self.pi_surface, gauge_cx, gauge_cy, gauge_r, 24, 135, 405, COLOR_DARK_GRAY)
         
         # RPM arc fill
         rpm_pct = self.telemetry.rpm / self.settings.redline_rpm
         rpm_angle = min(270, rpm_pct * 270)
         rpm_color = self.get_rpm_color(self.telemetry.rpm)
-        self.draw_arc(self.pi_surface, gauge_cx, gauge_cy, gauge_r, 25, 135, 135 + rpm_angle, rpm_color)
+        self.draw_arc(self.pi_surface, gauge_cx, gauge_cy, gauge_r, 24, 135, 135 + rpm_angle, rpm_color)
         
-        # Shift light indicator
+        # Shift light indicator with glow
         if self.telemetry.rpm >= self.settings.shift_rpm:
-            pygame.draw.circle(self.pi_surface, COLOR_RED, (gauge_cx, gauge_cy - gauge_r - 30), 15)
+            glow = pygame.Surface((40, 40), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (255, 70, 85, 100), (20, 20), 18)
+            self.pi_surface.blit(glow, (gauge_cx - 20, gauge_cy - gauge_r - 40))
+            pygame.draw.circle(self.pi_surface, COLOR_RED, (gauge_cx, gauge_cy - gauge_r - 20), 14)
         
-        # Center info
-        pygame.draw.circle(self.pi_surface, COLOR_BG, (gauge_cx, gauge_cy), 80)
+        # Center circle with gear
+        pygame.draw.circle(self.pi_surface, COLOR_BG_CARD, (gauge_cx, gauge_cy), 70)
         
-        # Gear
+        # Gear glow
         gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
-        txt = self.pi_font_huge.render(gear, True, rpm_color)
+        glow = pygame.Surface((80, 80), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*rpm_color[:3], 40), (40, 40), 35)
+        self.pi_surface.blit(glow, (gauge_cx - 40, gauge_cy - 50))
+        
+        txt = self.pi_font_large.render(gear, True, rpm_color)
         self.pi_surface.blit(txt, txt.get_rect(center=(gauge_cx, gauge_cy - 10)))
         
         # RPM digits
-        txt = self.font_small.render(f"{self.telemetry.rpm} RPM", True, COLOR_WHITE)
-        self.pi_surface.blit(txt, txt.get_rect(center=(gauge_cx, gauge_cy + 45)))
+        txt = self.font_small.render(f"{self.telemetry.rpm} RPM", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, txt.get_rect(center=(gauge_cx, gauge_cy + 35)))
         
-        # Right side: Speed + extras
-        # Big speed
+        # Right side panel
+        right_x = 440
+        
+        # Speed card
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (right_x, TOP, 340, 150), border_radius=14)
+        
         speed = self.telemetry.speed_kmh
         if self.settings.use_mph:
             speed = int(speed * 0.621371)
         
         txt = self.pi_font_huge.render(str(speed), True, COLOR_WHITE)
-        self.pi_surface.blit(txt, txt.get_rect(center=(580, 180)))
+        self.pi_surface.blit(txt, txt.get_rect(center=(right_x + 170, TOP + 60)))
         
         unit = "MPH" if self.settings.use_mph else "KMH"
         txt = self.font_medium.render(unit, True, COLOR_GRAY)
-        self.pi_surface.blit(txt, txt.get_rect(center=(580, 240)))
+        self.pi_surface.blit(txt, txt.get_rect(center=(right_x + 170, TOP + 120)))
         
-        # Throttle bar
-        self.render_pi_bar(440, 300, 280, 25, "THROTTLE", 
-                          self.telemetry.throttle_percent, 100, COLOR_GREEN)
+        # Throttle/Brake cards
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (right_x, TOP + 165, 165, 80), border_radius=12)
+        txt = self.font_tiny.render("THROTTLE", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, (right_x + 15, TOP + 172))
+        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, (right_x + 15, TOP + 195, 135, 14), border_radius=7)
+        throttle_w = int(135 * self.telemetry.throttle_percent / 100)
+        pygame.draw.rect(self.pi_surface, COLOR_GREEN, (right_x + 15, TOP + 195, throttle_w, 14), border_radius=7)
+        txt = self.font_small.render(f"{self.telemetry.throttle_percent}%", True, COLOR_GREEN)
+        self.pi_surface.blit(txt, (right_x + 15, TOP + 215))
         
-        # Brake bar
-        self.render_pi_bar(440, 350, 280, 25, "BRAKE",
-                          self.telemetry.brake_percent, 100, COLOR_RED)
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (right_x + 175, TOP + 165, 165, 80), border_radius=12)
+        txt = self.font_tiny.render("BRAKE", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, (right_x + 190, TOP + 172))
+        pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, (right_x + 190, TOP + 195, 135, 14), border_radius=7)
+        brake_w = int(135 * self.telemetry.brake_percent / 100)
+        pygame.draw.rect(self.pi_surface, COLOR_RED, (right_x + 190, TOP + 195, brake_w, 14), border_radius=7)
+        txt = self.font_small.render(f"{self.telemetry.brake_percent}%", True, COLOR_RED)
+        self.pi_surface.blit(txt, (right_x + 190, TOP + 215))
         
-        # Lap time
+        # Lap times card
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (right_x, TOP + 260, 340, 90), border_radius=12)
+        
         lap_ms = self.telemetry.lap_time_ms
         lap_min = lap_ms // 60000
         lap_sec = (lap_ms % 60000) / 1000
-        txt = self.font_small.render(f"LAP: {lap_min}:{lap_sec:05.2f}", True, COLOR_WHITE)
-        self.pi_surface.blit(txt, (440, 400))
+        
+        txt = self.font_tiny.render("CURRENT LAP", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, (right_x + 20, TOP + 270))
+        txt = self.pi_font_medium.render(f"{lap_min}:{lap_sec:05.2f}", True, COLOR_WHITE)
+        self.pi_surface.blit(txt, (right_x + 20, TOP + 290))
         
         best_ms = self.telemetry.best_lap_ms
         best_min = best_ms // 60000
         best_sec = (best_ms % 60000) / 1000
-        txt = self.font_small.render(f"BEST: {best_min}:{best_sec:05.2f}", True, COLOR_PURPLE)
-        self.pi_surface.blit(txt, (600, 400))
+        
+        txt = self.font_tiny.render("BEST", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, (right_x + 220, TOP + 270))
+        txt = self.font_medium.render(f"{best_min}:{best_sec:05.2f}", True, COLOR_PURPLE)
+        self.pi_surface.blit(txt, (right_x + 190, TOP + 295))
     
     def render_pi_tpms(self):
-        # Car outline in center
-        car_cx, car_cy = PI_WIDTH // 2, PI_HEIGHT // 2 + 20
+        TOP = 55  # Below title bar
         
-        # Simple car shape
-        car_w, car_h = 200, 350
+        # Car outline in center (modern) - adjusted to fit below title bar
+        car_cx, car_cy = PI_WIDTH // 2, TOP + (PI_HEIGHT - TOP) // 2
+        car_w, car_h = 150, 250
+        
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, 
+                        (car_cx - car_w//2, car_cy - car_h//2, car_w, car_h), 
+                        border_radius=22)
         pygame.draw.rect(self.pi_surface, COLOR_DARK_GRAY, 
                         (car_cx - car_w//2, car_cy - car_h//2, car_w, car_h), 
-                        border_radius=30)
+                        2, border_radius=22)
         
-        # Tire boxes
+        # Tire cards (modern style) - compact to fit
         positions = [
-            (car_cx - 160, car_cy - 100, "FL", 0),
-            (car_cx + 160, car_cy - 100, "FR", 1),
-            (car_cx - 160, car_cy + 100, "RL", 2),
-            (car_cx + 160, car_cy + 100, "RR", 3),
+            (car_cx - 165, car_cy - 75, "FL", 0),
+            (car_cx + 165, car_cy - 75, "FR", 1),
+            (car_cx - 165, car_cy + 75, "RL", 2),
+            (car_cx + 165, car_cy + 75, "RR", 3),
         ]
         
         for x, y, label, idx in positions:
             psi = self.telemetry.tire_pressure[idx]
             temp = self.telemetry.tire_temp[idx]
             
-            # Color
             if psi < self.settings.tire_low_psi:
                 color = COLOR_RED
             elif psi > self.settings.tire_high_psi:
@@ -971,133 +1179,176 @@ class CombinedSimulator:
             else:
                 color = COLOR_GREEN
             
-            # Box
-            box_w, box_h = 130, 100
-            pygame.draw.rect(self.pi_surface, (30, 30, 45),
-                           (x - box_w//2, y - box_h//2, box_w, box_h), border_radius=10)
+            # Modern card - compact
+            box_w, box_h = 125, 95
+            pygame.draw.rect(self.pi_surface, COLOR_BG_CARD,
+                           (x - box_w//2, y - box_h//2, box_w, box_h), border_radius=14)
+            
+            # Color accent bar
             pygame.draw.rect(self.pi_surface, color,
-                           (x - box_w//2, y - box_h//2, box_w, box_h), 3, border_radius=10)
+                           (x - box_w//2, y - box_h//2, 5, box_h), 
+                           border_top_left_radius=14, border_bottom_left_radius=14)
             
             # Label
             txt = self.font_small.render(label, True, COLOR_GRAY)
-            self.pi_surface.blit(txt, txt.get_rect(center=(x, y - 30)))
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + 5, y - 28)))
             
-            # PSI
+            # PSI (large)
             txt = self.pi_font_medium.render(f"{psi:.1f}", True, color)
-            self.pi_surface.blit(txt, txt.get_rect(center=(x, y + 5)))
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + 5, y + 5)))
             
-            # Temp
-            txt = self.font_tiny.render(f"{temp:.0f}°F", True, COLOR_GRAY)
-            self.pi_surface.blit(txt, txt.get_rect(center=(x, y + 35)))
+            # PSI label + Temp on same line
+            txt = self.font_tiny.render(f"PSI  |  {temp:.0f}°F", True, COLOR_GRAY)
+            self.pi_surface.blit(txt, txt.get_rect(center=(x + 5, y + 35)))
     
     def render_pi_engine(self):
-        # Grid of gauges
+        TOP = 55  # Below title bar
+        row1_y = TOP + 110
+        row2_y = TOP + 290
+        
         # Row 1: Coolant, Oil Temp, Oil Pressure
-        self.render_pi_gauge(150, 180, "COOLANT", self.telemetry.coolant_temp_f, "°F",
+        self.render_pi_gauge(150, row1_y, "COOLANT", self.telemetry.coolant_temp_f, "°F",
                             180, self.settings.coolant_warn_f, 250)
-        self.render_pi_gauge(400, 180, "OIL TEMP", self.telemetry.oil_temp_f, "°F",
+        self.render_pi_gauge(400, row1_y, "OIL TEMP", self.telemetry.oil_temp_f, "°F",
                             150, self.settings.oil_warn_f, 280)
-        self.render_pi_gauge(650, 180, "OIL PSI", self.telemetry.oil_pressure_psi, "",
+        self.render_pi_gauge(650, row1_y, "OIL PSI", self.telemetry.oil_pressure_psi, "",
                             0, 30, 80)
         
         # Row 2: Fuel, Voltage, Intake Temp
         fuel = self.telemetry.fuel_level_percent
         fuel_color = COLOR_RED if fuel < 15 else (COLOR_YELLOW if fuel < 25 else COLOR_GREEN)
-        self.render_pi_gauge_bar(150, 380, "FUEL", fuel, "%", fuel_color)
+        self.render_pi_gauge_bar(150, row2_y, "FUEL", fuel, "%", fuel_color)
         
-        self.render_pi_gauge(400, 380, "VOLTAGE", self.telemetry.voltage, "V",
+        self.render_pi_gauge(400, row2_y, "VOLTAGE", self.telemetry.voltage, "V",
                             11, 13.5, 15)
-        self.render_pi_gauge(650, 380, "INTAKE", self.telemetry.intake_temp_f, "°F",
+        self.render_pi_gauge(650, row2_y, "INTAKE", self.telemetry.intake_temp_f, "°F",
                             50, 120, 180)
     
     def render_pi_gforce(self):
-        # Big G-ball on left
-        ball_cx, ball_cy = 250, 280
-        ball_r = 180
+        TOP = 55  # Below title bar
         
-        pygame.draw.circle(self.pi_surface, (25, 25, 35), (ball_cx, ball_cy), ball_r)
-        pygame.draw.circle(self.pi_surface, COLOR_GRAY, (ball_cx, ball_cy), ball_r, 2)
+        # Big G-ball on left with modern styling
+        ball_cx, ball_cy = 230, TOP + 180
+        ball_r = 155
         
-        # Grid lines
-        for r in [60, 120]:
+        # Outer glow
+        pygame.draw.circle(self.pi_surface, COLOR_BG_CARD, (ball_cx, ball_cy), ball_r + 8)
+        pygame.draw.circle(self.pi_surface, COLOR_BG, (ball_cx, ball_cy), ball_r)
+        
+        # Grid circles
+        for g in [0.5, 1.0, 1.5]:
+            r = int(g * 85)
             pygame.draw.circle(self.pi_surface, COLOR_DARK_GRAY, (ball_cx, ball_cy), r, 1)
+        
+        # Crosshairs
         pygame.draw.line(self.pi_surface, COLOR_DARK_GRAY,
                         (ball_cx - ball_r, ball_cy), (ball_cx + ball_r, ball_cy), 1)
         pygame.draw.line(self.pi_surface, COLOR_DARK_GRAY,
                         (ball_cx, ball_cy - ball_r), (ball_cx, ball_cy + ball_r), 1)
         
         # G labels
-        for g, r in [(0.5, 60), (1.0, 120)]:
-            txt = self.font_tiny.render(f"{g}G", True, COLOR_DARK_GRAY)
-            self.pi_surface.blit(txt, (ball_cx + r + 5, ball_cy - 10))
+        for g in [0.5, 1.0, 1.5]:
+            r = int(g * 85)
+            txt = self.font_tiny.render(f"{g}", True, COLOR_DARK_GRAY)
+            self.pi_surface.blit(txt, (ball_cx + r + 5, ball_cy - 8))
         
         # G-ball
-        g_scale = 120
+        g_scale = 85
         gx = ball_cx + int(self.telemetry.g_lateral * g_scale)
         gy = ball_cy - int(self.telemetry.g_longitudinal * g_scale)
         
         # Clamp
         dx, dy = gx - ball_cx, gy - ball_cy
         dist = math.sqrt(dx*dx + dy*dy)
-        if dist > ball_r - 15:
-            scale = (ball_r - 15) / dist
+        if dist > ball_r - 16:
+            scale = (ball_r - 16) / dist
             gx = ball_cx + int(dx * scale)
             gy = ball_cy + int(dy * scale)
         
-        pygame.draw.circle(self.pi_surface, COLOR_ACCENT, (gx, gy), 18)
-        pygame.draw.circle(self.pi_surface, COLOR_WHITE, (gx, gy), 18, 3)
+        # G-ball with glow
+        glow = pygame.Surface((50, 50), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*COLOR_ACCENT[:3], 100), (25, 25), 20)
+        self.pi_surface.blit(glow, (gx - 25, gy - 25))
         
-        # Right side: detailed values
-        # Peak G
-        txt = self.font_medium.render("LATERAL", True, COLOR_GRAY)
-        self.pi_surface.blit(txt, (500, 120))
-        txt = self.pi_font_large.render(f"{self.telemetry.g_lateral:+.2f}G", True, COLOR_WHITE)
-        self.pi_surface.blit(txt, (500, 160))
+        pygame.draw.circle(self.pi_surface, COLOR_ACCENT, (gx, gy), 15)
+        pygame.draw.circle(self.pi_surface, COLOR_WHITE, (gx, gy), 15, 2)
         
-        txt = self.font_medium.render("LONGITUDINAL", True, COLOR_GRAY)
-        self.pi_surface.blit(txt, (500, 260))
-        txt = self.pi_font_large.render(f"{self.telemetry.g_longitudinal:+.2f}G", True, COLOR_WHITE)
-        self.pi_surface.blit(txt, (500, 300))
+        # Right panel with modern cards
+        right_x = 440
+        card_w = 340
+        card_h = 95
         
-        # Combined G
+        # Lateral card
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (right_x, TOP, card_w, card_h), border_radius=14)
+        pygame.draw.rect(self.pi_surface, COLOR_CYAN, (right_x, TOP, 5, card_h), 
+                        border_top_left_radius=14, border_bottom_left_radius=14)
+        txt = self.font_small.render("LATERAL", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, (right_x + 20, TOP + 12))
+        txt = self.pi_font_large.render(f"{self.telemetry.g_lateral:+.2f}G", True, COLOR_CYAN)
+        self.pi_surface.blit(txt, (right_x + 20, TOP + 40))
+        
+        # Longitudinal card
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (right_x, TOP + card_h + 15, card_w, card_h), border_radius=14)
+        pygame.draw.rect(self.pi_surface, COLOR_PURPLE, (right_x, TOP + card_h + 15, 5, card_h), 
+                        border_top_left_radius=14, border_bottom_left_radius=14)
+        txt = self.font_small.render("LONGITUDINAL", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, (right_x + 20, TOP + card_h + 27))
+        txt = self.pi_font_large.render(f"{self.telemetry.g_longitudinal:+.2f}G", True, COLOR_PURPLE)
+        self.pi_surface.blit(txt, (right_x + 20, TOP + card_h + 55))
+        
+        # Combined card
         combined = math.sqrt(self.telemetry.g_lateral**2 + self.telemetry.g_longitudinal**2)
-        txt = self.font_medium.render("COMBINED", True, COLOR_GRAY)
-        self.pi_surface.blit(txt, (500, 400))
-        txt = self.pi_font_medium.render(f"{combined:.2f}G", True, COLOR_ACCENT)
-        self.pi_surface.blit(txt, (500, 430))
+        pygame.draw.rect(self.pi_surface, COLOR_BG_CARD, (right_x, TOP + 2*(card_h + 15), card_w, card_h), border_radius=14)
+        pygame.draw.rect(self.pi_surface, COLOR_ACCENT, (right_x, TOP + 2*(card_h + 15), 5, card_h), 
+                        border_top_left_radius=14, border_bottom_left_radius=14)
+        txt = self.font_small.render("COMBINED", True, COLOR_GRAY)
+        self.pi_surface.blit(txt, (right_x + 20, TOP + 2*(card_h + 15) + 12))
+        txt = self.pi_font_large.render(f"{combined:.2f}G", True, COLOR_ACCENT)
+        self.pi_surface.blit(txt, (right_x + 20, TOP + 2*(card_h + 15) + 40))
+        
+        # IMU source note
+        txt = self.font_tiny.render("Source: QMI8658 IMU", True, COLOR_DARK_GRAY)
+        self.pi_surface.blit(txt, txt.get_rect(center=(ball_cx, PI_HEIGHT - 15)))
     
     def render_pi_settings(self):
-        items = self.get_settings_items()
+        TOP = 55  # Below title bar
         
-        start_y = 90
-        item_h = 55
+        items = self.get_settings_items()
+        item_h = 50
         
         for i, (name, value, unit) in enumerate(items):
-            y = start_y + i * item_h
+            y = TOP + i * item_h
+            is_selected = i == self.settings_selection
             
-            # Background
-            bg_color = (40, 40, 55) if i == self.settings_selection else (25, 25, 35)
-            pygame.draw.rect(self.pi_surface, bg_color, (30, y, PI_WIDTH - 60, item_h - 5), border_radius=8)
+            # Card background
+            bg_color = COLOR_BG_ELEVATED if is_selected else COLOR_BG_CARD
+            pygame.draw.rect(self.pi_surface, bg_color, (40, y, PI_WIDTH - 80, item_h - 5), border_radius=10)
             
-            if i == self.settings_selection and self.settings_edit_mode:
-                pygame.draw.rect(self.pi_surface, COLOR_ACCENT, (30, y, PI_WIDTH - 60, item_h - 5), 3, border_radius=8)
+            # Selection indicator
+            if is_selected:
+                pygame.draw.rect(self.pi_surface, COLOR_ACCENT, 
+                               (40, y, 5, item_h - 5), 
+                               border_top_left_radius=10, border_bottom_left_radius=10)
+                if self.settings_edit_mode:
+                    pygame.draw.rect(self.pi_surface, COLOR_ACCENT, 
+                                   (40, y, PI_WIDTH - 80, item_h - 5), 2, border_radius=10)
             
             # Name
-            color = COLOR_WHITE if i == self.settings_selection else COLOR_GRAY
-            txt = self.font_medium.render(name, True, color)
-            self.pi_surface.blit(txt, (50, y + 12))
+            color = COLOR_WHITE if is_selected else COLOR_GRAY
+            txt = self.font_small.render(name, True, color)
+            self.pi_surface.blit(txt, (60, y + 12))
             
             # Value
             if value != "":
-                val_color = COLOR_ACCENT if i == self.settings_selection else COLOR_WHITE
-                txt = self.font_medium.render(f"{value}{unit}", True, val_color)
-                self.pi_surface.blit(txt, (PI_WIDTH - 50 - txt.get_width(), y + 12))
+                val_color = COLOR_ACCENT if is_selected else COLOR_WHITE
+                txt = self.font_small.render(f"{value}{unit}", True, val_color)
+                self.pi_surface.blit(txt, (PI_WIDTH - 60 - txt.get_width(), y + 12))
             
             # Edit hint
-            if i == self.settings_selection and name != "Back":
+            if is_selected and name != "Back":
                 hint = "← VOL+/VOL- to adjust →" if self.settings_edit_mode else "Press ON/OFF to edit"
                 txt = self.font_tiny.render(hint, True, COLOR_DARK_GRAY)
-                self.pi_surface.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, PI_HEIGHT - 30)))
+                self.pi_surface.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, PI_HEIGHT - 15)))
     
     # -------------------------------------------------------------------------
     # PI HELPERS
