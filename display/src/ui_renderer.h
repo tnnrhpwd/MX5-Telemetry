@@ -11,6 +11,7 @@
 
 #include <LovyanGFX.hpp>
 #include "ui_config.h"
+#include "car_image.h"
 #include <math.h>
 
 // Forward declaration
@@ -46,6 +47,8 @@ private:
     void renderTpms();
     void renderEngine();
     void renderGforce();
+    void renderDiagnostics();
+    void renderSystem();
     void renderSettings();
     void renderSleep();
     void renderScreenDots(Screen currentScreen);
@@ -64,6 +67,10 @@ private:
         uint16_t color;
     };
     int getAlerts(Alert* alerts, int maxAlerts);
+    
+    // Car image drawing
+    void drawCarSilhouette(int cx, int cy, float scale = 1.0f);
+    void drawTireBox(int x, int y, int w, int h, float psi, float temp, const char* label, bool compact = false);
 };
 
 // =============================================================================
@@ -78,12 +85,14 @@ inline void UIRenderer::render(Screen screen, bool sleeping) {
         renderSleep();
     } else {
         switch (screen) {
-            case SCREEN_OVERVIEW:   renderOverview(); break;
-            case SCREEN_RPM_SPEED:  renderRpmSpeed(); break;
-            case SCREEN_TPMS:       renderTpms(); break;
-            case SCREEN_ENGINE:     renderEngine(); break;
-            case SCREEN_GFORCE:     renderGforce(); break;
-            case SCREEN_SETTINGS:   renderSettings(); break;
+            case SCREEN_OVERVIEW:    renderOverview(); break;
+            case SCREEN_RPM_SPEED:   renderRpmSpeed(); break;
+            case SCREEN_TPMS:        renderTpms(); break;
+            case SCREEN_ENGINE:      renderEngine(); break;
+            case SCREEN_GFORCE:      renderGforce(); break;
+            case SCREEN_DIAGNOSTICS: renderDiagnostics(); break;
+            case SCREEN_SYSTEM:      renderSystem(); break;
+            case SCREEN_SETTINGS:    renderSettings(); break;
             default: break;
         }
         renderScreenDots(screen);
@@ -252,30 +261,29 @@ inline void UIRenderer::renderOverview() {
     snprintf(speedStr, sizeof(speedStr), "%d %s", speed, _settings->use_mph ? "MPH" : "KMH");
     drawCenteredText(speedStr, CENTER, 105, &fonts::Font2, COLOR_WHITE);
     
-    // Mini TPMS (4 boxes)
-    int tireY = 150;
-    int boxW = 48, boxH = 38;
+    // Modern Mini TPMS with car silhouette
+    int carCx = CENTER, carCy = 175;
+    
+    // Draw scaled-down car silhouette
+    drawCarSilhouette(carCx, carCy, 0.55f);
+    
+    // Mini tire pressure cards around car
+    int boxW = 44, boxH = 32;
+    int carW = 38, carH = 70;  // Car bounds at 0.55 scale
+    int tireOffsetX = carW/2 + boxW/2 + 8;
+    int tireOffsetY = carH/2 - 8;
+    
     int positions[4][2] = {
-        {CENTER - 52, tireY}, {CENTER + 52, tireY},
-        {CENTER - 52, tireY + 45}, {CENTER + 52, tireY + 45}
+        {carCx - tireOffsetX, carCy - tireOffsetY + 5},   // FL
+        {carCx + tireOffsetX, carCy - tireOffsetY + 5},   // FR
+        {carCx - tireOffsetX, carCy + tireOffsetY - 5},   // RL
+        {carCx + tireOffsetX, carCy + tireOffsetY - 5}    // RR
     };
     
     for (int i = 0; i < 4; i++) {
         int x = positions[i][0];
         int y = positions[i][1];
-        float psi = _telemetry->tire_pressure[i];
-        float temp = _telemetry->tire_temp[i];
-        
-        uint16_t color = COLOR_GREEN;
-        if (psi < _settings->tire_low_psi) color = COLOR_RED;
-        else if (psi > _settings->tire_high_psi) color = COLOR_YELLOW;
-        
-        drawRoundedRect(x - boxW/2, y - boxH/2, boxW, boxH, 6, COLOR_BG_CARD);
-        drawRoundedRectOutline(x - boxW/2, y - boxH/2, boxW, boxH, 6, color, 2);
-        
-        char psiStr[12];
-        snprintf(psiStr, sizeof(psiStr), "%.0f/%.0f", psi, temp);
-        drawCenteredText(psiStr, x, y, &fonts::Font0, color);
+        drawTireBox(x, y, boxW, boxH, _telemetry->tire_pressure[i], _telemetry->tire_temp[i], nullptr, true);
     }
     
     // Alert section at bottom
@@ -354,52 +362,130 @@ inline void UIRenderer::renderRpmSpeed() {
 // Screen: TPMS
 // =============================================================================
 inline void UIRenderer::renderTpms() {
-    // Title
-    drawCenteredText("TPMS", CENTER, 35, &fonts::Font2, COLOR_WHITE);
-    _display->drawFastHLine(CENTER - 40, 52, 80, COLOR_ACCENT);
+    // Modern title with gradient underline
+    drawCenteredText("TIRE PRESSURE", CENTER, 32, &fonts::Font2, COLOR_WHITE);
     
-    // Car outline
-    int carW = 70, carH = 120;
-    drawRoundedRect(CENTER - carW/2, CENTER - carH/2 + 10, carW, carH, 12, COLOR_BG_CARD);
-    drawRoundedRectOutline(CENTER - carW/2, CENTER - carH/2 + 10, carW, carH, 12, COLOR_DARK_GRAY, 2);
+    // Gradient accent line
+    for (int i = 0; i < 60; i++) {
+        uint8_t alpha = 255 - (abs(i - 30) * 8);
+        uint16_t color = _display->color565(100 * alpha / 255, 140 * alpha / 255, 255 * alpha / 255);
+        _display->drawFastVLine(CENTER - 30 + i, 48, 2, color);
+    }
     
-    // Tire positions
-    int positions[4][2] = {
-        {CENTER - 70, CENTER - 35}, {CENTER + 70, CENTER - 35},
-        {CENTER - 70, CENTER + 65}, {CENTER + 70, CENTER + 65}
-    };
+    // Draw car silhouette in center
+    int carCx = CENTER, carCy = CENTER + 5;
+    drawCarSilhouette(carCx, carCy, 0.85f);
+    
+    // Tire info cards positioned around the car
+    int boxW = 72, boxH = 62;
+    int carW = 60, carH = 109;  // Car bounds at 0.85 scale
+    int tireOffsetX = carW/2 + boxW/2 + 12;
+    int tireOffsetY = carH/2 - 12;
+    
     const char* labels[] = {"FL", "FR", "RL", "RR"};
-    
-    int boxW = 68, boxH = 58;
+    int positions[4][2] = {
+        {carCx - tireOffsetX, carCy - tireOffsetY},   // FL
+        {carCx + tireOffsetX, carCy - tireOffsetY},   // FR
+        {carCx - tireOffsetX, carCy + tireOffsetY},   // RL
+        {carCx + tireOffsetX, carCy + tireOffsetY}    // RR
+    };
     
     for (int i = 0; i < 4; i++) {
-        int x = positions[i][0];
-        int y = positions[i][1];
-        float psi = _telemetry->tire_pressure[i];
-        float temp = _telemetry->tire_temp[i];
+        drawTireBox(positions[i][0], positions[i][1], boxW, boxH,
+                   _telemetry->tire_pressure[i], _telemetry->tire_temp[i], labels[i], false);
+    }
+    
+    // Status bar at bottom
+    bool allOk = true;
+    for (int i = 0; i < 4; i++) {
+        if (_telemetry->tire_pressure[i] < _settings->tire_low_psi ||
+            _telemetry->tire_pressure[i] > _settings->tire_high_psi) {
+            allOk = false;
+            break;
+        }
+    }
+    
+    uint16_t statusColor = allOk ? COLOR_GREEN : COLOR_YELLOW;
+    const char* statusText = allOk ? "ALL PRESSURES OK" : "CHECK PRESSURES";
+    
+    drawRoundedRect(CENTER - 80, DISPLAY_SIZE - 52, 160, 24, 6, COLOR_BG_CARD);
+    _display->fillRoundRect(CENTER - 80, DISPLAY_SIZE - 52, 4, 24, 2, statusColor);
+    drawCenteredText(statusText, CENTER, DISPLAY_SIZE - 40, &fonts::Font0, statusColor);
+}
+
+// =============================================================================
+// Car Silhouette Drawing
+// =============================================================================
+inline void UIRenderer::drawCarSilhouette(int cx, int cy, float scale) {
+    // Draw car image from car_image.h
+    int imgW = (int)(CAR_IMG_WIDTH * scale);
+    int imgH = (int)(CAR_IMG_HEIGHT * scale);
+    int startX = cx - imgW / 2;
+    int startY = cy - imgH / 2;
+    
+    // Draw with transparency
+    for (int y = 0; y < CAR_IMG_HEIGHT; y++) {
+        for (int x = 0; x < CAR_IMG_WIDTH; x++) {
+            int srcIdx = y * CAR_IMG_WIDTH + x;
+            uint8_t alpha = pgm_read_byte(&car_image_alpha[srcIdx]);
+            
+            if (alpha > 128) {  // Only draw if mostly opaque
+                uint16_t color = pgm_read_word(&car_image_rgb565[srcIdx]);
+                
+                // Scale position
+                int destX = startX + (int)(x * scale);
+                int destY = startY + (int)(y * scale);
+                
+                // Draw pixel (simple nearest-neighbor scaling)
+                if (destX >= 0 && destX < DISPLAY_SIZE && destY >= 0 && destY < DISPLAY_SIZE) {
+                    _display->drawPixel(destX, destY, color);
+                    // Fill in scaled pixels for smoother look
+                    if (scale > 0.6f) {
+                        _display->drawPixel(destX + 1, destY, color);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Tire Info Box Drawing
+// =============================================================================
+inline void UIRenderer::drawTireBox(int x, int y, int w, int h, float psi, float temp, const char* label, bool compact) {
+    // Determine color based on pressure
+    uint16_t color = COLOR_GREEN;
+    if (_settings && psi < _settings->tire_low_psi) color = COLOR_RED;
+    else if (_settings && psi > _settings->tire_high_psi) color = COLOR_YELLOW;
+    
+    // Background card with subtle gradient effect
+    drawRoundedRect(x - w/2, y - h/2, w, h, compact ? 6 : 10, COLOR_BG_CARD);
+    
+    // Color accent bar on left
+    _display->fillRoundRect(x - w/2, y - h/2, 4, h, 2, color);
+    
+    if (compact) {
+        // Compact mode: just PSI value
+        char psiStr[8];
+        snprintf(psiStr, sizeof(psiStr), "%.0f", psi);
+        drawCenteredText(psiStr, x + 2, y - 4, &fonts::Font2, color);
         
-        uint16_t color = COLOR_GREEN;
-        if (psi < _settings->tire_low_psi) color = COLOR_RED;
-        else if (psi > _settings->tire_high_psi) color = COLOR_YELLOW;
+        char tempStr[8];
+        snprintf(tempStr, sizeof(tempStr), "%.0fF", temp);
+        drawCenteredText(tempStr, x + 2, y + 10, &fonts::Font0, COLOR_GRAY);
+    } else {
+        // Full mode: label, PSI, temp
+        if (label) {
+            drawCenteredText(label, x + 2, y - h/2 + 12, &fonts::Font0, COLOR_GRAY);
+        }
         
-        // Tire card
-        drawRoundedRect(x - boxW/2, y - boxH/2, boxW, boxH, 10, COLOR_BG_CARD);
-        
-        // Color accent bar
-        _display->fillRoundRect(x - boxW/2, y - boxH/2, 4, boxH, 2, color);
-        
-        // Label
-        drawCenteredText(labels[i], x + 2, y - 18, &fonts::Font0, COLOR_GRAY);
-        
-        // PSI
         char psiStr[8];
         snprintf(psiStr, sizeof(psiStr), "%.1f", psi);
         drawCenteredText(psiStr, x + 2, y + 2, &fonts::Font2, color);
         
-        // Temp
         char tempStr[8];
         snprintf(tempStr, sizeof(tempStr), "%.0fF", temp);
-        drawCenteredText(tempStr, x + 2, y + 20, &fonts::Font0, COLOR_GRAY);
+        drawCenteredText(tempStr, x + 2, y + h/2 - 12, &fonts::Font0, COLOR_GRAY);
     }
 }
 
@@ -518,6 +604,267 @@ inline void UIRenderer::renderGforce() {
     char longStr[8];
     snprintf(longStr, sizeof(longStr), "%+.1fG", _telemetry->g_longitudinal);
     drawCenteredText(longStr, DISPLAY_SIZE - 72, cardY + 30, &fonts::Font2, COLOR_PURPLE);
+}
+
+// =============================================================================
+// Screen: Diagnostics
+// =============================================================================
+inline void UIRenderer::renderDiagnostics() {
+    // Title
+    drawCenteredText("DIAGNOSTICS", CENTER, 32, &fonts::Font2, COLOR_WHITE);
+    
+    // Gradient accent line
+    for (int i = 0; i < 70; i++) {
+        uint8_t alpha = 255 - (abs(i - 35) * 7);
+        uint16_t color = _display->color565(255 * alpha / 255, 70 * alpha / 255, 85 * alpha / 255);
+        _display->drawFastVLine(CENTER - 35 + i, 48, 2, color);
+    }
+    
+    // Warning indicators grid
+    int startY = 65;
+    int iconSize = 38;
+    int spacing = 8;
+    int cols = 4;
+    int totalWidth = cols * iconSize + (cols - 1) * spacing;
+    int startX = CENTER - totalWidth / 2;
+    
+    // Warning icon definitions: name, active flag, color when active
+    struct WarningIcon {
+        const char* label;
+        bool active;
+        uint16_t activeColor;
+    };
+    
+    WarningIcon warnings[] = {
+        {"CEL", _telemetry->check_engine_light, COLOR_YELLOW},
+        {"ABS", _telemetry->abs_warning, COLOR_ORANGE},
+        {"TC", _telemetry->traction_control_active, COLOR_YELLOW},
+        {"TC!", _telemetry->traction_control_off, COLOR_RED},
+        {"OIL", _telemetry->oil_pressure_warning, COLOR_RED},
+        {"BAT", _telemetry->battery_warning, COLOR_RED},
+        {"BRK", _telemetry->brake_warning, COLOR_RED},
+        {"AIR", _telemetry->airbag_warning, COLOR_RED},
+    };
+    
+    int numWarnings = 8;
+    int activeCount = 0;
+    
+    for (int i = 0; i < numWarnings; i++) {
+        int col = i % cols;
+        int row = i / cols;
+        int x = startX + col * (iconSize + spacing) + iconSize / 2;
+        int y = startY + row * (iconSize + spacing) + iconSize / 2;
+        
+        bool active = warnings[i].active;
+        uint16_t bgColor = active ? COLOR_BG_ELEVATED : COLOR_BG_CARD;
+        uint16_t textColor = active ? warnings[i].activeColor : COLOR_DARK_GRAY;
+        
+        if (active) activeCount++;
+        
+        // Draw icon background
+        drawRoundedRect(x - iconSize/2, y - iconSize/2, iconSize, iconSize, 8, bgColor);
+        
+        // Draw border if active
+        if (active) {
+            drawRoundedRectOutline(x - iconSize/2, y - iconSize/2, iconSize, iconSize, 8, warnings[i].activeColor, 2);
+        }
+        
+        // Draw label
+        drawCenteredText(warnings[i].label, x, y, &fonts::Font0, textColor);
+    }
+    
+    // DTC codes section
+    int dtcY = startY + 2 * (iconSize + spacing) + 15;
+    drawCenteredText("TROUBLE CODES", CENTER, dtcY, &fonts::Font0, COLOR_GRAY);
+    
+    dtcY += 18;
+    
+    if (_telemetry->dtc_count > 0) {
+        // Show DTC codes in a scrollable-style list
+        int codeH = 28;
+        int maxVisible = 3;
+        int visibleCount = min((int)_telemetry->dtc_count, maxVisible);
+        
+        for (int i = 0; i < visibleCount; i++) {
+            int y = dtcY + i * (codeH + 4);
+            drawRoundedRect(CENTER - 70, y, 140, codeH, 6, COLOR_BG_CARD);
+            _display->fillRoundRect(CENTER - 70, y, 4, codeH, 2, COLOR_YELLOW);
+            drawCenteredText(_telemetry->dtc_codes[i], CENTER, y + codeH/2, &fonts::Font2, COLOR_YELLOW);
+        }
+        
+        if (_telemetry->dtc_count > maxVisible) {
+            char moreStr[16];
+            snprintf(moreStr, sizeof(moreStr), "+%d more", _telemetry->dtc_count - maxVisible);
+            drawCenteredText(moreStr, CENTER, dtcY + visibleCount * (codeH + 4) + 10, &fonts::Font0, COLOR_DARK_GRAY);
+        }
+    } else {
+        drawRoundedRect(CENTER - 70, dtcY, 140, 28, 6, COLOR_BG_CARD);
+        _display->fillRoundRect(CENTER - 70, dtcY, 4, 28, 2, COLOR_GREEN);
+        drawCenteredText("NO CODES", CENTER, dtcY + 14, &fonts::Font0, COLOR_GREEN);
+    }
+    
+    // Wheel slip visualization (mini)
+    int slipY = DISPLAY_SIZE - 75;
+    drawCenteredText("WHEEL SLIP", CENTER, slipY - 15, &fonts::Font0, COLOR_GRAY);
+    
+    int slipBoxW = 35, slipBoxH = 25;
+    int slipGap = 50;
+    int slipPositions[4][2] = {
+        {CENTER - slipGap, slipY}, {CENTER + slipGap, slipY},
+        {CENTER - slipGap, slipY + slipBoxH + 5}, {CENTER + slipGap, slipY + slipBoxH + 5}
+    };
+    
+    for (int i = 0; i < 4; i++) {
+        int x = slipPositions[i][0];
+        int y = slipPositions[i][1];
+        float slip = _telemetry->wheel_slip[i];
+        
+        uint16_t color = COLOR_GREEN;
+        if (slip > 15.0f) color = COLOR_RED;
+        else if (slip > 5.0f) color = COLOR_YELLOW;
+        
+        drawRoundedRect(x - slipBoxW/2, y - slipBoxH/2, slipBoxW, slipBoxH, 4, COLOR_BG_CARD);
+        
+        // Slip bar
+        int barW = (int)((slipBoxW - 6) * min(slip, 30.0f) / 30.0f);
+        if (barW > 0) {
+            _display->fillRect(x - slipBoxW/2 + 3, y - 4, barW, 8, color);
+        }
+    }
+    
+    // Status summary at very bottom
+    uint16_t statusColor = (activeCount == 0 && _telemetry->dtc_count == 0) ? COLOR_GREEN : COLOR_YELLOW;
+    const char* statusText = (activeCount == 0 && _telemetry->dtc_count == 0) ? "SYSTEMS OK" : "CHECK WARNINGS";
+    drawCenteredText(statusText, CENTER, DISPLAY_SIZE - 25, &fonts::Font0, statusColor);
+}
+
+// =============================================================================
+// Screen: System (ESP32 hardware diagnostics)
+// =============================================================================
+inline void UIRenderer::renderSystem() {
+    // Title
+    drawCenteredText("ESP32 SYSTEM", CENTER, 45, &fonts::Font2, COLOR_WHITE);
+    _display->drawFastHLine(CENTER - 70, 63, 140, COLOR_ACCENT);
+    
+    // Get ESP32 system info
+    float cpuTempC = temperatureRead();  // Internal temp sensor
+    float cpuTempF = cpuTempC * 9.0f / 5.0f + 32.0f;
+    uint32_t freeHeap = ESP.getFreeHeap();
+    uint32_t totalHeap = ESP.getHeapSize();
+    uint32_t freePsram = ESP.getFreePsram();
+    uint32_t totalPsram = ESP.getPsramSize();
+    uint8_t cpuFreq = ESP.getCpuFreqMHz();
+    uint32_t uptime = millis() / 1000;  // seconds
+    
+    // Card dimensions
+    int cardW = 150;
+    int cardH = 55;
+    int gap = 8;
+    int startY = 80;
+    int leftX = CENTER - cardW - gap/2;
+    int rightX = CENTER + gap/2;
+    
+    // Row 1: CPU Temp and CPU Freq
+    // CPU Temperature
+    drawRoundedRect(leftX, startY, cardW, cardH, 8, COLOR_BG_CARD);
+    _display->fillRect(leftX, startY, 4, cardH, COLOR_CYAN);
+    _display->setTextColor(COLOR_GRAY);
+    _display->setFont(&fonts::Font0);
+    _display->setTextDatum(top_left);
+    _display->drawString("CPU TEMP", leftX + 12, startY + 8);
+    char tempStr[16];
+    sprintf(tempStr, "%.0fF", cpuTempF);
+    uint16_t tempColor = (cpuTempF > 140) ? COLOR_RED : (cpuTempF > 120) ? COLOR_YELLOW : COLOR_CYAN;
+    _display->setTextColor(tempColor);
+    _display->setFont(&fonts::Font2);
+    _display->drawString(tempStr, leftX + 12, startY + 26);
+    
+    // CPU Frequency
+    drawRoundedRect(rightX, startY, cardW, cardH, 8, COLOR_BG_CARD);
+    _display->fillRect(rightX, startY, 4, cardH, COLOR_GREEN);
+    _display->setTextColor(COLOR_GRAY);
+    _display->setFont(&fonts::Font0);
+    _display->drawString("CPU FREQ", rightX + 12, startY + 8);
+    char freqStr[16];
+    sprintf(freqStr, "%d MHz", cpuFreq);
+    _display->setTextColor(COLOR_GREEN);
+    _display->setFont(&fonts::Font2);
+    _display->drawString(freqStr, rightX + 12, startY + 26);
+    
+    // Row 2: Heap Memory and PSRAM
+    int row2Y = startY + cardH + gap;
+    
+    // Heap Memory
+    drawRoundedRect(leftX, row2Y, cardW, cardH, 8, COLOR_BG_CARD);
+    _display->fillRect(leftX, row2Y, 4, cardH, COLOR_PURPLE);
+    _display->setTextColor(COLOR_GRAY);
+    _display->setFont(&fonts::Font0);
+    _display->drawString("HEAP MEM", leftX + 12, row2Y + 8);
+    char heapStr[24];
+    float heapPct = (float)freeHeap / totalHeap * 100;
+    sprintf(heapStr, "%.0f%% free", heapPct);
+    uint16_t heapColor = (heapPct < 20) ? COLOR_RED : (heapPct < 40) ? COLOR_YELLOW : COLOR_PURPLE;
+    _display->setTextColor(heapColor);
+    _display->setFont(&fonts::Font2);
+    _display->drawString(heapStr, leftX + 12, row2Y + 26);
+    
+    // PSRAM
+    drawRoundedRect(rightX, row2Y, cardW, cardH, 8, COLOR_BG_CARD);
+    _display->fillRect(rightX, row2Y, 4, cardH, COLOR_TEAL);
+    _display->setTextColor(COLOR_GRAY);
+    _display->setFont(&fonts::Font0);
+    _display->drawString("PSRAM", rightX + 12, row2Y + 8);
+    char psramStr[24];
+    if (totalPsram > 0) {
+        float psramPct = (float)freePsram / totalPsram * 100;
+        sprintf(psramStr, "%.0f%% free", psramPct);
+    } else {
+        sprintf(psramStr, "N/A");
+    }
+    _display->setTextColor(COLOR_TEAL);
+    _display->setFont(&fonts::Font2);
+    _display->drawString(psramStr, rightX + 12, row2Y + 26);
+    
+    // Row 3: Uptime and Voltage (from telemetry)
+    int row3Y = row2Y + cardH + gap;
+    
+    // Uptime
+    drawRoundedRect(leftX, row3Y, cardW, cardH, 8, COLOR_BG_CARD);
+    _display->fillRect(leftX, row3Y, 4, cardH, COLOR_ORANGE);
+    _display->setTextColor(COLOR_GRAY);
+    _display->setFont(&fonts::Font0);
+    _display->drawString("UPTIME", leftX + 12, row3Y + 8);
+    char uptimeStr[24];
+    int hours = uptime / 3600;
+    int mins = (uptime % 3600) / 60;
+    int secs = uptime % 60;
+    if (hours > 0) {
+        sprintf(uptimeStr, "%dh %dm", hours, mins);
+    } else {
+        sprintf(uptimeStr, "%dm %ds", mins, secs);
+    }
+    _display->setTextColor(COLOR_ORANGE);
+    _display->setFont(&fonts::Font2);
+    _display->drawString(uptimeStr, leftX + 12, row3Y + 26);
+    
+    // System Voltage
+    drawRoundedRect(rightX, row3Y, cardW, cardH, 8, COLOR_BG_CARD);
+    _display->fillRect(rightX, row3Y, 4, cardH, COLOR_YELLOW);
+    _display->setTextColor(COLOR_GRAY);
+    _display->setFont(&fonts::Font0);
+    _display->drawString("VOLTAGE", rightX + 12, row3Y + 8);
+    char voltStr[16];
+    sprintf(voltStr, "%.1fV", _telemetry->voltage);
+    uint16_t voltColor = (_telemetry->voltage < 12.0) ? COLOR_RED : 
+                         (_telemetry->voltage < 13.0) ? COLOR_YELLOW : COLOR_GREEN;
+    _display->setTextColor(voltColor);
+    _display->setFont(&fonts::Font2);
+    _display->drawString(voltStr, rightX + 12, row3Y + 26);
+    
+    // Bottom status
+    char statusStr[32];
+    sprintf(statusStr, "ESP32-S3 @ %dMHz", cpuFreq);
+    drawCenteredText(statusStr, CENTER, DISPLAY_SIZE - 25, &fonts::Font0, COLOR_DARK_GRAY);
 }
 
 // =============================================================================

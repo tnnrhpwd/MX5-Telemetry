@@ -55,8 +55,10 @@ enum Screen {
     SCREEN_TPMS = 2,
     SCREEN_ENGINE = 3,
     SCREEN_GFORCE = 4,
-    SCREEN_SETTINGS = 5,
-    SCREEN_COUNT = 6
+    SCREEN_DIAGNOSTICS = 5,
+    SCREEN_SYSTEM = 6,
+    SCREEN_SETTINGS = 7,
+    SCREEN_COUNT = 8
 };
 
 // =============================================================================
@@ -76,24 +78,45 @@ enum ButtonEvent {
 // Telemetry Data Structure
 // =============================================================================
 struct TelemetryData {
-    uint16_t rpm = 2500;
-    uint16_t speed_kmh = 65;
-    uint8_t gear = 3;
-    uint8_t throttle_percent = 25;
+    uint16_t rpm = 0;
+    uint16_t speed_kmh = 0;
+    uint8_t gear = 0;
+    uint8_t throttle_percent = 0;
     uint8_t brake_percent = 0;
-    int16_t coolant_temp_f = 185;
-    int16_t oil_temp_f = 210;
-    float oil_pressure_psi = 45.0f;
-    int16_t intake_temp_f = 95;
-    int16_t ambient_temp_f = 72;
-    float fuel_level_percent = 65.0f;
-    float voltage = 14.2f;
-    float tire_pressure[4] = {32.5f, 31.8f, 33.1f, 32.9f};
-    float tire_temp[4] = {95.3f, 94.1f, 96.0f, 95.8f};
+    int16_t coolant_temp_f = 0;
+    int16_t oil_temp_f = 0;
+    float oil_pressure_psi = 0.0f;
+    int16_t intake_temp_f = 0;
+    int16_t ambient_temp_f = 0;
+    float fuel_level_percent = 0.0f;
+    float voltage = 0.0f;
+    float tire_pressure[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float tire_temp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float g_lateral = 0.0f;
     float g_longitudinal = 0.0f;
     uint32_t lap_time_ms = 0;
-    uint32_t best_lap_ms = 95400;  // 1:35.4
+    uint32_t best_lap_ms = 0;
+    
+    // Diagnostics data
+    bool check_engine_light = false;
+    bool abs_warning = false;
+    bool traction_control_off = false;
+    bool traction_control_active = false;
+    bool oil_pressure_warning = false;
+    bool battery_warning = false;
+    bool door_ajar = false;
+    bool seatbelt_warning = false;
+    bool airbag_warning = false;
+    bool brake_warning = false;
+    bool high_beam_on = false;
+    bool fog_light_on = false;
+    
+    // DTC codes (up to 8)
+    char dtc_codes[8][6] = {"", "", "", "", "", "", "", ""};  // e.g. "P0301"
+    uint8_t dtc_count = 0;
+    
+    // Wheel slip (for traction display)
+    float wheel_slip[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // FL, FR, RL, RR as % slip
 };
 
 // =============================================================================
@@ -119,6 +142,8 @@ const char* const SCREEN_NAMES[] = {
     "TPMS",
     "Engine",
     "G-Force",
+    "Diagnostics",
+    "System",
     "Settings"
 };
 

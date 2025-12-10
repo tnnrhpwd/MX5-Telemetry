@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=MX5 Telemetry
+Comment=MX5 NC Telemetry Display Application
+Exec=/usr/bin/python3 /home/pi/MX5-Telemetry/pi/ui/src/main.py --fullscreen --demo
+Icon=/home/pi/MX5-Telemetry/pi/ui/icon.png
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupNotify=true
