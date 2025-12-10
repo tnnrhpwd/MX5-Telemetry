@@ -20,21 +20,53 @@ Screens (synchronized with ESP32):
     6. Settings    - Configuration options
 
 Usage:
-    python3 main.py              # Normal mode
-    python3 main.py --demo       # Demo mode with simulated data
+    python3 main.py              # Normal mode (data source set in Settings)
     python3 main.py --fullscreen # Fullscreen mode for production
+    python3 main.py -f           # Fullscreen shortcut
+    
+    Data source (Demo/CAN Bus) is configured in Settings > Data Source
 
 Requirements:
     pip install pygame
+
+Compatible with pygame 1.9.x and 2.x
 """
 
+import os
+# Set SDL audio driver before importing pygame (fixes HDMI audio on Pi)
+os.environ.setdefault('SDL_AUDIODRIVER', 'alsa')
+
 import pygame
+import pygame.sndarray
 import math
 import sys
+import os
 import argparse
 from enum import Enum, auto
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
+
+# Try to import numpy for sound generation
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    print("Warning: numpy not installed. Sound effects disabled.")
+
+# Try to import CAN handler (optional on non-Pi systems)
+try:
+    from can_handler import CANHandler, CAN_AVAILABLE
+except ImportError:
+    CAN_AVAILABLE = False
+    CANHandler = None
+
+# Try to import ESP32 serial handler (optional on non-Pi systems)
+try:
+    from esp32_serial_handler import ESP32SerialHandler, SERIAL_AVAILABLE
+except ImportError:
+    SERIAL_AVAILABLE = False
+    ESP32SerialHandler = None
 
 # =============================================================================
 # CONSTANTS
@@ -54,6 +86,7 @@ COLOR_GRAY = (140, 140, 160)
 COLOR_DARK_GRAY = (55, 55, 70)
 COLOR_RED = (255, 70, 85)
 COLOR_GREEN = (50, 215, 130)
+COLOR_SUCCESS = (50, 215, 130)  # Alias for green - used in diagnostics
 COLOR_BLUE = (65, 135, 255)
 COLOR_YELLOW = (255, 210, 60)
 COLOR_ORANGE = (255, 140, 50)
@@ -83,7 +116,9 @@ class Screen(Enum):
     TPMS = 2
     ENGINE = 3
     GFORCE = 4
-    SETTINGS = 5
+    DIAGNOSTICS = 5
+    SYSTEM = 6
+    SETTINGS = 7
 
 
 SCREEN_NAMES = {
@@ -92,35 +127,59 @@ SCREEN_NAMES = {
     Screen.TPMS: "Tire Pressure",
     Screen.ENGINE: "Engine",
     Screen.GFORCE: "G-Force",
+    Screen.DIAGNOSTICS: "Diagnostics",
+    Screen.SYSTEM: "System",
     Screen.SETTINGS: "Settings",
 }
 
 
 @dataclass
 class TelemetryData:
-    rpm: int = 2500
-    speed_kmh: int = 65
-    gear: int = 3
-    throttle_percent: int = 25
+    rpm: int = 0
+    speed_kmh: int = 0
+    gear: int = 0
+    throttle_percent: int = 0
     brake_percent: int = 0
-    coolant_temp_f: int = 185
-    oil_temp_f: int = 210
-    oil_pressure_psi: float = 45.0
-    intake_temp_f: int = 95
-    ambient_temp_f: int = 72
-    fuel_level_percent: float = 65.0
-    voltage: float = 14.2
-    tire_pressure: List[float] = field(default_factory=lambda: [32.5, 31.8, 33.1, 32.9])
-    tire_temp: List[float] = field(default_factory=lambda: [95.3, 94.1, 96.0, 95.8])
+    coolant_temp_f: int = 0
+    oil_temp_f: int = 0
+    oil_pressure_psi: float = 0.0
+    intake_temp_f: int = 0
+    ambient_temp_f: int = 0
+    fuel_level_percent: float = 0.0
+    voltage: float = 0.0
+    tire_pressure: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
+    tire_temp: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     g_lateral: float = 0.0
     g_longitudinal: float = 0.0
     lap_time_ms: int = 0
-    best_lap_ms: int = 95400
+    best_lap_ms: int = 0
+    
+    # Diagnostics data
+    check_engine_light: bool = False
+    abs_warning: bool = False
+    traction_control_off: bool = False
+    traction_control_active: bool = False
+    oil_pressure_warning: bool = False
+    battery_warning: bool = False
+    door_ajar: bool = False
+    seatbelt_warning: bool = False
+    airbag_warning: bool = False
+    brake_warning: bool = False
+    high_beam_on: bool = False
+    fog_light_on: bool = False
+    
+    # DTC codes
+    dtc_codes: List[str] = field(default_factory=list)
+    dtc_count: int = 0
+    
+    # Wheel slip (for traction display)
+    wheel_slip: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
 
 
 @dataclass
 class Settings:
     brightness: int = 80
+    volume: int = 70  # Sound effects volume (0-100)
     shift_rpm: int = 6500
     redline_rpm: int = 7200
     use_mph: bool = True
@@ -128,6 +187,131 @@ class Settings:
     tire_high_psi: float = 36.0
     coolant_warn_f: int = 220
     oil_warn_f: int = 260
+    demo_mode: bool = False  # False = use real CAN data, True = simulated data
+
+
+# =============================================================================
+# SOUND MANAGER
+# =============================================================================
+
+class SoundManager:
+    """Manages UI sound effects using pygame.mixer"""
+    
+    def __init__(self, volume: int = 70):
+        """Initialize sound system"""
+        self._volume = volume / 100.0
+        self._enabled = True
+        self._sounds = {}
+        self._stereo = False
+        
+        if not NUMPY_AVAILABLE:
+            print("Sound effects disabled (numpy not available)")
+            self._enabled = False
+            return
+        
+        try:
+            # Check if mixer is already initialized by pygame.init()
+            mixer_info = pygame.mixer.get_init()
+            print(f"Mixer already init: {mixer_info}")
+            
+            if mixer_info:
+                # Mixer already initialized - check if we need to reinit with our settings
+                freq, fmt, channels = mixer_info
+                self._stereo = channels == 2
+                # Reinitialize with our preferred settings if sample rate differs
+                if freq != 22050:
+                    pygame.mixer.quit()
+                    pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+                    mixer_info = pygame.mixer.get_init()
+                    print(f"Mixer reinitialized: {mixer_info}")
+            else:
+                pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+                mixer_info = pygame.mixer.get_init()
+                self._stereo = mixer_info[2] == 2 if mixer_info else False
+                print(f"Mixer initialized: {mixer_info}")
+            
+            self._generate_sounds()
+            print(f"Sound effects enabled: {len(self._sounds)} sounds, stereo={self._stereo}, volume={self._volume}")
+        except Exception as e:
+            print(f"Sound init failed: {e}")
+            self._enabled = False
+    
+    def _make_sound(self, wave: 'np.ndarray') -> pygame.mixer.Sound:
+        """Create sound from wave array, handling mono/stereo conversion"""
+        if self._stereo:
+            # Convert mono to stereo by duplicating channel
+            stereo_wave = np.column_stack((wave, wave))
+            return pygame.sndarray.make_sound(stereo_wave)
+        return pygame.sndarray.make_sound(wave)
+    
+    def _generate_sounds(self):
+        """Generate simple sound effects programmatically"""
+        sample_rate = 22050
+        
+        # Navigate sound - short click/tick
+        duration = 0.05
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        freq = 800
+        wave = np.sin(2 * np.pi * freq * t) * 0.3
+        # Apply quick envelope
+        envelope = np.exp(-t * 40)
+        wave = (wave * envelope * 32767).astype(np.int16)
+        self._sounds['navigate'] = self._make_sound(wave)
+        
+        # Select sound - confirmation beep
+        duration = 0.08
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        freq1, freq2 = 600, 900
+        wave = (np.sin(2 * np.pi * freq1 * t) * 0.2 + 
+                np.sin(2 * np.pi * freq2 * t) * 0.2)
+        envelope = np.exp(-t * 20)
+        wave = (wave * envelope * 32767).astype(np.int16)
+        self._sounds['select'] = self._make_sound(wave)
+        
+        # Adjust sound - value change tick
+        duration = 0.03
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        freq = 1200
+        wave = np.sin(2 * np.pi * freq * t) * 0.25
+        envelope = np.exp(-t * 60)
+        wave = (wave * envelope * 32767).astype(np.int16)
+        self._sounds['adjust'] = self._make_sound(wave)
+        
+        # Back/cancel sound - descending tone
+        duration = 0.1
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        freq = 500 - t * 2000  # Descending frequency
+        wave = np.sin(2 * np.pi * freq * t / sample_rate * np.cumsum(np.ones_like(t))) * 0.25
+        envelope = np.exp(-t * 15)
+        wave = (wave * envelope * 32767).astype(np.int16)
+        self._sounds['back'] = self._make_sound(wave)
+        
+        # Error sound - low buzz
+        duration = 0.15
+        t = np.linspace(0, duration, int(sample_rate * duration), False)
+        freq = 200
+        wave = np.sin(2 * np.pi * freq * t) * 0.3
+        envelope = np.sin(np.pi * t / duration)
+        wave = (wave * envelope * 32767).astype(np.int16)
+        self._sounds['error'] = self._make_sound(wave)
+        
+        self._update_volumes()
+    
+    def _update_volumes(self):
+        """Update volume for all sounds"""
+        for sound in self._sounds.values():
+            sound.set_volume(self._volume)
+    
+    def set_volume(self, volume: int):
+        """Set volume (0-100)"""
+        self._volume = max(0, min(100, volume)) / 100.0
+        self._update_volumes()
+    
+    def play(self, sound_name: str):
+        """Play a sound effect"""
+        if self._enabled and sound_name in self._sounds and self._volume > 0:
+            print(f"Playing sound: {sound_name}")  # Debug
+            self._sounds[sound_name].play()
 
 
 # =============================================================================
@@ -135,7 +319,7 @@ class Settings:
 # =============================================================================
 
 class PiDisplayApp:
-    def __init__(self, fullscreen: bool = False, demo_mode: bool = True):
+    def __init__(self, fullscreen: bool = False):
         pygame.init()
         
         # Display setup
@@ -146,8 +330,8 @@ class PiDisplayApp:
         # State
         self.current_screen = Screen.OVERVIEW
         self.sleeping = False
-        self.demo_mode = demo_mode
         self.demo_rpm_dir = 1
+        self.show_exit_dialog = False  # Exit confirmation dialog state
         
         # Settings navigation
         self.settings_selection = 0
@@ -155,7 +339,15 @@ class PiDisplayApp:
         
         # Data
         self.telemetry = TelemetryData()
-        self.settings = Settings()
+        self.settings = Settings()  # demo_mode is controlled via settings.demo_mode
+        
+        # Sound manager
+        self.sound = SoundManager(self.settings.volume)
+        
+        # Load car image for TPMS display
+        self.car_image = None
+        self.car_image_small = None
+        self._load_car_image()
         
         # Fonts
         self.font_huge = pygame.font.Font(None, 120)
@@ -169,6 +361,104 @@ class PiDisplayApp:
         
         # Serial connection (for production)
         self.serial_conn = None
+        
+        # CAN bus handler (for real data from vehicle)
+        self.can_handler = None
+        
+        # ESP32 serial handler (for TPMS + IMU data)
+        self.esp32_handler = None
+        
+        # Initialize data sources based on settings
+        self._init_data_sources()
+    
+    def _init_data_sources(self):
+        """Initialize or reinitialize CAN and ESP32 handlers based on demo_mode setting"""
+        # Stop existing handlers if running
+        if self.can_handler:
+            self.can_handler.stop()
+            self.can_handler = None
+        if self.esp32_handler:
+            self.esp32_handler.stop()
+            self.esp32_handler = None
+        
+        if self.settings.demo_mode:
+            print("Data Source: DEMO MODE - using simulated data")
+            return
+        
+        # Production mode - initialize real data sources
+        print("Data Source: CAN BUS - using real vehicle data")
+        
+        # CAN bus handler
+        if CAN_AVAILABLE and CANHandler:
+            print("  Initializing CAN bus...")
+            self.can_handler = CANHandler(self.telemetry)
+            if self.can_handler.start():
+                print("  ✓ CAN bus connected - reading RPM, speed, gear, temps")
+            else:
+                print("  ✗ CAN bus failed - check MCP2515 wiring")
+                self.can_handler = None
+        else:
+            print("  ✗ CAN library not available - install python-can")
+        
+        # ESP32 serial handler
+        if SERIAL_AVAILABLE and ESP32SerialHandler:
+            print("  Initializing ESP32 serial...")
+            self.esp32_handler = ESP32SerialHandler(self.telemetry)
+            if self.esp32_handler.start():
+                print("  ✓ ESP32 connected - receiving TPMS and G-force data")
+            else:
+                print("  ✗ ESP32 serial failed - check UART connection")
+                self.esp32_handler = None
+        else:
+            print("  ✗ Serial library not available - install pyserial")
+    
+    def _on_data_source_changed(self):
+        """Called when demo_mode setting is toggled"""
+        # Reset telemetry data when switching modes
+        self.telemetry = TelemetryData()
+        
+        # Reinitialize data sources
+        self._init_data_sources()
+        
+        # Update handlers to use new telemetry object
+        if self.can_handler:
+            self.can_handler.telemetry = self.telemetry
+        if self.esp32_handler:
+            self.esp32_handler.telemetry = self.telemetry
+    
+    def _load_car_image(self):
+
+        """Load and prepare car silhouette image for TPMS display"""
+        # Try multiple possible paths for the car image
+        possible_paths = [
+            os.path.join(os.path.dirname(__file__), '..', '..', '..', 'display', 'output-onlinepngtools.png'),
+            os.path.join(os.path.dirname(__file__), '..', 'assets', 'car_topdown.png'),
+            '/home/pi/MX5-Telemetry/display/output-onlinepngtools.png',
+            'C:/Users/tanne/Documents/Github/MX5-Telemetry/display/output-onlinepngtools.png',
+        ]
+        
+        for path in possible_paths:
+            try:
+                if os.path.exists(path):
+                    img = pygame.image.load(path).convert_alpha()
+                    # Scale for full TPMS screen (target ~200px wide)
+                    scale = 200 / img.get_width()
+                    new_w = 200
+                    new_h = int(img.get_height() * scale)
+                    self.car_image = pygame.transform.smoothscale(img, (new_w, new_h))
+                    
+                    # Scale for overview mini TPMS (target ~80px wide)
+                    scale_small = 80 / img.get_width()
+                    small_w = 80
+                    small_h = int(img.get_height() * scale_small)
+                    self.car_image_small = pygame.transform.smoothscale(img, (small_w, small_h))
+                    
+                    print(f"Loaded car image from: {path}")
+                    return
+            except Exception as e:
+                print(f"Failed to load {path}: {e}")
+        
+        print("Warning: Could not load car image, using rectangle placeholder")
     
     def run(self):
         """Main application loop"""
@@ -181,14 +471,14 @@ class PiDisplayApp:
         print(f"Demo Mode: {self.demo_mode}")
         print()
         print("Controls:")
-        print("  ↑ / W     = Previous screen (RES+)")
-        print("  ↓ / S     = Next screen (SET-)")
-        print("  → / D     = Increase value (VOL+)")
-        print("  ← / A     = Decrease value (VOL-)")
-        print("  Enter     = Select / Edit (ON/OFF)")
-        print("  Esc / B   = Back / Exit (CANCEL)")
-        print("  Space     = Toggle sleep mode")
-        print("  Q         = Quit")
+        print("  Up / W     = Previous screen (RES+)")
+        print("  Down / S   = Next screen (SET-)")
+        print("  Right / D  = Increase value (VOL+)")
+        print("  Left / A   = Decrease value (VOL-)")
+        print("  Enter      = Select / Edit (ON/OFF)")
+        print("  Esc / B    = Back / Exit (CANCEL)")
+        print("  Space      = Toggle sleep mode")
+        print("  Q          = Quit")
         print("=" * 60)
         
         while running:
@@ -197,25 +487,61 @@ class PiDisplayApp:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
+                    # Handle exit confirmation dialog
+                    if self.show_exit_dialog:
+                        if event.key == pygame.K_y or event.key == pygame.K_RETURN:
+                            running = False  # Yes, exit
+                        elif event.key == pygame.K_n or event.key == pygame.K_ESCAPE:
+                            self.show_exit_dialog = False  # No, cancel
+                        continue
+                    
+                    # ESC key shows exit confirmation
+                    if event.key == pygame.K_ESCAPE:
+                        self.show_exit_dialog = True
+                        continue
+                    
                     button = self._key_to_button(event.key)
                     if button == ButtonEvent.NONE:
                         if event.key == pygame.K_q:
-                            running = False
+                            self.show_exit_dialog = True  # Q also shows confirmation
                         elif event.key == pygame.K_SPACE:
                             self.sleeping = not self.sleeping
                     else:
                         self._handle_button(button)
             
-            # Update demo mode
-            if self.demo_mode and not self.sleeping:
+            # Update data source
+            if self.settings.demo_mode and not self.sleeping:
+                # Demo mode: simulate data for testing
                 self._update_demo()
+            # Real mode: CAN handler reads data automatically in background thread
+            # Real mode: ESP32 handler receives TPMS/IMU data automatically
+            
+            # Forward telemetry to ESP32 (if connected)
+            if self.esp32_handler and self.esp32_handler.connected:
+                # Send telemetry at ~10Hz (every 3 frames at 30fps)
+                if hasattr(self, '_esp32_tx_counter'):
+                    self._esp32_tx_counter += 1
+                else:
+                    self._esp32_tx_counter = 0
+                if self._esp32_tx_counter >= 3:
+                    self._esp32_tx_counter = 0
+                    self.esp32_handler.send_telemetry()
             
             # Render
             self._render()
             
+            # Draw exit dialog on top if active
+            if self.show_exit_dialog:
+                self._render_exit_dialog()
+            
             pygame.display.flip()
             self.clock.tick(30)
         
+        # Cleanup
+        if self.can_handler:
+            self.can_handler.stop()
+        if self.esp32_handler:
+            self.esp32_handler.stop()
         pygame.quit()
     
     def _key_to_button(self, key) -> ButtonEvent:
@@ -230,8 +556,7 @@ class PiDisplayApp:
             pygame.K_LEFT: ButtonEvent.VOL_DOWN,
             pygame.K_a: ButtonEvent.VOL_DOWN,
             pygame.K_RETURN: ButtonEvent.ON_OFF,
-            pygame.K_ESCAPE: ButtonEvent.CANCEL,
-            pygame.K_b: ButtonEvent.CANCEL,
+            pygame.K_b: ButtonEvent.CANCEL,  # B key for back/cancel (ESC reserved for exit)
         }
         return mapping.get(key, ButtonEvent.NONE)
     
@@ -247,67 +572,92 @@ class PiDisplayApp:
         screens = list(Screen)
         idx = screens.index(self.current_screen)
         
-        if button == ButtonEvent.RES_PLUS:
+        if button in (ButtonEvent.RES_PLUS, ButtonEvent.VOL_DOWN):
+            # UP or LEFT - previous screen
             idx = (idx - 1) % len(screens)
             self.current_screen = screens[idx]
-        elif button == ButtonEvent.SET_MINUS:
+            self.sound.play('navigate')
+        elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
+            # DOWN or RIGHT - next screen
             idx = (idx + 1) % len(screens)
             self.current_screen = screens[idx]
+            self.sound.play('navigate')
     
     def _handle_settings_button(self, button: ButtonEvent):
         """Handle settings screen navigation"""
         items = self._get_settings_items()
         
         if button == ButtonEvent.RES_PLUS and not self.settings_edit_mode:
-            self.settings_selection = max(0, self.settings_selection - 1)
+            if self.settings_selection > 0:
+                self.settings_selection -= 1
+                self.sound.play('navigate')
         elif button == ButtonEvent.SET_MINUS and not self.settings_edit_mode:
-            self.settings_selection = min(len(items) - 1, self.settings_selection + 1)
+            if self.settings_selection < len(items) - 1:
+                self.settings_selection += 1
+                self.sound.play('navigate')
         elif button == ButtonEvent.ON_OFF:
             if self.settings_selection == len(items) - 1:  # Back
                 self.current_screen = Screen.OVERVIEW
                 self.settings_selection = 0
+                self.sound.play('back')
             else:
                 self.settings_edit_mode = not self.settings_edit_mode
+                self.sound.play('select')
         elif button == ButtonEvent.CANCEL:
             if self.settings_edit_mode:
                 self.settings_edit_mode = False
+                self.sound.play('back')
             else:
                 self.current_screen = Screen.OVERVIEW
                 self.settings_selection = 0
+                self.sound.play('back')
         elif self.settings_edit_mode:
             delta = 1 if button == ButtonEvent.VOL_UP else (-1 if button == ButtonEvent.VOL_DOWN else 0)
-            self._adjust_setting(delta)
+            if delta != 0:
+                self._adjust_setting(delta)
+                self.sound.play('adjust')
     
     def _adjust_setting(self, delta: int):
         """Adjust currently selected setting"""
         sel = self.settings_selection
         if sel == 0:  # Brightness
             self.settings.brightness = max(10, min(100, self.settings.brightness + delta * 5))
-        elif sel == 1:  # Shift RPM
+        elif sel == 1:  # Volume
+            self.settings.volume = max(0, min(100, self.settings.volume + delta * 5))
+            self.sound.set_volume(self.settings.volume)
+        elif sel == 2:  # Shift RPM
             self.settings.shift_rpm = max(4000, min(7500, self.settings.shift_rpm + delta * 100))
-        elif sel == 2:  # Redline
+        elif sel == 3:  # Redline
             self.settings.redline_rpm = max(5000, min(8000, self.settings.redline_rpm + delta * 100))
-        elif sel == 3:  # Units
+        elif sel == 4:  # Units
             self.settings.use_mph = not self.settings.use_mph
-        elif sel == 4:  # Low tire PSI
+        elif sel == 5:  # Low tire PSI
             self.settings.tire_low_psi = max(20, min(35, self.settings.tire_low_psi + delta * 0.5))
-        elif sel == 5:  # Coolant warn
+        elif sel == 6:  # Coolant warn
             self.settings.coolant_warn_f = max(180, min(250, self.settings.coolant_warn_f + delta * 5))
+        elif sel == 7:  # Data Source (Demo Mode)
+            self.settings.demo_mode = not self.settings.demo_mode
+            self._on_data_source_changed()
     
     def _get_settings_items(self):
         """Return list of (name, value, unit) tuples"""
         return [
             ("Brightness", self.settings.brightness, "%"),
+            ("Volume", self.settings.volume, "%"),
             ("Shift RPM", self.settings.shift_rpm, ""),
             ("Redline", self.settings.redline_rpm, ""),
             ("Units", "MPH" if self.settings.use_mph else "KMH", ""),
             ("Low Tire PSI", self.settings.tire_low_psi, ""),
             ("Coolant Warn", self.settings.coolant_warn_f, "°F"),
+            ("Data Source", "DEMO" if self.settings.demo_mode else "CAN BUS", ""),
             ("Back", "", ""),
         ]
     
     def _update_demo(self):
-        """Update demo animation"""
+        """Update demo animation with complete simulated data"""
+        import time
+        t = time.time()
+        
         # RPM oscillation
         self.telemetry.rpm += 50 * self.demo_rpm_dir
         if self.telemetry.rpm >= 7200:
@@ -327,12 +677,16 @@ class PiDisplayApp:
         else:
             self.telemetry.gear = 5
         
-        # Speed approximation
-        self.telemetry.speed_kmh = self.telemetry.rpm * self.telemetry.gear // 100
+        # Speed approximation (more realistic: gear ratios)
+        gear_ratios = [0, 3.136, 1.888, 1.330, 1.000, 0.814, 0.0]  # MX5 NC gear ratios
+        if 1 <= self.telemetry.gear <= 5:
+            # Speed = (RPM * tire_circumference) / (gear_ratio * diff_ratio * 60)
+            # Simplified: ~rpm/gear_ratio * factor for km/h
+            self.telemetry.speed_kmh = int(self.telemetry.rpm / (gear_ratios[self.telemetry.gear] * 25))
+        else:
+            self.telemetry.speed_kmh = 0
         
-        # G-force simulation
-        import time
-        t = time.time()
+        # G-force simulation (from IMU)
         self.telemetry.g_lateral = math.sin(t) * 0.8
         self.telemetry.g_longitudinal = math.cos(t * 1.5) * 0.5
         
@@ -340,10 +694,51 @@ class PiDisplayApp:
         self.telemetry.throttle_percent = int(50 + math.sin(t * 2) * 50)
         self.telemetry.brake_percent = int(max(0, -math.sin(t * 2) * 30))
         
-        # Lap time
+        # Engine temperatures (simulate warm engine with slight variation)
+        self.telemetry.coolant_temp_f = int(195 + math.sin(t * 0.1) * 10)  # 185-205°F
+        self.telemetry.oil_temp_f = int(210 + math.sin(t * 0.08) * 15)     # 195-225°F
+        self.telemetry.oil_pressure_psi = 45 + math.sin(t * 0.2) * 10      # 35-55 PSI
+        self.telemetry.intake_temp_f = int(85 + math.sin(t * 0.05) * 10)   # 75-95°F
+        self.telemetry.ambient_temp_f = 72  # Static ambient temp
+        
+        # Fuel and voltage
+        self.telemetry.fuel_level_percent = max(0, 65 - (t % 3600) * 0.001)  # Slowly decreasing
+        self.telemetry.voltage = 14.2 + math.sin(t * 0.5) * 0.3  # 13.9-14.5V
+        
+        # TPMS simulation (slight variations in tire pressure/temp)
+        base_psi = 32.0
+        base_temp = 75.0
+        for i in range(4):
+            self.telemetry.tire_pressure[i] = base_psi + math.sin(t * 0.1 + i) * 1.5
+            self.telemetry.tire_temp[i] = base_temp + math.sin(t * 0.15 + i * 0.5) * 8 + i * 2
+        
+        # Wheel slip simulation (occasional slip during acceleration)
+        for i in range(4):
+            if self.telemetry.throttle_percent > 80 and self.telemetry.rpm > 5000:
+                self.telemetry.wheel_slip[i] = abs(math.sin(t * 5 + i)) * 15  # 0-15% slip
+            else:
+                self.telemetry.wheel_slip[i] = 0
+        
+        # Lap time simulation
         self.telemetry.lap_time_ms += 33
-        if self.telemetry.lap_time_ms > 120000:
+        if self.telemetry.lap_time_ms > 120000:  # 2 minute lap
+            # Record best lap occasionally
+            if self.telemetry.best_lap_ms == 0 or self.telemetry.lap_time_ms < self.telemetry.best_lap_ms + 5000:
+                self.telemetry.best_lap_ms = 85000 + int(math.sin(t) * 5000)  # ~1:20-1:30
             self.telemetry.lap_time_ms = 0
+        
+        # Diagnostics simulation (occasional warnings)
+        self.telemetry.check_engine_light = False
+        self.telemetry.abs_warning = False
+        self.telemetry.traction_control_active = self.telemetry.wheel_slip[2] > 5 or self.telemetry.wheel_slip[3] > 5
+        self.telemetry.traction_control_off = False
+        self.telemetry.oil_pressure_warning = self.telemetry.oil_pressure_psi < 20
+        self.telemetry.battery_warning = self.telemetry.voltage < 12.0
+        self.telemetry.door_ajar = False
+        self.telemetry.seatbelt_warning = False
+        self.telemetry.brake_warning = False
+        self.telemetry.high_beam_on = False
+        self.telemetry.fog_light_on = False
     
     def _get_rpm_color(self, rpm: int) -> Tuple[int, int, int]:
         """Get color based on RPM percentage"""
@@ -370,9 +765,9 @@ class PiDisplayApp:
         
         # Check temperatures
         if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f:
-            alerts.append((f"COOLANT: {self.telemetry.coolant_temp_f}°F", COLOR_RED))
+            alerts.append((f"COOLANT: {self.telemetry.coolant_temp_f}F", COLOR_RED))
         if self.telemetry.oil_temp_f >= self.settings.oil_warn_f:
-            alerts.append((f"OIL TEMP: {self.telemetry.oil_temp_f}°F", COLOR_RED))
+            alerts.append((f"OIL TEMP: {self.telemetry.oil_temp_f}F", COLOR_RED))
         
         # Check voltage
         if self.telemetry.voltage < 12.0:
@@ -386,7 +781,6 @@ class PiDisplayApp:
     
     def _draw_arc(self, surface, cx, cy, radius, thickness, start_angle, end_angle, color):
         """Draw a thick arc"""
-        import math
         start_rad = math.radians(start_angle)
         end_rad = math.radians(end_angle)
         
@@ -423,6 +817,8 @@ class PiDisplayApp:
                 Screen.TPMS: self._render_tpms,
                 Screen.ENGINE: self._render_engine,
                 Screen.GFORCE: self._render_gforce,
+                Screen.DIAGNOSTICS: self._render_diagnostics,
+                Screen.SYSTEM: self._render_system,
                 Screen.SETTINGS: self._render_settings,
             }
             renderers[self.current_screen]()
@@ -445,6 +841,33 @@ class PiDisplayApp:
         txt = self.font_large.render("SLEEP MODE", True, COLOR_DARK_GRAY)
         self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, PI_HEIGHT // 2)))
     
+    def _render_exit_dialog(self):
+        """Render exit confirmation dialog overlay"""
+        # Semi-transparent overlay
+        overlay = pygame.Surface((PI_WIDTH, PI_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+        
+        # Dialog box
+        dialog_w, dialog_h = 400, 180
+        dialog_x = (PI_WIDTH - dialog_w) // 2
+        dialog_y = (PI_HEIGHT - dialog_h) // 2
+        
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (dialog_x, dialog_y, dialog_w, dialog_h))
+        pygame.draw.rect(self.screen, COLOR_ACCENT, (dialog_x, dialog_y, dialog_w, dialog_h), 3)
+        
+        # Title
+        txt = self.font_medium.render("Exit Application?", True, COLOR_WHITE)
+        self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, dialog_y + 45)))
+        
+        # Message
+        txt = self.font_small.render("Are you sure you want to close?", True, COLOR_GRAY)
+        self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, dialog_y + 90)))
+        
+        # Buttons hint
+        txt = self.font_small.render("Y / Enter = Yes     N / Esc = No", True, COLOR_ACCENT)
+        self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, dialog_y + 140)))
+    
     def _render_overview(self):
         """Overview screen - matches simulator exactly"""
         alerts = self._get_alerts()
@@ -453,9 +876,8 @@ class PiDisplayApp:
         left_panel_x = 20
         left_panel_w = 180
         
-        # Gear card with glow
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, 
-                        (left_panel_x, TOP, left_panel_w, 150), border_radius=14)
+        # Gear card
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_panel_x, TOP, left_panel_w, 150))
         
         rpm_color = self._get_rpm_color(self.telemetry.rpm)
         gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
@@ -477,21 +899,20 @@ class PiDisplayApp:
         self.screen.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 120)))
         
         # RPM bar card
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, 
-                        (left_panel_x, TOP + 160, left_panel_w, 40), border_radius=10)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_panel_x, TOP + 160, left_panel_w, 50))
         rpm_pct = min(1.0, self.telemetry.rpm / self.settings.redline_rpm)
-        bar_x, bar_y = left_panel_x + 12, TOP + 172
+        bar_x, bar_y = left_panel_x + 12, TOP + 168
         bar_w = left_panel_w - 24
-        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (bar_x, bar_y, bar_w, 12), border_radius=6)
-        pygame.draw.rect(self.screen, rpm_color, (bar_x, bar_y, int(bar_w * rpm_pct), 12), border_radius=6)
+        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (bar_x, bar_y, bar_w, 10))
+        pygame.draw.rect(self.screen, rpm_color, (bar_x, bar_y, int(bar_w * rpm_pct), 10))
         txt = self.font_tiny.render(f"{self.telemetry.rpm} RPM", True, COLOR_GRAY)
-        self.screen.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 188)))
+        self.screen.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 195)))
         
         # Key values grid
         values = [
-            ("COOL", f"{self.telemetry.coolant_temp_f:.0f}°", 
+            ("COOL", f"{self.telemetry.coolant_temp_f:.0f}", 
              COLOR_RED if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f else COLOR_TEAL),
-            ("OIL", f"{self.telemetry.oil_temp_f:.0f}°",
+            ("OIL", f"{self.telemetry.oil_temp_f:.0f}",
              COLOR_RED if self.telemetry.oil_temp_f >= self.settings.oil_warn_f else COLOR_GREEN),
             ("FUEL", f"{self.telemetry.fuel_level_percent:.0f}%",
              COLOR_RED if self.telemetry.fuel_level_percent < 10 else 
@@ -508,34 +929,45 @@ class PiDisplayApp:
             x = left_panel_x + col * (card_w + 10)
             y = TOP + 210 + row * (card_h + 6)
             
-            pygame.draw.rect(self.screen, COLOR_BG_CARD, (x, y, card_w, card_h), border_radius=8)
-            pygame.draw.rect(self.screen, color, (x, y, 3, card_h), 
-                           border_top_left_radius=8, border_bottom_left_radius=8)
+            pygame.draw.rect(self.screen, COLOR_BG_CARD, (x, y, card_w, card_h))
+            pygame.draw.rect(self.screen, color, (x, y, 3, card_h))
             
             txt = self.font_tiny.render(label, True, COLOR_GRAY)
             self.screen.blit(txt, (x + 10, y + 5))
             txt = self.font_small.render(val, True, color)
             self.screen.blit(txt, (x + 10, y + 22))
         
-        # Center: TPMS diagram
+        # Center: Modern TPMS diagram with car silhouette
         tpms_cx, tpms_cy = 340, TOP + 160
         
-        car_w, car_h = 55, 100
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, 
-                        (tpms_cx - car_w//2, tpms_cy - car_h//2, car_w, car_h), border_radius=12)
+        # Draw car silhouette (small version)
+        if self.car_image_small:
+            car_rect = self.car_image_small.get_rect(center=(tpms_cx, tpms_cy))
+            self.screen.blit(self.car_image_small, car_rect)
+            car_w = self.car_image_small.get_width()
+            car_h = self.car_image_small.get_height()
+        else:
+            # Fallback to rectangle
+            car_w, car_h = 55, 100
+            pygame.draw.rect(self.screen, COLOR_BG_CARD, 
+                            (tpms_cx - car_w//2, tpms_cy - car_h//2, car_w, car_h))
         
         box_w, box_h = 60, 65
-        gap = 70
+        tire_offset_x = car_w // 2 + box_w // 2 + 12
+        tire_offset_y = car_h // 2 - 10
+        
         tire_positions = [
-            (0, -gap, -30, "FL"), (1, gap, -30, "FR"),
-            (2, -gap, 50, "RL"), (3, gap, 50, "RR"),
+            (0, -tire_offset_x, -tire_offset_y, "FL"),
+            (1, tire_offset_x, -tire_offset_y, "FR"),
+            (2, -tire_offset_x, tire_offset_y, "RL"),
+            (3, tire_offset_x, tire_offset_y, "RR"),
         ]
         
         for idx, dx, dy, name in tire_positions:
             psi = self.telemetry.tire_pressure[idx]
             temp = self.telemetry.tire_temp[idx]
-            x = tpms_cx + dx - box_w//2
-            y = tpms_cy + dy - box_h//2
+            x = tpms_cx + dx
+            y = tpms_cy + dy
             
             if psi < self.settings.tire_low_psi:
                 color = COLOR_RED
@@ -544,16 +976,16 @@ class PiDisplayApp:
             else:
                 color = COLOR_GREEN
             
-            pygame.draw.rect(self.screen, COLOR_BG_CARD, (x, y, box_w, box_h), border_radius=10)
-            pygame.draw.rect(self.screen, color, (x, y, 3, box_h), 
-                           border_top_left_radius=10, border_bottom_left_radius=10)
+            # Draw centered box
+            pygame.draw.rect(self.screen, COLOR_BG_CARD, (x - box_w//2, y - box_h//2, box_w, box_h))
+            pygame.draw.rect(self.screen, color, (x - box_w//2, y - box_h//2, 3, box_h))
             
             txt = self.font_tiny.render(name, True, COLOR_GRAY)
-            self.screen.blit(txt, txt.get_rect(center=(x + box_w//2, y + 10)))
+            self.screen.blit(txt, txt.get_rect(center=(x, y - 18)))
             txt = self.font_small.render(f"{psi:.0f}", True, color)
-            self.screen.blit(txt, txt.get_rect(center=(x + box_w//2, y + 32)))
-            txt = self.font_tiny.render(f"{temp:.0f}°", True, COLOR_GRAY)
-            self.screen.blit(txt, txt.get_rect(center=(x + box_w//2, y + 52)))
+            self.screen.blit(txt, txt.get_rect(center=(x, y + 2)))
+            txt = self.font_tiny.render(f"{temp:.0f}F", True, COLOR_GRAY)
+            self.screen.blit(txt, txt.get_rect(center=(x, y + 20)))
         
         # Right panel: Alerts
         alerts_x = 490
@@ -561,24 +993,21 @@ class PiDisplayApp:
         alerts_w = 290
         alerts_h = PI_HEIGHT - TOP - 10
         
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, 
-                        (alerts_x, alerts_y, alerts_w, alerts_h), border_radius=14)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (alerts_x, alerts_y, alerts_w, alerts_h))
         
         header_color = COLOR_RED if alerts else COLOR_GREEN
-        pygame.draw.rect(self.screen, header_color, 
-                        (alerts_x, alerts_y, alerts_w, 45), 
-                        border_top_left_radius=14, border_top_right_radius=14)
-        header_text = "⚠ ALERTS" if alerts else "✓ ALL OK"
-        txt = self.font_medium.render(header_text, True, COLOR_WHITE)
+        pygame.draw.rect(self.screen, header_color, (alerts_x, alerts_y, alerts_w, 45))
+        header_text = "! ALERTS" if alerts else "ALL GOOD"
+        txt = self.font_small.render(header_text, True, COLOR_WHITE)
         self.screen.blit(txt, txt.get_rect(center=(alerts_x + alerts_w//2, alerts_y + 22)))
         
         if alerts:
             alert_y = alerts_y + 55
             for i, (alert_text, alert_color) in enumerate(alerts[:8]):
                 pygame.draw.rect(self.screen, COLOR_BG_ELEVATED,
-                               (alerts_x + 10, alert_y, alerts_w - 20, 38), border_radius=6)
+                               (alerts_x + 10, alert_y, alerts_w - 20, 38))
                 pygame.draw.rect(self.screen, alert_color,
-                               (alerts_x + 10, alert_y, 3, 38), border_radius=2)
+                               (alerts_x + 10, alert_y, 3, 38))
                 txt = self.font_small.render(alert_text, True, alert_color)
                 self.screen.blit(txt, (alerts_x + 20, alert_y + 10))
                 alert_y += 45
@@ -594,8 +1023,8 @@ class PiDisplayApp:
             for label, ok in checks:
                 color = COLOR_GREEN if ok else COLOR_YELLOW
                 pygame.draw.rect(self.screen, COLOR_BG_ELEVATED,
-                               (alerts_x + 10, check_y, alerts_w - 20, 38), border_radius=6)
-                symbol = "✓" if ok else "!"
+                               (alerts_x + 10, check_y, alerts_w - 20, 38))
+                symbol = "+" if ok else "!"
                 txt = self.font_small.render(f"{symbol}  {label}", True, color)
                 self.screen.blit(txt, (alerts_x + 20, check_y + 10))
                 check_y += 45
@@ -645,7 +1074,7 @@ class PiDisplayApp:
         right_x = 440
         
         # Speed card
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP, 340, 150), border_radius=14)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP, 340, 150))
         
         speed = self.telemetry.speed_kmh
         if self.settings.use_mph:
@@ -659,26 +1088,26 @@ class PiDisplayApp:
         self.screen.blit(txt, txt.get_rect(center=(right_x + 170, TOP + 120)))
         
         # Throttle/Brake
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + 165, 165, 80), border_radius=12)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + 165, 165, 80))
         txt = self.font_tiny.render("THROTTLE", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 15, TOP + 172))
-        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (right_x + 15, TOP + 195, 135, 14), border_radius=7)
+        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (right_x + 15, TOP + 195, 135, 14))
         throttle_w = int(135 * self.telemetry.throttle_percent / 100)
-        pygame.draw.rect(self.screen, COLOR_GREEN, (right_x + 15, TOP + 195, throttle_w, 14), border_radius=7)
+        pygame.draw.rect(self.screen, COLOR_GREEN, (right_x + 15, TOP + 195, throttle_w, 14))
         txt = self.font_small.render(f"{self.telemetry.throttle_percent}%", True, COLOR_GREEN)
         self.screen.blit(txt, (right_x + 15, TOP + 215))
         
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x + 175, TOP + 165, 165, 80), border_radius=12)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x + 175, TOP + 165, 165, 80))
         txt = self.font_tiny.render("BRAKE", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 190, TOP + 172))
-        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (right_x + 190, TOP + 195, 135, 14), border_radius=7)
+        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (right_x + 190, TOP + 195, 135, 14))
         brake_w = int(135 * self.telemetry.brake_percent / 100)
-        pygame.draw.rect(self.screen, COLOR_RED, (right_x + 190, TOP + 195, brake_w, 14), border_radius=7)
+        pygame.draw.rect(self.screen, COLOR_RED, (right_x + 190, TOP + 195, brake_w, 14))
         txt = self.font_small.render(f"{self.telemetry.brake_percent}%", True, COLOR_RED)
         self.screen.blit(txt, (right_x + 190, TOP + 215))
         
         # Lap times
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + 260, 340, 90), border_radius=12)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + 260, 340, 90))
         
         lap_ms = self.telemetry.lap_time_ms
         lap_min = lap_ms // 60000
@@ -699,30 +1128,42 @@ class PiDisplayApp:
         self.screen.blit(txt, (right_x + 190, TOP + 295))
     
     def _render_tpms(self):
-        """TPMS screen"""
+        """TPMS screen - Modern design with car silhouette"""
         TOP = 55
         
         car_cx, car_cy = PI_WIDTH // 2, TOP + (PI_HEIGHT - TOP) // 2
-        car_w, car_h = 150, 250
         
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, 
-                        (car_cx - car_w//2, car_cy - car_h//2, car_w, car_h), border_radius=22)
-        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, 
-                        (car_cx - car_w//2, car_cy - car_h//2, car_w, car_h), 2, border_radius=22)
+        # Draw car silhouette
+        if self.car_image:
+            car_rect = self.car_image.get_rect(center=(car_cx, car_cy))
+            self.screen.blit(self.car_image, car_rect)
+            car_w = self.car_image.get_width()
+            car_h = self.car_image.get_height()
+        else:
+            # Fallback to rectangle
+            car_w, car_h = 150, 250
+            pygame.draw.rect(self.screen, COLOR_BG_CARD, 
+                            (car_cx - car_w//2, car_cy - car_h//2, car_w, car_h))
+            pygame.draw.rect(self.screen, COLOR_DARK_GRAY, 
+                            (car_cx - car_w//2, car_cy - car_h//2, car_w, car_h), 2)
+        
+        # Tire info card positions around the car
+        box_w, box_h = 140, 110
+        tire_offset_x = car_w // 2 + box_w // 2 + 30
+        tire_offset_y = car_h // 2 - 40
         
         positions = [
-            (car_cx - 165, car_cy - 75, "FL", 0),
-            (car_cx + 165, car_cy - 75, "FR", 1),
-            (car_cx - 165, car_cy + 75, "RL", 2),
-            (car_cx + 165, car_cy + 75, "RR", 3),
+            (car_cx - tire_offset_x, car_cy - tire_offset_y, "FL", 0),
+            (car_cx + tire_offset_x, car_cy - tire_offset_y, "FR", 1),
+            (car_cx - tire_offset_x, car_cy + tire_offset_y, "RL", 2),
+            (car_cx + tire_offset_x, car_cy + tire_offset_y, "RR", 3),
         ]
-        
-        box_w, box_h = 125, 95
         
         for x, y, label, idx in positions:
             psi = self.telemetry.tire_pressure[idx]
             temp = self.telemetry.tire_temp[idx]
             
+            # Determine color
             if psi < self.settings.tire_low_psi:
                 color = COLOR_RED
             elif psi > self.settings.tire_high_psi:
@@ -730,20 +1171,48 @@ class PiDisplayApp:
             else:
                 color = COLOR_GREEN
             
+            # Modern card with glow effect
+            glow = pygame.Surface((box_w + 8, box_h + 8), pygame.SRCALPHA)
+            glow.fill((*color[:3], 30))
+            self.screen.blit(glow, (x - box_w//2 - 4, y - box_h//2 - 4))
+            
+            # Card background
             pygame.draw.rect(self.screen, COLOR_BG_CARD,
-                           (x - box_w//2, y - box_h//2, box_w, box_h), border_radius=14)
+                           (x - box_w//2, y - box_h//2, box_w, box_h))
+            
+            # Color accent bar
             pygame.draw.rect(self.screen, color,
-                           (x - box_w//2, y - box_h//2, 5, box_h), 
-                           border_top_left_radius=14, border_bottom_left_radius=14)
+                           (x - box_w//2, y - box_h//2, 5, box_h))
             
+            # Label
             txt = self.font_small.render(label, True, COLOR_GRAY)
-            self.screen.blit(txt, txt.get_rect(center=(x + 5, y - 28)))
+            self.screen.blit(txt, txt.get_rect(center=(x + 5, y - 38)))
             
-            txt = self.font_medium.render(f"{psi:.1f}", True, color)
-            self.screen.blit(txt, txt.get_rect(center=(x + 5, y + 5)))
+            # PSI value (large)
+            txt = self.font_large.render(f"{psi:.1f}", True, color)
+            self.screen.blit(txt, txt.get_rect(center=(x + 5, y - 5)))
             
-            txt = self.font_tiny.render(f"PSI  |  {temp:.0f}°F", True, COLOR_GRAY)
-            self.screen.blit(txt, txt.get_rect(center=(x + 5, y + 35)))
+            # Unit label
+            txt = self.font_tiny.render("PSI", True, COLOR_GRAY)
+            self.screen.blit(txt, txt.get_rect(center=(x + 5, y + 22)))
+            
+            # Temperature
+            txt = self.font_small.render(f"{temp:.0f}°F", True, COLOR_GRAY)
+            self.screen.blit(txt, txt.get_rect(center=(x + 5, y + 42)))
+        
+        # Status bar at bottom
+        all_ok = all(
+            self.settings.tire_low_psi <= psi <= self.settings.tire_high_psi
+            for psi in self.telemetry.tire_pressure
+        )
+        
+        status_color = COLOR_GREEN if all_ok else COLOR_YELLOW
+        status_text = "ALL PRESSURES NORMAL" if all_ok else "! CHECK TIRE PRESSURES"
+        
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (PI_WIDTH//2 - 150, PI_HEIGHT - 45, 300, 35))
+        pygame.draw.rect(self.screen, status_color, (PI_WIDTH//2 - 150, PI_HEIGHT - 45, 5, 35))
+        txt = self.font_small.render(status_text, True, status_color)
+        self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH//2, PI_HEIGHT - 28)))
     
     def _render_engine(self):
         """Engine screen"""
@@ -754,12 +1223,12 @@ class PiDisplayApp:
         # Coolant
         cool = self.telemetry.coolant_temp_f
         cool_color = COLOR_RED if cool >= self.settings.coolant_warn_f else COLOR_TEAL
-        self._render_gauge(150, row1_y, "COOLANT", cool, "°F", 180, self.settings.coolant_warn_f, 250, cool_color)
+        self._render_gauge(150, row1_y, "COOLANT", cool, "F", 180, self.settings.coolant_warn_f, 250, cool_color)
         
         # Oil Temp
         oil = self.telemetry.oil_temp_f
         oil_color = COLOR_RED if oil >= self.settings.oil_warn_f else COLOR_GREEN
-        self._render_gauge(400, row1_y, "OIL TEMP", oil, "°F", 150, self.settings.oil_warn_f, 280, oil_color)
+        self._render_gauge(400, row1_y, "OIL TEMP", oil, "F", 150, self.settings.oil_warn_f, 280, oil_color)
         
         # Oil Pressure
         self._render_gauge(650, row1_y, "OIL PSI", self.telemetry.oil_pressure_psi, "", 0, 30, 80, COLOR_ACCENT)
@@ -775,7 +1244,7 @@ class PiDisplayApp:
         self._render_gauge(400, row2_y, "VOLTAGE", volt, "V", 11, 13.5, 15, volt_color)
         
         # Intake
-        self._render_gauge(650, row2_y, "INTAKE", self.telemetry.intake_temp_f, "°F", 50, 120, 180, COLOR_CYAN)
+        self._render_gauge(650, row2_y, "INTAKE", self.telemetry.intake_temp_f, "F", 50, 120, 180, COLOR_CYAN)
     
     def _render_gauge(self, cx, cy, label, value, unit, min_v, warn_v, max_v, color):
         """Render a circular gauge"""
@@ -807,15 +1276,15 @@ class PiDisplayApp:
         """Render a horizontal bar gauge"""
         bar_w, bar_h = 120, 20
         
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (cx - 70, cy - 40, 140, 80), border_radius=12)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (cx - 70, cy - 40, 140, 80))
         
         txt = self.font_tiny.render(label, True, COLOR_GRAY)
         self.screen.blit(txt, txt.get_rect(center=(cx, cy - 25)))
         
-        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (cx - bar_w//2, cy - 5, bar_w, bar_h), border_radius=5)
+        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, (cx - bar_w//2, cy - 5, bar_w, bar_h))
         fill_w = int(bar_w * value / 100)
         if fill_w > 0:
-            pygame.draw.rect(self.screen, color, (cx - bar_w//2, cy - 5, fill_w, bar_h), border_radius=5)
+            pygame.draw.rect(self.screen, color, (cx - bar_w//2, cy - 5, fill_w, bar_h))
         
         txt = self.font_small.render(f"{value:.0f}{unit}", True, color)
         self.screen.blit(txt, txt.get_rect(center=(cx, cy + 25)))
@@ -870,18 +1339,16 @@ class PiDisplayApp:
         card_h = 95
         
         # Lateral
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP, card_w, card_h), border_radius=14)
-        pygame.draw.rect(self.screen, COLOR_CYAN, (right_x, TOP, 5, card_h), 
-                        border_top_left_radius=14, border_bottom_left_radius=14)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_CYAN, (right_x, TOP, 5, card_h))
         txt = self.font_small.render("LATERAL", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 20, TOP + 12))
         txt = self.font_large.render(f"{self.telemetry.g_lateral:+.2f}G", True, COLOR_CYAN)
         self.screen.blit(txt, (right_x + 20, TOP + 40))
         
         # Longitudinal
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + card_h + 15, card_w, card_h), border_radius=14)
-        pygame.draw.rect(self.screen, COLOR_PURPLE, (right_x, TOP + card_h + 15, 5, card_h), 
-                        border_top_left_radius=14, border_bottom_left_radius=14)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + card_h + 15, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_PURPLE, (right_x, TOP + card_h + 15, 5, card_h))
         txt = self.font_small.render("LONGITUDINAL", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 20, TOP + card_h + 27))
         txt = self.font_large.render(f"{self.telemetry.g_longitudinal:+.2f}G", True, COLOR_PURPLE)
@@ -889,9 +1356,8 @@ class PiDisplayApp:
         
         # Combined
         combined = math.sqrt(self.telemetry.g_lateral**2 + self.telemetry.g_longitudinal**2)
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + 2*(card_h + 15), card_w, card_h), border_radius=14)
-        pygame.draw.rect(self.screen, COLOR_ACCENT, (right_x, TOP + 2*(card_h + 15), 5, card_h), 
-                        border_top_left_radius=14, border_bottom_left_radius=14)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + 2*(card_h + 15), card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_ACCENT, (right_x, TOP + 2*(card_h + 15), 5, card_h))
         txt = self.font_small.render("COMBINED", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 20, TOP + 2*(card_h + 15) + 12))
         txt = self.font_large.render(f"{combined:.2f}G", True, COLOR_ACCENT)
@@ -900,6 +1366,472 @@ class PiDisplayApp:
         # IMU source
         txt = self.font_tiny.render("Source: QMI8658 IMU", True, COLOR_DARK_GRAY)
         self.screen.blit(txt, txt.get_rect(center=(ball_cx, PI_HEIGHT - 15)))
+    
+    def _render_diagnostics(self):
+        """Diagnostics screen - vehicle warnings, DTCs, and system status"""
+        TOP = 55
+        
+        # Warning colors
+        COLOR_WARNING_ON = (255, 50, 50)      # Red when active
+        COLOR_WARNING_OFF = (50, 50, 50)      # Dark gray when inactive
+        COLOR_CAUTION = (255, 180, 0)         # Amber for cautions
+        COLOR_INFO_BLUE = (50, 150, 255)      # Blue for info indicators
+        
+        # --- Left Column: Warning Indicators (2x4 grid) ---
+        left_x = 30
+        icon_w, icon_h = 170, 80
+        gap = 15
+        
+        # Warning indicator data: (name, short_label, is_active, severity)
+        # severity: 'critical'=red, 'warning'=amber, 'info'=blue
+        warnings = [
+            ("CHECK ENGINE", "CEL", self.telemetry.check_engine_light, 'critical'),
+            ("ABS WARNING", "ABS", self.telemetry.abs_warning, 'critical'),
+            ("TRACTION OFF", "TC OFF", self.telemetry.traction_control_off, 'warning'),
+            ("OIL PRESSURE", "OIL", self.telemetry.oil_pressure_warning, 'critical'),
+            ("BATTERY", "BATT", self.telemetry.battery_warning, 'warning'),
+            ("BRAKE", "BRAKE", self.telemetry.brake_warning, 'critical'),
+            ("AIRBAG", "SRS", self.telemetry.airbag_warning, 'critical'),
+            ("SEATBELT", "BELT", self.telemetry.seatbelt_warning, 'warning'),
+        ]
+        
+        for i, (name, short, active, severity) in enumerate(warnings):
+            row = i // 2
+            col = i % 2
+            x = left_x + col * (icon_w + gap)
+            y = TOP + row * (icon_h + gap)
+            
+            # Background
+            if active:
+                if severity == 'critical':
+                    bg_color = (80, 20, 20)
+                    border_color = COLOR_WARNING_ON
+                elif severity == 'warning':
+                    bg_color = (80, 60, 0)
+                    border_color = COLOR_CAUTION
+                else:
+                    bg_color = (20, 50, 80)
+                    border_color = COLOR_INFO_BLUE
+            else:
+                bg_color = COLOR_BG_CARD
+                border_color = COLOR_WARNING_OFF
+            
+            pygame.draw.rect(self.screen, bg_color, (x, y, icon_w, icon_h))
+            pygame.draw.rect(self.screen, border_color, (x, y, icon_w, icon_h), 2)
+            
+            # Icon text (short label)
+            icon_color = border_color if active else COLOR_DARK_GRAY
+            txt = self.font_small.render(short, True, icon_color)
+            self.screen.blit(txt, txt.get_rect(center=(x + icon_w//2, y + 30)))
+            
+            # Full name below
+            txt = self.font_tiny.render(name, True, COLOR_GRAY if not active else border_color)
+            self.screen.blit(txt, txt.get_rect(center=(x + icon_w//2, y + 58)))
+        
+        # --- Middle Column: DTC Codes ---
+        mid_x = 390
+        dtc_w = 200
+        
+        # DTC Header
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (mid_x, TOP, dtc_w, 35))
+        pygame.draw.rect(self.screen, COLOR_WARNING_ON, (mid_x, TOP, 4, 35))
+        txt = self.font_small.render("DTC CODES", True, COLOR_WHITE)
+        self.screen.blit(txt, (mid_x + 15, TOP + 8))
+        
+        # DTC Count badge
+        dtc_count = self.telemetry.dtc_count
+        count_color = COLOR_WARNING_ON if dtc_count > 0 else COLOR_SUCCESS
+        pygame.draw.circle(self.screen, count_color, (mid_x + dtc_w - 25, TOP + 17), 14)
+        txt = self.font_small.render(str(dtc_count), True, COLOR_WHITE)
+        self.screen.blit(txt, txt.get_rect(center=(mid_x + dtc_w - 25, TOP + 17)))
+        
+        # DTC List
+        dtc_y = TOP + 45
+        dtc_item_h = 55
+        if dtc_count > 0:
+            for i in range(min(dtc_count, 5)):  # Show up to 5 codes
+                code = self.telemetry.dtc_codes[i] if i < len(self.telemetry.dtc_codes) else "-----"
+                pygame.draw.rect(self.screen, (40, 25, 25), (mid_x, dtc_y + i * dtc_item_h, dtc_w, dtc_item_h - 5))
+                pygame.draw.rect(self.screen, COLOR_WARNING_ON, (mid_x, dtc_y + i * dtc_item_h, 3, dtc_item_h - 5))
+                
+                # Code
+                txt = self.font_small.render(code, True, COLOR_WARNING_ON)
+                self.screen.blit(txt, (mid_x + 15, dtc_y + i * dtc_item_h + 12))
+                
+                # Description placeholder
+                txt = self.font_tiny.render("Tap to view details", True, COLOR_DARK_GRAY)
+                self.screen.blit(txt, (mid_x + 15, dtc_y + i * dtc_item_h + 32))
+        else:
+            # No codes - show success message
+            pygame.draw.rect(self.screen, (20, 40, 20), (mid_x, dtc_y, dtc_w, 80))
+            txt = self.font_small.render("NO CODES", True, COLOR_SUCCESS)
+            self.screen.blit(txt, txt.get_rect(center=(mid_x + dtc_w//2, dtc_y + 30)))
+            txt = self.font_tiny.render("System OK", True, COLOR_SUCCESS)
+            self.screen.blit(txt, txt.get_rect(center=(mid_x + dtc_w//2, dtc_y + 55)))
+        
+        # --- Right Column: Traction & Slip ---
+        right_x = 610
+        col_w = 170
+        
+        # Traction Control Status
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP, col_w, 90))
+        tc_active = self.telemetry.traction_control_active
+        tc_off = self.telemetry.traction_control_off
+        
+        if tc_off:
+            tc_color = COLOR_CAUTION
+            tc_status = "DISABLED"
+        elif tc_active:
+            tc_color = COLOR_INFO_BLUE
+            tc_status = "ACTIVE"
+        else:
+            tc_color = COLOR_SUCCESS
+            tc_status = "READY"
+        
+        pygame.draw.rect(self.screen, tc_color, (right_x, TOP, 4, 90))
+        txt = self.font_tiny.render("TRACTION CTRL", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, TOP + 10))
+        txt = self.font_small.render(tc_status, True, tc_color)
+        self.screen.blit(txt, (right_x + 15, TOP + 40))
+        
+        # Wheel Slip Visualization (mini car top view)
+        slip_y = TOP + 110
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, slip_y, col_w, 150))
+        pygame.draw.rect(self.screen, COLOR_CYAN, (right_x, slip_y, 4, 150))
+        txt = self.font_tiny.render("WHEEL SLIP", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, slip_y + 8))
+        
+        # Mini car outline
+        car_cx = right_x + col_w // 2
+        car_cy = slip_y + 90
+        car_w, car_h = 50, 80
+        pygame.draw.rect(self.screen, COLOR_DARK_GRAY, 
+                        (car_cx - car_w//2, car_cy - car_h//2, car_w, car_h), 1)
+        
+        # Wheel positions (FL, FR, RL, RR)
+        wheel_pos = [
+            (car_cx - 30, car_cy - 25),  # FL
+            (car_cx + 30, car_cy - 25),  # FR
+            (car_cx - 30, car_cy + 25),  # RL
+            (car_cx + 30, car_cy + 25),  # RR
+        ]
+        wheel_labels = ["FL", "FR", "RL", "RR"]
+        
+        for i, ((wx, wy), label) in enumerate(zip(wheel_pos, wheel_labels)):
+            slip = self.telemetry.wheel_slip[i] if i < len(self.telemetry.wheel_slip) else 0.0
+            
+            # Color based on slip percentage
+            if slip > 15:
+                w_color = COLOR_WARNING_ON
+            elif slip > 5:
+                w_color = COLOR_CAUTION
+            else:
+                w_color = COLOR_SUCCESS
+            
+            # Wheel rectangle
+            pygame.draw.rect(self.screen, w_color, (wx - 8, wy - 12, 16, 24))
+            
+            # Slip percentage
+            txt = self.font_tiny.render(f"{slip:.0f}%", True, w_color)
+            self.screen.blit(txt, txt.get_rect(center=(wx, wy + 22)))
+        
+        # --- Bottom: Additional Indicators ---
+        bottom_y = TOP + 280
+        ind_w = 110
+        ind_h = 50
+        indicators = [
+            ("DOOR", self.telemetry.door_ajar, COLOR_CAUTION),
+            ("HIGH BEAM", self.telemetry.high_beam_on, COLOR_INFO_BLUE),
+            ("FOG LIGHT", self.telemetry.fog_light_on, COLOR_SUCCESS),
+        ]
+        
+        for i, (name, active, color) in enumerate(indicators):
+            x = right_x + (i % 2) * (ind_w + 10) - 60
+            y = bottom_y + (i // 2) * (ind_h + 5)
+            
+            bg = (40, 40, 40) if not active else (color[0]//4, color[1]//4, color[2]//4)
+            border = COLOR_DARK_GRAY if not active else color
+            
+            pygame.draw.rect(self.screen, bg, (x, y, ind_w, ind_h))
+            pygame.draw.rect(self.screen, border, (x, y, ind_w, ind_h), 1)
+            
+            txt = self.font_tiny.render(name, True, border if active else COLOR_DARK_GRAY)
+            self.screen.blit(txt, txt.get_rect(center=(x + ind_w//2, y + ind_h//2)))
+        
+        # Status summary at very bottom
+        active_warnings = sum([
+            self.telemetry.check_engine_light,
+            self.telemetry.abs_warning,
+            self.telemetry.oil_pressure_warning,
+            self.telemetry.battery_warning,
+            self.telemetry.brake_warning,
+            self.telemetry.airbag_warning,
+        ])
+        
+        if active_warnings > 0:
+            status_txt = f"{active_warnings} ACTIVE WARNING{'S' if active_warnings > 1 else ''}"
+            status_color = COLOR_WARNING_ON
+        else:
+            status_txt = "ALL SYSTEMS NORMAL"
+            status_color = COLOR_SUCCESS
+        
+        txt = self.font_small.render(status_txt, True, status_color)
+        self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, PI_HEIGHT - 20)))
+    
+    def _render_system(self):
+        """System screen - Raspberry Pi hardware diagnostics"""
+        TOP = 55
+        
+        # Get Pi system info
+        import subprocess
+        
+        # CPU Temperature
+        try:
+            with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
+                cpu_temp_c = int(f.read().strip()) / 1000.0
+                cpu_temp_f = cpu_temp_c * 9.0 / 5.0 + 32.0
+        except:
+            cpu_temp_c = 0
+            cpu_temp_f = 0
+        
+        # CPU Usage
+        try:
+            with open('/proc/stat', 'r') as f:
+                cpu_line = f.readline()
+                cpu_parts = cpu_line.split()[1:5]
+                idle = int(cpu_parts[3])
+                total = sum(int(x) for x in cpu_parts)
+                # This is instantaneous, not averaged
+                cpu_usage = 100 - (idle * 100 / total) if total > 0 else 0
+        except:
+            cpu_usage = 0
+        
+        # Memory info
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                lines = f.readlines()
+                mem_total = int(lines[0].split()[1]) / 1024  # MB
+                mem_free = int(lines[1].split()[1]) / 1024   # MB
+                mem_available = int(lines[2].split()[1]) / 1024  # MB
+                mem_used_pct = (1 - mem_available / mem_total) * 100 if mem_total > 0 else 0
+        except:
+            mem_total = 0
+            mem_available = 0
+            mem_used_pct = 0
+        
+        # Disk usage
+        try:
+            result = subprocess.run(['df', '-h', '/'], capture_output=True, text=True)
+            lines = result.stdout.strip().split('\n')
+            if len(lines) > 1:
+                parts = lines[1].split()
+                disk_total = parts[1]
+                disk_used_pct = parts[4].replace('%', '')
+            else:
+                disk_total = "?"
+                disk_used_pct = 0
+        except:
+            disk_total = "?"
+            disk_used_pct = 0
+        
+        # Uptime
+        try:
+            with open('/proc/uptime', 'r') as f:
+                uptime_secs = int(float(f.read().split()[0]))
+                hours = uptime_secs // 3600
+                mins = (uptime_secs % 3600) // 60
+        except:
+            hours = 0
+            mins = 0
+        
+        # Network IP
+        try:
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True)
+            ip_addr = result.stdout.strip().split()[0] if result.stdout.strip() else "N/A"
+        except:
+            ip_addr = "N/A"
+        
+        # Card layout - 2 columns, 5 rows (smaller cards to fit)
+        card_w = 370
+        card_h = 65  # Reduced from 75 to fit 5 rows
+        gap = 10     # Reduced gap
+        left_x = 20
+        right_x = left_x + card_w + gap
+        
+        # Row 1: CPU Temp and Memory
+        y = TOP + 5
+        
+        # CPU Temperature
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_x, y, card_w, card_h))
+        temp_color = COLOR_RED if cpu_temp_f > 175 else COLOR_YELLOW if cpu_temp_f > 150 else COLOR_CYAN
+        pygame.draw.rect(self.screen, temp_color, (left_x, y, 5, card_h))
+        txt = self.font_tiny.render("CPU TEMPERATURE", True, COLOR_GRAY)
+        self.screen.blit(txt, (left_x + 15, y + 5))
+        txt = self.font_small.render(f"{cpu_temp_f:.1f}°F ({cpu_temp_c:.1f}°C)", True, temp_color)
+        self.screen.blit(txt, (left_x + 15, y + 28))
+        
+        # Memory card
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_GREEN, (right_x, y, 5, card_h))
+
+        txt = self.font_tiny.render("MEMORY USAGE", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 5))
+        mem_color = COLOR_RED if mem_used_pct > 85 else COLOR_YELLOW if mem_used_pct > 70 else COLOR_GREEN
+        txt = self.font_small.render(f"{mem_used_pct:.0f}% ({mem_available:.0f}MB free)", True, mem_color)
+        self.screen.blit(txt, (right_x + 15, y + 28))
+        
+        # Row 2: Disk and Network
+        y = TOP + 5 + card_h + gap
+        
+        # Disk Usage
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_PURPLE, (left_x, y, 5, card_h))
+        txt = self.font_tiny.render("DISK USAGE", True, COLOR_GRAY)
+        self.screen.blit(txt, (left_x + 15, y + 5))
+        try:
+            disk_pct = int(disk_used_pct)
+        except:
+            disk_pct = 0
+        disk_color = COLOR_RED if disk_pct > 90 else COLOR_YELLOW if disk_pct > 75 else COLOR_PURPLE
+        txt = self.font_small.render(f"{disk_pct}% (Total: {disk_total})", True, disk_color)
+        self.screen.blit(txt, (left_x + 15, y + 28))
+        
+        # Network IP
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_ACCENT, (right_x, y, 5, card_h))
+        txt = self.font_tiny.render("NETWORK IP", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 5))
+        txt = self.font_small.render(ip_addr, True, COLOR_ACCENT)
+        self.screen.blit(txt, (right_x + 15, y + 28))
+        
+        # Row 3: Uptime and Power Status
+        y = TOP + 5 + 2 * (card_h + gap)
+        
+        # Uptime
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_ORANGE, (left_x, y, 5, card_h))
+        txt = self.font_tiny.render("UPTIME", True, COLOR_GRAY)
+        self.screen.blit(txt, (left_x + 15, y + 5))
+        if hours > 24:
+            days = hours // 24
+            hrs = hours % 24
+            uptime_str = f"{days}d {hrs}h {mins}m"
+        else:
+            uptime_str = f"{hours}h {mins}m"
+        txt = self.font_small.render(uptime_str, True, COLOR_ORANGE)
+        self.screen.blit(txt, (left_x + 15, y + 28))
+        
+        # Power Status (check for undervoltage/throttling)
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_YELLOW, (right_x, y, 5, card_h))
+        txt = self.font_tiny.render("POWER STATUS", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 5))
+        
+        # Check throttle status via vcgencmd
+        try:
+            result = subprocess.run(['vcgencmd', 'get_throttled'], capture_output=True, text=True)
+            throttle_hex = result.stdout.strip().split('=')[1] if '=' in result.stdout else '0x0'
+
+            throttle_val = int(throttle_hex, 16)
+            
+            # Bit meanings: 0=undervoltage, 1=arm freq capped, 2=throttled, 3=soft temp limit
+            undervoltage = throttle_val & 0x1
+            throttled = throttle_val & 0x4
+            
+            if undervoltage:
+                power_status = "LOW VOLTAGE!"
+                power_color = COLOR_RED
+            elif throttled:
+                power_status = "THROTTLED"
+                power_color = COLOR_YELLOW
+            else:
+                power_status = "5V OK"
+                power_color = COLOR_GREEN
+        except:
+            power_status = "5V (est)"
+            power_color = COLOR_GREEN
+        
+        txt = self.font_small.render(power_status, True, power_color)
+        self.screen.blit(txt, (right_x + 15, y + 28))
+        
+        # Row 4: Display and CAN status
+        y = TOP + 5 + 3 * (card_h + gap)
+        
+        # Display FPS/Status
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_TEAL, (left_x, y, 5, card_h))
+        txt = self.font_tiny.render("DISPLAY INFO", True, COLOR_GRAY)
+        self.screen.blit(txt, (left_x + 15, y + 5))
+        
+        fps = self.clock.get_fps()
+        txt = self.font_tiny.render(f"FPS: {fps:.1f}  {PI_WIDTH}x{PI_HEIGHT}  {self.current_screen.name}", True, COLOR_TEAL)
+        self.screen.blit(txt, (left_x + 15, y + 28))
+        
+        # CAN Bus Status
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        
+        if self.demo_mode:
+            pygame.draw.rect(self.screen, COLOR_ORANGE, (right_x, y, 5, card_h))
+            txt = self.font_tiny.render("CAN BUS", True, COLOR_GRAY)
+            self.screen.blit(txt, (right_x + 15, y + 5))
+            txt = self.font_small.render("DEMO MODE", True, COLOR_ORANGE)
+            self.screen.blit(txt, (right_x + 15, y + 28))
+        elif self.can_handler and self.can_handler.is_receiving_data():
+            pygame.draw.rect(self.screen, COLOR_GREEN, (right_x, y, 5, card_h))
+            txt = self.font_tiny.render("CAN BUS", True, COLOR_GRAY)
+            self.screen.blit(txt, (right_x + 15, y + 5))
+            hs = "HS " if self.can_handler.hs_can else ""
+            ms = "MS" if self.can_handler.ms_can else ""
+            txt = self.font_small.render(f"OK ({hs}{ms})", True, COLOR_GREEN)
+            self.screen.blit(txt, (right_x + 15, y + 28))
+        elif self.can_handler and self.can_handler.connected:
+            pygame.draw.rect(self.screen, COLOR_YELLOW, (right_x, y, 5, card_h))
+            txt = self.font_tiny.render("CAN BUS", True, COLOR_GRAY)
+            self.screen.blit(txt, (right_x + 15, y + 5))
+            txt = self.font_small.render("WAITING...", True, COLOR_YELLOW)
+            self.screen.blit(txt, (right_x + 15, y + 28))
+        else:
+            pygame.draw.rect(self.screen, COLOR_RED, (right_x, y, 5, card_h))
+            txt = self.font_tiny.render("CAN BUS", True, COLOR_GRAY)
+            self.screen.blit(txt, (right_x + 15, y + 5))
+            txt = self.font_small.render("OFFLINE", True, COLOR_RED)
+            self.screen.blit(txt, (right_x + 15, y + 28))
+        
+        # Row 5: ESP32 Serial Status
+        y = TOP + 5 + 4 * (card_h + gap)
+        
+        # ESP32 Serial Status
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_x, y, card_w, card_h))
+        
+        if self.demo_mode:
+            pygame.draw.rect(self.screen, COLOR_ORANGE, (left_x, y, 5, card_h))
+            txt = self.font_tiny.render("ESP32 SERIAL (TPMS + IMU)", True, COLOR_GRAY)
+            self.screen.blit(txt, (left_x + 15, y + 5))
+            txt = self.font_small.render("DEMO MODE", True, COLOR_ORANGE)
+            self.screen.blit(txt, (left_x + 15, y + 28))
+        elif self.esp32_handler and self.esp32_handler.is_receiving_data():
+            pygame.draw.rect(self.screen, COLOR_GREEN, (left_x, y, 5, card_h))
+            txt = self.font_tiny.render("ESP32 SERIAL (TPMS + IMU)", True, COLOR_GRAY)
+            self.screen.blit(txt, (left_x + 15, y + 5))
+            txt = self.font_small.render("RECEIVING DATA", True, COLOR_GREEN)
+            self.screen.blit(txt, (left_x + 15, y + 28))
+        elif self.esp32_handler and self.esp32_handler.connected:
+            pygame.draw.rect(self.screen, COLOR_YELLOW, (left_x, y, 5, card_h))
+            txt = self.font_tiny.render("ESP32 SERIAL (TPMS + IMU)", True, COLOR_GRAY)
+            self.screen.blit(txt, (left_x + 15, y + 5))
+            txt = self.font_small.render("WAITING...", True, COLOR_YELLOW)
+            self.screen.blit(txt, (left_x + 15, y + 28))
+        else:
+            pygame.draw.rect(self.screen, COLOR_RED, (left_x, y, 5, card_h))
+            txt = self.font_tiny.render("ESP32 SERIAL (TPMS + IMU)", True, COLOR_GRAY)
+            self.screen.blit(txt, (left_x + 15, y + 5))
+            txt = self.font_small.render("OFFLINE", True, COLOR_RED)
+            self.screen.blit(txt, (left_x + 15, y + 28))
+        
+        # Bottom status (skip the second card in row 5)
+        txt = self.font_tiny.render("Raspberry Pi 4B", True, COLOR_DARK_GRAY)
+        self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, PI_HEIGHT - 10)))
+
     
     def _render_settings(self):
         """Settings screen"""
@@ -913,15 +1845,12 @@ class PiDisplayApp:
             is_selected = i == self.settings_selection
             
             bg_color = COLOR_BG_ELEVATED if is_selected else COLOR_BG_CARD
-            pygame.draw.rect(self.screen, bg_color, (40, y, PI_WIDTH - 80, item_h - 5), border_radius=10)
+            pygame.draw.rect(self.screen, bg_color, (40, y, PI_WIDTH - 80, item_h - 5))
             
             if is_selected:
-                pygame.draw.rect(self.screen, COLOR_ACCENT, 
-                               (40, y, 5, item_h - 5), 
-                               border_top_left_radius=10, border_bottom_left_radius=10)
+                pygame.draw.rect(self.screen, COLOR_ACCENT, (40, y, 5, item_h - 5))
                 if self.settings_edit_mode:
-                    pygame.draw.rect(self.screen, COLOR_ACCENT, 
-                                   (40, y, PI_WIDTH - 80, item_h - 5), 2, border_radius=10)
+                    pygame.draw.rect(self.screen, COLOR_ACCENT, (40, y, PI_WIDTH - 80, item_h - 5), 2)
             
             color = COLOR_WHITE if is_selected else COLOR_GRAY
             txt = self.font_small.render(name, True, color)
@@ -933,7 +1862,7 @@ class PiDisplayApp:
                 self.screen.blit(txt, (PI_WIDTH - 60 - txt.get_width(), y + 12))
             
             if is_selected and name != "Back":
-                hint = "← VOL+/VOL- to adjust →" if self.settings_edit_mode else "Press ON/OFF to edit"
+                hint = "<- VOL+/VOL- to adjust ->" if self.settings_edit_mode else "Press ON/OFF to edit"
                 txt = self.font_tiny.render(hint, True, COLOR_DARK_GRAY)
                 self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, PI_HEIGHT - 15)))
 
@@ -945,13 +1874,17 @@ class PiDisplayApp:
 def main():
     parser = argparse.ArgumentParser(description="MX5 Telemetry Pi Display")
     parser.add_argument("--fullscreen", "-f", action="store_true", help="Run in fullscreen mode")
-    parser.add_argument("--demo", "-d", action="store_true", default=True, help="Run in demo mode")
-    parser.add_argument("--no-demo", action="store_true", help="Disable demo mode")
     args = parser.parse_args()
     
-    demo_mode = args.demo and not args.no_demo
+    print("="*60)
+    print("MX5 Telemetry - Raspberry Pi Display")
+    print("="*60)
+    print("Data source can be changed in Settings > Data Source")
+    print("  CAN BUS = Real vehicle data (default)")
+    print("  DEMO    = Simulated data for testing")
+    print("="*60)
     
-    app = PiDisplayApp(fullscreen=args.fullscreen, demo_mode=demo_mode)
+    app = PiDisplayApp(fullscreen=args.fullscreen)
     app.run()
 
 
