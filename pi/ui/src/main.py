@@ -215,17 +215,16 @@ class SoundManager:
             print(f"Mixer already init: {mixer_info}")
             
             if mixer_info:
-                # Mixer already initialized - check if we need to reinit with our settings
+                # Mixer already initialized - reinit with low-latency settings
                 freq, fmt, channels = mixer_info
                 self._stereo = channels == 2
-                # Reinitialize with our preferred settings if sample rate differs
-                if freq != 22050:
-                    pygame.mixer.quit()
-                    pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
-                    mixer_info = pygame.mixer.get_init()
-                    print(f"Mixer reinitialized: {mixer_info}")
+                # Always reinitialize with low-latency buffer
+                pygame.mixer.quit()
+                pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=256)
+                mixer_info = pygame.mixer.get_init()
+                print(f"Mixer reinitialized: {mixer_info}")
             else:
-                pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+                pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=256)
                 mixer_info = pygame.mixer.get_init()
                 self._stereo = mixer_info[2] == 2 if mixer_info else False
                 print(f"Mixer initialized: {mixer_info}")
@@ -468,7 +467,7 @@ class PiDisplayApp:
         print("MX5 Telemetry - Raspberry Pi Display")
         print("=" * 60)
         print(f"Resolution: {PI_WIDTH}x{PI_HEIGHT}")
-        print(f"Demo Mode: {self.demo_mode}")
+        print(f"Demo Mode: {self.settings.demo_mode}")
         print()
         print("Controls:")
         print("  Up / W     = Previous screen (RES+)")
@@ -1770,7 +1769,7 @@ class PiDisplayApp:
         # CAN Bus Status
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
         
-        if self.demo_mode:
+        if self.settings.demo_mode:
             pygame.draw.rect(self.screen, COLOR_ORANGE, (right_x, y, 5, card_h))
             txt = self.font_tiny.render("CAN BUS", True, COLOR_GRAY)
             self.screen.blit(txt, (right_x + 15, y + 5))
@@ -1803,7 +1802,7 @@ class PiDisplayApp:
         # ESP32 Serial Status
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_x, y, card_w, card_h))
         
-        if self.demo_mode:
+        if self.settings.demo_mode:
             pygame.draw.rect(self.screen, COLOR_ORANGE, (left_x, y, 5, card_h))
             txt = self.font_tiny.render("ESP32 SERIAL (TPMS + IMU)", True, COLOR_GRAY)
             self.screen.blit(txt, (left_x + 15, y + 5))
