@@ -26,7 +26,7 @@ Both displays share a synchronized **8-screen interface**:
 | 6 | **System** | CPU, memory, network, CAN status |
 | 7 | **Settings** | Brightness, shift RPM, warnings, units |
 
-**Navigation**: RES+/SET- to cycle screens, VOL+/VOL- to adjust values, ON/OFF to select, CANCEL to back, MUTE for sleep mode.
+**Navigation**: RES+/SET- (↑/↓) to cycle screens, VOL+/VOL- (→/←) also navigates, ON/OFF to select, CANCEL to back, MUTE for sleep mode. **RPM/Speed screen**: ON/OFF starts/stops lap timer, CANCEL resets.
 
 ---
 
@@ -706,15 +706,15 @@ inline void readCANMessages() {
 │   ══════════════════════════           ════════════════════════════         │
 │                                                                              │
 │   ┌───────┐                            ┌────────┐  ┌────────┐               │
-│   │  VOL+ │ = Increase Value           │ ON/OFF │  │ CANCEL │               │
-│   │   ▲   │   (settings mode)          │ SELECT │  │  BACK  │               │
-│   └───────┘   Next Screen (normal)     │ ENTER  │  │  EXIT  │               │
+│   │  VOL+ │ = RIGHT / Next Screen      │ ON/OFF │  │ CANCEL │               │
+│   │   →   │   Increase (settings)      │ SELECT │  │  BACK  │               │
+│   └───────┘                            │ ENTER  │  │  EXIT  │               │
 │                                        └────────┘  └────────┘               │
 │   ┌───────┐                                                                  │
-│   │  VOL- │ = Decrease Value           ┌────────┐  ┌────────┐               │
-│   │   ▼   │   (settings mode)          │  RES+  │  │  SET-  │               │
-│   └───────┘   Previous Screen (normal) │  PREV  │  │  NEXT  │               │
-│                                        │ SCREEN │  │ SCREEN │               │
+│   │  VOL- │ = LEFT / Previous Screen   ┌────────┐  ┌────────┐               │
+│   │   ←   │   Decrease (settings)      │  RES+  │  │  SET-  │               │
+│   └───────┘                            │   UP   │  │  DOWN  │               │
+│                                        │  PREV  │  │  NEXT  │               │
 │   ┌───────┐  ┌───────┐  ┌──────┐       └────────┘  └────────┘               │
 │   │ SEEK▲ │  │ SEEK▼ │  │ MODE │                                            │
 │   │(track)│  │(track)│  │(src) │ ◄── Not used in current implementation     │
@@ -727,17 +727,56 @@ inline void readCANMessages() {
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Keyboard Mapping (Development/Testing)
+
+For testing without CAN bus hardware:
+
+| Key | SWC Equivalent | Action |
+|-----|----------------|--------|
+| **↑ / W** | RES+ | Previous screen / Navigate up |
+| **↓ / S** | SET- | Next screen / Navigate down |
+| **→ / D** | VOL+ | Next screen / Increase value |
+| **← / A** | VOL- | Previous screen / Decrease value |
+| **Enter** | ON/OFF | Select / Confirm / Start-Stop |
+| **B** | CANCEL | Back / Exit / Reset |
+| **ESC** | - | Exit application |
+
 ### Button Actions by Context
 
-| Button | Normal Mode | Settings Mode | Description |
-|--------|-------------|---------------|-------------|
-| **RES+** | Previous screen | Navigate up in menu | Cycles through 8 screens (wraps) |
-| **SET-** | Next screen | Navigate down in menu | Cycles through 8 screens (wraps) |
-| **VOL+** | Next screen (alt) | Increase selected value | +5% brightness, +100 RPM, etc. |
-| **VOL-** | Previous screen (alt) | Decrease selected value | -5% brightness, -100 RPM, etc. |
-| **ON/OFF** | Select / Enter | Enter edit mode | Confirms selection, enters sub-menu |
-| **CANCEL** | Back / Exit | Exit edit / Back to menu | Returns to previous state |
-| **MUTE** | Toggle sleep mode | Toggle sleep mode | Dims display, shows minimal UI |
+| Button | Normal Screens | Settings Screen | RPM/Speed Screen |
+|--------|----------------|-----------------|------------------|
+| **RES+ (↑)** | Previous screen | Navigate up in menu | Previous screen |
+| **SET- (↓)** | Next screen | Navigate down in menu | Next screen |
+| **VOL+ (→)** | Next screen | Increase selected value | Next screen |
+| **VOL- (←)** | Previous screen | Decrease selected value | Previous screen |
+| **ON/OFF** | - | Select/Edit setting | **Start/Stop Lap Timer** |
+| **CANCEL** | - | Exit edit / Back | **Reset Lap Timer** |
+| **MUTE** | Toggle sleep mode | Toggle sleep mode | Toggle sleep mode |
+
+### RPM/Speed Screen - Lap Timer Controls
+
+The RPM/Speed screen (Screen 1) has special lap timer functionality:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        LAP TIMER CONTROLS                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ON/OFF (Enter)  = Start / Stop lap timer                                  │
+│                     • Starting resets timer to 0:00.00                      │
+│                     • Stopping records best lap if faster                   │
+│                                                                              │
+│   CANCEL (B key)  = Reset lap timer                                         │
+│                     • Resets timer to 0:00.00                               │
+│                     • Stops timer if running                                │
+│                                                                              │
+│   Visual Indicators:                                                        │
+│   • "● RUN" (green) = Timer is running                                      │
+│   • "○ STOP" (gray) = Timer is stopped                                      │
+│   • Button hints shown at bottom: "ENTER: Start/Stop   B: Reset"           │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ### Navigation Flow
 
@@ -752,10 +791,10 @@ inline void readCANMessages() {
 │       ┌─────────────────────────────────────────────────────────────┐       │
 │       │                                                             │       │
 │       ▼                                                             │       │
-│   ┌───────┐   SET-    ┌───────┐   SET-    ┌───────┐        ┌───────┐       │
-│   │Screen │ ────────► │Screen │ ────────► │Screen │  ...   │Screen │       │
-│   │   0   │ ◄──────── │   1   │ ◄──────── │   2   │  ...   │   7   │       │
-│   └───────┘   RES+    └───────┘   RES+    └───────┘        └───────┘       │
+│   ┌───────┐  SET-/→  ┌───────┐  SET-/→  ┌───────┐        ┌───────┐        │
+│   │Screen │ ────────► │Screen │ ────────► │Screen │  ...   │Screen │        │
+│   │   0   │ ◄──────── │   1   │ ◄──────── │   2   │  ...   │   7   │        │
+│   └───────┘  RES+/←  └───────┘  RES+/←  └───────┘        └───────┘        │
 │       ▲                                                             │       │
 │       │                       (wraps around)                        │       │
 │       └─────────────────────────────────────────────────────────────┘       │
@@ -765,13 +804,16 @@ inline void readCANMessages() {
 │   ═════════════════════════                                                 │
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │  SETTINGS SCREEN                                                    │   │
+│   │  SETTINGS SCREEN (scrollable list)                                  │   │
 │   │                                                                     │   │
-│   │  RES+ / SET-     = Navigate between settings                       │   │
-│   │                                                                     │   │
-│   │  ON/OFF          = Enter edit mode for selected setting            │   │
-│   │                                                                     │   │
-│   │  VOL+ / VOL-     = Adjust value (when editing)                     │   │
+│   │  [Back]          ◄── Select with ON/OFF to return to Overview      │   │
+│   │  Brightness      ◄── RES+/SET- to navigate, ON/OFF to edit         │   │
+│   │  Shift RPM           VOL+/VOL- to adjust value when editing        │   │
+│   │  Redline RPM                                                        │   │
+│   │  Units (MPH/KPH)                                                    │   │
+│   │  Low Tire PSI                                                       │   │
+│   │  Coolant Warning                                                    │   │
+│   │  Demo Mode                                                          │   │
 │   │                                                                     │   │
 │   │  CANCEL          = Exit edit mode / Return to screens              │   │
 │   │                                                                     │   │
@@ -958,19 +1000,23 @@ Both ESP32-S3 and Raspberry Pi share a synchronized 8-screen structure for consi
 
 ### ESP32 Touch Navigation
 
-The round display supports touch input with 5 zones:
+The round display supports touch input with 5 zones (matching SWC buttons):
 
 ```
               ┌─────────────┐
-              │     TOP     │ ← Previous screen
-              │   (swipe)   │
+              │     TOP     │ ← Tap: RES+ (Previous screen)
+              │   (y<120)   │
         ┌─────┼─────────────┼─────┐
         │LEFT │   CENTER    │RIGHT│
-        │ (-) │  (select)   │ (+) │
+        │VOL- │  ON/OFF     │VOL+ │ ← Tap: Select/Enter
+        │(x<120)           (x>240)│
         └─────┼─────────────┼─────┘
-              │   BOTTOM    │ ← Next screen
-              │   (swipe)   │
+              │   BOTTOM    │ ← Tap: SET- (Next screen)
+              │   (y>240)   │
               └─────────────┘
+              
+        Swipe Up   = RES+ (Previous screen)
+        Swipe Down = SET- (Next screen)
 ```
 
 ---
