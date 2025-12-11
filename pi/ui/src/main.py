@@ -41,6 +41,7 @@ import pygame.sndarray
 import math
 import sys
 import os
+import time
 import argparse
 from enum import Enum, auto
 from dataclasses import dataclass, field
@@ -244,54 +245,74 @@ class SoundManager:
         return pygame.sndarray.make_sound(wave)
     
     def _generate_sounds(self):
-        """Generate simple sound effects programmatically"""
+        """Generate modern UI sound effects programmatically"""
         sample_rate = 22050
         
-        # Navigate sound - short click/tick
-        duration = 0.05
+        # Navigate sound - modern soft pop with harmonics
+        duration = 0.06
         t = np.linspace(0, duration, int(sample_rate * duration), False)
-        freq = 800
-        wave = np.sin(2 * np.pi * freq * t) * 0.3
-        # Apply quick envelope
-        envelope = np.exp(-t * 40)
+        # Layer multiple frequencies for richer sound
+        wave = (np.sin(2 * np.pi * 1400 * t) * 0.15 +  # High
+                np.sin(2 * np.pi * 700 * t) * 0.2 +    # Mid
+                np.sin(2 * np.pi * 350 * t) * 0.1)     # Low warmth
+        # Snappy attack, quick decay
+        envelope = np.exp(-t * 50) * (1 - np.exp(-t * 500))
         wave = (wave * envelope * 32767).astype(np.int16)
         self._sounds['navigate'] = self._make_sound(wave)
         
-        # Select sound - confirmation beep
-        duration = 0.08
+        # Select sound - satisfying two-tone confirmation (like modern UI)
+        duration = 0.12
         t = np.linspace(0, duration, int(sample_rate * duration), False)
-        freq1, freq2 = 600, 900
-        wave = (np.sin(2 * np.pi * freq1 * t) * 0.2 + 
-                np.sin(2 * np.pi * freq2 * t) * 0.2)
-        envelope = np.exp(-t * 20)
+        # Rising two-note chime
+        freq1 = 880  # A5
+        freq2 = 1320  # E6 (perfect fifth up)
+        # First note then second
+        wave1 = np.sin(2 * np.pi * freq1 * t) * np.exp(-t * 25)
+        wave2 = np.sin(2 * np.pi * freq2 * t) * np.exp(-(t - 0.04) * 20) * (t > 0.04)
+        wave = (wave1 * 0.25 + wave2 * 0.2)
+        # Add subtle harmonics
+        wave += np.sin(2 * np.pi * freq1 * 2 * t) * 0.05 * np.exp(-t * 30)
+        envelope = 1 - np.exp(-t * 200)  # Quick attack
         wave = (wave * envelope * 32767).astype(np.int16)
         self._sounds['select'] = self._make_sound(wave)
         
-        # Adjust sound - value change tick
-        duration = 0.03
+        # Adjust sound - subtle tick with body
+        duration = 0.04
         t = np.linspace(0, duration, int(sample_rate * duration), False)
-        freq = 1200
-        wave = np.sin(2 * np.pi * freq * t) * 0.25
-        envelope = np.exp(-t * 60)
+        # Crisp tick with subtle sub
+        wave = (np.sin(2 * np.pi * 1800 * t) * 0.15 +
+                np.sin(2 * np.pi * 900 * t) * 0.1 +
+                np.sin(2 * np.pi * 300 * t) * 0.08)
+        envelope = np.exp(-t * 80) * (1 - np.exp(-t * 800))
         wave = (wave * envelope * 32767).astype(np.int16)
         self._sounds['adjust'] = self._make_sound(wave)
         
-        # Back/cancel sound - descending tone
+        # Back/cancel sound - soft descending whoosh
         duration = 0.1
         t = np.linspace(0, duration, int(sample_rate * duration), False)
-        freq = 500 - t * 2000  # Descending frequency
-        wave = np.sin(2 * np.pi * freq * t / sample_rate * np.cumsum(np.ones_like(t))) * 0.25
-        envelope = np.exp(-t * 15)
+        # Smooth frequency sweep down
+        freq_start, freq_end = 800, 300
+        freq = freq_start + (freq_end - freq_start) * (t / duration) ** 0.7
+        phase = 2 * np.pi * np.cumsum(freq) / sample_rate
+        wave = np.sin(phase) * 0.2
+        # Add noise for "whoosh" texture
+        noise = np.random.randn(len(t)) * 0.03
+        wave += noise * np.exp(-t * 30)
+        envelope = np.sin(np.pi * t / duration) ** 0.5
         wave = (wave * envelope * 32767).astype(np.int16)
         self._sounds['back'] = self._make_sound(wave)
         
-        # Error sound - low buzz
-        duration = 0.15
+        # Error sound - gentle warning pulse
+        duration = 0.2
         t = np.linspace(0, duration, int(sample_rate * duration), False)
-        freq = 200
-        wave = np.sin(2 * np.pi * freq * t) * 0.3
-        envelope = np.sin(np.pi * t / duration)
-        wave = (wave * envelope * 32767).astype(np.int16)
+        # Two quick low pulses
+        freq = 280
+        pulse1 = np.sin(2 * np.pi * freq * t) * (t < 0.08) * np.exp(-((t - 0.04) ** 2) * 500)
+        pulse2 = np.sin(2 * np.pi * freq * 0.9 * t) * (t > 0.1) * np.exp(-((t - 0.14) ** 2) * 500)
+        wave = (pulse1 + pulse2) * 0.3
+        # Add harmonics for character
+        wave += np.sin(2 * np.pi * freq * 2 * t) * 0.1 * (pulse1 + pulse2) / 0.3
+        wave = (wave * 32767).astype(np.int16)
         self._sounds['error'] = self._make_sound(wave)
         
         self._update_volumes()
@@ -331,6 +352,10 @@ class PiDisplayApp:
         self.sleeping = False
         self.demo_rpm_dir = 1
         self.show_exit_dialog = False  # Exit confirmation dialog state
+        
+        # Lap timer state
+        self.lap_timer_running = False
+        self.lap_timer_start_time = 0
         
         # Settings navigation
         self.settings_selection = 0
@@ -515,6 +540,11 @@ class PiDisplayApp:
             # Real mode: CAN handler reads data automatically in background thread
             # Real mode: ESP32 handler receives TPMS/IMU data automatically
             
+            # Update lap timer if running (independent of demo mode)
+            if self.lap_timer_running:
+                import time
+                self.telemetry.lap_time_ms = int(time.time() * 1000 - self.lap_timer_start_time)
+            
             # Forward telemetry to ESP32 (if connected)
             if self.esp32_handler and self.esp32_handler.connected:
                 # Send telemetry at ~10Hz (every 3 frames at 30fps)
@@ -563,6 +593,8 @@ class PiDisplayApp:
         """Handle button press"""
         if self.current_screen == Screen.SETTINGS:
             self._handle_settings_button(button)
+        elif self.current_screen == Screen.RPM_SPEED:
+            self._handle_lap_timer_button(button)
         else:
             self._handle_navigation_button(button)
     
@@ -582,6 +614,46 @@ class PiDisplayApp:
             self.current_screen = screens[idx]
             self.sound.play('navigate')
     
+    def _handle_lap_timer_button(self, button: ButtonEvent):
+        """Handle lap timer controls on RPM/Speed screen"""
+        import time
+        
+        # Navigation still works
+        if button in (ButtonEvent.RES_PLUS, ButtonEvent.VOL_DOWN):
+            # UP or LEFT - previous screen
+            screens = list(Screen)
+            idx = screens.index(self.current_screen)
+            idx = (idx - 1) % len(screens)
+            self.current_screen = screens[idx]
+            self.sound.play('navigate')
+        elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
+            # DOWN or RIGHT - next screen
+            screens = list(Screen)
+            idx = screens.index(self.current_screen)
+            idx = (idx + 1) % len(screens)
+            self.current_screen = screens[idx]
+            self.sound.play('navigate')
+        elif button == ButtonEvent.ON_OFF:
+            # Enter/Select - Start/Stop lap timer
+            if self.lap_timer_running:
+                # Stop timer - record lap if better than best
+                if self.telemetry.lap_time_ms > 0:
+                    if self.telemetry.best_lap_ms == 0 or self.telemetry.lap_time_ms < self.telemetry.best_lap_ms:
+                        self.telemetry.best_lap_ms = self.telemetry.lap_time_ms
+                self.lap_timer_running = False
+                self.sound.play('select')
+            else:
+                # Start timer
+                self.lap_timer_running = True
+                self.lap_timer_start_time = time.time() * 1000
+                self.telemetry.lap_time_ms = 0
+                self.sound.play('select')
+        elif button == ButtonEvent.CANCEL:
+            # Cancel/Back - Reset timer
+            self.lap_timer_running = False
+            self.telemetry.lap_time_ms = 0
+            self.sound.play('back')
+    
     def _handle_settings_button(self, button: ButtonEvent):
         """Handle settings screen navigation"""
         items = self._get_settings_items()
@@ -595,7 +667,7 @@ class PiDisplayApp:
                 self.settings_selection += 1
                 self.sound.play('navigate')
         elif button == ButtonEvent.ON_OFF:
-            if self.settings_selection == len(items) - 1:  # Back
+            if self.settings_selection == 0:  # Back is now at index 0
                 self.current_screen = Screen.OVERVIEW
                 self.settings_selection = 0
                 self.sound.play('back')
@@ -619,28 +691,31 @@ class PiDisplayApp:
     def _adjust_setting(self, delta: int):
         """Adjust currently selected setting"""
         sel = self.settings_selection
-        if sel == 0:  # Brightness
-            self.settings.brightness = max(10, min(100, self.settings.brightness + delta * 5))
-        elif sel == 1:  # Volume
-            self.settings.volume = max(0, min(100, self.settings.volume + delta * 5))
-            self.sound.set_volume(self.settings.volume)
-        elif sel == 2:  # Shift RPM
-            self.settings.shift_rpm = max(4000, min(7500, self.settings.shift_rpm + delta * 100))
-        elif sel == 3:  # Redline
-            self.settings.redline_rpm = max(5000, min(8000, self.settings.redline_rpm + delta * 100))
-        elif sel == 4:  # Units
-            self.settings.use_mph = not self.settings.use_mph
-        elif sel == 5:  # Low tire PSI
-            self.settings.tire_low_psi = max(20, min(35, self.settings.tire_low_psi + delta * 0.5))
-        elif sel == 6:  # Coolant warn
-            self.settings.coolant_warn_f = max(180, min(250, self.settings.coolant_warn_f + delta * 5))
-        elif sel == 7:  # Data Source (Demo Mode)
+        # Index 0 is Back (no adjustment)
+        if sel == 1:  # Data Source (Demo Mode)
             self.settings.demo_mode = not self.settings.demo_mode
             self._on_data_source_changed()
+        elif sel == 2:  # Brightness
+            self.settings.brightness = max(10, min(100, self.settings.brightness + delta * 5))
+        elif sel == 3:  # Volume
+            self.settings.volume = max(0, min(100, self.settings.volume + delta * 5))
+            self.sound.set_volume(self.settings.volume)
+        elif sel == 4:  # Shift RPM
+            self.settings.shift_rpm = max(4000, min(7500, self.settings.shift_rpm + delta * 100))
+        elif sel == 5:  # Redline
+            self.settings.redline_rpm = max(5000, min(8000, self.settings.redline_rpm + delta * 100))
+        elif sel == 6:  # Units
+            self.settings.use_mph = not self.settings.use_mph
+        elif sel == 7:  # Low tire PSI
+            self.settings.tire_low_psi = max(20, min(35, self.settings.tire_low_psi + delta * 0.5))
+        elif sel == 8:  # Coolant warn
+            self.settings.coolant_warn_f = max(180, min(250, self.settings.coolant_warn_f + delta * 5))
     
     def _get_settings_items(self):
         """Return list of (name, value, unit) tuples"""
         return [
+            ("Back", "", ""),
+            ("Data Source", "DEMO" if self.settings.demo_mode else "CAN BUS", ""),
             ("Brightness", self.settings.brightness, "%"),
             ("Volume", self.settings.volume, "%"),
             ("Shift RPM", self.settings.shift_rpm, ""),
@@ -648,8 +723,6 @@ class PiDisplayApp:
             ("Units", "MPH" if self.settings.use_mph else "KMH", ""),
             ("Low Tire PSI", self.settings.tire_low_psi, ""),
             ("Coolant Warn", self.settings.coolant_warn_f, "°F"),
-            ("Data Source", "DEMO" if self.settings.demo_mode else "CAN BUS", ""),
-            ("Back", "", ""),
         ]
     
     def _update_demo(self):
@@ -718,13 +791,14 @@ class PiDisplayApp:
             else:
                 self.telemetry.wheel_slip[i] = 0
         
-        # Lap time simulation
-        self.telemetry.lap_time_ms += 33
-        if self.telemetry.lap_time_ms > 120000:  # 2 minute lap
-            # Record best lap occasionally
-            if self.telemetry.best_lap_ms == 0 or self.telemetry.lap_time_ms < self.telemetry.best_lap_ms + 5000:
-                self.telemetry.best_lap_ms = 85000 + int(math.sin(t) * 5000)  # ~1:20-1:30
-            self.telemetry.lap_time_ms = 0
+        # Lap time simulation - only if manual timer is not running
+        if not self.lap_timer_running:
+            self.telemetry.lap_time_ms += 33
+            if self.telemetry.lap_time_ms > 120000:  # 2 minute lap
+                # Record best lap occasionally
+                if self.telemetry.best_lap_ms == 0 or self.telemetry.lap_time_ms < self.telemetry.best_lap_ms + 5000:
+                    self.telemetry.best_lap_ms = 85000 + int(math.sin(t) * 5000)  # ~1:20-1:30
+                self.telemetry.lap_time_ms = 0
         
         # Diagnostics simulation (occasional warnings)
         self.telemetry.check_engine_light = False
@@ -1112,8 +1186,13 @@ class PiDisplayApp:
         lap_min = lap_ms // 60000
         lap_sec = (lap_ms % 60000) / 1000
         
+        # Show timer status indicator
+        status_text = "● RUN" if self.lap_timer_running else "○ STOP"
+        status_color = COLOR_GREEN if self.lap_timer_running else COLOR_GRAY
         txt = self.font_tiny.render("CURRENT LAP", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 20, TOP + 270))
+        status_txt = self.font_tiny.render(status_text, True, status_color)
+        self.screen.blit(status_txt, (right_x + 130, TOP + 270))
         txt = self.font_medium.render(f"{lap_min}:{lap_sec:05.2f}", True, COLOR_WHITE)
         self.screen.blit(txt, (right_x + 20, TOP + 290))
         
@@ -1125,6 +1204,12 @@ class PiDisplayApp:
         self.screen.blit(txt, (right_x + 220, TOP + 270))
         txt = self.font_medium.render(f"{best_min}:{best_sec:05.2f}", True, COLOR_PURPLE)
         self.screen.blit(txt, (right_x + 190, TOP + 295))
+        
+        # Lap timer button hints at bottom
+        hint_y = PI_HEIGHT - 25
+        hint = self.font_tiny.render("ENTER: Start/Stop   B: Reset", True, COLOR_GRAY)
+        hint_rect = hint.get_rect(center=(PI_WIDTH // 2, hint_y))
+        self.screen.blit(hint, hint_rect)
     
     def _render_tpms(self):
         """TPMS screen - Modern design with car silhouette"""
@@ -1288,9 +1373,23 @@ class PiDisplayApp:
         txt = self.font_small.render(f"{value:.0f}{unit}", True, color)
         self.screen.blit(txt, txt.get_rect(center=(cx, cy + 25)))
     
+    def _is_imu_data_stale(self, timeout_sec: float = 1.0) -> bool:
+        """Check if IMU data is stale (no data received within timeout)"""
+        # In demo mode, data is never stale
+        if self.settings.demo_mode:
+            return False
+        # Check if ESP32 handler is connected and receiving data
+        if self.esp32_handler and self.esp32_handler.connected:
+            return (time.time() - self.esp32_handler.last_rx_time) > timeout_sec
+        # No handler = no data
+        return True
+    
     def _render_gforce(self):
         """G-Force screen"""
         TOP = 55
+        
+        # Check if IMU data is being received (1 second debounce)
+        imu_data_stale = self._is_imu_data_stale(timeout_sec=1.0)
         
         ball_cx, ball_cy = 230, TOP + 180
         ball_r = 155
@@ -1313,24 +1412,31 @@ class PiDisplayApp:
             txt = self.font_tiny.render(f"{g}", True, COLOR_DARK_GRAY)
             self.screen.blit(txt, (ball_cx + r + 5, ball_cy - 8))
         
-        # G-ball
-        g_scale = 85
-        gx = ball_cx + int(self.telemetry.g_lateral * g_scale)
-        gy = ball_cy - int(self.telemetry.g_longitudinal * g_scale)
-        
-        dx, dy = gx - ball_cx, gy - ball_cy
-        dist = math.sqrt(dx*dx + dy*dy)
-        if dist > ball_r - 16:
-            scale = (ball_r - 16) / dist
-            gx = ball_cx + int(dx * scale)
-            gy = ball_cy + int(dy * scale)
-        
-        glow = pygame.Surface((50, 50), pygame.SRCALPHA)
-        pygame.draw.circle(glow, (*COLOR_ACCENT[:3], 100), (25, 25), 20)
-        self.screen.blit(glow, (gx - 25, gy - 25))
-        
-        pygame.draw.circle(self.screen, COLOR_ACCENT, (gx, gy), 15)
-        pygame.draw.circle(self.screen, COLOR_WHITE, (gx, gy), 15, 2)
+        if imu_data_stale:
+            # Show "No Data" message in the G-ball area
+            txt = self.font_medium.render("NO DATA", True, COLOR_YELLOW)
+            self.screen.blit(txt, txt.get_rect(center=(ball_cx, ball_cy - 15)))
+            txt = self.font_tiny.render("Waiting for ESP32 IMU...", True, COLOR_GRAY)
+            self.screen.blit(txt, txt.get_rect(center=(ball_cx, ball_cy + 20)))
+        else:
+            # G-ball
+            g_scale = 85
+            gx = ball_cx + int(self.telemetry.g_lateral * g_scale)
+            gy = ball_cy - int(self.telemetry.g_longitudinal * g_scale)
+            
+            dx, dy = gx - ball_cx, gy - ball_cy
+            dist = math.sqrt(dx*dx + dy*dy)
+            if dist > ball_r - 16:
+                scale = (ball_r - 16) / dist
+                gx = ball_cx + int(dx * scale)
+                gy = ball_cy + int(dy * scale)
+            
+            glow = pygame.Surface((50, 50), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (*COLOR_ACCENT[:3], 100), (25, 25), 20)
+            self.screen.blit(glow, (gx - 25, gy - 25))
+            
+            pygame.draw.circle(self.screen, COLOR_ACCENT, (gx, gy), 15)
+            pygame.draw.circle(self.screen, COLOR_WHITE, (gx, gy), 15, 2)
         
         # Right panel cards
         right_x = 440
@@ -1339,31 +1445,43 @@ class PiDisplayApp:
         
         # Lateral
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP, card_w, card_h))
-        pygame.draw.rect(self.screen, COLOR_CYAN, (right_x, TOP, 5, card_h))
+        pygame.draw.rect(self.screen, COLOR_CYAN if not imu_data_stale else COLOR_DARK_GRAY, (right_x, TOP, 5, card_h))
         txt = self.font_small.render("LATERAL", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 20, TOP + 12))
-        txt = self.font_large.render(f"{self.telemetry.g_lateral:+.2f}G", True, COLOR_CYAN)
+        if imu_data_stale:
+            txt = self.font_large.render("--", True, COLOR_DARK_GRAY)
+        else:
+            txt = self.font_large.render(f"{self.telemetry.g_lateral:+.2f}G", True, COLOR_CYAN)
         self.screen.blit(txt, (right_x + 20, TOP + 40))
         
         # Longitudinal
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + card_h + 15, card_w, card_h))
-        pygame.draw.rect(self.screen, COLOR_PURPLE, (right_x, TOP + card_h + 15, 5, card_h))
+        pygame.draw.rect(self.screen, COLOR_PURPLE if not imu_data_stale else COLOR_DARK_GRAY, (right_x, TOP + card_h + 15, 5, card_h))
         txt = self.font_small.render("LONGITUDINAL", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 20, TOP + card_h + 27))
-        txt = self.font_large.render(f"{self.telemetry.g_longitudinal:+.2f}G", True, COLOR_PURPLE)
+        if imu_data_stale:
+            txt = self.font_large.render("--", True, COLOR_DARK_GRAY)
+        else:
+            txt = self.font_large.render(f"{self.telemetry.g_longitudinal:+.2f}G", True, COLOR_PURPLE)
         self.screen.blit(txt, (right_x + 20, TOP + card_h + 55))
         
         # Combined
         combined = math.sqrt(self.telemetry.g_lateral**2 + self.telemetry.g_longitudinal**2)
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + 2*(card_h + 15), card_w, card_h))
-        pygame.draw.rect(self.screen, COLOR_ACCENT, (right_x, TOP + 2*(card_h + 15), 5, card_h))
+        pygame.draw.rect(self.screen, COLOR_ACCENT if not imu_data_stale else COLOR_DARK_GRAY, (right_x, TOP + 2*(card_h + 15), 5, card_h))
         txt = self.font_small.render("COMBINED", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 20, TOP + 2*(card_h + 15) + 12))
-        txt = self.font_large.render(f"{combined:.2f}G", True, COLOR_ACCENT)
+        if imu_data_stale:
+            txt = self.font_large.render("--", True, COLOR_DARK_GRAY)
+        else:
+            txt = self.font_large.render(f"{combined:.2f}G", True, COLOR_ACCENT)
         self.screen.blit(txt, (right_x + 20, TOP + 2*(card_h + 15) + 40))
         
-        # IMU source
-        txt = self.font_tiny.render("Source: QMI8658 IMU", True, COLOR_DARK_GRAY)
+        # IMU source / status
+        if imu_data_stale:
+            txt = self.font_tiny.render("⚠ ESP32 IMU: No Data", True, COLOR_YELLOW)
+        else:
+            txt = self.font_tiny.render("Source: QMI8658 IMU", True, COLOR_DARK_GRAY)
         self.screen.blit(txt, txt.get_rect(center=(ball_cx, PI_HEIGHT - 15)))
     
     def _render_diagnostics(self):
@@ -1833,14 +1951,29 @@ class PiDisplayApp:
 
     
     def _render_settings(self):
-        """Settings screen"""
+        """Settings screen with scrolling support"""
         TOP = 55
+        BOTTOM_MARGIN = 40
         
         items = self._get_settings_items()
         item_h = 50
+        visible_height = PI_HEIGHT - TOP - BOTTOM_MARGIN
+        max_visible = visible_height // item_h
         
+        # Calculate scroll offset to keep selected item visible
+        scroll_offset = 0
+        if self.settings_selection >= max_visible:
+            scroll_offset = self.settings_selection - max_visible + 1
+        
+        # Render visible items
         for i, (name, value, unit) in enumerate(items):
-            y = TOP + i * item_h
+            display_index = i - scroll_offset
+            y = TOP + display_index * item_h
+            
+            # Skip items outside visible area
+            if y < TOP - item_h or y > PI_HEIGHT - BOTTOM_MARGIN:
+                continue
+            
             is_selected = i == self.settings_selection
             
             bg_color = COLOR_BG_ELEVATED if is_selected else COLOR_BG_CARD
@@ -1859,11 +1992,31 @@ class PiDisplayApp:
                 val_color = COLOR_ACCENT if is_selected else COLOR_WHITE
                 txt = self.font_small.render(f"{value}{unit}", True, val_color)
                 self.screen.blit(txt, (PI_WIDTH - 60 - txt.get_width(), y + 12))
-            
-            if is_selected and name != "Back":
-                hint = "<- VOL+/VOL- to adjust ->" if self.settings_edit_mode else "Press ON/OFF to edit"
-                txt = self.font_tiny.render(hint, True, COLOR_DARK_GRAY)
-                self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, PI_HEIGHT - 15)))
+        
+        # Scroll indicators
+        if scroll_offset > 0:
+            # Up arrow indicator
+            pygame.draw.polygon(self.screen, COLOR_GRAY, [
+                (PI_WIDTH // 2, TOP - 15),
+                (PI_WIDTH // 2 - 10, TOP - 5),
+                (PI_WIDTH // 2 + 10, TOP - 5)
+            ])
+        
+        if scroll_offset + max_visible < len(items):
+            # Down arrow indicator
+            arrow_y = PI_HEIGHT - BOTTOM_MARGIN + 5
+            pygame.draw.polygon(self.screen, COLOR_GRAY, [
+                (PI_WIDTH // 2, arrow_y + 10),
+                (PI_WIDTH // 2 - 10, arrow_y),
+                (PI_WIDTH // 2 + 10, arrow_y)
+            ])
+        
+        # Hint at bottom
+        current_name = items[self.settings_selection][0] if self.settings_selection < len(items) else ""
+        if current_name != "Back":
+            hint = "<- VOL+/VOL- to adjust ->" if self.settings_edit_mode else "Press ON/OFF to edit"
+            txt = self.font_tiny.render(hint, True, COLOR_DARK_GRAY)
+            self.screen.blit(txt, txt.get_rect(center=(PI_WIDTH // 2, PI_HEIGHT - 15)))
 
 
 # =============================================================================
