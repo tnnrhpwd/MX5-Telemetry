@@ -1,23 +1,22 @@
 #include "Touch_CST816.h"
 
 struct CST816_Touch touch_data = {0};
-volatile uint8_t Touch_interrupts = 0;
+uint8_t Touch_interrupts = 0;  // Match demo: not volatile
 
-// Touch controller uses same I2C bus as IO expander (Wire)
+// I2C functions matching the demo exactly
 static bool I2C_Read_Touch(uint16_t Driver_addr, uint8_t Reg_addr, uint8_t *Reg_data, uint32_t Length)
 {
   Wire.beginTransmission((uint8_t)Driver_addr);
   Wire.write(Reg_addr); 
-  if (Wire.endTransmission(true)) {  // true = send stop
+  if (Wire.endTransmission(true)) {
+    Serial.println("Touch I2C: endTransmission failed");
     return false;
   }
   Wire.requestFrom((uint8_t)Driver_addr, (uint8_t)Length);
-  uint32_t i = 0;
-  while (Wire.available() && i < Length) {
+  for (uint32_t i = 0; i < Length; i++) {
     *Reg_data++ = Wire.read();
-    i++;
   }
-  return (i == Length);  // Return true only if we got all bytes
+  return true;  // Demo always returns true
 }
 
 static bool I2C_Write_Touch(uint8_t Driver_addr, uint8_t Reg_addr, const uint8_t *Reg_data, uint32_t Length)
@@ -28,54 +27,68 @@ static bool I2C_Write_Touch(uint8_t Driver_addr, uint8_t Reg_addr, const uint8_t
     Wire.write(*Reg_data++);
   }
   if (Wire.endTransmission(true)) {
+    Serial.println("Touch I2C: Write endTransmission failed");
     return false;
   }
   return true;
 }
 
-void IRAM_ATTR Touch_CST816_ISR(void) {
+// Match demo: use ARDUINO_ISR_ATTR
+void ARDUINO_ISR_ATTR Touch_CST816_ISR(void) {
   Touch_interrupts = true;
 }
 
 uint8_t Touch_Init(void) {
-  // I2C is already initialized by I2C_Init() on Wire
+  Serial.println("Touch_Init: Starting...");
+  
+  // Reset and configure touch controller
+  Serial.println("Touch_Init: Resetting touch controller...");
   CST816_Touch_Reset();
-  CST816_Read_cfg();
+  
+  // Try to read chip ID to verify communication
+  Serial.println("Touch_Init: Attempting to read chip info...");
+  uint16_t Verification = CST816_Read_cfg();
+  
   CST816_AutoSleep(true);
    
   pinMode(CST816_INT_PIN, INPUT_PULLUP);
   attachInterrupt(CST816_INT_PIN, Touch_CST816_ISR, FALLING); 
 
-  Serial.println("Touch initialized!");
+  Serial.println("Touch_Init: Complete!");
   return true;
 }
 
+// Reset controller - match demo timing exactly
 uint8_t CST816_Touch_Reset(void)
 {
-  Serial.println("Touch: Resetting CST816 via EXIO_PIN1...");
+  Serial.println("CST816_Touch_Reset: Setting EXIO_PIN1 LOW...");
   Set_EXIO(EXIO_PIN1, Low);
   vTaskDelay(pdMS_TO_TICKS(10));
+  Serial.println("CST816_Touch_Reset: Setting EXIO_PIN1 HIGH...");
   Set_EXIO(EXIO_PIN1, High);
-  vTaskDelay(pdMS_TO_TICKS(100));  // Wait longer for touch controller to boot
+  vTaskDelay(pdMS_TO_TICKS(50));  // Demo uses 50ms, not 100ms
   
-  // Scan for touch controller after reset
-  Serial.println("Touch: Scanning I2C for CST816...");
-  Wire.beginTransmission(CST816_ADDR);
-  uint8_t result = Wire.endTransmission();
-  Serial.printf("Touch: CST816 at 0x%02X - %s\n", CST816_ADDR, result == 0 ? "FOUND" : "NOT FOUND");
+  // Scan I2C after reset to see if CST816 appears
+  Serial.println("I2C scan after touch reset...");
+  for (uint8_t addr = 0x10; addr < 0x60; addr++) {
+    Wire.beginTransmission(addr);
+    uint8_t error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.printf("  Device at 0x%02X\r\n", addr);
+    }
+  }
   
-  return result == 0;
+  return true;
 }
 
 uint16_t CST816_Read_cfg(void) {
-  uint8_t buf[3] = {0};
-  bool ok1 = I2C_Read_Touch(CST816_ADDR, CST816_REG_Version, buf, 1);
-  Serial.printf("TouchPad_Version: 0x%02x (read %s)\r\n", buf[0], ok1 ? "OK" : "FAILED");
+  uint8_t buf[3];
+  I2C_Read_Touch(CST816_ADDR, CST816_REG_Version, buf, 1);
+  Serial.printf("TouchPad_Version: 0x%02x\r\n", buf[0]);
   
-  bool ok2 = I2C_Read_Touch(CST816_ADDR, CST816_REG_ChipID, buf, 3);
-  Serial.printf("ChipID: 0x%02x  ProjID: 0x%02x  FwVersion: 0x%02x (read %s)\r\n", 
-                buf[0], buf[1], buf[2], ok2 ? "OK" : "FAILED");
-  return ok1 && ok2;
+  I2C_Read_Touch(CST816_ADDR, CST816_REG_ChipID, buf, 3);
+  Serial.printf("ChipID: 0x%02x  ProjID: 0x%02x  FwVersion: 0x%02x\r\n", buf[0], buf[1], buf[2]);
+  return true;
 }
 
 void CST816_AutoSleep(bool Sleep_State) {
@@ -84,38 +97,48 @@ void CST816_AutoSleep(bool Sleep_State) {
   I2C_Write_Touch(CST816_ADDR, CST816_REG_DisAutoSleep, &Sleep_State_Set, 1);
 }
 
+// Read touch data
 uint8_t Touch_Read_Data(void) {
-  static bool i2cErrorReported = false;
-  uint8_t buf[6] = {0};  // Initialize to zero
+  uint8_t buf[6] = {0};
+  
   if (!I2C_Read_Touch(CST816_ADDR, CST816_REG_GestureID, buf, 6)) {
-    if (!i2cErrorReported) {
-      Serial.println("Touch I2C read failed! (further errors suppressed)");
-      i2cErrorReported = true;
-    }
+    // I2C failed - don't update touch data with garbage
     return false;
   }
-  i2cErrorReported = false;  // Reset so we can report again if it starts failing
   
-  // Only update if we have a valid gesture (0-5, 0x0B, 0x0C)
+  // Validate data - coordinates must be within display range
+  uint16_t x = ((buf[2] & 0x0F) << 8) + buf[3];
+  uint16_t y = ((buf[4] & 0x0F) << 8) + buf[5];
+  
+  if (x > 360 || y > 360) {
+    // Invalid coordinates - ignore this read
+    return false;
+  }
+  
+  // Touched gesture - only valid gesture codes
   uint8_t gesture = buf[0];
   if (gesture <= 5 || gesture == 0x0B || gesture == 0x0C) {
     touch_data.gesture = (GESTURE)gesture;
   }
   
-  uint8_t points = buf[1];
-  if (points > 0 && points <= CST816_LCD_TOUCH_MAX_POINTS) {        
+  if (buf[1] != 0x00) {        
     noInterrupts(); 
-    touch_data.points = points;
-    touch_data.x = ((buf[2] & 0x0F) << 8) + buf[3];               
-    touch_data.y = ((buf[4] & 0x0F) << 8) + buf[5];
-    interrupts(); 
+    touch_data.points = (buf[1] <= CST816_LCD_TOUCH_MAX_POINTS) ? buf[1] : CST816_LCD_TOUCH_MAX_POINTS;
+    touch_data.x = x;               
+    touch_data.y = y;
+    interrupts();
+    
+    // Debug: Print valid touches
+    Serial.printf("Touch: X=%u Y=%u gesture=%d\r\n", touch_data.x, touch_data.y, (int)touch_data.gesture);
   }
   return true;
 }
 
+// Touch loop with debug output
 void Touch_Loop(void) {
   if (Touch_interrupts) {
     Touch_interrupts = false;
+    delayMicroseconds(100);  // Small delay after interrupt before I2C read
     Touch_Read_Data();
   }
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include <Arduino.h>
 #include <Wire.h> 
 
 #define I2C_SCL_PIN       10

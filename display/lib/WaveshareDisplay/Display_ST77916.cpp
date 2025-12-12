@@ -390,15 +390,6 @@ bool LCD_Init(void) {
     I2C_Init();
     delay(10);
     
-    // Initial I2C scan (before IO expander init - touch may be in reset)
-    Serial.println("LCD_Init: Initial I2C scan...");
-    for (uint8_t addr = 1; addr < 127; addr++) {
-        Wire.beginTransmission(addr);
-        if (Wire.endTransmission() == 0) {
-            Serial.printf("  Found device at 0x%02X\n", addr);
-        }
-    }
-    
     // Initialize IO expander (TCA9554PWR) - all outputs
     Serial.println("LCD_Init: Initializing IO expander...");
     TCA9554PWR_Init(0x00);  // All pins as outputs
@@ -425,15 +416,6 @@ bool LCD_Init(void) {
     // Initialize touch controller
     Serial.println("LCD_Init: Initializing touch...");
     Touch_Init();
-    
-    // Second I2C scan (after touch reset - should see CST816)
-    Serial.println("LCD_Init: Post-init I2C scan...");
-    for (uint8_t addr = 1; addr < 127; addr++) {
-        Wire.beginTransmission(addr);
-        if (Wire.endTransmission() == 0) {
-            Serial.printf("  Found device at 0x%02X\n", addr);
-        }
-    }
     
     Serial.println("LCD_Init: Complete");
     return true;
