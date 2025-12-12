@@ -55,6 +55,10 @@ void LCD_DrawArc(uint16_t x, uint16_t y, uint16_t r,
 void LCD_DrawThickArc(uint16_t x, uint16_t y, uint16_t r, uint16_t thickness,
                       uint16_t start_angle, uint16_t end_angle, uint16_t color);
 
+// Image drawing (RGB565 format, data already byte-swapped for BIG endian)
+void LCD_DrawImage(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t* data);
+void LCD_DrawImageCentered(uint16_t w, uint16_t h, const uint16_t* data);
+
 // Color helpers
 #define RGB565(r, g, b) (((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3))
 #define COLOR_BLACK     0x0000
