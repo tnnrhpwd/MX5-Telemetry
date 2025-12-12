@@ -117,17 +117,39 @@ void loop() {
     Touch_Loop();
     handleTouch();
     
-    // Update display at 30fps
-    if (millis() - lastUpdate > 33) {
+    // Static display test - only redraw once every 2 seconds
+    // This helps verify if the display hardware works without animation tearing
+    static bool initialDrawDone = false;
+    if (!initialDrawDone) {
+        // Draw a simple static test pattern
+        LCD_Clear(COLOR_BLACK);
+        
+        // Draw colored quadrants to verify colors
+        LCD_FillRect(0, 0, 180, 180, RGB565(255, 0, 0));      // Red - top left
+        LCD_FillRect(180, 0, 180, 180, RGB565(0, 255, 0));    // Green - top right  
+        LCD_FillRect(0, 180, 180, 180, RGB565(0, 0, 255));    // Blue - bottom left
+        LCD_FillRect(180, 180, 180, 180, RGB565(255, 255, 0)); // Yellow - bottom right
+        
+        // Draw center circle
+        LCD_FillCircle(180, 180, 80, COLOR_WHITE);
+        LCD_FillCircle(180, 180, 60, COLOR_BLACK);
+        
+        Serial.println("Static test pattern drawn");
+        initialDrawDone = true;
+        
+        delay(3000);  // Show test pattern for 3 seconds
+    }
+    
+    // After test, update display slowly (every 500ms)
+    if (millis() - lastUpdate > 500) {
         lastUpdate = millis();
         
-        // Demo: animate RPM
-        static float rpmDir = 100;
+        // Slow demo animation
+        static float rpmDir = 50;
         telemetry.rpm += rpmDir;
-        if (telemetry.rpm > 7000) rpmDir = -100;
-        if (telemetry.rpm < 1000) rpmDir = 100;
+        if (telemetry.rpm > 7000) rpmDir = -50;
+        if (telemetry.rpm < 1000) rpmDir = 50;
         
-        // Demo: slight g-force variation
         telemetry.gForceX = sin(millis() / 1000.0) * 0.3;
         telemetry.gForceY = cos(millis() / 1500.0) * 0.2;
         

@@ -230,7 +230,7 @@ static void LCD_HardwareReset() {
 bool QSPI_Init(void) {
     Serial.println("QSPI_Init: Starting SPI bus initialization...");
     
-    // SPI bus configuration for QSPI
+    // SPI bus configuration for QSPI (matching Waveshare reference exactly)
     static const spi_bus_config_t host_config = {            
         .data0_io_num = LCD_QSPI_D0,                    
         .data1_io_num = LCD_QSPI_D1,                   
@@ -241,8 +241,8 @@ bool QSPI_Init(void) {
         .data5_io_num = -1,                      
         .data6_io_num = -1,                       
         .data7_io_num = -1,                      
-        .max_transfer_sz = 2048,
-        .flags = SPICOMMON_BUSFLAG_MASTER,       
+        .max_transfer_sz = 2048,  // Match reference exactly
+        .flags = SPICOMMON_BUSFLAG_MASTER,  // Reference doesn't use QUAD flag here
         .intr_flags = 0,                            
     };
     
@@ -253,7 +253,7 @@ bool QSPI_Init(void) {
     }
     Serial.println("QSPI_Init: SPI bus initialized successfully");
     
-    // Create panel IO with slow clock for reading register
+    // IO config for slow speed register read (5MHz)
     esp_lcd_panel_io_spi_config_t io_config = {
         .cs_gpio_num = LCD_CS_PIN,               
         .dc_gpio_num = -1,                  
@@ -280,7 +280,7 @@ bool QSPI_Init(void) {
         Serial.printf("QSPI_Init: Failed to create panel IO: %d\n", ret);
         return false;
     }
-    Serial.println("QSPI_Init: Panel IO created successfully");
+    Serial.println("QSPI_Init: Panel IO created (5MHz for register read)");
     
     // Read hardware revision register 0x04
     uint8_t register_data[4] = {0}; 
@@ -296,40 +296,49 @@ bool QSPI_Init(void) {
         Serial.printf("QSPI_Init: Failed to read register 0x04, error: %d\n", ret);
     }
     
-    // Delete IO handle and recreate at full speed
-    // esp_lcd_panel_io_del(io_handle);  // API may not be available
-    
-    // Recreate IO at full speed (80MHz)
+    // Recreate IO at 80MHz 
     io_config.pclk_hz = 80 * 1000 * 1000;
     ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &io_handle);
     if (ret != ESP_OK) {
-        Serial.printf("QSPI_Init: Failed to create full-speed panel IO: %d\n", ret);
+        Serial.printf("QSPI_Init: Failed to create panel IO at 80MHz: %d\n", ret);
         return false;
     }
-    Serial.println("QSPI_Init: Full-speed panel IO created (80MHz)");
+    Serial.println("QSPI_Init: Panel IO recreated (80MHz)");
     
-    // Prepare vendor config with hardware-appropriate init sequence
+    // Prepare vendor config - match reference logic exactly
     st77916_vendor_config_t vendor_config = {  
-        .init_cmds = vendor_specific_init_new,
-        .init_cmds_size = sizeof(vendor_specific_init_new) / sizeof(st77916_lcd_init_cmd_t),
         .flags = {
             .use_qspi_interface = 1,
         },
     };
     
-    // Check for specific hardware revision and select init sequence
-    if (register_data[0] == 0x00 && register_data[1] == 0x02 && 
+    // Log hardware revision for debugging
+    Serial.printf("QSPI_Init: Hardware ID: %02x %02x %02x %02x\n", 
+                  register_data[0], register_data[1], register_data[2], register_data[3]);
+    
+    // Check register values and configure accordingly (match reference exactly)
+    if (register_data[0] == 0x00 && register_data[1] == 0x7F && 
         register_data[2] == 0x7F && register_data[3] == 0x7F) {
-        Serial.println("QSPI_Init: Detected hardware revision 2 - using new init sequence");
+        // Case 1: Use driver default init
+        Serial.println("QSPI_Init: Case 1 - using driver default init");
+    } else if (register_data[0] == 0x00 && register_data[1] == 0x02 && 
+               register_data[2] == 0x7F && register_data[3] == 0x7F) {
+        // Case 2: Use vendor-specific init
+        Serial.println("QSPI_Init: Case 2 - using vendor-specific init");
+        vendor_config.init_cmds = vendor_specific_init_new;
+        vendor_config.init_cmds_size = sizeof(vendor_specific_init_new) / sizeof(st77916_lcd_init_cmd_t);
     } else {
-        Serial.println("QSPI_Init: Using default init sequence");
+        // Unknown - try vendor init as fallback
+        Serial.println("QSPI_Init: Unknown HW - trying vendor-specific init");
+        vendor_config.init_cmds = vendor_specific_init_new;
+        vendor_config.init_cmds_size = sizeof(vendor_specific_init_new) / sizeof(st77916_lcd_init_cmd_t);
     }
     
-    // Panel configuration
+    // Panel configuration (matching reference exactly)
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = -1,  // Using IO expander for reset                                     
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,                   
-        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,                       
+        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,  // BIG endian - matches reference                       
         .bits_per_pixel = 16,                                 
         .flags = {                                                    
             .reset_active_high = 0,                                   
@@ -358,12 +367,54 @@ bool QSPI_Init(void) {
     }
     Serial.println("QSPI_Init: Panel initialized");
     
+    // NOTE: Color inversion is already set in init sequence via command 0x21
+    // The reference code does NOT call esp_lcd_panel_invert_color after init
+    // Commenting this out to match reference behavior
+    // ret = esp_lcd_panel_invert_color(panel_handle, true);
+    
     // Turn on display
     ret = esp_lcd_panel_disp_on_off(panel_handle, true);
     if (ret != ESP_OK) {
         Serial.printf("QSPI_Init: Display on failed: %d\n", ret);
     }
     Serial.println("QSPI_Init: Display turned on");
+    
+    // Immediate test - draw colored stripes like reference demo
+    Serial.println("QSPI_Init: Drawing test pattern...");
+    uint32_t stripe_h = LCD_HEIGHT / 16;
+    uint16_t stripe_colors[] = {
+        0xF800,  // Red
+        0x07E0,  // Green
+        0x001F,  // Blue
+        0xFFE0,  // Yellow
+        0xF81F,  // Magenta
+        0x07FF,  // Cyan
+        0xFFFF,  // White
+        0x0000,  // Black
+        0xF800,  // Red
+        0x07E0,  // Green
+        0x001F,  // Blue
+        0xFFE0,  // Yellow
+        0xF81F,  // Magenta
+        0x07FF,  // Cyan
+        0xFFFF,  // White
+        0x8410,  // Gray
+    };
+    
+    uint16_t* stripe_buf = (uint16_t*)heap_caps_malloc(LCD_WIDTH * stripe_h * 2, MALLOC_CAP_DMA);
+    if (stripe_buf) {
+        for (int stripe = 0; stripe < 16; stripe++) {
+            uint16_t color = stripe_colors[stripe];
+            // Byte swap for BIG endian (matching reference)
+            uint16_t swapped = ((color >> 8) & 0xFF) | ((color << 8) & 0xFF00);
+            for (uint32_t i = 0; i < LCD_WIDTH * stripe_h; i++) {
+                stripe_buf[i] = swapped;
+            }
+            esp_lcd_panel_draw_bitmap(panel_handle, 0, stripe * stripe_h, LCD_WIDTH, (stripe + 1) * stripe_h, stripe_buf);
+        }
+        heap_caps_free(stripe_buf);
+        Serial.println("QSPI_Init: Test pattern drawn");
+    }
     
     return true;
 }
@@ -420,7 +471,7 @@ void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color
         return;
     }
     
-    // Swap bytes for big-endian display and fill buffer
+    // Byte swap for BIG endian (matching reference LCD_addWindow)
     uint16_t swapped = ((color >> 8) & 0xFF) | ((color << 8) & 0xFF00);
     for (uint32_t i = 0; i < size; i++) {
         buf[i] = swapped;
@@ -434,6 +485,7 @@ void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color) {
     if (panel_handle == NULL) return;
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     
+    // Byte swap for BIG endian
     uint16_t swapped = ((color >> 8) & 0xFF) | ((color << 8) & 0xFF00);
     esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + 1, y + 1, &swapped);
 }
