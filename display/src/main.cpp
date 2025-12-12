@@ -122,8 +122,8 @@ void loop() {
     // Handle serial commands from Pi
     handleSerialCommands();
     
-    // Update display at reasonable rate (every 100ms)
-    if (millis() - lastUpdate > 100) {
+    // Update display at ~30Hz for smooth animation
+    if (millis() - lastUpdate > 33) {
         lastUpdate = millis();
         
         // Demo animation when not receiving real data
@@ -163,23 +163,28 @@ void loop() {
         }
     }
     
-    delay(10);
+    delay(5);  // ~200Hz loop rate for responsive touch
 }
 
 void handleTouch() {
-    if (touch_data.gesture != NONE && millis() - lastTouchTime > 300) {
+    // Debounce time 200ms for responsive but not too sensitive touch
+    if (touch_data.gesture != NONE && millis() - lastTouchTime > 200) {
         lastTouchTime = millis();
         
         switch (touch_data.gesture) {
             case SWIPE_LEFT:
+                // Swipe left = finger moves left = go to NEXT screen (content slides left)
                 currentScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
                 needsRedraw = true;
                 LCD_Clear(MX5_BLACK);
+                Serial.printf("Screen: %d (swipe left -> next)\n", currentScreen);
                 break;
             case SWIPE_RIGHT:
+                // Swipe right = finger moves right = go to PREVIOUS screen (content slides right)
                 currentScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
                 needsRedraw = true;
                 LCD_Clear(MX5_BLACK);
+                Serial.printf("Screen: %d (swipe right -> prev)\n", currentScreen);
                 break;
             case SINGLE_CLICK:
                 // Toggle backlight or other action
