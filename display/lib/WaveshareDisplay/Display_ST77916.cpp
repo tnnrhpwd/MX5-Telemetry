@@ -1,0 +1,696 @@
+/**
+ * @file Display_ST77916.cpp
+ * @brief ST77916 QSPI Display Driver for Waveshare ESP32-S3-Touch-LCD-1.85
+ * @note Based on Waveshare's official driver, adapted for standalone use
+ */
+
+#include "Display_ST77916.h"
+#include <Arduino.h>
+#include <stdlib.h>
+#include <string.h>
+#include "esp_intr_alloc.h"
+#include "driver/spi_master.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_st77916.h"
+
+#define LCD_OPCODE_WRITE_CMD        (0x02ULL)
+#define LCD_OPCODE_READ_CMD         (0x0BULL)
+#define LCD_OPCODE_WRITE_COLOR      (0x32ULL)
+
+// Global panel handle
+static esp_lcd_panel_handle_t panel_handle = NULL;
+static uint8_t backlight_level = 100;
+
+// Vendor-specific initialization for newer hardware revision
+static const st77916_lcd_init_cmd_t vendor_specific_init_new[] = {
+  {0xF0, (uint8_t []){0x28}, 1, 0},
+  {0xF2, (uint8_t []){0x28}, 1, 0},
+  {0x73, (uint8_t []){0xF0}, 1, 0},
+  {0x7C, (uint8_t []){0xD1}, 1, 0},
+  {0x83, (uint8_t []){0xE0}, 1, 0},
+  {0x84, (uint8_t []){0x61}, 1, 0},
+  {0xF2, (uint8_t []){0x82}, 1, 0},
+  {0xF0, (uint8_t []){0x00}, 1, 0},
+  {0xF0, (uint8_t []){0x01}, 1, 0},
+  {0xF1, (uint8_t []){0x01}, 1, 0},
+  {0xB0, (uint8_t []){0x56}, 1, 0},
+  {0xB1, (uint8_t []){0x4D}, 1, 0},
+  {0xB2, (uint8_t []){0x24}, 1, 0},
+  {0xB4, (uint8_t []){0x87}, 1, 0},
+  {0xB5, (uint8_t []){0x44}, 1, 0},
+  {0xB6, (uint8_t []){0x8B}, 1, 0},
+  {0xB7, (uint8_t []){0x40}, 1, 0},
+  {0xB8, (uint8_t []){0x86}, 1, 0},
+  {0xBA, (uint8_t []){0x00}, 1, 0},
+  {0xBB, (uint8_t []){0x08}, 1, 0},
+  {0xBC, (uint8_t []){0x08}, 1, 0},
+  {0xBD, (uint8_t []){0x00}, 1, 0},
+  {0xC0, (uint8_t []){0x80}, 1, 0},
+  {0xC1, (uint8_t []){0x10}, 1, 0},
+  {0xC2, (uint8_t []){0x37}, 1, 0},
+  {0xC3, (uint8_t []){0x80}, 1, 0},
+  {0xC4, (uint8_t []){0x10}, 1, 0},
+  {0xC5, (uint8_t []){0x37}, 1, 0},
+  {0xC6, (uint8_t []){0xA9}, 1, 0},
+  {0xC7, (uint8_t []){0x41}, 1, 0},
+  {0xC8, (uint8_t []){0x01}, 1, 0},
+  {0xC9, (uint8_t []){0xA9}, 1, 0},
+  {0xCA, (uint8_t []){0x41}, 1, 0},
+  {0xCB, (uint8_t []){0x01}, 1, 0},
+  {0xD0, (uint8_t []){0x91}, 1, 0},
+  {0xD1, (uint8_t []){0x68}, 1, 0},
+  {0xD2, (uint8_t []){0x68}, 1, 0},
+  {0xF5, (uint8_t []){0x00, 0xA5}, 2, 0},
+  {0xDD, (uint8_t []){0x4F}, 1, 0},
+  {0xDE, (uint8_t []){0x4F}, 1, 0},
+  {0xF1, (uint8_t []){0x10}, 1, 0},
+  {0xF0, (uint8_t []){0x00}, 1, 0},
+  {0xF0, (uint8_t []){0x02}, 1, 0},
+  {0xE0, (uint8_t []){0xF0, 0x0A, 0x10, 0x09, 0x09, 0x36, 0x35, 0x33, 0x4A, 0x29, 0x15, 0x15, 0x2E, 0x34}, 14, 0},
+  {0xE1, (uint8_t []){0xF0, 0x0A, 0x0F, 0x08, 0x08, 0x05, 0x34, 0x33, 0x4A, 0x39, 0x15, 0x15, 0x2D, 0x33}, 14, 0},
+  {0xF0, (uint8_t []){0x10}, 1, 0},
+  {0xF3, (uint8_t []){0x10}, 1, 0},
+  {0xE0, (uint8_t []){0x07}, 1, 0},
+  {0xE1, (uint8_t []){0x00}, 1, 0},
+  {0xE2, (uint8_t []){0x00}, 1, 0},
+  {0xE3, (uint8_t []){0x00}, 1, 0},
+  {0xE4, (uint8_t []){0xE0}, 1, 0},
+  {0xE5, (uint8_t []){0x06}, 1, 0},
+  {0xE6, (uint8_t []){0x21}, 1, 0},
+  {0xE7, (uint8_t []){0x01}, 1, 0},
+  {0xE8, (uint8_t []){0x05}, 1, 0},
+  {0xE9, (uint8_t []){0x02}, 1, 0},
+  {0xEA, (uint8_t []){0xDA}, 1, 0},
+  {0xEB, (uint8_t []){0x00}, 1, 0},
+  {0xEC, (uint8_t []){0x00}, 1, 0},
+  {0xED, (uint8_t []){0x0F}, 1, 0},
+  {0xEE, (uint8_t []){0x00}, 1, 0},
+  {0xEF, (uint8_t []){0x00}, 1, 0},
+  {0xF8, (uint8_t []){0x00}, 1, 0},
+  {0xF9, (uint8_t []){0x00}, 1, 0},
+  {0xFA, (uint8_t []){0x00}, 1, 0},
+  {0xFB, (uint8_t []){0x00}, 1, 0},
+  {0xFC, (uint8_t []){0x00}, 1, 0},
+  {0xFD, (uint8_t []){0x00}, 1, 0},
+  {0xFE, (uint8_t []){0x00}, 1, 0},
+  {0xFF, (uint8_t []){0x00}, 1, 0},
+  {0x60, (uint8_t []){0x40}, 1, 0},
+  {0x61, (uint8_t []){0x04}, 1, 0},
+  {0x62, (uint8_t []){0x00}, 1, 0},
+  {0x63, (uint8_t []){0x42}, 1, 0},
+  {0x64, (uint8_t []){0xD9}, 1, 0},
+  {0x65, (uint8_t []){0x00}, 1, 0},
+  {0x66, (uint8_t []){0x00}, 1, 0},
+  {0x67, (uint8_t []){0x00}, 1, 0},
+  {0x68, (uint8_t []){0x00}, 1, 0},
+  {0x69, (uint8_t []){0x00}, 1, 0},
+  {0x6A, (uint8_t []){0x00}, 1, 0},
+  {0x6B, (uint8_t []){0x00}, 1, 0},
+  {0x70, (uint8_t []){0x40}, 1, 0},
+  {0x71, (uint8_t []){0x03}, 1, 0},
+  {0x72, (uint8_t []){0x00}, 1, 0},
+  {0x73, (uint8_t []){0x42}, 1, 0},
+  {0x74, (uint8_t []){0xD8}, 1, 0},
+  {0x75, (uint8_t []){0x00}, 1, 0},
+  {0x76, (uint8_t []){0x00}, 1, 0},
+  {0x77, (uint8_t []){0x00}, 1, 0},
+  {0x78, (uint8_t []){0x00}, 1, 0},
+  {0x79, (uint8_t []){0x00}, 1, 0},
+  {0x7A, (uint8_t []){0x00}, 1, 0},
+  {0x7B, (uint8_t []){0x00}, 1, 0},
+  {0x80, (uint8_t []){0x48}, 1, 0},
+  {0x81, (uint8_t []){0x00}, 1, 0},
+  {0x82, (uint8_t []){0x06}, 1, 0},
+  {0x83, (uint8_t []){0x02}, 1, 0},
+  {0x84, (uint8_t []){0xD6}, 1, 0},
+  {0x85, (uint8_t []){0x04}, 1, 0},
+  {0x86, (uint8_t []){0x00}, 1, 0},
+  {0x87, (uint8_t []){0x00}, 1, 0},
+  {0x88, (uint8_t []){0x48}, 1, 0},
+  {0x89, (uint8_t []){0x00}, 1, 0},
+  {0x8A, (uint8_t []){0x08}, 1, 0},
+  {0x8B, (uint8_t []){0x02}, 1, 0},
+  {0x8C, (uint8_t []){0xD8}, 1, 0},
+  {0x8D, (uint8_t []){0x04}, 1, 0},
+  {0x8E, (uint8_t []){0x00}, 1, 0},
+  {0x8F, (uint8_t []){0x00}, 1, 0},
+  {0x90, (uint8_t []){0x48}, 1, 0},
+  {0x91, (uint8_t []){0x00}, 1, 0},
+  {0x92, (uint8_t []){0x0A}, 1, 0},
+  {0x93, (uint8_t []){0x02}, 1, 0},
+  {0x94, (uint8_t []){0xDA}, 1, 0},
+  {0x95, (uint8_t []){0x04}, 1, 0},
+  {0x96, (uint8_t []){0x00}, 1, 0},
+  {0x97, (uint8_t []){0x00}, 1, 0},
+  {0x98, (uint8_t []){0x48}, 1, 0},
+  {0x99, (uint8_t []){0x00}, 1, 0},
+  {0x9A, (uint8_t []){0x0C}, 1, 0},
+  {0x9B, (uint8_t []){0x02}, 1, 0},
+  {0x9C, (uint8_t []){0xDC}, 1, 0},
+  {0x9D, (uint8_t []){0x04}, 1, 0},
+  {0x9E, (uint8_t []){0x00}, 1, 0},
+  {0x9F, (uint8_t []){0x00}, 1, 0},
+  {0xA0, (uint8_t []){0x48}, 1, 0},
+  {0xA1, (uint8_t []){0x00}, 1, 0},
+  {0xA2, (uint8_t []){0x05}, 1, 0},
+  {0xA3, (uint8_t []){0x02}, 1, 0},
+  {0xA4, (uint8_t []){0xD5}, 1, 0},
+  {0xA5, (uint8_t []){0x04}, 1, 0},
+  {0xA6, (uint8_t []){0x00}, 1, 0},
+  {0xA7, (uint8_t []){0x00}, 1, 0},
+  {0xA8, (uint8_t []){0x48}, 1, 0},
+  {0xA9, (uint8_t []){0x00}, 1, 0},
+  {0xAA, (uint8_t []){0x07}, 1, 0},
+  {0xAB, (uint8_t []){0x02}, 1, 0},
+  {0xAC, (uint8_t []){0xD7}, 1, 0},
+  {0xAD, (uint8_t []){0x04}, 1, 0},
+  {0xAE, (uint8_t []){0x00}, 1, 0},
+  {0xAF, (uint8_t []){0x00}, 1, 0},
+  {0xB0, (uint8_t []){0x48}, 1, 0},
+  {0xB1, (uint8_t []){0x00}, 1, 0},
+  {0xB2, (uint8_t []){0x09}, 1, 0},
+  {0xB3, (uint8_t []){0x02}, 1, 0},
+  {0xB4, (uint8_t []){0xD9}, 1, 0},
+  {0xB5, (uint8_t []){0x04}, 1, 0},
+  {0xB6, (uint8_t []){0x00}, 1, 0},
+  {0xB7, (uint8_t []){0x00}, 1, 0},
+  {0xB8, (uint8_t []){0x48}, 1, 0},
+  {0xB9, (uint8_t []){0x00}, 1, 0},
+  {0xBA, (uint8_t []){0x0B}, 1, 0},
+  {0xBB, (uint8_t []){0x02}, 1, 0},
+  {0xBC, (uint8_t []){0xDB}, 1, 0},
+  {0xBD, (uint8_t []){0x04}, 1, 0},
+  {0xBE, (uint8_t []){0x00}, 1, 0},
+  {0xBF, (uint8_t []){0x00}, 1, 0},
+  {0xC0, (uint8_t []){0x10}, 1, 0},
+  {0xC1, (uint8_t []){0x47}, 1, 0},
+  {0xC2, (uint8_t []){0x56}, 1, 0},
+  {0xC3, (uint8_t []){0x65}, 1, 0},
+  {0xC4, (uint8_t []){0x74}, 1, 0},
+  {0xC5, (uint8_t []){0x88}, 1, 0},
+  {0xC6, (uint8_t []){0x99}, 1, 0},
+  {0xC7, (uint8_t []){0x01}, 1, 0},
+  {0xC8, (uint8_t []){0xBB}, 1, 0},
+  {0xC9, (uint8_t []){0xAA}, 1, 0},
+  {0xD0, (uint8_t []){0x10}, 1, 0},
+  {0xD1, (uint8_t []){0x47}, 1, 0},
+  {0xD2, (uint8_t []){0x56}, 1, 0},
+  {0xD3, (uint8_t []){0x65}, 1, 0},
+  {0xD4, (uint8_t []){0x74}, 1, 0},
+  {0xD5, (uint8_t []){0x88}, 1, 0},
+  {0xD6, (uint8_t []){0x99}, 1, 0},
+  {0xD7, (uint8_t []){0x01}, 1, 0},
+  {0xD8, (uint8_t []){0xBB}, 1, 0},
+  {0xD9, (uint8_t []){0xAA}, 1, 0},
+  {0xF3, (uint8_t []){0x01}, 1, 0},
+  {0xF0, (uint8_t []){0x00}, 1, 0},
+  {0x21, (uint8_t []){0x00}, 1, 0},
+  {0x11, (uint8_t []){0x00}, 1, 120},
+  {0x29, (uint8_t []){0x00}, 1, 0},  
+};
+
+// Forward declaration
+extern "C" {
+    esp_err_t esp_lcd_new_panel_st77916(const esp_lcd_panel_io_handle_t io, 
+                                        const esp_lcd_panel_dev_config_t *panel_dev_config, 
+                                        esp_lcd_panel_handle_t *ret_panel);
+}
+
+// Hardware reset via IO expander
+static void LCD_HardwareReset() {
+    Serial.println("LCD: Hardware reset...");
+    Set_EXIO(EXIO_PIN2, Low);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    Set_EXIO(EXIO_PIN2, High);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    Serial.println("LCD: Hardware reset complete");
+}
+
+bool QSPI_Init(void) {
+    Serial.println("QSPI_Init: Starting SPI bus initialization...");
+    
+    // SPI bus configuration for QSPI
+    static const spi_bus_config_t host_config = {            
+        .data0_io_num = LCD_QSPI_D0,                    
+        .data1_io_num = LCD_QSPI_D1,                   
+        .sclk_io_num = LCD_QSPI_CLK,                   
+        .data2_io_num = LCD_QSPI_D2,                    
+        .data3_io_num = LCD_QSPI_D3,                    
+        .data4_io_num = -1,                       
+        .data5_io_num = -1,                      
+        .data6_io_num = -1,                       
+        .data7_io_num = -1,                      
+        .max_transfer_sz = 2048,
+        .flags = SPICOMMON_BUSFLAG_MASTER,       
+        .intr_flags = 0,                            
+    };
+    
+    esp_err_t ret = spi_bus_initialize(SPI2_HOST, &host_config, SPI_DMA_CH_AUTO);
+    if (ret != ESP_OK) {
+        Serial.printf("QSPI_Init: SPI bus init failed: %d\n", ret);
+        return false;
+    }
+    Serial.println("QSPI_Init: SPI bus initialized successfully");
+    
+    // Create panel IO with slow clock for reading register
+    esp_lcd_panel_io_spi_config_t io_config = {
+        .cs_gpio_num = LCD_CS_PIN,               
+        .dc_gpio_num = -1,                  
+        .spi_mode = 0,                      
+        .pclk_hz = 5 * 1000 * 1000,       // Slow for register read
+        .trans_queue_depth = 10,            
+        .on_color_trans_done = NULL,                            
+        .user_ctx = NULL,                   
+        .lcd_cmd_bits = 32,                 
+        .lcd_param_bits = 8,                
+        .flags = {                          
+            .dc_low_on_data = 0,            
+            .octal_mode = 0,                
+            .quad_mode = 1,                 
+            .sio_mode = 0,                  
+            .lsb_first = 0,                 
+            .cs_high_active = 0,            
+        },                                  
+    };
+    
+    esp_lcd_panel_io_handle_t io_handle = NULL;
+    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &io_handle);
+    if (ret != ESP_OK) {
+        Serial.printf("QSPI_Init: Failed to create panel IO: %d\n", ret);
+        return false;
+    }
+    Serial.println("QSPI_Init: Panel IO created successfully");
+    
+    // Read hardware revision register 0x04
+    uint8_t register_data[4] = {0}; 
+    int lcd_cmd = 0x04;
+    lcd_cmd &= 0xff;
+    lcd_cmd <<= 8;
+    lcd_cmd |= LCD_OPCODE_READ_CMD << 24;
+    ret = esp_lcd_panel_io_rx_param(io_handle, lcd_cmd, register_data, sizeof(register_data)); 
+    if (ret == ESP_OK) {
+        Serial.printf("QSPI_Init: Register 0x04: %02x %02x %02x %02x\n", 
+                      register_data[0], register_data[1], register_data[2], register_data[3]);
+    } else {
+        Serial.printf("QSPI_Init: Failed to read register 0x04, error: %d\n", ret);
+    }
+    
+    // Delete IO handle and recreate at full speed
+    // esp_lcd_panel_io_del(io_handle);  // API may not be available
+    
+    // Recreate IO at full speed (80MHz)
+    io_config.pclk_hz = 80 * 1000 * 1000;
+    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &io_handle);
+    if (ret != ESP_OK) {
+        Serial.printf("QSPI_Init: Failed to create full-speed panel IO: %d\n", ret);
+        return false;
+    }
+    Serial.println("QSPI_Init: Full-speed panel IO created (80MHz)");
+    
+    // Prepare vendor config with hardware-appropriate init sequence
+    st77916_vendor_config_t vendor_config = {  
+        .init_cmds = vendor_specific_init_new,
+        .init_cmds_size = sizeof(vendor_specific_init_new) / sizeof(st77916_lcd_init_cmd_t),
+        .flags = {
+            .use_qspi_interface = 1,
+        },
+    };
+    
+    // Check for specific hardware revision and select init sequence
+    if (register_data[0] == 0x00 && register_data[1] == 0x02 && 
+        register_data[2] == 0x7F && register_data[3] == 0x7F) {
+        Serial.println("QSPI_Init: Detected hardware revision 2 - using new init sequence");
+    } else {
+        Serial.println("QSPI_Init: Using default init sequence");
+    }
+    
+    // Panel configuration
+    esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = -1,  // Using IO expander for reset                                     
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,                   
+        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,                       
+        .bits_per_pixel = 16,                                 
+        .flags = {                                                    
+            .reset_active_high = 0,                                   
+        },                                                            
+        .vendor_config = (void *)&vendor_config,                                  
+    };
+    
+    // Create the ST77916 panel
+    ret = esp_lcd_new_panel_st77916(io_handle, &panel_config, &panel_handle);
+    if (ret != ESP_OK) {
+        Serial.printf("QSPI_Init: Failed to create ST77916 panel: %d\n", ret);
+        return false;
+    }
+    Serial.println("QSPI_Init: ST77916 panel created");
+    
+    // Reset and initialize panel
+    ret = esp_lcd_panel_reset(panel_handle);
+    if (ret != ESP_OK) {
+        Serial.printf("QSPI_Init: Panel reset failed: %d\n", ret);
+    }
+    
+    ret = esp_lcd_panel_init(panel_handle);
+    if (ret != ESP_OK) {
+        Serial.printf("QSPI_Init: Panel init failed: %d\n", ret);
+        return false;
+    }
+    Serial.println("QSPI_Init: Panel initialized");
+    
+    // Turn on display
+    ret = esp_lcd_panel_disp_on_off(panel_handle, true);
+    if (ret != ESP_OK) {
+        Serial.printf("QSPI_Init: Display on failed: %d\n", ret);
+    }
+    Serial.println("QSPI_Init: Display turned on");
+    
+    return true;
+}
+
+bool LCD_Init(void) {
+    Serial.println("LCD_Init: Starting...");
+    
+    // Hardware reset via IO expander
+    LCD_HardwareReset();
+    
+    // Initialize QSPI and panel
+    if (!QSPI_Init()) {
+        Serial.println("LCD_Init: QSPI initialization failed!");
+        return false;
+    }
+    
+    Serial.println("LCD_Init: Complete");
+    return true;
+}
+
+void LCD_Clear(uint16_t color) {
+    LCD_FillRect(0, 0, LCD_WIDTH, LCD_HEIGHT, color);
+}
+
+void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
+    if (panel_handle == NULL) return;
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
+    if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
+    
+    uint32_t size = w * h;
+    uint16_t* buf = (uint16_t*)heap_caps_malloc(size * 2, MALLOC_CAP_DMA);
+    if (!buf) {
+        Serial.println("LCD_FillRect: Failed to allocate buffer");
+        return;
+    }
+    
+    // Swap bytes for big-endian display and fill buffer
+    uint16_t swapped = ((color >> 8) & 0xFF) | ((color << 8) & 0xFF00);
+    for (uint32_t i = 0; i < size; i++) {
+        buf[i] = swapped;
+    }
+    
+    esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + w, y + h, buf);
+    heap_caps_free(buf);
+}
+
+void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color) {
+    if (panel_handle == NULL) return;
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    
+    uint16_t swapped = ((color >> 8) & 0xFF) | ((color << 8) & 0xFF00);
+    esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + 1, y + 1, &swapped);
+}
+
+void LCD_DrawLine(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t color) {
+    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy, e2;
+    
+    while (true) {
+        LCD_DrawPixel(x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
+    // Draw horizontal lines more efficiently
+    LCD_FillRect(x, y, w, 1, color);
+    LCD_FillRect(x, y + h - 1, w, 1, color);
+    // Draw vertical lines
+    LCD_FillRect(x, y, 1, h, color);
+    LCD_FillRect(x + w - 1, y, 1, h, color);
+}
+
+void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color) {
+    int f = 1 - r;
+    int ddF_x = 1;
+    int ddF_y = -2 * r;
+    int x = 0;
+    int y = r;
+    
+    LCD_DrawPixel(x0, y0 + r, color);
+    LCD_DrawPixel(x0, y0 - r, color);
+    LCD_DrawPixel(x0 + r, y0, color);
+    LCD_DrawPixel(x0 - r, y0, color);
+    
+    while (x < y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+        x++;
+        ddF_x += 2;
+        f += ddF_x;
+        
+        LCD_DrawPixel(x0 + x, y0 + y, color);
+        LCD_DrawPixel(x0 - x, y0 + y, color);
+        LCD_DrawPixel(x0 + x, y0 - y, color);
+        LCD_DrawPixel(x0 - x, y0 - y, color);
+        LCD_DrawPixel(x0 + y, y0 + x, color);
+        LCD_DrawPixel(x0 - y, y0 + x, color);
+        LCD_DrawPixel(x0 + y, y0 - x, color);
+        LCD_DrawPixel(x0 - y, y0 - x, color);
+    }
+}
+
+void LCD_FillCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color) {
+    int f = 1 - r;
+    int ddF_x = 1;
+    int ddF_y = -2 * r;
+    int x = 0;
+    int y = r;
+    
+    // Draw center vertical line
+    LCD_FillRect(x0, y0 - r, 1, 2 * r + 1, color);
+    
+    while (x < y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+        x++;
+        ddF_x += 2;
+        f += ddF_x;
+        
+        // Draw horizontal lines
+        LCD_FillRect(x0 - x, y0 + y, 2 * x + 1, 1, color);
+        LCD_FillRect(x0 - x, y0 - y, 2 * x + 1, 1, color);
+        LCD_FillRect(x0 - y, y0 + x, 2 * y + 1, 1, color);
+        LCD_FillRect(x0 - y, y0 - x, 2 * y + 1, 1, color);
+    }
+}
+
+// Basic font - 5x7 characters
+static const uint8_t font_5x7[96][5] = {
+    {0x00,0x00,0x00,0x00,0x00}, // Space
+    {0x00,0x00,0x5F,0x00,0x00}, // !
+    {0x00,0x07,0x00,0x07,0x00}, // "
+    {0x14,0x7F,0x14,0x7F,0x14}, // #
+    {0x24,0x2A,0x7F,0x2A,0x12}, // $
+    {0x23,0x13,0x08,0x64,0x62}, // %
+    {0x36,0x49,0x55,0x22,0x50}, // &
+    {0x00,0x05,0x03,0x00,0x00}, // '
+    {0x00,0x1C,0x22,0x41,0x00}, // (
+    {0x00,0x41,0x22,0x1C,0x00}, // )
+    {0x14,0x08,0x3E,0x08,0x14}, // *
+    {0x08,0x08,0x3E,0x08,0x08}, // +
+    {0x00,0x50,0x30,0x00,0x00}, // ,
+    {0x08,0x08,0x08,0x08,0x08}, // -
+    {0x00,0x60,0x60,0x00,0x00}, // .
+    {0x20,0x10,0x08,0x04,0x02}, // /
+    {0x3E,0x51,0x49,0x45,0x3E}, // 0
+    {0x00,0x42,0x7F,0x40,0x00}, // 1
+    {0x42,0x61,0x51,0x49,0x46}, // 2
+    {0x21,0x41,0x45,0x4B,0x31}, // 3
+    {0x18,0x14,0x12,0x7F,0x10}, // 4
+    {0x27,0x45,0x45,0x45,0x39}, // 5
+    {0x3C,0x4A,0x49,0x49,0x30}, // 6
+    {0x01,0x71,0x09,0x05,0x03}, // 7
+    {0x36,0x49,0x49,0x49,0x36}, // 8
+    {0x06,0x49,0x49,0x29,0x1E}, // 9
+    {0x00,0x36,0x36,0x00,0x00}, // :
+    {0x00,0x56,0x36,0x00,0x00}, // ;
+    {0x08,0x14,0x22,0x41,0x00}, // <
+    {0x14,0x14,0x14,0x14,0x14}, // =
+    {0x00,0x41,0x22,0x14,0x08}, // >
+    {0x02,0x01,0x51,0x09,0x06}, // ?
+    {0x32,0x49,0x79,0x41,0x3E}, // @
+    {0x7E,0x11,0x11,0x11,0x7E}, // A
+    {0x7F,0x49,0x49,0x49,0x36}, // B
+    {0x3E,0x41,0x41,0x41,0x22}, // C
+    {0x7F,0x41,0x41,0x22,0x1C}, // D
+    {0x7F,0x49,0x49,0x49,0x41}, // E
+    {0x7F,0x09,0x09,0x09,0x01}, // F
+    {0x3E,0x41,0x49,0x49,0x7A}, // G
+    {0x7F,0x08,0x08,0x08,0x7F}, // H
+    {0x00,0x41,0x7F,0x41,0x00}, // I
+    {0x20,0x40,0x41,0x3F,0x01}, // J
+    {0x7F,0x08,0x14,0x22,0x41}, // K
+    {0x7F,0x40,0x40,0x40,0x40}, // L
+    {0x7F,0x02,0x0C,0x02,0x7F}, // M
+    {0x7F,0x04,0x08,0x10,0x7F}, // N
+    {0x3E,0x41,0x41,0x41,0x3E}, // O
+    {0x7F,0x09,0x09,0x09,0x06}, // P
+    {0x3E,0x41,0x51,0x21,0x5E}, // Q
+    {0x7F,0x09,0x19,0x29,0x46}, // R
+    {0x46,0x49,0x49,0x49,0x31}, // S
+    {0x01,0x01,0x7F,0x01,0x01}, // T
+    {0x3F,0x40,0x40,0x40,0x3F}, // U
+    {0x1F,0x20,0x40,0x20,0x1F}, // V
+    {0x3F,0x40,0x38,0x40,0x3F}, // W
+    {0x63,0x14,0x08,0x14,0x63}, // X
+    {0x07,0x08,0x70,0x08,0x07}, // Y
+    {0x61,0x51,0x49,0x45,0x43}, // Z
+    {0x00,0x7F,0x41,0x41,0x00}, // [
+    {0x02,0x04,0x08,0x10,0x20}, // backslash
+    {0x00,0x41,0x41,0x7F,0x00}, // ]
+    {0x04,0x02,0x01,0x02,0x04}, // ^
+    {0x40,0x40,0x40,0x40,0x40}, // _
+    {0x00,0x01,0x02,0x04,0x00}, // `
+    {0x20,0x54,0x54,0x54,0x78}, // a
+    {0x7F,0x48,0x44,0x44,0x38}, // b
+    {0x38,0x44,0x44,0x44,0x20}, // c
+    {0x38,0x44,0x44,0x48,0x7F}, // d
+    {0x38,0x54,0x54,0x54,0x18}, // e
+    {0x08,0x7E,0x09,0x01,0x02}, // f
+    {0x0C,0x52,0x52,0x52,0x3E}, // g
+    {0x7F,0x08,0x04,0x04,0x78}, // h
+    {0x00,0x44,0x7D,0x40,0x00}, // i
+    {0x20,0x40,0x44,0x3D,0x00}, // j
+    {0x7F,0x10,0x28,0x44,0x00}, // k
+    {0x00,0x41,0x7F,0x40,0x00}, // l
+    {0x7C,0x04,0x18,0x04,0x78}, // m
+    {0x7C,0x08,0x04,0x04,0x78}, // n
+    {0x38,0x44,0x44,0x44,0x38}, // o
+    {0x7C,0x14,0x14,0x14,0x08}, // p
+    {0x08,0x14,0x14,0x18,0x7C}, // q
+    {0x7C,0x08,0x04,0x04,0x08}, // r
+    {0x48,0x54,0x54,0x54,0x20}, // s
+    {0x04,0x3F,0x44,0x40,0x20}, // t
+    {0x3C,0x40,0x40,0x20,0x7C}, // u
+    {0x1C,0x20,0x40,0x20,0x1C}, // v
+    {0x3C,0x40,0x30,0x40,0x3C}, // w
+    {0x44,0x28,0x10,0x28,0x44}, // x
+    {0x0C,0x50,0x50,0x50,0x3C}, // y
+    {0x44,0x64,0x54,0x4C,0x44}, // z
+    {0x00,0x08,0x36,0x41,0x00}, // {
+    {0x00,0x00,0x7F,0x00,0x00}, // |
+    {0x00,0x41,0x36,0x08,0x00}, // }
+    {0x10,0x08,0x08,0x10,0x08}, // ~
+    {0x00,0x00,0x00,0x00,0x00}  // DEL
+};
+
+void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    if (c < 32 || c > 127) c = '?';
+    
+    for (uint8_t i = 0; i < 5; i++) {
+        uint8_t line = font_5x7[c - 32][i];
+        for (uint8_t j = 0; j < 7; j++) {
+            if (line & 0x01) {
+                if (size == 1) {
+                    LCD_DrawPixel(x + i, y + j, color);
+                } else {
+                    LCD_FillRect(x + i * size, y + j * size, size, size, color);
+                }
+            } else if (bg != color) {
+                if (size == 1) {
+                    LCD_DrawPixel(x + i, y + j, bg);
+                } else {
+                    LCD_FillRect(x + i * size, y + j * size, size, size, bg);
+                }
+            }
+            line >>= 1;
+        }
+    }
+}
+
+void LCD_DrawString(uint16_t x, uint16_t y, const char* str, uint16_t color, uint16_t bg, uint8_t size) {
+    while (*str) {
+        LCD_DrawChar(x, y, *str++, color, bg, size);
+        x += 6 * size;  // 5 pixel width + 1 space
+        if (x + 6 * size > LCD_WIDTH) {
+            x = 0;
+            y += 8 * size;
+        }
+        if (y + 8 * size > LCD_HEIGHT) break;
+    }
+}
+
+void LCD_DrawNumber(uint16_t x, uint16_t y, int32_t num, uint16_t color, uint16_t bg, uint8_t size) {
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%ld", num);
+    LCD_DrawString(x, y, buf, color, bg, size);
+}
+
+void LCD_SetBacklight(uint8_t level) {
+    backlight_level = level;
+    if (level > 100) level = 100;
+    
+    // Use ledc for PWM on backlight pin (1024 max for 10-bit resolution)
+    uint32_t duty = level * 1024 / 100;
+    if (duty > 1024) duty = 1024;
+    ledcWrite(LCD_BL_PIN, duty);
+}
+
+uint8_t LCD_GetBacklight(void) {
+    return backlight_level;
+}
+
+// Progress bar
+void LCD_DrawProgressBar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
+                         uint8_t progress, uint16_t fg, uint16_t bg, uint16_t border) {
+    // Draw border
+    LCD_DrawRect(x, y, w, h, border);
+    
+    // Fill background
+    LCD_FillRect(x + 1, y + 1, w - 2, h - 2, bg);
+    
+    // Fill progress
+    if (progress > 100) progress = 100;
+    uint16_t fill_w = (w - 2) * progress / 100;
+    if (fill_w > 0) {
+        LCD_FillRect(x + 1, y + 1, fill_w, h - 2, fg);
+    }
+}
+
+// Arc drawing for gauges
+void LCD_DrawArc(uint16_t x, uint16_t y, uint16_t r, 
+                 uint16_t start_angle, uint16_t end_angle, uint16_t color) {
+    for (uint16_t angle = start_angle; angle <= end_angle; angle++) {
+        float rad = angle * 3.14159f / 180.0f;
+        int px = x + (int)(r * cos(rad));
+        int py = y - (int)(r * sin(rad));  // Y is inverted
+        LCD_DrawPixel(px, py, color);
+    }
+}
+
+void LCD_DrawThickArc(uint16_t x, uint16_t y, uint16_t r, uint16_t thickness,
+                      uint16_t start_angle, uint16_t end_angle, uint16_t color) {
+    for (uint16_t t = 0; t < thickness; t++) {
+        LCD_DrawArc(x, y, r - t, start_angle, end_angle, color);
+    }
+}

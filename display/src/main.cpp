@@ -1,367 +1,373 @@
 /*
- * ============================================================================
- * MX5-Telemetry Display Module - ESP32-S3 Round Touch Screen
- * ============================================================================
+ * MX5 Telemetry Display - ESP32-S3 Round LCD
+ * Waveshare ESP32-S3-Touch-LCD-1.85 (360x360)
  * 
- * UI identical to Python simulator - see tools/simulators/ui_simulator/
- * 
- * HARDWARE:
- * - ESP32-S3 with 1.85" Round Touch Screen (360x360 IPS LCD)
- * - Built-in QMI8658 IMU for G-Force measurement
- * - 8Ω 2W Speaker with onboard Audio Codec
- * 
- * SCREENS (synchronized with Pi display):
- * 1. Overview    - Gear, speed, TPMS summary, alerts
- * 2. RPM/Speed   - Primary driving data with arc gauge
- * 3. TPMS        - Tire pressure and temperatures
- * 4. Engine      - Coolant, oil, fuel, voltage
- * 5. G-Force     - Lateral and longitudinal G visualization
- * 6. Settings    - Configuration options
- * 
- * CONTROLS (SWC - Steering Wheel Controls):
- * - RES+/SET-   = Navigate between screens
- * - VOL+/VOL-   = Adjust values (in settings)
- * - ON/OFF      = Select / Enter settings
- * - CANCEL      = Exit settings / Back
- * 
- * ============================================================================
+ * This display shows real-time telemetry data from the Raspberry Pi
+ * connected via serial communication.
  */
 
 #include <Arduino.h>
+#include "Display_ST77916.h"
+#include "Touch_CST816.h"
 
-// Display library
-#define LGFX_USE_V1
-#include <LovyanGFX.hpp>
+// Screen dimensions
+#define SCREEN_WIDTH  360
+#define SCREEN_HEIGHT 360
+#define CENTER_X      (SCREEN_WIDTH / 2)
+#define CENTER_Y      (SCREEN_HEIGHT / 2)
 
-// UI components
-#include "ui_config.h"
-#include "ui_renderer.h"
+// Colors for MX5 theme
+#define MX5_RED       RGB565(200, 0, 0)
+#define MX5_ORANGE    RGB565(255, 140, 0)
+#define MX5_YELLOW    RGB565(255, 220, 0)
+#define MX5_GREEN     RGB565(0, 180, 0)
+#define MX5_BLUE      RGB565(0, 100, 200)
+#define MX5_WHITE     COLOR_WHITE
+#define MX5_BLACK     COLOR_BLACK
+#define MX5_GRAY      RGB565(60, 60, 60)
+#define MX5_DARKGRAY  RGB565(30, 30, 30)
 
-// ============================================================================
-// Display Configuration for 1.85" Round LCD (GC9A01)
-// ============================================================================
-class LGFX : public lgfx::LGFX_Device {
-    lgfx::Panel_GC9A01 _panel_instance;
-    lgfx::Bus_SPI _bus_instance;
-    lgfx::Light_PWM _light_instance;
-    lgfx::Touch_FT5x06 _touch_instance;
-
-public:
-    LGFX(void) {
-        // SPI Bus Configuration
-        {
-            auto cfg = _bus_instance.config();
-            cfg.spi_host = SPI2_HOST;
-            cfg.spi_mode = 0;
-            cfg.freq_write = 80000000;
-            cfg.freq_read = 16000000;
-            cfg.spi_3wire = true;
-            cfg.use_lock = true;
-            cfg.dma_channel = SPI_DMA_CH_AUTO;
-            
-            // Pin configuration - adjust based on your specific board
-            cfg.pin_sclk = 12;  // SCK
-            cfg.pin_mosi = 11;  // MOSI
-            cfg.pin_miso = -1;  // Not used
-            cfg.pin_dc = 8;     // Data/Command
-            
-            _bus_instance.config(cfg);
-            _panel_instance.setBus(&_bus_instance);
-        }
-
-        // Panel Configuration
-        {
-            auto cfg = _panel_instance.config();
-            cfg.pin_cs = 10;    // Chip Select
-            cfg.pin_rst = 14;   // Reset
-            cfg.pin_busy = -1;  // Not used
-            
-            cfg.panel_width = DISPLAY_SIZE;
-            cfg.panel_height = DISPLAY_SIZE;
-            cfg.offset_x = 0;
-            cfg.offset_y = 0;
-            cfg.offset_rotation = 0;
-            cfg.dummy_read_pixel = 8;
-            cfg.dummy_read_bits = 1;
-            cfg.readable = true;
-            cfg.invert = true;
-            cfg.rgb_order = false;
-            cfg.dlen_16bit = false;
-            cfg.bus_shared = true;
-            
-            _panel_instance.config(cfg);
-        }
-
-        // Backlight Configuration
-        {
-            auto cfg = _light_instance.config();
-            cfg.pin_bl = 45;    // Backlight PWM pin
-            cfg.invert = false;
-            cfg.freq = 44100;
-            cfg.pwm_channel = 7;
-            
-            _light_instance.config(cfg);
-            _panel_instance.setLight(&_light_instance);
-        }
-
-        // Touch Configuration (FT5x06/FT6206)
-        {
-            auto cfg = _touch_instance.config();
-            cfg.x_min = 0;
-            cfg.x_max = DISPLAY_SIZE - 1;
-            cfg.y_min = 0;
-            cfg.y_max = DISPLAY_SIZE - 1;
-            cfg.pin_int = 3;    // Touch interrupt
-            cfg.bus_shared = true;
-            cfg.offset_rotation = 0;
-            
-            // I2C configuration for touch
-            cfg.i2c_port = 0;
-            cfg.i2c_addr = 0x38;
-            cfg.pin_sda = 4;
-            cfg.pin_scl = 5;
-            cfg.freq = 400000;
-            
-            _touch_instance.config(cfg);
-            _panel_instance.setTouch(&_touch_instance);
-        }
-
-        setPanel(&_panel_instance);
-    }
+// Telemetry data structure
+struct TelemetryData {
+    float rpm;
+    float speed;
+    int gear;
+    float coolantTemp;
+    float oilTemp;
+    float fuelLevel;
+    float voltage;
+    float tirePressure[4];  // FL, FR, RL, RR
+    float gForceX;
+    float gForceY;
+    bool engineRunning;
+    bool connected;
 };
 
-// ============================================================================
-// Global Objects
-// ============================================================================
-LGFX display;
-UIRenderer* ui = nullptr;
+TelemetryData telemetry = {0};
 
-// State
-Screen currentScreen = SCREEN_OVERVIEW;
-bool sleeping = false;
-bool demoMode = true;
-int demoRpmDir = 1;
+// Display state
+enum ScreenMode {
+    SCREEN_OVERVIEW,
+    SCREEN_RPM,
+    SCREEN_TPMS,
+    SCREEN_ENGINE,
+    SCREEN_GFORCE,
+    SCREEN_COUNT
+};
 
-// Data
-TelemetryData telemetry;
-DisplaySettings settings;
+ScreenMode currentScreen = SCREEN_OVERVIEW;
+unsigned long lastUpdate = 0;
+unsigned long lastTouchTime = 0;
+bool needsRedraw = true;
 
-// Timing
-uint32_t lastUpdate = 0;
-uint32_t lastRender = 0;
-const uint32_t UPDATE_INTERVAL = 50;    // 20 Hz telemetry update
-const uint32_t RENDER_INTERVAL = 33;    // ~30 FPS
+// Function prototypes
+void drawOverviewScreen();
+void drawRPMScreen();
+void drawTPMSScreen();
+void drawEngineScreen();
+void drawGForceScreen();
+void handleTouch();
+void updateTelemetry();
 
-// ============================================================================
-// Button Handling (placeholder - connect to actual SWC input)
-// ============================================================================
-ButtonEvent readButton() {
-    // TODO: Implement actual button reading from CAN bus or GPIO
-    // For now, use touch screen for navigation
-    
-    static uint32_t lastTouch = 0;
-    static int16_t lastTouchY = -1;
-    
-    uint16_t x, y;
-    if (display.getTouch(&x, &y)) {
-        if (millis() - lastTouch > 300) {  // Debounce
-            lastTouch = millis();
-            
-            // Swipe detection
-            if (lastTouchY >= 0) {
-                int dy = y - lastTouchY;
-                if (dy < -50) return BTN_RES_PLUS;   // Swipe up = previous screen
-                if (dy > 50) return BTN_SET_MINUS;   // Swipe down = next screen
-            }
-            lastTouchY = y;
-            
-            // Tap zones
-            if (y < 120) return BTN_RES_PLUS;        // Top = previous
-            if (y > 240) return BTN_SET_MINUS;       // Bottom = next
-            if (x < 120) return BTN_VOL_DOWN;        // Left = decrease
-            if (x > 240) return BTN_VOL_UP;          // Right = increase
-            return BTN_ON_OFF;                        // Center = select
-        }
-    } else {
-        lastTouchY = -1;
-    }
-    
-    return BTN_NONE;
-}
-
-void handleButton(ButtonEvent btn) {
-    if (btn == BTN_NONE) return;
-    
-    if (currentScreen == SCREEN_SETTINGS) {
-        // Settings navigation
-        int sel = ui->getSettingsSelection();
-        bool editMode = ui->getSettingsEditMode();
-        
-        if (btn == BTN_RES_PLUS && !editMode) {
-            if (sel > 0) ui->setSettingsSelection(sel - 1);
-        }
-        else if (btn == BTN_SET_MINUS && !editMode) {
-            if (sel < 6) ui->setSettingsSelection(sel + 1);
-        }
-        else if (btn == BTN_ON_OFF) {
-            if (sel == 6) {  // Back
-                currentScreen = SCREEN_OVERVIEW;
-                ui->setSettingsSelection(0);
-            } else {
-                ui->setSettingsEditMode(!editMode);
-            }
-        }
-        else if (btn == BTN_CANCEL) {
-            if (editMode) {
-                ui->setSettingsEditMode(false);
-            } else {
-                currentScreen = SCREEN_OVERVIEW;
-                ui->setSettingsSelection(0);
-            }
-        }
-        else if (editMode) {
-            int delta = (btn == BTN_VOL_UP) ? 1 : ((btn == BTN_VOL_DOWN) ? -1 : 0);
-            if (delta != 0) {
-                switch (sel) {
-                    case 0: settings.brightness = constrain(settings.brightness + delta * 5, 10, 100); break;
-                    case 1: settings.shift_rpm = constrain(settings.shift_rpm + delta * 100, 4000, 7500); break;
-                    case 2: settings.redline_rpm = constrain(settings.redline_rpm + delta * 100, 5000, 8000); break;
-                    case 3: settings.use_mph = !settings.use_mph; break;
-                    case 4: settings.tire_low_psi = constrain(settings.tire_low_psi + delta * 0.5f, 20.0f, 35.0f); break;
-                    case 5: settings.coolant_warn_f = constrain(settings.coolant_warn_f + delta * 5, 180, 250); break;
-                }
-                // Apply brightness immediately
-                if (sel == 0) {
-                    display.setBrightness(settings.brightness * 255 / 100);
-                }
-            }
-        }
-    } else {
-        // Normal screen navigation
-        if (btn == BTN_RES_PLUS) {
-            int s = (int)currentScreen - 1;
-            if (s < 0) s = SCREEN_COUNT - 1;
-            currentScreen = (Screen)s;
-        }
-        else if (btn == BTN_SET_MINUS) {
-            int s = (int)currentScreen + 1;
-            if (s >= SCREEN_COUNT) s = 0;
-            currentScreen = (Screen)s;
-        }
-        else if (btn == BTN_ON_OFF && currentScreen == SCREEN_SETTINGS) {
-            // Enter settings edit mode
-        }
-        else if (btn == BTN_CANCEL) {
-            sleeping = !sleeping;
-        }
-    }
-}
-
-// ============================================================================
-// Demo Mode Animation
-// ============================================================================
-void updateDemo() {
-    if (!demoMode) return;
-    
-    // RPM oscillation
-    telemetry.rpm += 50 * demoRpmDir;
-    if (telemetry.rpm >= 7200) demoRpmDir = -1;
-    if (telemetry.rpm <= 800) demoRpmDir = 1;
-    
-    // Gear based on RPM
-    if (telemetry.rpm < 2000) telemetry.gear = 1;
-    else if (telemetry.rpm < 3500) telemetry.gear = 2;
-    else if (telemetry.rpm < 5000) telemetry.gear = 3;
-    else if (telemetry.rpm < 6000) telemetry.gear = 4;
-    else telemetry.gear = 5;
-    
-    // Speed approximation
-    telemetry.speed_kmh = telemetry.rpm * telemetry.gear / 100;
-    
-    // Slowly varying values
-    telemetry.g_lateral = sin(millis() / 1000.0f) * 0.8f;
-    telemetry.g_longitudinal = cos(millis() / 1500.0f) * 0.5f;
-    
-    // Tire temps vary slightly
-    for (int i = 0; i < 4; i++) {
-        telemetry.tire_temp[i] = 95.0f + sin(millis() / 2000.0f + i) * 5.0f;
-    }
-    
-    // Lap time
-    telemetry.lap_time_ms += UPDATE_INTERVAL;
-    if (telemetry.lap_time_ms > 120000) telemetry.lap_time_ms = 0;
-}
-
-// ============================================================================
-// Setup
-// ============================================================================
 void setup() {
     Serial.begin(115200);
-    delay(500);
+    delay(100);
     
-    Serial.println("============================================");
-    Serial.println("MX5-Telemetry Round Display Module");
-    Serial.println("ESP32-S3 with 1.85\" Touch Screen (360x360)");
-    Serial.println("UI Version: 2.0.0 (Simulator Match)");
-    Serial.println("============================================");
+    Serial.println("MX5 Telemetry Display Starting...");
+    Serial.println("Initializing LCD...");
     
-    // Initialize display
-    display.init();
-    display.setRotation(0);
-    display.setBrightness(settings.brightness * 255 / 100);
-    display.fillScreen(COLOR_BG);
+    // Initialize display and touch
+    LCD_Init();
     
-    Serial.println("[DISPLAY] Initialized 360x360 round display");
+    Serial.println("Display initialized!");
     
-    // Create UI renderer
-    ui = new UIRenderer(&display);
-    ui->setTelemetry(&telemetry);
-    ui->setSettings(&settings);
+    // Draw startup screen
+    LCD_Clear(MX5_BLACK);
+    LCD_FillCircle(CENTER_X, CENTER_Y, 150, MX5_DARKGRAY);
+    LCD_FillCircle(CENTER_X, CENTER_Y, 140, MX5_BLACK);
     
-    Serial.println("[UI] Created UI renderer");
+    // Draw MX5 logo placeholder
+    LCD_FillCircle(CENTER_X, CENTER_Y - 30, 40, MX5_RED);
     
-    // Show startup screen
-    display.setTextColor(COLOR_ACCENT);
-    display.setTextDatum(middle_center);
-    display.setFont(&fonts::Font4);
-    display.drawString("MX5", CENTER, CENTER - 30);
-    display.setFont(&fonts::Font2);
-    display.drawString("TELEMETRY", CENTER, CENTER + 10);
-    display.setTextColor(COLOR_GRAY);
-    display.setFont(&fonts::Font0);
-    display.drawString("Initializing...", CENTER, CENTER + 50);
+    delay(1000);
     
-    delay(1500);
+    // Set demo values for testing
+    telemetry.rpm = 3500;
+    telemetry.speed = 65;
+    telemetry.gear = 3;
+    telemetry.coolantTemp = 85;
+    telemetry.oilTemp = 95;
+    telemetry.fuelLevel = 75;
+    telemetry.voltage = 14.2;
+    telemetry.tirePressure[0] = 32;
+    telemetry.tirePressure[1] = 32;
+    telemetry.tirePressure[2] = 30;
+    telemetry.tirePressure[3] = 30;
+    telemetry.gForceX = 0.2;
+    telemetry.gForceY = -0.1;
+    telemetry.engineRunning = true;
+    telemetry.connected = true;
     
-    Serial.println("[READY] Display module initialized");
-    Serial.println();
-    Serial.println("Controls:");
-    Serial.println("  Touch top/bottom = Navigate screens");
-    Serial.println("  Touch center = Select");
-    Serial.println("  Touch left/right = Adjust values");
+    needsRedraw = true;
+    Serial.println("Setup complete!");
 }
 
-// ============================================================================
-// Main Loop
-// ============================================================================
 void loop() {
-    uint32_t now = millis();
+    // Handle touch input
+    Touch_Loop();
+    handleTouch();
     
-    // Update telemetry/demo at fixed rate
-    if (now - lastUpdate >= UPDATE_INTERVAL) {
-        lastUpdate = now;
-        updateDemo();
+    // Update display at 30fps
+    if (millis() - lastUpdate > 33) {
+        lastUpdate = millis();
         
-        // Handle button input
-        ButtonEvent btn = readButton();
-        handleButton(btn);
+        // Demo: animate RPM
+        static float rpmDir = 100;
+        telemetry.rpm += rpmDir;
+        if (telemetry.rpm > 7000) rpmDir = -100;
+        if (telemetry.rpm < 1000) rpmDir = 100;
+        
+        // Demo: slight g-force variation
+        telemetry.gForceX = sin(millis() / 1000.0) * 0.3;
+        telemetry.gForceY = cos(millis() / 1500.0) * 0.2;
+        
+        needsRedraw = true;
     }
     
-    // Render at fixed frame rate
-    if (now - lastRender >= RENDER_INTERVAL) {
-        lastRender = now;
-        ui->render(currentScreen, sleeping);
+    // Redraw screen if needed
+    if (needsRedraw) {
+        needsRedraw = false;
+        
+        switch (currentScreen) {
+            case SCREEN_OVERVIEW:
+                drawOverviewScreen();
+                break;
+            case SCREEN_RPM:
+                drawRPMScreen();
+                break;
+            case SCREEN_TPMS:
+                drawTPMSScreen();
+                break;
+            case SCREEN_ENGINE:
+                drawEngineScreen();
+                break;
+            case SCREEN_GFORCE:
+                drawGForceScreen();
+                break;
+        }
     }
     
-    delay(1);
+    delay(10);
+}
+
+void handleTouch() {
+    if (touch_data.gesture != NONE && millis() - lastTouchTime > 300) {
+        lastTouchTime = millis();
+        
+        switch (touch_data.gesture) {
+            case SWIPE_LEFT:
+                currentScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
+                needsRedraw = true;
+                LCD_Clear(MX5_BLACK);
+                break;
+            case SWIPE_RIGHT:
+                currentScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+                needsRedraw = true;
+                LCD_Clear(MX5_BLACK);
+                break;
+            case SINGLE_CLICK:
+                // Toggle backlight or other action
+                break;
+            default:
+                break;
+        }
+        
+        // Clear gesture after handling
+        touch_data.gesture = NONE;
+    }
+}
+
+void drawOverviewScreen() {
+    // Clear only the changing areas
+    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    
+    // Draw outer ring
+    LCD_DrawCircle(CENTER_X, CENTER_Y, 175, MX5_GRAY);
+    
+    // Gear indicator (center)
+    char gearStr[4];
+    if (telemetry.gear == 0) {
+        strcpy(gearStr, "N");
+    } else if (telemetry.gear == -1) {
+        strcpy(gearStr, "R");
+    } else {
+        snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
+    }
+    
+    // Draw large gear number
+    LCD_FillCircle(CENTER_X, CENTER_Y - 20, 50, MX5_DARKGRAY);
+    LCD_DrawCircle(CENTER_X, CENTER_Y - 20, 50, MX5_WHITE);
+    
+    // Speed (bottom center)
+    LCD_FillRect(CENTER_X - 60, CENTER_Y + 50, 120, 40, MX5_BLACK);
+    char speedStr[16];
+    snprintf(speedStr, sizeof(speedStr), "%.0f", telemetry.speed);
+    
+    // RPM bar (top)
+    uint16_t rpmBarWidth = (telemetry.rpm / 8000.0) * 200;
+    uint16_t rpmColor = MX5_GREEN;
+    if (telemetry.rpm > 6000) rpmColor = MX5_RED;
+    else if (telemetry.rpm > 4500) rpmColor = MX5_ORANGE;
+    else if (telemetry.rpm > 3000) rpmColor = MX5_YELLOW;
+    
+    LCD_FillRect(CENTER_X - 100, 30, 200, 15, MX5_DARKGRAY);
+    LCD_FillRect(CENTER_X - 100, 30, rpmBarWidth, 15, rpmColor);
+    LCD_DrawRect(CENTER_X - 100, 30, 200, 15, MX5_WHITE);
+    
+    // Status indicators (bottom)
+    uint16_t engineColor = telemetry.engineRunning ? MX5_GREEN : MX5_RED;
+    uint16_t connColor = telemetry.connected ? MX5_GREEN : MX5_RED;
+    
+    LCD_FillCircle(CENTER_X - 50, CENTER_Y + 120, 8, engineColor);
+    LCD_FillCircle(CENTER_X + 50, CENTER_Y + 120, 8, connColor);
+    
+    // Page indicator dots
+    for (int i = 0; i < SCREEN_COUNT; i++) {
+        uint16_t dotColor = (i == currentScreen) ? MX5_WHITE : MX5_GRAY;
+        LCD_FillCircle(CENTER_X - 40 + i * 20, SCREEN_HEIGHT - 20, 4, dotColor);
+    }
+}
+
+void drawRPMScreen() {
+    // RPM gauge screen
+    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    
+    // Draw RPM arc gauge
+    float rpmPercent = telemetry.rpm / 8000.0;
+    uint16_t rpmColor = MX5_GREEN;
+    if (telemetry.rpm > 6500) rpmColor = MX5_RED;
+    else if (telemetry.rpm > 5000) rpmColor = MX5_ORANGE;
+    else if (telemetry.rpm > 3500) rpmColor = MX5_YELLOW;
+    
+    // Draw gauge background arc
+    for (int i = 0; i < 10; i++) {
+        uint16_t segColor = (i < rpmPercent * 10) ? rpmColor : MX5_DARKGRAY;
+        float angle1 = -135 + i * 27;
+        float angle2 = -135 + (i + 1) * 27 - 2;
+        
+        // Simple arc segments as filled rectangles rotated
+        float midAngle = (angle1 + angle2) / 2.0 * PI / 180.0;
+        int px = CENTER_X + cos(midAngle) * 130;
+        int py = CENTER_Y + sin(midAngle) * 130;
+        LCD_FillCircle(px, py, 12, segColor);
+    }
+    
+    // RPM number
+    LCD_FillRect(CENTER_X - 50, CENTER_Y - 20, 100, 40, MX5_BLACK);
+    char rpmStr[16];
+    snprintf(rpmStr, sizeof(rpmStr), "%.0f", telemetry.rpm);
+    
+    // Page indicator
+    for (int i = 0; i < SCREEN_COUNT; i++) {
+        uint16_t dotColor = (i == currentScreen) ? MX5_WHITE : MX5_GRAY;
+        LCD_FillCircle(CENTER_X - 40 + i * 20, SCREEN_HEIGHT - 20, 4, dotColor);
+    }
+}
+
+void drawTPMSScreen() {
+    // Tire pressure screen - car outline with 4 tires
+    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    
+    // Draw car outline (simplified rectangle)
+    LCD_DrawRect(CENTER_X - 40, CENTER_Y - 80, 80, 160, MX5_WHITE);
+    
+    // Draw tires
+    const int tireW = 30, tireH = 50;
+    const int tireOffsetX = 55, tireOffsetY = 50;
+    
+    // Front Left
+    uint16_t flColor = (telemetry.tirePressure[0] < 28) ? MX5_RED : MX5_GREEN;
+    LCD_FillRect(CENTER_X - tireOffsetX - tireW/2, CENTER_Y - tireOffsetY - tireH/2, tireW, tireH, flColor);
+    
+    // Front Right
+    uint16_t frColor = (telemetry.tirePressure[1] < 28) ? MX5_RED : MX5_GREEN;
+    LCD_FillRect(CENTER_X + tireOffsetX - tireW/2, CENTER_Y - tireOffsetY - tireH/2, tireW, tireH, frColor);
+    
+    // Rear Left
+    uint16_t rlColor = (telemetry.tirePressure[2] < 28) ? MX5_RED : MX5_GREEN;
+    LCD_FillRect(CENTER_X - tireOffsetX - tireW/2, CENTER_Y + tireOffsetY - tireH/2, tireW, tireH, rlColor);
+    
+    // Rear Right
+    uint16_t rrColor = (telemetry.tirePressure[3] < 28) ? MX5_RED : MX5_GREEN;
+    LCD_FillRect(CENTER_X + tireOffsetX - tireW/2, CENTER_Y + tireOffsetY - tireH/2, tireW, tireH, rrColor);
+    
+    // Page indicator
+    for (int i = 0; i < SCREEN_COUNT; i++) {
+        uint16_t dotColor = (i == currentScreen) ? MX5_WHITE : MX5_GRAY;
+        LCD_FillCircle(CENTER_X - 40 + i * 20, SCREEN_HEIGHT - 20, 4, dotColor);
+    }
+}
+
+void drawEngineScreen() {
+    // Engine vitals - coolant, oil, fuel, voltage
+    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    
+    // Coolant temp (top left)
+    uint16_t coolantColor = (telemetry.coolantTemp > 100) ? MX5_RED : MX5_BLUE;
+    LCD_FillRect(CENTER_X - 120, CENTER_Y - 80, 100, 60, MX5_DARKGRAY);
+    LCD_DrawRect(CENTER_X - 120, CENTER_Y - 80, 100, 60, coolantColor);
+    
+    // Oil temp (top right)
+    uint16_t oilColor = (telemetry.oilTemp > 120) ? MX5_RED : MX5_ORANGE;
+    LCD_FillRect(CENTER_X + 20, CENTER_Y - 80, 100, 60, MX5_DARKGRAY);
+    LCD_DrawRect(CENTER_X + 20, CENTER_Y - 80, 100, 60, oilColor);
+    
+    // Fuel (bottom left)
+    uint16_t fuelColor = (telemetry.fuelLevel < 15) ? MX5_RED : MX5_YELLOW;
+    LCD_FillRect(CENTER_X - 120, CENTER_Y + 20, 100, 60, MX5_DARKGRAY);
+    LCD_DrawRect(CENTER_X - 120, CENTER_Y + 20, 100, 60, fuelColor);
+    
+    // Voltage (bottom right)
+    uint16_t voltColor = (telemetry.voltage < 12.5) ? MX5_RED : MX5_GREEN;
+    LCD_FillRect(CENTER_X + 20, CENTER_Y + 20, 100, 60, MX5_DARKGRAY);
+    LCD_DrawRect(CENTER_X + 20, CENTER_Y + 20, 100, 60, voltColor);
+    
+    // Page indicator
+    for (int i = 0; i < SCREEN_COUNT; i++) {
+        uint16_t dotColor = (i == currentScreen) ? MX5_WHITE : MX5_GRAY;
+        LCD_FillCircle(CENTER_X - 40 + i * 20, SCREEN_HEIGHT - 20, 4, dotColor);
+    }
+}
+
+void drawGForceScreen() {
+    // G-Force display with centered dot
+    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    
+    // Draw grid
+    LCD_DrawCircle(CENTER_X, CENTER_Y, 50, MX5_GRAY);
+    LCD_DrawCircle(CENTER_X, CENTER_Y, 100, MX5_GRAY);
+    LCD_DrawCircle(CENTER_X, CENTER_Y, 150, MX5_GRAY);
+    
+    // Draw crosshairs
+    LCD_FillRect(CENTER_X - 150, CENTER_Y, 300, 1, MX5_GRAY);
+    LCD_FillRect(CENTER_X, CENTER_Y - 150, 1, 300, MX5_GRAY);
+    
+    // Calculate G-force dot position (max 1.5G = full radius)
+    int gX = CENTER_X + (telemetry.gForceX / 1.5) * 140;
+    int gY = CENTER_Y + (telemetry.gForceY / 1.5) * 140;
+    
+    // Draw G-force indicator
+    LCD_FillCircle(gX, gY, 15, MX5_RED);
+    LCD_DrawCircle(gX, gY, 15, MX5_WHITE);
+    
+    // Page indicator
+    for (int i = 0; i < SCREEN_COUNT; i++) {
+        uint16_t dotColor = (i == currentScreen) ? MX5_WHITE : MX5_GRAY;
+        LCD_FillCircle(CENTER_X - 40 + i * 20, SCREEN_HEIGHT - 20, 4, dotColor);
+    }
 }
