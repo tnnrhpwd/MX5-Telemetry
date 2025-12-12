@@ -39,7 +39,7 @@ struct CST816_Touch {
 };
 
 extern struct CST816_Touch touch_data;
-extern volatile uint8_t Touch_interrupts;
+extern uint8_t Touch_interrupts;  // Match demo - not volatile
 
 // Touch functions
 uint8_t Touch_Init();
@@ -49,4 +49,4 @@ void CST816_AutoSleep(bool Sleep_State);
 uint16_t CST816_Read_cfg(void);
 String Touch_GestureName(void);
 uint8_t Touch_Read_Data(void);
-void IRAM_ATTR Touch_CST816_ISR(void);
+void ARDUINO_ISR_ATTR Touch_CST816_ISR(void);  // Match demo ISR attribute

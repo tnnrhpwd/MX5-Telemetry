@@ -3,9 +3,14 @@ ESP32-S3 Serial Handler for Raspberry Pi
 
 Handles bidirectional serial communication with ESP32-S3 round display:
 - Receives: TPMS data (BLE sensors) and IMU data (QMI8658 G-force)
-- Sends: CAN telemetry data and SWC button events
+- Sends: CAN telemetry data, screen navigation, and SWC button events
 
-Serial Connection:
+Serial Connection (USB-C - preferred):
+    Pi USB-A port -> ESP32-S3 USB-C port
+    Shows as /dev/ttyACM0 on Pi (USB CDC)
+    Single cable for power AND data!
+
+Serial Connection (GPIO UART - alternative):
     Pi GPIO 14 (TXD) -> ESP32 RX (GPIO 44)
     Pi GPIO 15 (RXD) -> ESP32 TX (GPIO 43)
     Baud: 115200
@@ -16,14 +21,20 @@ Protocol (ESP32 -> Pi):
     TPMS:2,33.1,26.0,88\n    - Tire 2
     TPMS:3,32.9,25.8,90\n    - Tire 3
     IMU:0.25,-0.15\n         - G-force: lateral, longitudinal
+    OK:SCREEN_X\n            - Confirmation of screen change
 
 Protocol (Pi -> ESP32):
     TEL:3500,65,3,45,185,210,14.2\n  - RPM,speed,gear,throttle,coolant,oil,voltage
+    SCREEN:0\n                        - Change to screen 0 (Overview)
+    SCREEN:1\n                        - Change to screen 1 (RPM)
+    LEFT\n                            - Next screen
+    RIGHT\n                           - Previous screen
     SWC:RES_PLUS\n                    - Steering wheel button event
 """
 
 import threading
 import time
+import glob
 from typing import Optional
 
 # Try to import serial library
@@ -38,18 +49,26 @@ except ImportError:
 class ESP32SerialHandler:
     """Handles serial communication with ESP32-S3 display"""
     
-    # Default serial port for Pi UART
-    DEFAULT_PORT = '/dev/serial0'  # Pi GPIO UART (14/15)
+    # Serial port options (tried in order)
+    USB_PORTS = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']
+    GPIO_PORT = '/dev/serial0'  # Pi GPIO UART (14/15)
     BAUD_RATE = 115200
+    
+    # Screen mapping (must match ESP32 ScreenMode enum)
+    SCREEN_OVERVIEW = 0
+    SCREEN_RPM = 1
+    SCREEN_TPMS = 2
+    SCREEN_ENGINE = 3
+    SCREEN_GFORCE = 4
     
     def __init__(self, telemetry_data, port: str = None):
         """
         Args:
             telemetry_data: TelemetryData object to update with received values
-            port: Serial port path (default: /dev/serial0)
+            port: Serial port path (default: auto-detect USB then GPIO)
         """
         self.telemetry = telemetry_data
-        self.port = port or self.DEFAULT_PORT
+        self.port = port  # Will be auto-detected if None
         
         self.serial_conn = None
         self._running = False
@@ -59,15 +78,52 @@ class ESP32SerialHandler:
         self.last_rx_time = 0
         self.last_tx_time = 0
         
+        # Current ESP32 screen (synced from acknowledgements)
+        self.esp32_screen = 0
+        
         # TPMS data cache (updated from ESP32)
         self.tpms_pressure = [0.0, 0.0, 0.0, 0.0]  # PSI
         self.tpms_temp = [0.0, 0.0, 0.0, 0.0]      # °C
         self.tpms_battery = [0, 0, 0, 0]           # %
+    
+    def _find_serial_port(self) -> Optional[str]:
+        """Auto-detect ESP32 serial port (USB preferred over GPIO)"""
+        # Try USB ports first (ESP32-S3 USB CDC)
+        for port in self.USB_PORTS:
+            try:
+                import os
+                if os.path.exists(port):
+                    # Try to open it briefly
+                    test = serial.Serial(port, self.BAUD_RATE, timeout=0.1)
+                    test.close()
+                    print(f"Found ESP32 on USB: {port}")
+                    return port
+            except Exception:
+                pass
+        
+        # Fall back to GPIO UART
+        try:
+            import os
+            if os.path.exists(self.GPIO_PORT):
+                print(f"Using GPIO UART: {self.GPIO_PORT}")
+                return self.GPIO_PORT
+        except Exception:
+            pass
+        
+        return None
         
     def start(self) -> bool:
         """Initialize and start serial communication"""
         if not SERIAL_AVAILABLE:
             print("Serial library not available")
+            return False
+        
+        # Auto-detect port if not specified
+        if not self.port:
+            self.port = self._find_serial_port()
+        
+        if not self.port:
+            print("No ESP32 serial port found")
             return False
         
         try:
@@ -133,9 +189,21 @@ class ESP32SerialHandler:
                 self._parse_tpms(line[5:])
             elif line.startswith("IMU:"):
                 self._parse_imu(line[4:])
-            else:
-                # Unknown message type
+            elif line.startswith("OK:SCREEN_"):
+                # Screen change acknowledgement
+                try:
+                    self.esp32_screen = int(line[10:])
+                except ValueError:
+                    pass
+            elif line.startswith("OK:"):
+                # Other acknowledgements (SCREEN_NEXT, SCREEN_PREV, etc.)
                 pass
+            elif line.startswith("Touch I2C"):
+                # Ignore touch debug messages
+                pass
+            else:
+                # Log unknown messages for debugging
+                print(f"ESP32: {line}")
         except Exception as e:
             print(f"Error parsing ESP32 data '{line}': {e}")
     
@@ -203,6 +271,54 @@ class ESP32SerialHandler:
     def is_receiving_data(self) -> bool:
         """Check if we're receiving data from ESP32"""
         return (time.time() - self.last_rx_time) < 2.0
+    
+    def send_screen_change(self, screen_index: int):
+        """
+        Send screen change command to ESP32 display.
+        
+        Args:
+            screen_index: Screen number (0-4)
+                0 = Overview
+                1 = RPM/Speed
+                2 = TPMS
+                3 = Engine
+                4 = G-Force
+        """
+        if not self.serial_conn or not self._running:
+            return
+        
+        try:
+            # Clamp to valid range (ESP32 has 5 screens)
+            screen_index = max(0, min(4, screen_index))
+            msg = f"SCREEN:{screen_index}\n"
+            self.serial_conn.write(msg.encode('utf-8'))
+            self.last_tx_time = time.time()
+            print(f"ESP32: Sent screen change to {screen_index}")
+            
+        except Exception as e:
+            print(f"ESP32 serial write error: {e}")
+    
+    def send_next_screen(self):
+        """Send next screen command to ESP32"""
+        if not self.serial_conn or not self._running:
+            return
+        
+        try:
+            self.serial_conn.write(b"LEFT\n")
+            self.last_tx_time = time.time()
+        except Exception as e:
+            print(f"ESP32 serial write error: {e}")
+    
+    def send_prev_screen(self):
+        """Send previous screen command to ESP32"""
+        if not self.serial_conn or not self._running:
+            return
+        
+        try:
+            self.serial_conn.write(b"RIGHT\n")
+            self.last_tx_time = time.time()
+        except Exception as e:
+            print(f"ESP32 serial write error: {e}")
 
 
 # =============================================================================

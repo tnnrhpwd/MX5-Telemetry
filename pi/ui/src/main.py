@@ -430,8 +430,10 @@ class PiDisplayApp:
             self.esp32_handler = ESP32SerialHandler(self.telemetry)
             if self.esp32_handler.start():
                 print("  ✓ ESP32 connected - receiving TPMS and G-force data")
+                # Sync initial screen
+                self._sync_esp32_screen()
             else:
-                print("  ✗ ESP32 serial failed - check UART connection")
+                print("  ✗ ESP32 serial failed - check USB or UART connection")
                 self.esp32_handler = None
         else:
             print("  ✗ Serial library not available - install pyserial")
@@ -608,11 +610,23 @@ class PiDisplayApp:
             idx = (idx - 1) % len(screens)
             self.current_screen = screens[idx]
             self.sound.play('navigate')
+            self._sync_esp32_screen()
         elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
             # DOWN or RIGHT - next screen
             idx = (idx + 1) % len(screens)
             self.current_screen = screens[idx]
             self.sound.play('navigate')
+            self._sync_esp32_screen()
+    
+    def _sync_esp32_screen(self):
+        """Sync ESP32 display to match Pi screen (first 5 screens only)"""
+        if self.esp32_handler:
+            # Map Pi screens to ESP32 screens (ESP32 has 5 screens: 0-4)
+            # Pi: OVERVIEW=0, RPM_SPEED=1, TPMS=2, ENGINE=3, GFORCE=4, DIAGNOSTICS=5, SYSTEM=6, SETTINGS=7
+            # ESP: OVERVIEW=0, RPM=1, TPMS=2, ENGINE=3, GFORCE=4
+            screen_idx = self.current_screen.value
+            if screen_idx <= 4:
+                self.esp32_handler.send_screen_change(screen_idx)
     
     def _handle_lap_timer_button(self, button: ButtonEvent):
         """Handle lap timer controls on RPM/Speed screen"""
@@ -626,6 +640,7 @@ class PiDisplayApp:
             idx = (idx - 1) % len(screens)
             self.current_screen = screens[idx]
             self.sound.play('navigate')
+            self._sync_esp32_screen()
         elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
             # DOWN or RIGHT - next screen
             screens = list(Screen)
@@ -633,6 +648,7 @@ class PiDisplayApp:
             idx = (idx + 1) % len(screens)
             self.current_screen = screens[idx]
             self.sound.play('navigate')
+            self._sync_esp32_screen()
         elif button == ButtonEvent.ON_OFF:
             # Enter/Select - Start/Stop lap timer
             if self.lap_timer_running:
@@ -671,6 +687,7 @@ class PiDisplayApp:
                 self.current_screen = Screen.OVERVIEW
                 self.settings_selection = 0
                 self.sound.play('back')
+                self._sync_esp32_screen()
             else:
                 self.settings_edit_mode = not self.settings_edit_mode
                 self.sound.play('select')
@@ -682,6 +699,7 @@ class PiDisplayApp:
                 self.current_screen = Screen.OVERVIEW
                 self.settings_selection = 0
                 self.sound.play('back')
+                self._sync_esp32_screen()
         elif self.settings_edit_mode:
             delta = 1 if button == ButtonEvent.VOL_UP else (-1 if button == ButtonEvent.VOL_DOWN else 0)
             if delta != 0:
