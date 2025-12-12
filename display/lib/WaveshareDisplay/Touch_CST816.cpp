@@ -3,31 +3,29 @@
 struct CST816_Touch touch_data = {0};
 volatile uint8_t Touch_interrupts = 0;
 
-// Touch controller uses separate I2C bus (Wire1)
+// Touch controller uses same I2C bus as IO expander (Wire)
 static bool I2C_Read_Touch(uint16_t Driver_addr, uint8_t Reg_addr, uint8_t *Reg_data, uint32_t Length)
 {
-  Wire1.beginTransmission(Driver_addr);
-  Wire1.write(Reg_addr); 
-  if (Wire1.endTransmission(true)) {
-    printf("Touch I2C Read failed\r\n");
+  Wire.beginTransmission(Driver_addr);
+  Wire.write(Reg_addr); 
+  if (Wire.endTransmission(true)) {
     return false;
   }
-  Wire1.requestFrom(Driver_addr, Length);
+  Wire.requestFrom(Driver_addr, Length);
   for (uint32_t i = 0; i < Length; i++) {
-    *Reg_data++ = Wire1.read();
+    *Reg_data++ = Wire.read();
   }
   return true;
 }
 
 static bool I2C_Write_Touch(uint8_t Driver_addr, uint8_t Reg_addr, const uint8_t *Reg_data, uint32_t Length)
 {
-  Wire1.beginTransmission(Driver_addr);
-  Wire1.write(Reg_addr);       
+  Wire.beginTransmission(Driver_addr);
+  Wire.write(Reg_addr);       
   for (uint32_t i = 0; i < Length; i++) {
-    Wire1.write(*Reg_data++);
+    Wire.write(*Reg_data++);
   }
-  if (Wire1.endTransmission(true)) {
-    printf("Touch I2C Write failed\r\n");
+  if (Wire.endTransmission(true)) {
     return false;
   }
   return true;
@@ -38,7 +36,7 @@ void IRAM_ATTR Touch_CST816_ISR(void) {
 }
 
 uint8_t Touch_Init(void) {
-  Wire1.begin(CST816_SDA_PIN, CST816_SCL_PIN, I2C_MASTER_FREQ_HZ);
+  // I2C is already initialized by I2C_Init() on Wire
   CST816_Touch_Reset();
   CST816_Read_cfg();
   CST816_AutoSleep(true);
@@ -46,6 +44,7 @@ uint8_t Touch_Init(void) {
   pinMode(CST816_INT_PIN, INPUT_PULLUP);
   attachInterrupt(CST816_INT_PIN, Touch_CST816_ISR, FALLING); 
 
+  Serial.println("Touch initialized!");
   return true;
 }
 
