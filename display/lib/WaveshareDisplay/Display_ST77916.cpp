@@ -371,6 +371,21 @@ bool QSPI_Init(void) {
 bool LCD_Init(void) {
     Serial.println("LCD_Init: Starting...");
     
+    // Initialize I2C bus for IO expander and touch
+    Serial.println("LCD_Init: Initializing I2C...");
+    I2C_Init();
+    delay(10);
+    
+    // Initialize IO expander (TCA9554PWR) - all outputs
+    Serial.println("LCD_Init: Initializing IO expander...");
+    TCA9554PWR_Init(0x00);  // All pins as outputs
+    delay(10);
+    
+    // Set up backlight PWM
+    Serial.println("LCD_Init: Setting up backlight PWM...");
+    ledcAttach(LCD_BL_PIN, LCD_PWM_FREQ, LCD_PWM_RESOLUTION);
+    ledcWrite(LCD_BL_PIN, 512);  // 50% brightness initially
+    
     // Hardware reset via IO expander
     LCD_HardwareReset();
     
@@ -379,6 +394,10 @@ bool LCD_Init(void) {
         Serial.println("LCD_Init: QSPI initialization failed!");
         return false;
     }
+    
+    // Set backlight to 100%
+    Serial.println("LCD_Init: Enabling backlight...");
+    ledcWrite(LCD_BL_PIN, 1024);  // Full brightness
     
     Serial.println("LCD_Init: Complete");
     return true;

@@ -2,62 +2,78 @@
 
 ## Overview
 
-This module provides a visual dashboard for the MX5 Telemetry system using an ESP32-S3 with a 1.85" round touch screen display.
+This module provides a visual dashboard for the MX5 Telemetry system using the **Waveshare ESP32-S3-Touch-LCD-1.85** round touch screen display.
 
-### Hardware Specifications
-- **MCU**: ESP32-S3 (Dual-core Xtensa LX7, 240MHz)
-- **Display**: 1.85" Round IPS LCD (360×360 pixels)
-- **Touch**: Capacitive touch screen
-- **Audio**: 8Ω 2W Speaker with onboard Audio Codec
-- **Features**: Offline Speech Recognition, AI Speech Interaction
-- **Flash**: 16MB
-- **PSRAM**: 8MB (OPI)
+### Hardware: Waveshare ESP32-S3-Touch-LCD-1.85
+
+| Component | Specification |
+|-----------|---------------|
+| **MCU** | ESP32-S3 (Dual-core Xtensa LX7, 240MHz) |
+| **Display** | 1.85" Round IPS LCD, 360×360 pixels, ST77916 controller (QSPI) |
+| **Touch** | CST816 Capacitive touch controller |
+| **IMU** | QMI8658 (Accelerometer + Gyroscope) |
+| **IO Expander** | TCA9554PWR |
+| **Flash** | 16MB |
+| **PSRAM** | 8MB (OPI) |
+| **Connectivity** | WiFi, BLE, USB-C |
+
+### I2C Device Addresses
+- `0x15` - CST816 Touch Controller  
+- `0x20` - TCA9554PWR IO Expander
+- `0x51` - QMI8658 IMU
 
 ## Quick Start
 
-### 1. Clone Firmware Between Two Modules
-
-If you have two ESP32-S3 modules and want to clone firmware from one to another:
+### Build and Upload Firmware
 
 ```powershell
 cd display
 
-# Step 1: Connect Module A (source) and backup its firmware
-.\scripts\backup_firmware.ps1
+# Build the firmware
+pio run
 
-# Step 2: Disconnect Module A, connect Module B (target)
-# Step 3: Flash the backup to Module B
-.\scripts\flash_firmware.ps1
+# Upload to device (auto-detect COM port)
+pio run --target upload
+
+# Or specify COM port manually
+pio run --target upload --upload-port COM8
 ```
 
-See [WORKFLOW.md](WORKFLOW.md) for detailed instructions.
-
-### 2. Backup Firmware from a Device
-
-Back up firmware from any connected ESP32-S3:
+### Serial Monitor
 
 ```powershell
-# Run the backup script
-.\scripts\backup_firmware.ps1
-
-# Or specify options manually
-.\scripts\backup_firmware.ps1 -ComPort COM5 -FlashSize 16MB
+pio device monitor -b 115200
 ```
 
-The script will:
-1. Auto-detect the ESP32-S3 device
-2. Read device information (chip ID, flash info)
-3. Create a complete flash backup
-4. Save individual partitions (bootloader, partition table, app)
+### Boot Mode (if upload fails)
 
-Backups are saved to `display/firmware_backup/<timestamp>/`
+1. **Hold BOOT button** on the device
+2. **Press RESET button** (or reconnect USB)
+3. **Release BOOT button**
+4. Device is now in download mode - upload should work
 
-### 3. Flash Firmware to a Device
+## PlatformIO Configuration
 
-#### Flash a Backup
-```powershell
-# Interactive mode - will list available backups
-.\scripts\flash_firmware.ps1
+This project requires **Arduino-ESP32 3.x** (based on ESP-IDF 5.1+) for the Waveshare ST77916 display driver APIs.
+
+Key `platformio.ini` settings:
+```ini
+; pioarduino platform provides Arduino-ESP32 3.x with ESP-IDF 5.x APIs
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/53.03.10/platform-espressif32.zip
+board = esp32-s3-devkitc-1
+framework = arduino
+
+; 16MB flash with OPI PSRAM
+board_build.flash_size = 16MB
+board_build.psram_type = opi
+
+; USB CDC for serial output
+build_flags = 
+    -DARDUINO_USB_MODE=1
+    -DARDUINO_USB_CDC_ON_BOOT=1
+```
+
+> **Important**: The standard `espressif32` platform uses Arduino-ESP32 2.x (ESP-IDF 4.x) which lacks the LCD APIs needed for the ST77916 driver. The `pioarduino` platform provides Arduino-ESP32 3.x with full ESP-IDF 5.x support.
 
 # Or specify the backup file directly
 .\scripts\flash_firmware.ps1 -FirmwarePath "firmware_backup\2025-12-06_10-30-00\flash_backup_full.bin"
