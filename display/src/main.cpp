@@ -67,6 +67,8 @@ void drawTPMSScreen();
 void drawEngineScreen();
 void drawGForceScreen();
 void handleTouch();
+void handleSerialCommands();
+void parseCommand(String cmd);
 void updateTelemetry();
 
 void setup() {
@@ -117,41 +119,23 @@ void loop() {
     Touch_Loop();
     handleTouch();
     
-    // Static display test - only redraw once every 2 seconds
-    // This helps verify if the display hardware works without animation tearing
-    static bool initialDrawDone = false;
-    if (!initialDrawDone) {
-        // Draw a simple static test pattern
-        LCD_Clear(COLOR_BLACK);
-        
-        // Draw colored quadrants to verify colors
-        LCD_FillRect(0, 0, 180, 180, RGB565(255, 0, 0));      // Red - top left
-        LCD_FillRect(180, 0, 180, 180, RGB565(0, 255, 0));    // Green - top right  
-        LCD_FillRect(0, 180, 180, 180, RGB565(0, 0, 255));    // Blue - bottom left
-        LCD_FillRect(180, 180, 180, 180, RGB565(255, 255, 0)); // Yellow - bottom right
-        
-        // Draw center circle
-        LCD_FillCircle(180, 180, 80, COLOR_WHITE);
-        LCD_FillCircle(180, 180, 60, COLOR_BLACK);
-        
-        Serial.println("Static test pattern drawn");
-        initialDrawDone = true;
-        
-        delay(3000);  // Show test pattern for 3 seconds
-    }
+    // Handle serial commands from Pi
+    handleSerialCommands();
     
-    // After test, update display slowly (every 500ms)
-    if (millis() - lastUpdate > 500) {
+    // Update display at reasonable rate (every 100ms)
+    if (millis() - lastUpdate > 100) {
         lastUpdate = millis();
         
-        // Slow demo animation
-        static float rpmDir = 50;
-        telemetry.rpm += rpmDir;
-        if (telemetry.rpm > 7000) rpmDir = -50;
-        if (telemetry.rpm < 1000) rpmDir = 50;
-        
-        telemetry.gForceX = sin(millis() / 1000.0) * 0.3;
-        telemetry.gForceY = cos(millis() / 1500.0) * 0.2;
+        // Demo animation when not receiving real data
+        if (!telemetry.connected) {
+            static float rpmDir = 50;
+            telemetry.rpm += rpmDir;
+            if (telemetry.rpm > 7000) rpmDir = -50;
+            if (telemetry.rpm < 1000) rpmDir = 50;
+            
+            telemetry.gForceX = sin(millis() / 1000.0) * 0.3;
+            telemetry.gForceY = cos(millis() / 1500.0) * 0.2;
+        }
         
         needsRedraw = true;
     }
@@ -391,5 +375,126 @@ void drawGForceScreen() {
     for (int i = 0; i < SCREEN_COUNT; i++) {
         uint16_t dotColor = (i == currentScreen) ? MX5_WHITE : MX5_GRAY;
         LCD_FillCircle(CENTER_X - 40 + i * 20, SCREEN_HEIGHT - 20, 4, dotColor);
+    }
+}
+
+// Serial command buffer
+static String serialBuffer = "";
+
+void handleSerialCommands() {
+    while (Serial.available()) {
+        char c = Serial.read();
+        if (c == '\n' || c == '\r') {
+            if (serialBuffer.length() > 0) {
+                parseCommand(serialBuffer);
+                serialBuffer = "";
+            }
+        } else {
+            serialBuffer += c;
+        }
+    }
+}
+
+void parseCommand(String cmd) {
+    cmd.trim();
+    
+    // Navigation commands (swipe simulation)
+    if (cmd == "LEFT" || cmd == "left" || cmd == "l") {
+        currentScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
+        needsRedraw = true;
+        LCD_Clear(MX5_BLACK);
+        Serial.println("OK:SCREEN_NEXT");
+    }
+    else if (cmd == "RIGHT" || cmd == "right" || cmd == "r") {
+        currentScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+        needsRedraw = true;
+        LCD_Clear(MX5_BLACK);
+        Serial.println("OK:SCREEN_PREV");
+    }
+    else if (cmd == "CLICK" || cmd == "click" || cmd == "c") {
+        // Single click action - toggle something or confirm
+        Serial.println("OK:CLICK");
+    }
+    // Direct screen selection
+    else if (cmd.startsWith("SCREEN:") || cmd.startsWith("screen:")) {
+        int screenNum = cmd.substring(7).toInt();
+        if (screenNum >= 0 && screenNum < SCREEN_COUNT) {
+            currentScreen = (ScreenMode)screenNum;
+            needsRedraw = true;
+            LCD_Clear(MX5_BLACK);
+            Serial.printf("OK:SCREEN_%d\n", screenNum);
+        }
+    }
+    // Telemetry data updates from Pi (format: KEY:VALUE)
+    else if (cmd.startsWith("RPM:")) {
+        telemetry.rpm = cmd.substring(4).toFloat();
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("SPEED:")) {
+        telemetry.speed = cmd.substring(6).toFloat();
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("GEAR:")) {
+        telemetry.gear = cmd.substring(5).toInt();
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("COOLANT:")) {
+        telemetry.coolantTemp = cmd.substring(8).toFloat();
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("OIL:")) {
+        telemetry.oilTemp = cmd.substring(4).toFloat();
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("FUEL:")) {
+        telemetry.fuelLevel = cmd.substring(5).toFloat();
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("VOLT:")) {
+        telemetry.voltage = cmd.substring(5).toFloat();
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("TIRE:")) {
+        // Format: TIRE:FL,FR,RL,RR
+        String tireData = cmd.substring(5);
+        int idx = 0;
+        int start = 0;
+        for (int i = 0; i <= tireData.length() && idx < 4; i++) {
+            if (i == tireData.length() || tireData[i] == ',') {
+                telemetry.tirePressure[idx++] = tireData.substring(start, i).toFloat();
+                start = i + 1;
+            }
+        }
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("GFORCE:")) {
+        // Format: GFORCE:X,Y
+        String gData = cmd.substring(7);
+        int commaPos = gData.indexOf(',');
+        if (commaPos > 0) {
+            telemetry.gForceX = gData.substring(0, commaPos).toFloat();
+            telemetry.gForceY = gData.substring(commaPos + 1).toFloat();
+        }
+        telemetry.connected = true;
+    }
+    else if (cmd.startsWith("ENGINE:")) {
+        telemetry.engineRunning = (cmd.substring(7).toInt() == 1);
+        telemetry.connected = true;
+    }
+    else if (cmd == "PING") {
+        Serial.println("PONG");
+    }
+    else if (cmd == "STATUS") {
+        Serial.printf("SCREEN:%d,RPM:%.0f,SPEED:%.0f,GEAR:%d,CONNECTED:%d\n",
+                      currentScreen, telemetry.rpm, telemetry.speed, 
+                      telemetry.gear, telemetry.connected ? 1 : 0);
+    }
+    else if (cmd == "DEMO:ON") {
+        telemetry.connected = false;  // Enable demo mode
+        Serial.println("OK:DEMO_ON");
+    }
+    else if (cmd == "DEMO:OFF") {
+        telemetry.connected = true;   // Disable demo mode
+        Serial.println("OK:DEMO_OFF");
     }
 }
