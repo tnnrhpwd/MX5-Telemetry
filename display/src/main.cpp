@@ -9,6 +9,8 @@
 #include <Arduino.h>
 #include "Display_ST77916.h"
 #include "Touch_CST816.h"
+#include "boot_logo.h"
+#include "background_image.h"
 
 // Screen dimensions
 #define SCREEN_WIDTH  360
@@ -62,6 +64,7 @@ bool needsRedraw = true;
 bool needsFullRedraw = true;  // Set to true on screen change to redraw background
 
 // Function prototypes
+void drawBackground();
 void drawOverviewScreen();
 void drawRPMScreen();
 void drawTPMSScreen();
@@ -71,6 +74,11 @@ void handleTouch();
 void handleSerialCommands();
 void parseCommand(String cmd);
 void updateTelemetry();
+
+// Draw the background image (called on full redraw)
+void drawBackground() {
+    LCD_DrawImage(0, 0, BACKGROUND_DATA_WIDTH, BACKGROUND_DATA_HEIGHT, background_data);
+}
 
 void setup() {
     Serial.begin(115200);
@@ -84,15 +92,11 @@ void setup() {
     
     Serial.println("Display initialized!");
     
-    // Draw startup screen
+    // Draw startup screen with boot logo
     LCD_Clear(MX5_BLACK);
-    LCD_FillCircle(CENTER_X, CENTER_Y, 150, MX5_DARKGRAY);
-    LCD_FillCircle(CENTER_X, CENTER_Y, 140, MX5_BLACK);
+    LCD_DrawImageCentered(BOOT_LOGO_DATA_WIDTH, BOOT_LOGO_DATA_HEIGHT, boot_logo_data);
     
-    // Draw MX5 logo placeholder
-    LCD_FillCircle(CENTER_X, CENTER_Y - 30, 40, MX5_RED);
-    
-    delay(1000);
+    delay(2000);  // Show logo for 2 seconds
     
     // Set demo values for testing
     telemetry.rpm = 3500;
@@ -193,7 +197,6 @@ void handleTouch() {
                 currentScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
                 needsRedraw = true;
                 needsFullRedraw = true;
-                LCD_Clear(MX5_BLACK);
                 Serial.printf("Screen: %d (swipe left -> next)\n", currentScreen);
                 break;
             case SWIPE_RIGHT:
@@ -201,7 +204,6 @@ void handleTouch() {
                 currentScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
                 needsRedraw = true;
                 needsFullRedraw = true;
-                LCD_Clear(MX5_BLACK);
                 Serial.printf("Screen: %d (swipe right -> prev)\n", currentScreen);
                 break;
             case SINGLE_CLICK:
@@ -232,9 +234,7 @@ void handleTouch() {
 void drawOverviewScreen() {
     // Only draw background on full redraw (screen change)
     if (needsFullRedraw) {
-        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
-        LCD_DrawCircle(CENTER_X, CENTER_Y, 175, MX5_GRAY);
+        drawBackground();
         
         // Draw gear box frame (static)
         LCD_FillCircle(CENTER_X, CENTER_Y - 20, 50, MX5_DARKGRAY);
@@ -288,8 +288,7 @@ void drawOverviewScreen() {
 void drawRPMScreen() {
     // Only draw background on full redraw
     if (needsFullRedraw) {
-        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+        drawBackground();
     }
     
     // Draw RPM arc gauge
@@ -327,8 +326,7 @@ void drawRPMScreen() {
 void drawTPMSScreen() {
     // Only draw background on full redraw
     if (needsFullRedraw) {
-        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+        drawBackground();
         // Draw car outline (static)
         LCD_DrawRect(CENTER_X - 40, CENTER_Y - 80, 80, 160, MX5_WHITE);
     }
@@ -363,8 +361,7 @@ void drawTPMSScreen() {
 void drawEngineScreen() {
     // Only draw background on full redraw
     if (needsFullRedraw) {
-        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+        drawBackground();
     }
     
     // Coolant temp (top left)
@@ -401,8 +398,7 @@ void drawGForceScreen() {
     
     // Only draw background on full redraw
     if (needsFullRedraw) {
-        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+        drawBackground();
         
         // Draw grid (static)
         LCD_DrawCircle(CENTER_X, CENTER_Y, 50, MX5_GRAY);

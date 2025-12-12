@@ -390,6 +390,15 @@ bool LCD_Init(void) {
     I2C_Init();
     delay(10);
     
+    // Initial I2C scan (before IO expander init - touch may be in reset)
+    Serial.println("LCD_Init: Initial I2C scan...");
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("  Found device at 0x%02X\n", addr);
+        }
+    }
+    
     // Initialize IO expander (TCA9554PWR) - all outputs
     Serial.println("LCD_Init: Initializing IO expander...");
     TCA9554PWR_Init(0x00);  // All pins as outputs
@@ -416,6 +425,15 @@ bool LCD_Init(void) {
     // Initialize touch controller
     Serial.println("LCD_Init: Initializing touch...");
     Touch_Init();
+    
+    // Second I2C scan (after touch reset - should see CST816)
+    Serial.println("LCD_Init: Post-init I2C scan...");
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("  Found device at 0x%02X\n", addr);
+        }
+    }
     
     Serial.println("LCD_Init: Complete");
     return true;
@@ -731,4 +749,35 @@ void LCD_DrawThickArc(uint16_t x, uint16_t y, uint16_t r, uint16_t thickness,
     for (uint16_t t = 0; t < thickness; t++) {
         LCD_DrawArc(x, y, r - t, start_angle, end_angle, color);
     }
+}
+
+void LCD_DrawImage(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t* data) {
+    if (panel_handle == NULL) return;
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    
+    // Clip if necessary
+    uint16_t draw_w = (x + w > LCD_WIDTH) ? (LCD_WIDTH - x) : w;
+    uint16_t draw_h = (y + h > LCD_HEIGHT) ? (LCD_HEIGHT - y) : h;
+    
+    // For images stored in PROGMEM, we need to copy to RAM for DMA
+    // Draw row by row to limit memory usage
+    uint16_t* row_buf = (uint16_t*)heap_caps_malloc(draw_w * 2, MALLOC_CAP_DMA);
+    if (!row_buf) {
+        Serial.println("LCD_DrawImage: Failed to allocate row buffer");
+        return;
+    }
+    
+    for (uint16_t row = 0; row < draw_h; row++) {
+        // Copy row from PROGMEM (data is already byte-swapped by converter)
+        memcpy_P(row_buf, &data[row * w], draw_w * 2);
+        esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + 1, row_buf);
+    }
+    
+    heap_caps_free(row_buf);
+}
+
+void LCD_DrawImageCentered(uint16_t w, uint16_t h, const uint16_t* data) {
+    uint16_t x = (LCD_WIDTH - w) / 2;
+    uint16_t y = (LCD_HEIGHT - h) / 2;
+    LCD_DrawImage(x, y, w, h, data);
 }
