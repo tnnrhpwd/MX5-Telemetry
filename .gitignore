@@ -131,3 +131,25 @@ docs/.doctrees/
 # ============================================================================
 # Firmware backups (can be large, keep local only)
 display/firmware_backup/
+
+# ESP-IDF specific
+sdkconfig
+sdkconfig.old
+managed_components/
+
+# ESP32 firmware binaries
+*.bin
+
+# LVGL SquareLine Studio exports
+display/ui/export/
+*.si
+
+# Build logs
+display/build_log.txt
+display/build_output.txt
+display/build_stderr.txt
+display/build_stdout.txt
+display/full_build.log
+
+# Temporary image conversion files
+display/output-onlinepngtools.*
