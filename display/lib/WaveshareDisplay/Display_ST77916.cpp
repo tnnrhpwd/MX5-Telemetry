@@ -379,43 +379,6 @@ bool QSPI_Init(void) {
     }
     Serial.println("QSPI_Init: Display turned on");
     
-    // Immediate test - draw colored stripes like reference demo
-    Serial.println("QSPI_Init: Drawing test pattern...");
-    uint32_t stripe_h = LCD_HEIGHT / 16;
-    uint16_t stripe_colors[] = {
-        0xF800,  // Red
-        0x07E0,  // Green
-        0x001F,  // Blue
-        0xFFE0,  // Yellow
-        0xF81F,  // Magenta
-        0x07FF,  // Cyan
-        0xFFFF,  // White
-        0x0000,  // Black
-        0xF800,  // Red
-        0x07E0,  // Green
-        0x001F,  // Blue
-        0xFFE0,  // Yellow
-        0xF81F,  // Magenta
-        0x07FF,  // Cyan
-        0xFFFF,  // White
-        0x8410,  // Gray
-    };
-    
-    uint16_t* stripe_buf = (uint16_t*)heap_caps_malloc(LCD_WIDTH * stripe_h * 2, MALLOC_CAP_DMA);
-    if (stripe_buf) {
-        for (int stripe = 0; stripe < 16; stripe++) {
-            uint16_t color = stripe_colors[stripe];
-            // Byte swap for BIG endian (matching reference)
-            uint16_t swapped = ((color >> 8) & 0xFF) | ((color << 8) & 0xFF00);
-            for (uint32_t i = 0; i < LCD_WIDTH * stripe_h; i++) {
-                stripe_buf[i] = swapped;
-            }
-            esp_lcd_panel_draw_bitmap(panel_handle, 0, stripe * stripe_h, LCD_WIDTH, (stripe + 1) * stripe_h, stripe_buf);
-        }
-        heap_caps_free(stripe_buf);
-        Serial.println("QSPI_Init: Test pattern drawn");
-    }
-    
     return true;
 }
 
@@ -449,6 +412,10 @@ bool LCD_Init(void) {
     // Set backlight to 100%
     Serial.println("LCD_Init: Enabling backlight...");
     ledcWrite(LCD_BL_PIN, 1024);  // Full brightness
+    
+    // Initialize touch controller
+    Serial.println("LCD_Init: Initializing touch...");
+    Touch_Init();
     
     Serial.println("LCD_Init: Complete");
     return true;
