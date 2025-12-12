@@ -59,6 +59,7 @@ ScreenMode currentScreen = SCREEN_OVERVIEW;
 unsigned long lastUpdate = 0;
 unsigned long lastTouchTime = 0;
 bool needsRedraw = true;
+bool needsFullRedraw = true;  // Set to true on screen change to redraw background
 
 // Function prototypes
 void drawOverviewScreen();
@@ -115,14 +116,14 @@ void setup() {
 }
 
 void loop() {
-    // Handle touch input
+    // Handle touch input - check more frequently for responsiveness
     Touch_Loop();
     handleTouch();
     
     // Handle serial commands from Pi
     handleSerialCommands();
     
-    // Update display at ~30Hz for smooth animation
+    // Update demo animation data at ~30Hz (only when in demo mode)
     if (millis() - lastUpdate > 33) {
         lastUpdate = millis();
         
@@ -135,9 +136,10 @@ void loop() {
             
             telemetry.gForceX = sin(millis() / 1000.0) * 0.3;
             telemetry.gForceY = cos(millis() / 1500.0) * 0.2;
+            
+            // Only redraw in demo mode when animating
+            needsRedraw = true;
         }
-        
-        needsRedraw = true;
     }
     
     // Redraw screen if needed
@@ -161,35 +163,64 @@ void loop() {
                 drawGForceScreen();
                 break;
         }
+        
+        // Clear fullRedraw flag after drawing
+        needsFullRedraw = false;
     }
     
     delay(5);  // ~200Hz loop rate for responsive touch
 }
 
 void handleTouch() {
-    // Debounce time 200ms for responsive but not too sensitive touch
+    // Debug: Print any touch activity
+    static unsigned long lastTouchDebug = 0;
+    if (touch_data.points > 0 || touch_data.gesture != NONE) {
+        if (millis() - lastTouchDebug > 100) {
+            Serial.printf("Touch: x=%d y=%d pts=%d gesture=%d\n", 
+                          touch_data.x, touch_data.y, touch_data.points, touch_data.gesture);
+            lastTouchDebug = millis();
+        }
+    }
+    
+    // Handle gestures with debounce
     if (touch_data.gesture != NONE && millis() - lastTouchTime > 200) {
         lastTouchTime = millis();
+        Serial.printf("Gesture detected: %d\n", touch_data.gesture);
         
         switch (touch_data.gesture) {
             case SWIPE_LEFT:
-                // Swipe left = finger moves left = go to NEXT screen (content slides left)
+                // Swipe left = finger moves left = go to NEXT screen
                 currentScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
                 needsRedraw = true;
+                needsFullRedraw = true;
                 LCD_Clear(MX5_BLACK);
                 Serial.printf("Screen: %d (swipe left -> next)\n", currentScreen);
                 break;
             case SWIPE_RIGHT:
-                // Swipe right = finger moves right = go to PREVIOUS screen (content slides right)
+                // Swipe right = finger moves right = go to PREVIOUS screen
                 currentScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
                 needsRedraw = true;
+                needsFullRedraw = true;
                 LCD_Clear(MX5_BLACK);
                 Serial.printf("Screen: %d (swipe right -> prev)\n", currentScreen);
                 break;
             case SINGLE_CLICK:
-                // Toggle backlight or other action
+                Serial.println("Single click detected");
+                break;
+            case DOUBLE_CLICK:
+                Serial.println("Double click detected");
+                break;
+            case LONG_PRESS:
+                Serial.println("Long press detected");
+                break;
+            case SWIPE_UP:
+                Serial.println("Swipe up detected");
+                break;
+            case SWIPE_DOWN:
+                Serial.println("Swipe down detected");
                 break;
             default:
+                Serial.printf("Unknown gesture: %d\n", touch_data.gesture);
                 break;
         }
         
@@ -199,12 +230,16 @@ void handleTouch() {
 }
 
 void drawOverviewScreen() {
-    // Clear only the changing areas
-    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
-    
-    // Draw outer ring
-    LCD_DrawCircle(CENTER_X, CENTER_Y, 175, MX5_GRAY);
+    // Only draw background on full redraw (screen change)
+    if (needsFullRedraw) {
+        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+        LCD_DrawCircle(CENTER_X, CENTER_Y, 175, MX5_GRAY);
+        
+        // Draw gear box frame (static)
+        LCD_FillCircle(CENTER_X, CENTER_Y - 20, 50, MX5_DARKGRAY);
+        LCD_DrawCircle(CENTER_X, CENTER_Y - 20, 50, MX5_WHITE);
+    }
     
     // Gear indicator (center)
     char gearStr[4];
@@ -251,9 +286,11 @@ void drawOverviewScreen() {
 }
 
 void drawRPMScreen() {
-    // RPM gauge screen
-    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    // Only draw background on full redraw
+    if (needsFullRedraw) {
+        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    }
     
     // Draw RPM arc gauge
     float rpmPercent = telemetry.rpm / 8000.0;
@@ -288,12 +325,13 @@ void drawRPMScreen() {
 }
 
 void drawTPMSScreen() {
-    // Tire pressure screen - car outline with 4 tires
-    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
-    
-    // Draw car outline (simplified rectangle)
-    LCD_DrawRect(CENTER_X - 40, CENTER_Y - 80, 80, 160, MX5_WHITE);
+    // Only draw background on full redraw
+    if (needsFullRedraw) {
+        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+        // Draw car outline (static)
+        LCD_DrawRect(CENTER_X - 40, CENTER_Y - 80, 80, 160, MX5_WHITE);
+    }
     
     // Draw tires
     const int tireW = 30, tireH = 50;
@@ -323,9 +361,11 @@ void drawTPMSScreen() {
 }
 
 void drawEngineScreen() {
-    // Engine vitals - coolant, oil, fuel, voltage
-    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    // Only draw background on full redraw
+    if (needsFullRedraw) {
+        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    }
     
     // Coolant temp (top left)
     uint16_t coolantColor = (telemetry.coolantTemp > 100) ? MX5_RED : MX5_BLUE;
@@ -355,18 +395,27 @@ void drawEngineScreen() {
 }
 
 void drawGForceScreen() {
-    // G-Force display with centered dot
-    LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
-    LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+    // Track previous G-force position to erase old dot
+    static int lastGX = CENTER_X;
+    static int lastGY = CENTER_Y;
     
-    // Draw grid
-    LCD_DrawCircle(CENTER_X, CENTER_Y, 50, MX5_GRAY);
-    LCD_DrawCircle(CENTER_X, CENTER_Y, 100, MX5_GRAY);
-    LCD_DrawCircle(CENTER_X, CENTER_Y, 150, MX5_GRAY);
-    
-    // Draw crosshairs
-    LCD_FillRect(CENTER_X - 150, CENTER_Y, 300, 1, MX5_GRAY);
-    LCD_FillRect(CENTER_X, CENTER_Y - 150, 1, 300, MX5_GRAY);
+    // Only draw background on full redraw
+    if (needsFullRedraw) {
+        LCD_FillCircle(CENTER_X, CENTER_Y, 170, MX5_DARKGRAY);
+        LCD_FillCircle(CENTER_X, CENTER_Y, 160, MX5_BLACK);
+        
+        // Draw grid (static)
+        LCD_DrawCircle(CENTER_X, CENTER_Y, 50, MX5_GRAY);
+        LCD_DrawCircle(CENTER_X, CENTER_Y, 100, MX5_GRAY);
+        LCD_DrawCircle(CENTER_X, CENTER_Y, 150, MX5_GRAY);
+        
+        // Draw crosshairs (static)
+        LCD_FillRect(CENTER_X - 150, CENTER_Y, 300, 1, MX5_GRAY);
+        LCD_FillRect(CENTER_X, CENTER_Y - 150, 1, 300, MX5_GRAY);
+    } else {
+        // Clear old G-force dot position
+        LCD_FillCircle(lastGX, lastGY, 17, MX5_BLACK);
+    }
     
     // Calculate G-force dot position (max 1.5G = full radius)
     int gX = CENTER_X + (telemetry.gForceX / 1.5) * 140;
@@ -375,6 +424,10 @@ void drawGForceScreen() {
     // Draw G-force indicator
     LCD_FillCircle(gX, gY, 15, MX5_RED);
     LCD_DrawCircle(gX, gY, 15, MX5_WHITE);
+    
+    // Remember position for next frame
+    lastGX = gX;
+    lastGY = gY;
     
     // Page indicator
     for (int i = 0; i < SCREEN_COUNT; i++) {
