@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "esp_intr_alloc.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
@@ -514,30 +515,12 @@ void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color) {
 }
 
 void LCD_FillCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color) {
-    int f = 1 - r;
-    int ddF_x = 1;
-    int ddF_y = -2 * r;
-    int x = 0;
-    int y = r;
-    
-    // Draw center vertical line
-    LCD_FillRect(x0, y0 - r, 1, 2 * r + 1, color);
-    
-    while (x < y) {
-        if (f >= 0) {
-            y--;
-            ddF_y += 2;
-            f += ddF_y;
-        }
-        x++;
-        ddF_x += 2;
-        f += ddF_x;
-        
-        // Draw horizontal lines
+    // Use scanline fill approach - no gaps
+    for (int y = -r; y <= r; y++) {
+        // Calculate x width at this y using circle equation: x^2 + y^2 = r^2
+        // x = sqrt(r^2 - y^2)
+        int x = (int)sqrt((float)(r * r - y * y));
         LCD_FillRect(x0 - x, y0 + y, 2 * x + 1, 1, color);
-        LCD_FillRect(x0 - x, y0 - y, 2 * x + 1, 1, color);
-        LCD_FillRect(x0 - y, y0 + x, 2 * y + 1, 1, color);
-        LCD_FillRect(x0 - y, y0 - x, 2 * y + 1, 1, color);
     }
 }
 
