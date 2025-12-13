@@ -1568,15 +1568,38 @@ void loop() {
 }
 ```
 
-### Serial Protocol (ESP32-S3 → Pi)
+### Serial Protocol (ESP32-S3 ↔ Pi)
 
+**ESP32 → Pi (Data):**
 ```
 TPMS:0,32.5,25.3,95\n    // Tire 0: 32.5 PSI, 25.3°C, 95% battery
 TPMS:1,31.8,24.1,92\n    // Tire 1: 31.8 PSI, 24.1°C, 92% battery
 TPMS:2,33.1,26.0,88\n    // Tire 2: 33.1 PSI, 26.0°C, 88% battery
 TPMS:3,32.9,25.8,90\n    // Tire 3: 32.9 PSI, 25.8°C, 90% battery
 IMU:0.25,-0.15\n         // G-Force: lateral +0.25G, longitudinal -0.15G (braking)
+SCREEN_CHANGED:2\n       // ESP32 user swiped to screen 2 (TPMS)
+OK:SCREEN_2\n            // Acknowledgement of screen command from Pi
 ```
+
+**Pi → ESP32 (Commands):**
+```
+SCREEN:0\n               // Change to Overview screen
+SCREEN:1\n               // Change to RPM/Speed screen
+SCREEN:2\n               // Change to TPMS screen
+SCREEN:3\n               // Change to Engine screen
+SCREEN:4\n               // Change to G-Force screen
+TEL:3500,65,3,...\n      // Telemetry: RPM, speed, gear, etc.
+PING\n                   // Connection test (ESP32 responds: PONG)
+```
+
+### Bidirectional Screen Sync
+
+Both displays stay synchronized when either device changes screens:
+
+1. **Pi → ESP32**: When user presses keys on Pi, `ESP32SerialHandler.send_screen_change(idx)` sends `SCREEN:X`
+2. **ESP32 → Pi**: When user swipes on ESP32, it sends `SCREEN_CHANGED:X` and Pi callback updates `current_screen`
+
+This ensures both displays always show the same screen, regardless of which input method is used.
 
 ### Resources
 
