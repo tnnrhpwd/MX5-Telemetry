@@ -38,6 +38,8 @@ uint8_t LCD_GetBacklight(void);
 void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color);
 void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
 void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
+void LCD_FillRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color);
+void LCD_DrawRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color);
 void LCD_DrawLine(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t color);
 void LCD_FillCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color);
 void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color);
@@ -57,6 +59,9 @@ void LCD_DrawThickArc(uint16_t x, uint16_t y, uint16_t r, uint16_t thickness,
 
 // Image drawing (RGB565 format, data already byte-swapped for BIG endian)
 void LCD_DrawImage(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t* data);
+void LCD_DrawImageWithAlpha(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
+                            const uint16_t* rgb_data, const uint8_t* alpha_data,
+                            uint16_t bg_color);
 void LCD_DrawImageCentered(uint16_t w, uint16_t h, const uint16_t* data);
 
 // Color helpers

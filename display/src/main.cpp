@@ -13,6 +13,7 @@
 #include "QMI8658.h"
 #include "boot_logo.h"
 #include "background_image.h"
+#include "car_image.h"
 
 // Screen dimensions
 #define SCREEN_WIDTH  360
@@ -40,6 +41,10 @@
 #define MX5_GRAY      RGB565(140, 140, 160)
 #define MX5_DARKGRAY  RGB565(55, 55, 70)
 #define MX5_ACCENT    RGB565(100, 140, 255)
+
+// Standard corner radius for UI elements
+#define CARD_RADIUS 8
+#define BAR_RADIUS 4
 
 // Telemetry data structure
 struct TelemetryData {
@@ -352,9 +357,13 @@ void drawOverviewScreen() {
     
     drawBackground();
     
+    // === TITLE ===
+    LCD_DrawString(CENTER_X - 48, 15, "OVERVIEW", MX5_WHITE, COLOR_BG, 2);
+    
     // === GEAR INDICATOR (Large center) ===
-    int gearRadius = 55;
-    LCD_FillCircle(CENTER_X, CENTER_Y - 25, gearRadius, COLOR_BG_CARD);
+    int gearRadius = 50;
+    int gearY = CENTER_Y - 30;
+    LCD_FillCircle(CENTER_X, gearY, gearRadius, COLOR_BG_CARD);
     
     // Gear color based on RPM
     uint16_t gearGlow = MX5_GREEN;
@@ -364,96 +373,125 @@ void drawOverviewScreen() {
     
     // Draw gear ring
     for (int r = gearRadius; r > gearRadius - 4; r--) {
-        LCD_DrawCircle(CENTER_X, CENTER_Y - 25, r, gearGlow);
+        LCD_DrawCircle(CENTER_X, gearY, r, gearGlow);
     }
     
-    // Gear text placeholder (large centered dot)
-    LCD_FillCircle(CENTER_X, CENTER_Y - 25, 20, gearGlow);
+    // Gear text - show actual gear number
+    char gearStr[4];
+    if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
+    else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+    else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
+    LCD_DrawString(CENTER_X - 8, gearY - 12, gearStr, gearGlow, COLOR_BG_CARD, 3);
+    LCD_DrawString(CENTER_X - 24, gearY + 22, "GEAR", MX5_GRAY, COLOR_BG_CARD, 1);
     
-    // === RPM BAR (Top arc style) ===
+    // === RPM BAR (Top) ===
     float rpmPercent = telemetry.rpm / 8000.0;
-    int barWidth = 220;
+    int barWidth = 200;
     int barHeight = 14;
     int barX = CENTER_X - barWidth/2;
-    int barY = 35;
+    int barY = 48;
     
-    // Background
-    LCD_FillRect(barX, barY, barWidth, barHeight, MX5_DARKGRAY);
+    LCD_DrawString(CENTER_X - 12, barY - 15, "RPM", MX5_GRAY, COLOR_BG, 1);
+    LCD_FillRoundRect(barX, barY, barWidth, barHeight, 6, MX5_DARKGRAY);
     
-    // RPM segments with gradient effect
     uint16_t rpmColor = MX5_GREEN;
     if (telemetry.rpm > 6000) rpmColor = MX5_RED;
     else if (telemetry.rpm > 4500) rpmColor = MX5_ORANGE;
     else if (telemetry.rpm > 3000) rpmColor = MX5_YELLOW;
     
     int fillWidth = (int)(barWidth * rpmPercent);
-    if (fillWidth > 0) {
+    if (fillWidth > 12) {
+        LCD_FillRoundRect(barX, barY, fillWidth, barHeight, 6, rpmColor);
+    } else if (fillWidth > 0) {
         LCD_FillRect(barX, barY, fillWidth, barHeight, rpmColor);
     }
+    LCD_DrawRoundRect(barX, barY, barWidth, barHeight, 6, MX5_WHITE);
     
-    // Border and tick marks
-    LCD_DrawRect(barX, barY, barWidth, barHeight, MX5_WHITE);
-    for (int i = 1; i < 8; i++) {
-        int tickX = barX + (barWidth * i / 8);
-        LCD_FillRect(tickX, barY + barHeight - 3, 1, 3, MX5_GRAY);
-    }
+    // === SPEED DISPLAY (Below gear) ===
+    int speedY = CENTER_Y + 35;
+    char speedStr[8];
+    snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
+    LCD_DrawString(CENTER_X - 24, speedY, speedStr, MX5_WHITE, COLOR_BG, 3);
+    LCD_DrawString(CENTER_X - 18, speedY + 28, "MPH", MX5_GRAY, COLOR_BG, 1);
     
-    // === SPEED (Bottom center card) ===
-    int speedW = 130, speedH = 45;
-    LCD_FillRect(CENTER_X - speedW/2, CENTER_Y + 50, speedW, speedH, COLOR_BG_CARD);
-    LCD_DrawRect(CENTER_X - speedW/2, CENTER_Y + 50, speedW, speedH, MX5_ACCENT);
-    LCD_FillCircle(CENTER_X, CENTER_Y + 72, 12, MX5_WHITE);  // Speed value placeholder
-    
-    // === STATUS ROW (Bottom) ===
-    int statusY = CENTER_Y + 115;
+    // === STATUS ROW (Bottom) - with labels ===
+    int statusY = CENTER_Y + 95;
     
     // Engine status
     uint16_t engineColor = telemetry.engineRunning ? MX5_GREEN : MX5_RED;
-    LCD_FillCircle(CENTER_X - 70, statusY, 12, engineColor);
-    LCD_DrawCircle(CENTER_X - 70, statusY, 12, MX5_WHITE);
+    LCD_FillCircle(CENTER_X - 80, statusY, 12, engineColor);
+    LCD_DrawCircle(CENTER_X - 80, statusY, 12, MX5_WHITE);
+    LCD_DrawString(CENTER_X - 92, statusY + 18, "ENG", MX5_GRAY, COLOR_BG, 1);
     
-    // IMU status
+    // IMU status  
     uint16_t imuColor = imuAvailable ? MX5_GREEN : MX5_GRAY;
     LCD_FillCircle(CENTER_X, statusY, 12, imuColor);
     LCD_DrawCircle(CENTER_X, statusY, 12, MX5_WHITE);
+    LCD_DrawString(CENTER_X - 9, statusY + 18, "IMU", MX5_GRAY, COLOR_BG, 1);
     
     // Connection status
     uint16_t connColor = telemetry.connected ? MX5_GREEN : MX5_ORANGE;
-    LCD_FillCircle(CENTER_X + 70, statusY, 12, connColor);
-    LCD_DrawCircle(CENTER_X + 70, statusY, 12, MX5_WHITE);
+    LCD_FillCircle(CENTER_X + 80, statusY, 12, connColor);
+    LCD_DrawCircle(CENTER_X + 80, statusY, 12, MX5_WHITE);
+    LCD_DrawString(CENTER_X + 68, statusY + 18, "COM", MX5_GRAY, COLOR_BG, 1);
     
-    // === MINI TPMS (Left side) ===
-    int tpmsX = 55, tpmsY = CENTER_Y + 30;
-    LCD_FillRect(tpmsX - 18, tpmsY - 25, 36, 50, COLOR_BG_CARD);
+    // === FUEL GAUGE (Left side with tank icon) ===
+    int fuelX = 55;
+    int fuelY = CENTER_Y - 10;
+    int fuelBarH = 60;
+    int fuelBarW = 22;
     
-    // Mini tire indicators
-    uint16_t flCol = (telemetry.tirePressure[0] < 28) ? MX5_RED : MX5_GREEN;
-    uint16_t frCol = (telemetry.tirePressure[1] < 28) ? MX5_RED : MX5_GREEN;
-    uint16_t rlCol = (telemetry.tirePressure[2] < 28) ? MX5_RED : MX5_GREEN;
-    uint16_t rrCol = (telemetry.tirePressure[3] < 28) ? MX5_RED : MX5_GREEN;
+    // Fuel tank icon (simplified with rounded corners)
+    LCD_FillRoundRect(fuelX - fuelBarW/2, fuelY, fuelBarW, fuelBarH, 6, MX5_DARKGRAY);
+    uint16_t fuelColor = MX5_YELLOW;
+    if (telemetry.fuelLevel < 15) fuelColor = MX5_RED;
+    else if (telemetry.fuelLevel < 25) fuelColor = MX5_ORANGE;
+    int fuelFill = (int)(fuelBarH * telemetry.fuelLevel / 100.0);
+    if (fuelFill > 12) {
+        LCD_FillRoundRect(fuelX - fuelBarW/2, fuelY + fuelBarH - fuelFill, fuelBarW, fuelFill, 6, fuelColor);
+    } else if (fuelFill > 0) {
+        LCD_FillRect(fuelX - fuelBarW/2, fuelY + fuelBarH - fuelFill, fuelBarW, fuelFill, fuelColor);
+    }
+    LCD_DrawRoundRect(fuelX - fuelBarW/2, fuelY, fuelBarW, fuelBarH, 6, MX5_WHITE);
+    // Tank cap (rounded)
+    LCD_FillRoundRect(fuelX - 5, fuelY - 7, 10, 7, 3, MX5_GRAY);
+    LCD_DrawString(fuelX - 12, fuelY + fuelBarH + 5, "FUEL", MX5_GRAY, COLOR_BG, 1);
     
-    LCD_FillRect(tpmsX - 28, tpmsY - 18, 8, 14, flCol);
-    LCD_FillRect(tpmsX + 20, tpmsY - 18, 8, 14, frCol);
-    LCD_FillRect(tpmsX - 28, tpmsY + 6, 8, 14, rlCol);
-    LCD_FillRect(tpmsX + 20, tpmsY + 6, 8, 14, rrCol);
+    // === TEMP GAUGES (Right side) ===
+    int tempX = SCREEN_WIDTH - 55;
+    int tempY = CENTER_Y - 20;
+    int tempBarW = 20;
+    int tempBarH = 45;
     
-    // === MINI TEMPS (Right side) ===
-    int tempX = SCREEN_WIDTH - 55, tempY = CENTER_Y + 30;
-    LCD_FillRect(tempX - 25, tempY - 25, 50, 50, COLOR_BG_CARD);
+    // Coolant temp bar
+    uint16_t coolCol = MX5_BLUE;
+    if (telemetry.coolantTemp > 220) coolCol = MX5_RED;
+    else if (telemetry.coolantTemp > 200) coolCol = MX5_ORANGE;
+    LCD_FillRoundRect(tempX - 24, tempY, tempBarW, tempBarH, 5, MX5_DARKGRAY);
+    float coolPct = constrain((telemetry.coolantTemp - 120) / 120.0, 0, 1);
+    int coolFill = (int)(tempBarH * coolPct);
+    if (coolFill > 10) {
+        LCD_FillRoundRect(tempX - 24, tempY + tempBarH - coolFill, tempBarW, coolFill, 5, coolCol);
+    } else if (coolFill > 0) {
+        LCD_FillRect(tempX - 24, tempY + tempBarH - coolFill, tempBarW, coolFill, coolCol);
+    }
+    LCD_DrawRoundRect(tempX - 24, tempY, tempBarW, tempBarH, 5, MX5_WHITE);
+    LCD_DrawString(tempX - 24, tempY + tempBarH + 5, "H2O", MX5_GRAY, COLOR_BG, 1);
     
-    // Coolant indicator
-    uint16_t coolCol = (telemetry.coolantTemp > 220) ? MX5_RED : MX5_BLUE;
-    LCD_FillCircle(tempX - 10, tempY - 8, 8, coolCol);
+    // Oil temp bar
+    uint16_t oilCol = MX5_ORANGE;
+    if (telemetry.oilTemp > 250) oilCol = MX5_RED;
+    LCD_FillRoundRect(tempX + 4, tempY, tempBarW, tempBarH, 5, MX5_DARKGRAY);
+    float oilPct = constrain((telemetry.oilTemp - 150) / 130.0, 0, 1);
+    int oilFill = (int)(tempBarH * oilPct);
+    if (oilFill > 10) {
+        LCD_FillRoundRect(tempX + 4, tempY + tempBarH - oilFill, tempBarW, oilFill, 5, oilCol);
+    } else if (oilFill > 0) {
+        LCD_FillRect(tempX + 4, tempY + tempBarH - oilFill, tempBarW, oilFill, oilCol);
+    }
+    LCD_DrawRoundRect(tempX + 4, tempY, tempBarW, tempBarH, 5, MX5_WHITE);
+    LCD_DrawString(tempX + 6, tempY + tempBarH + 5, "OIL", MX5_GRAY, COLOR_BG, 1);
     
-    // Oil indicator
-    uint16_t oilCol = (telemetry.oilTemp > 250) ? MX5_RED : MX5_ORANGE;
-    LCD_FillCircle(tempX + 10, tempY - 8, 8, oilCol);
-    
-    // Fuel indicator
-    uint16_t fuelCol = (telemetry.fuelLevel < 15) ? MX5_RED : MX5_YELLOW;
-    LCD_FillCircle(tempX, tempY + 12, 8, fuelCol);
-    
-    // Page indicator
     drawPageIndicator();
 }
 
@@ -463,84 +501,119 @@ void drawRPMScreen() {
     
     drawBackground();
     
-    // === RPM ARC GAUGE ===
-    float rpmPercent = telemetry.rpm / 8000.0;
-    int gaugeRadius = 125;
-    int arcThickness = 18;
+    // === LARGE GEAR INDICATOR (Top) ===
+    int gearY = 55;
     
-    // Draw gauge segments (10 segments around arc)
-    for (int i = 0; i < 10; i++) {
-        float segStart = i / 10.0;
+    // Gear color based on RPM
+    uint16_t gearColor = MX5_GREEN;
+    if (telemetry.rpm > 6500) gearColor = MX5_RED;
+    else if (telemetry.rpm > 5500) gearColor = MX5_ORANGE;
+    else if (telemetry.rpm > 4500) gearColor = MX5_YELLOW;
+    
+    // Large gear number
+    char gearStr[4];
+    if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
+    else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+    else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
+    
+    // Draw gear in large font (size 4 = 28px wide per char)
+    int gearStrLen = strlen(gearStr);
+    LCD_DrawString(CENTER_X - gearStrLen * 14, gearY, gearStr, gearColor, COLOR_BG, 4);
+    LCD_DrawString(CENTER_X - 18, gearY + 38, "GEAR", MX5_GRAY, COLOR_BG, 1);
+    
+    // === RPM ARC GAUGE (Center) ===
+    float rpmPercent = constrain(telemetry.rpm / 8000.0, 0, 1);
+    int gaugeRadius = 95;
+    int gaugeY = CENTER_Y + 25;
+    
+    // Draw continuous arc segments
+    int numSegments = 20;
+    for (int i = 0; i < numSegments; i++) {
+        float segStart = i / (float)numSegments;
+        float segEnd = (i + 1) / (float)numSegments;
         
         // Determine segment color
         uint16_t segColor = MX5_DARKGRAY;
         if (segStart < rpmPercent) {
-            if (i >= 8) segColor = MX5_RED;
-            else if (i >= 7) segColor = MX5_ORANGE;
-            else if (i >= 5) segColor = MX5_YELLOW;
+            float rpmAt = segStart * 8000;
+            if (rpmAt >= 6400) segColor = MX5_RED;
+            else if (rpmAt >= 5600) segColor = MX5_ORANGE;
+            else if (rpmAt >= 4000) segColor = MX5_YELLOW;
             else segColor = MX5_GREEN;
         }
         
-        // Arc from -135° to +135° (270° total)
-        float angle = (-135 + i * 27) * PI / 180.0;
-        int px = CENTER_X + cos(angle) * gaugeRadius;
-        int py = CENTER_Y + sin(angle) * gaugeRadius;
+        // Arc from -150° to +150° (300° total, open at top)
+        float startAngle = (120 + i * 15) * PI / 180.0;  // Start from bottom-left
+        float endAngle = (120 + (i + 1) * 15) * PI / 180.0;
         
-        // Draw segment with glow effect for active segments
-        LCD_FillCircle(px, py, arcThickness/2 + 2, segColor);
-        if (segStart < rpmPercent && segColor != MX5_DARKGRAY) {
-            LCD_DrawCircle(px, py, arcThickness/2 + 4, segColor);
+        // Draw thick arc segment
+        for (float a = startAngle; a < endAngle; a += 0.02) {
+            int px = CENTER_X + cos(a) * gaugeRadius;
+            int py = gaugeY + sin(a) * gaugeRadius;
+            LCD_FillCircle(px, py, 8, segColor);
         }
     }
     
-    // === CENTER DISPLAY ===
-    LCD_FillCircle(CENTER_X, CENTER_Y, 55, COLOR_BG_CARD);
-    
-    // Inner ring
-    uint16_t ringColor = MX5_ACCENT;
-    if (telemetry.rpm > 6500) ringColor = MX5_RED;
-    for (int r = 55; r > 52; r--) {
-        LCD_DrawCircle(CENTER_X, CENTER_Y, r, ringColor);
+    // RPM tick labels (0, 2, 4, 6, 8)
+    const char* rpmLabels[] = {"0", "2", "4", "6", "8"};
+    for (int i = 0; i < 5; i++) {
+        float angle = (120 + i * 75) * PI / 180.0;
+        int lx = CENTER_X + cos(angle) * (gaugeRadius + 22) - 4;
+        int ly = gaugeY + sin(angle) * (gaugeRadius + 22) - 4;
+        LCD_DrawString(lx, ly, rpmLabels[i], MX5_GRAY, COLOR_BG, 1);
     }
     
-    // Gear indicator in center
-    uint16_t gearColor = MX5_WHITE;
-    if (telemetry.rpm > 6500) gearColor = MX5_RED;
-    LCD_FillCircle(CENTER_X, CENTER_Y - 5, 22, gearColor);
+    // === RPM VALUE (Center of gauge) ===
+    char rpmStr[8];
+    snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
+    int rpmLen = strlen(rpmStr);
+    LCD_DrawString(CENTER_X - rpmLen * 10, gaugeY - 8, rpmStr, MX5_WHITE, COLOR_BG, 3);
+    LCD_DrawString(CENTER_X - 12, gaugeY + 22, "RPM", MX5_GRAY, COLOR_BG, 1);
     
-    // RPM value placeholder below center
-    LCD_FillRect(CENTER_X - 35, CENTER_Y + 20, 70, 20, COLOR_BG);
+    // === SPEED (Bottom) ===
+    int speedY = SCREEN_HEIGHT - 70;
+    char speedStr[8];
+    snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
+    int speedLen = strlen(speedStr);
+    LCD_DrawString(CENTER_X - speedLen * 10, speedY, speedStr, MX5_CYAN, COLOR_BG, 3);
+    LCD_DrawString(CENTER_X - 12, speedY + 28, "MPH", MX5_GRAY, COLOR_BG, 1);
     
-    // === SPEED CARD (Bottom) ===
-    int speedW = 130, speedH = 55;
-    int speedY = CENTER_Y + 85;
-    LCD_FillRect(CENTER_X - speedW/2, speedY, speedW, speedH, COLOR_BG_CARD);
-    LCD_DrawRect(CENTER_X - speedW/2, speedY, speedW, speedH, MX5_BLUE);
+    // === THROTTLE BAR (Right side) ===
+    int barW = 16, barH = 80;
+    int barY = CENTER_Y - 10;
+    int throttleX = CENTER_X + 115;
     
-    // Speed value placeholder
-    LCD_FillCircle(CENTER_X, speedY + 28, 14, MX5_WHITE);
-    
-    // === THROTTLE/BRAKE BARS (Sides) ===
-    int barW = 18, barH = 100;
-    int barY = CENTER_Y - barH/2;
-    
-    // Throttle (right side) - green
-    int throttleX = CENTER_X + 95;
-    LCD_FillRect(throttleX, barY, barW, barH, MX5_DARKGRAY);
+    LCD_DrawString(throttleX - 4, barY - 14, "THR", MX5_GRAY, COLOR_BG, 1);
+    LCD_FillRoundRect(throttleX, barY, barW, barH, 5, MX5_DARKGRAY);
     int throttleFill = (int)(barH * telemetry.throttle / 100.0);
-    if (throttleFill > 0) {
+    if (throttleFill > 10) {
+        LCD_FillRoundRect(throttleX, barY + barH - throttleFill, barW, throttleFill, 5, MX5_GREEN);
+    } else if (throttleFill > 0) {
         LCD_FillRect(throttleX, barY + barH - throttleFill, barW, throttleFill, MX5_GREEN);
     }
-    LCD_DrawRect(throttleX, barY, barW, barH, MX5_GRAY);
+    LCD_DrawRoundRect(throttleX, barY, barW, barH, 5, MX5_GRAY);
     
-    // Brake (left side) - red  
-    int brakeX = CENTER_X - 95 - barW;
-    LCD_FillRect(brakeX, barY, barW, barH, MX5_DARKGRAY);
+    // Throttle percentage
+    char thrPct[8];
+    snprintf(thrPct, sizeof(thrPct), "%d%%", (int)telemetry.throttle);
+    LCD_DrawString(throttleX - 2, barY + barH + 5, thrPct, MX5_GREEN, COLOR_BG, 1);
+    
+    // === BRAKE BAR (Left side) ===
+    int brakeX = CENTER_X - 115 - barW;
+    LCD_DrawString(brakeX, barY - 14, "BRK", MX5_GRAY, COLOR_BG, 1);
+    LCD_FillRoundRect(brakeX, barY, barW, barH, 5, MX5_DARKGRAY);
     int brakeFill = (int)(barH * telemetry.brake / 100.0);
-    if (brakeFill > 0) {
+    if (brakeFill > 10) {
+        LCD_FillRoundRect(brakeX, barY + barH - brakeFill, barW, brakeFill, 5, MX5_RED);
+    } else if (brakeFill > 0) {
         LCD_FillRect(brakeX, barY + barH - brakeFill, barW, brakeFill, MX5_RED);
     }
-    LCD_DrawRect(brakeX, barY, barW, barH, MX5_GRAY);
+    LCD_DrawRoundRect(brakeX, barY, barW, barH, 5, MX5_GRAY);
+    
+    // Brake percentage
+    char brkPct[8];
+    snprintf(brkPct, sizeof(brkPct), "%d%%", (int)telemetry.brake);
+    LCD_DrawString(brakeX, barY + barH + 5, brkPct, MX5_RED, COLOR_BG, 1);
     
     drawPageIndicator();
 }
@@ -551,87 +624,109 @@ void drawTPMSScreen() {
     
     drawBackground();
     
-    // === CAR BODY OUTLINE ===
-    // Main body
-    LCD_FillRect(CENTER_X - 35, CENTER_Y - 75, 70, 150, COLOR_BG_CARD);
-    LCD_DrawRect(CENTER_X - 35, CENTER_Y - 75, 70, 150, MX5_GRAY);
+    // === TITLE ===
+    LCD_DrawString(CENTER_X - 24, 25, "TPMS", MX5_WHITE, COLOR_BG, 2);
     
-    // Windshield (trapezoid top)
-    LCD_DrawLine(CENTER_X - 30, CENTER_Y - 55, CENTER_X - 25, CENTER_Y - 70, MX5_GRAY);
-    LCD_DrawLine(CENTER_X + 30, CENTER_Y - 55, CENTER_X + 25, CENTER_Y - 70, MX5_GRAY);
+    // === CAR BODY OUTLINE (programmatic, clean look) ===
+    int carW = 60, carH = 110;
+    int carX = CENTER_X - carW/2;
+    int carY = CENTER_Y - carH/2;
+    
+    // Main body (rounded for car shape)
+    LCD_FillRoundRect(carX, carY, carW, carH, 12, COLOR_BG_CARD);
+    LCD_DrawRoundRect(carX, carY, carW, carH, 12, MX5_GRAY);
+    
+    // Windshield (front, top of car)
+    LCD_DrawLine(carX + 8, carY + 15, carX + carW - 8, carY + 15, MX5_ACCENT);
+    LCD_DrawLine(carX + 5, carY + 25, carX + carW - 5, carY + 25, MX5_ACCENT);
     
     // Rear window
-    LCD_DrawLine(CENTER_X - 30, CENTER_Y + 55, CENTER_X - 25, CENTER_Y + 70, MX5_GRAY);
-    LCD_DrawLine(CENTER_X + 30, CENTER_Y + 55, CENTER_X + 25, CENTER_Y + 70, MX5_GRAY);
+    LCD_DrawLine(carX + 8, carY + carH - 15, carX + carW - 8, carY + carH - 15, MX5_ACCENT);
+    LCD_DrawLine(carX + 5, carY + carH - 25, carX + carW - 5, carY + carH - 25, MX5_ACCENT);
     
-    // === TIRE BOXES ===
-    const int tireW = 32, tireH = 48;
-    const int tireOffsetX = 58, tireOffsetY = 50;
+    // Center line
+    LCD_DrawLine(carX + carW/2, carY + 30, carX + carW/2, carY + carH - 30, MX5_DARKGRAY);
     
-    // Helper lambda for tire color based on pressure
+    // === TIRE PRESSURE INDICATORS ===
+    const int tireW = 26, tireH = 40;
+    const int tireOffsetX = 55, tireOffsetY = 38;
+    
+    // Helper lambda for tire color based on pressure (PSI)
     auto getTireColor = [](float psi) -> uint16_t {
-        if (psi < 26) return MX5_RED;
-        if (psi < 28) return MX5_ORANGE;
-        if (psi > 36) return MX5_ORANGE;
-        if (psi > 38) return MX5_RED;
-        return MX5_GREEN;
+        if (psi < 26) return MX5_RED;      // Dangerously low
+        if (psi < 28) return MX5_ORANGE;   // Low warning
+        if (psi > 36) return MX5_ORANGE;   // High warning
+        if (psi > 38) return MX5_RED;      // Dangerously high
+        return MX5_GREEN;                   // Normal 28-36 PSI
+    };
+    
+    // Helper to draw tire with tread pattern (rounded)
+    auto drawTire = [&](int x, int y, uint16_t color) {
+        LCD_FillRoundRect(x, y, tireW, tireH, 6, color);
+        LCD_DrawRoundRect(x, y, tireW, tireH, 6, MX5_WHITE);
+        // Tread pattern
+        for (int i = 8; i < tireH - 8; i += 8) {
+            LCD_FillRoundRect(x + 4, y + i, tireW - 8, 3, 1, COLOR_BG_CARD);
+        }
     };
     
     // Front Left tire
     uint16_t flColor = getTireColor(telemetry.tirePressure[0]);
     int flX = CENTER_X - tireOffsetX - tireW/2;
     int flY = CENTER_Y - tireOffsetY - tireH/2;
-    LCD_FillRect(flX, flY, tireW, tireH, flColor);
-    LCD_DrawRect(flX, flY, tireW, tireH, MX5_WHITE);
-    // Tire groove lines
-    LCD_DrawLine(flX + 6, flY + 4, flX + 6, flY + tireH - 4, COLOR_BG_CARD);
-    LCD_DrawLine(flX + tireW - 6, flY + 4, flX + tireW - 6, flY + tireH - 4, COLOR_BG_CARD);
+    drawTire(flX, flY, flColor);
     
     // Front Right tire
     uint16_t frColor = getTireColor(telemetry.tirePressure[1]);
     int frX = CENTER_X + tireOffsetX - tireW/2;
     int frY = CENTER_Y - tireOffsetY - tireH/2;
-    LCD_FillRect(frX, frY, tireW, tireH, frColor);
-    LCD_DrawRect(frX, frY, tireW, tireH, MX5_WHITE);
-    LCD_DrawLine(frX + 6, frY + 4, frX + 6, frY + tireH - 4, COLOR_BG_CARD);
-    LCD_DrawLine(frX + tireW - 6, frY + 4, frX + tireW - 6, frY + tireH - 4, COLOR_BG_CARD);
+    drawTire(frX, frY, frColor);
     
     // Rear Left tire
     uint16_t rlColor = getTireColor(telemetry.tirePressure[2]);
     int rlX = CENTER_X - tireOffsetX - tireW/2;
     int rlY = CENTER_Y + tireOffsetY - tireH/2;
-    LCD_FillRect(rlX, rlY, tireW, tireH, rlColor);
-    LCD_DrawRect(rlX, rlY, tireW, tireH, MX5_WHITE);
-    LCD_DrawLine(rlX + 6, rlY + 4, rlX + 6, rlY + tireH - 4, COLOR_BG_CARD);
-    LCD_DrawLine(rlX + tireW - 6, rlY + 4, rlX + tireW - 6, rlY + tireH - 4, COLOR_BG_CARD);
+    drawTire(rlX, rlY, rlColor);
     
     // Rear Right tire
     uint16_t rrColor = getTireColor(telemetry.tirePressure[3]);
     int rrX = CENTER_X + tireOffsetX - tireW/2;
     int rrY = CENTER_Y + tireOffsetY - tireH/2;
-    LCD_FillRect(rrX, rrY, tireW, tireH, rrColor);
-    LCD_DrawRect(rrX, rrY, tireW, tireH, MX5_WHITE);
-    LCD_DrawLine(rrX + 6, rrY + 4, rrX + 6, rrY + tireH - 4, COLOR_BG_CARD);
-    LCD_DrawLine(rrX + tireW - 6, rrY + 4, rrX + tireW - 6, rrY + tireH - 4, COLOR_BG_CARD);
+    drawTire(rrX, rrY, rrColor);
     
-    // === PRESSURE VALUE CARDS (outside tires) ===
-    int cardW = 50, cardH = 28;
+    // === PRESSURE VALUE LABELS ===
+    char psiStr[8];
     
-    // FL pressure card
-    LCD_FillRect(flX - cardW - 8, flY + tireH/2 - cardH/2, cardW, cardH, COLOR_BG_CARD);
-    LCD_DrawRect(flX - cardW - 8, flY + tireH/2 - cardH/2, cardW, cardH, flColor);
+    // Front Left
+    snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[0]);
+    LCD_DrawString(flX - 42, flY + 8, psiStr, flColor, COLOR_BG, 2);
+    LCD_DrawString(flX - 42, flY + 26, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(flX - 18, flY - 14, "FL", MX5_GRAY, COLOR_BG, 1);
     
-    // FR pressure card
-    LCD_FillRect(frX + tireW + 8, frY + tireH/2 - cardH/2, cardW, cardH, COLOR_BG_CARD);
-    LCD_DrawRect(frX + tireW + 8, frY + tireH/2 - cardH/2, cardW, cardH, frColor);
+    // Front Right
+    snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[1]);
+    LCD_DrawString(frX + tireW + 8, frY + 8, psiStr, frColor, COLOR_BG, 2);
+    LCD_DrawString(frX + tireW + 8, frY + 26, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(frX + 6, frY - 14, "FR", MX5_GRAY, COLOR_BG, 1);
     
-    // RL pressure card
-    LCD_FillRect(rlX - cardW - 8, rlY + tireH/2 - cardH/2, cardW, cardH, COLOR_BG_CARD);
-    LCD_DrawRect(rlX - cardW - 8, rlY + tireH/2 - cardH/2, cardW, cardH, rlColor);
+    // Rear Left
+    snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[2]);
+    LCD_DrawString(rlX - 42, rlY + 8, psiStr, rlColor, COLOR_BG, 2);
+    LCD_DrawString(rlX - 42, rlY + 26, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(rlX - 18, rlY + tireH + 4, "RL", MX5_GRAY, COLOR_BG, 1);
     
-    // RR pressure card
-    LCD_FillRect(rrX + tireW + 8, rrY + tireH/2 - cardH/2, cardW, cardH, COLOR_BG_CARD);
-    LCD_DrawRect(rrX + tireW + 8, rrY + tireH/2 - cardH/2, cardW, cardH, rrColor);
+    // Rear Right
+    snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[3]);
+    LCD_DrawString(rrX + tireW + 8, rrY + 8, psiStr, rrColor, COLOR_BG, 2);
+    LCD_DrawString(rrX + tireW + 8, rrY + 26, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(rrX + 6, rrY + tireH + 4, "RR", MX5_GRAY, COLOR_BG, 1);
+    
+    // === STATUS BAR ===
+    bool allGood = (flColor == MX5_GREEN && frColor == MX5_GREEN && 
+                   rlColor == MX5_GREEN && rrColor == MX5_GREEN);
+    const char* statusText = allGood ? "ALL TIRES OK" : "CHECK PRESSURE";
+    uint16_t statusColor = allGood ? MX5_GREEN : MX5_ORANGE;
+    LCD_DrawString(CENTER_X - 54, SCREEN_HEIGHT - 50, statusText, statusColor, COLOR_BG, 1);
     
     drawPageIndicator();
 }
@@ -642,74 +737,85 @@ void drawEngineScreen() {
     
     drawBackground();
     
-    int cardW = 115, cardH = 75;
-    int gap = 15;
+    // === TITLE ===
+    LCD_DrawString(CENTER_X - 36, 20, "ENGINE", MX5_WHITE, COLOR_BG, 2);
+    
+    int cardW = 140, cardH = 70;
+    int gap = 12;
     int startX = CENTER_X - cardW - gap/2;
-    int startY = CENTER_Y - cardH - gap/2 - 10;
+    int startY = CENTER_Y - cardH - gap/2 - 5;
     
     // === COOLANT TEMP (Top Left) ===
     uint16_t coolantColor = MX5_BLUE;
     if (telemetry.coolantTemp > 230) coolantColor = MX5_RED;
     else if (telemetry.coolantTemp > 215) coolantColor = MX5_ORANGE;
     
-    LCD_FillRect(startX, startY, cardW, cardH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, cardW, cardH, coolantColor);
+    LCD_FillRoundRect(startX, startY, cardW, cardH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, cardW, cardH, CARD_RADIUS, coolantColor);
     
-    // Temperature icon (thermometer shape)
-    int iconX = startX + 25, iconY = startY + cardH/2;
-    LCD_FillRect(iconX - 3, iconY - 18, 6, 28, coolantColor);
-    LCD_FillCircle(iconX, iconY + 15, 8, coolantColor);
-    LCD_FillCircle(iconX, iconY - 18, 4, coolantColor);
+    // Label
+    LCD_DrawString(startX + 10, startY + 8, "COOLANT", MX5_GRAY, COLOR_BG_CARD, 1);
     
-    // Value indicator bar
+    // Temperature value
+    char tempStr[12];
+    snprintf(tempStr, sizeof(tempStr), "%d F", (int)telemetry.coolantTemp);
+    LCD_DrawString(startX + 10, startY + 24, tempStr, coolantColor, COLOR_BG_CARD, 2);
+    
+    // Progress bar (rounded)
     float coolantPct = constrain((telemetry.coolantTemp - 100) / 150.0, 0, 1);
-    int barX = startX + 50, barY = startY + 15;
-    LCD_FillRect(barX, barY, 50, 10, MX5_DARKGRAY);
-    LCD_FillRect(barX, barY, (int)(50 * coolantPct), 10, coolantColor);
+    LCD_FillRoundRect(startX + 10, startY + cardH - 20, cardW - 20, 12, 4, MX5_DARKGRAY);
+    int coolFillW = (int)((cardW - 20) * coolantPct);
+    if (coolFillW > 8) {
+        LCD_FillRoundRect(startX + 10, startY + cardH - 20, coolFillW, 12, 4, coolantColor);
+    }
     
     // === OIL TEMP (Top Right) ===
     uint16_t oilColor = MX5_ORANGE;
     if (telemetry.oilTemp > 260) oilColor = MX5_RED;
     else if (telemetry.oilTemp < 180) oilColor = MX5_BLUE;
     
-    LCD_FillRect(startX + cardW + gap, startY, cardW, cardH, COLOR_BG_CARD);
-    LCD_DrawRect(startX + cardW + gap, startY, cardW, cardH, oilColor);
+    int rightX = startX + cardW + gap;
+    LCD_FillRoundRect(rightX, startY, cardW, cardH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(rightX, startY, cardW, cardH, CARD_RADIUS, oilColor);
     
-    // Oil drop icon
-    iconX = startX + cardW + gap + 25;
-    LCD_FillCircle(iconX, iconY + 8, 10, oilColor);
-    // Drop point
-    for (int i = 0; i < 8; i++) {
-        LCD_FillRect(iconX - 4 + i/2, iconY - 10 + i, 8 - i, 2, oilColor);
-    }
+    // Label
+    LCD_DrawString(rightX + 10, startY + 8, "OIL TEMP", MX5_GRAY, COLOR_BG_CARD, 1);
     
-    // Value bar
+    // Temperature value
+    snprintf(tempStr, sizeof(tempStr), "%d F", (int)telemetry.oilTemp);
+    LCD_DrawString(rightX + 10, startY + 24, tempStr, oilColor, COLOR_BG_CARD, 2);
+    
+    // Progress bar (rounded)
     float oilPct = constrain((telemetry.oilTemp - 150) / 150.0, 0, 1);
-    barX = startX + cardW + gap + 50;
-    LCD_FillRect(barX, barY, 50, 10, MX5_DARKGRAY);
-    LCD_FillRect(barX, barY, (int)(50 * oilPct), 10, oilColor);
+    LCD_FillRoundRect(rightX + 10, startY + cardH - 20, cardW - 20, 12, 4, MX5_DARKGRAY);
+    int oilFillW = (int)((cardW - 20) * oilPct);
+    if (oilFillW > 8) {
+        LCD_FillRoundRect(rightX + 10, startY + cardH - 20, oilFillW, 12, 4, oilColor);
+    }
     
     // === FUEL LEVEL (Bottom Left) ===
     uint16_t fuelColor = MX5_YELLOW;
     if (telemetry.fuelLevel < 15) fuelColor = MX5_RED;
     else if (telemetry.fuelLevel < 25) fuelColor = MX5_ORANGE;
     
-    startY = CENTER_Y + gap/2 - 10;
-    LCD_FillRect(startX, startY, cardW, cardH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, cardW, cardH, fuelColor);
+    int bottomY = CENTER_Y + gap/2 - 5;
+    LCD_FillRoundRect(startX, bottomY, cardW, cardH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, bottomY, cardW, cardH, CARD_RADIUS, fuelColor);
     
-    // Fuel pump icon
-    iconX = startX + 25;
-    iconY = startY + cardH/2;
-    LCD_FillRect(iconX - 8, iconY - 8, 16, 20, fuelColor);
-    LCD_FillRect(iconX - 10, iconY - 10, 4, 8, fuelColor);
-    LCD_FillRect(iconX + 8, iconY - 5, 6, 3, fuelColor);
+    // Label
+    LCD_DrawString(startX + 10, bottomY + 8, "FUEL", MX5_GRAY, COLOR_BG_CARD, 1);
     
-    // Fuel gauge bar
-    barX = startX + 50;
-    barY = startY + 15;
-    LCD_FillRect(barX, barY, 50, 10, MX5_DARKGRAY);
-    LCD_FillRect(barX, barY, (int)(50 * telemetry.fuelLevel / 100.0), 10, fuelColor);
+    // Fuel value
+    char fuelStr[12];
+    snprintf(fuelStr, sizeof(fuelStr), "%d%%", (int)telemetry.fuelLevel);
+    LCD_DrawString(startX + 10, bottomY + 24, fuelStr, fuelColor, COLOR_BG_CARD, 2);
+    
+    // Progress bar (rounded)
+    LCD_FillRoundRect(startX + 10, bottomY + cardH - 20, cardW - 20, 12, 4, MX5_DARKGRAY);
+    int fuelFillW = (int)((cardW - 20) * telemetry.fuelLevel / 100.0);
+    if (fuelFillW > 8) {
+        LCD_FillRoundRect(startX + 10, bottomY + cardH - 20, fuelFillW, 12, 4, fuelColor);
+    }
     
     // === VOLTAGE (Bottom Right) ===
     uint16_t voltColor = MX5_GREEN;
@@ -717,69 +823,38 @@ void drawEngineScreen() {
     else if (telemetry.voltage < 12.8) voltColor = MX5_ORANGE;
     else if (telemetry.voltage > 15.0) voltColor = MX5_RED;
     
-    LCD_FillRect(startX + cardW + gap, startY, cardW, cardH, COLOR_BG_CARD);
-    LCD_DrawRect(startX + cardW + gap, startY, cardW, cardH, voltColor);
+    LCD_FillRoundRect(rightX, bottomY, cardW, cardH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(rightX, bottomY, cardW, cardH, CARD_RADIUS, voltColor);
     
-    // Battery icon
-    iconX = startX + cardW + gap + 25;
-    LCD_FillRect(iconX - 10, iconY - 6, 20, 14, voltColor);
-    LCD_FillRect(iconX + 10, iconY - 3, 4, 8, voltColor);
-    // Battery segments
-    LCD_FillRect(iconX - 7, iconY - 3, 4, 8, COLOR_BG_CARD);
-    LCD_FillRect(iconX - 1, iconY - 3, 4, 8, COLOR_BG_CARD);
-    LCD_FillRect(iconX + 5, iconY - 3, 4, 8, COLOR_BG_CARD);
+    // Label
+    LCD_DrawString(rightX + 10, bottomY + 8, "BATTERY", MX5_GRAY, COLOR_BG_CARD, 1);
     
-    // Voltage bar
+    // Voltage value
+    char voltStr[12];
+    snprintf(voltStr, sizeof(voltStr), "%.1fV", telemetry.voltage);
+    LCD_DrawString(rightX + 10, bottomY + 24, voltStr, voltColor, COLOR_BG_CARD, 2);
+    
+    // Progress bar (rounded)
     float voltPct = constrain((telemetry.voltage - 11.0) / 4.0, 0, 1);
-    barX = startX + cardW + gap + 50;
-    barY = startY + 15;
-    LCD_FillRect(barX, barY, 50, 10, MX5_DARKGRAY);
-    LCD_FillRect(barX, barY, (int)(50 * voltPct), 10, voltColor);
+    LCD_FillRoundRect(rightX + 10, bottomY + cardH - 20, cardW - 20, 12, 4, MX5_DARKGRAY);
+    int voltFillW = (int)((cardW - 20) * voltPct);
+    if (voltFillW > 8) {
+        LCD_FillRoundRect(rightX + 10, bottomY + cardH - 20, voltFillW, 12, 4, voltColor);
+    }
     
     drawPageIndicator();
 }
 
 void drawGForceScreen() {
-    // Track previous G-force position to erase old dot
-    static int lastGX = CENTER_X;
-    static int lastGY = CENTER_Y;
-    
-    // Only draw background on full redraw
-    if (needsFullRedraw) {
-        drawBackground();
-        
-        // Draw grid circles for G reference
-        for (int g = 1; g <= 3; g++) {
-            int radius = g * 45;
-            LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
-        }
-        
-        // Draw crosshairs
-        LCD_DrawLine(CENTER_X - 140, CENTER_Y, CENTER_X + 140, CENTER_Y, MX5_DARKGRAY);
-        LCD_DrawLine(CENTER_X, CENTER_Y - 140, CENTER_X, CENTER_Y + 140, MX5_DARKGRAY);
-        
-        // Labels at edges
-        LCD_FillCircle(CENTER_X, CENTER_Y - 145, 5, MX5_GREEN);  // Accel
-        LCD_FillCircle(CENTER_X, CENTER_Y + 145, 5, MX5_RED);    // Brake
-        LCD_FillCircle(CENTER_X - 145, CENTER_Y, 5, MX5_CYAN);   // Left
-        LCD_FillCircle(CENTER_X + 145, CENTER_Y, 5, MX5_CYAN);   // Right
-    } else {
-        // Clear old G-force dot position
-        LCD_FillCircle(lastGX, lastGY, 18, COLOR_BG);
-        // Redraw grid at old position
-        for (int g = 1; g <= 3; g++) {
-            int radius = g * 45;
-            if (abs(lastGX - CENTER_X) < radius + 20 || abs(lastGY - CENTER_Y) < radius + 20) {
-                LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
-            }
-        }
-    }
+    // Static variables to track previous ball position for partial redraw
+    static int prevGX = CENTER_X;
+    static int prevGY = CENTER_Y;
     
     // Calculate G-force dot position (1.5G = full radius)
     float maxG = 1.5;
-    int maxRadius = 135;
+    int maxRadius = 120;
     int gX = CENTER_X + (int)(telemetry.gForceX / maxG * maxRadius);
-    int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted for display
+    int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted
     
     // Clamp to circle
     float dist = sqrt(pow(gX - CENTER_X, 2) + pow(gY - CENTER_Y, 2));
@@ -796,28 +871,101 @@ void drawGForceScreen() {
     else if (totalG > 0.7) dotColor = MX5_ORANGE;
     else if (totalG > 0.4) dotColor = MX5_YELLOW;
     
-    // Draw G-force indicator with glow
-    LCD_FillCircle(gX, gY, 16, dotColor);
-    LCD_DrawCircle(gX, gY, 16, MX5_WHITE);
-    LCD_DrawCircle(gX, gY, 17, MX5_WHITE);
-    
-    // Trail effect - small dot at center
-    LCD_FillCircle(CENTER_X, CENTER_Y, 4, MX5_WHITE);
-    
-    // Remember position for next frame
-    lastGX = gX;
-    lastGY = gY;
-    
-    // G values display (bottom)
-    LCD_FillRect(CENTER_X - 80, SCREEN_HEIGHT - 55, 160, 35, COLOR_BG_CARD);
-    LCD_DrawRect(CENTER_X - 80, SCREEN_HEIGHT - 55, 160, 35, MX5_ACCENT);
-    
-    // Page indicator
-    int dotSpacing = 12;
-    for (int i = 0; i < SCREEN_COUNT; i++) {
-        uint16_t dotColor2 = (i == currentScreen) ? MX5_WHITE : MX5_DARKGRAY;
-        LCD_FillCircle(CENTER_X - (SCREEN_COUNT * dotSpacing)/2 + i * dotSpacing + 6, SCREEN_HEIGHT - 18, 3, dotColor2);
+    if (needsFullRedraw) {
+        // Full redraw - draw everything
+        drawBackground();
+        
+        // === TITLE ===
+        LCD_DrawString(CENTER_X - 42, 20, "G-FORCE", MX5_WHITE, COLOR_BG, 2);
+        
+        // Draw grid circles for G reference with labels
+        for (int g = 1; g <= 3; g++) {
+            int radius = g * 40;
+            LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
+        }
+        
+        // Draw crosshairs
+        LCD_DrawLine(CENTER_X - 130, CENTER_Y, CENTER_X + 130, CENTER_Y, MX5_DARKGRAY);
+        LCD_DrawLine(CENTER_X, CENTER_Y - 130, CENTER_X, CENTER_Y + 130, MX5_DARKGRAY);
+        
+        // Axis labels
+        LCD_DrawString(CENTER_X - 6, CENTER_Y - 145, "ACC", MX5_GREEN, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X - 6, CENTER_Y + 135, "BRK", MX5_RED, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X - 145, CENTER_Y - 4, "L", MX5_CYAN, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X + 138, CENTER_Y - 4, "R", MX5_CYAN, COLOR_BG, 1);
+        
+        // G-force ring labels
+        LCD_DrawString(CENTER_X + 42, CENTER_Y - 6, "1G", MX5_GRAY, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X + 82, CENTER_Y - 6, "2G", MX5_GRAY, COLOR_BG, 1);
+        
+        // Fixed center reference point
+        LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
+        
+        drawPageIndicator();
+        
+        // Reset previous position on full redraw
+        prevGX = CENTER_X;
+        prevGY = CENTER_Y;
+    } else {
+        // Partial redraw - only update the moving ball and values
+        
+        // Erase old ball position by filling with background color
+        LCD_FillCircle(prevGX, prevGY, 16, COLOR_BG);
+        
+        // Redraw any grid elements that might have been covered by the old ball
+        // Check if old position was near crosshairs or circles
+        if (abs(prevGY - CENTER_Y) < 20) {
+            // Redraw horizontal crosshair segment near old position
+            int lineStart = max(CENTER_X - 130, prevGX - 20);
+            int lineEnd = min(CENTER_X + 130, prevGX + 20);
+            LCD_DrawLine(lineStart, CENTER_Y, lineEnd, CENTER_Y, MX5_DARKGRAY);
+        }
+        if (abs(prevGX - CENTER_X) < 20) {
+            // Redraw vertical crosshair segment near old position
+            int lineStart = max(CENTER_Y - 130, prevGY - 20);
+            int lineEnd = min(CENTER_Y + 130, prevGY + 20);
+            LCD_DrawLine(CENTER_X, lineStart, CENTER_X, lineEnd, MX5_DARKGRAY);
+        }
+        
+        // Redraw any grid circles that might have been affected
+        for (int g = 1; g <= 3; g++) {
+            int radius = g * 40;
+            float prevDist = sqrt(pow(prevGX - CENTER_X, 2) + pow(prevGY - CENTER_Y, 2));
+            if (abs(prevDist - radius) < 20) {
+                LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
+            }
+        }
+        
+        // Redraw center reference if it was covered
+        if (abs(prevGX - CENTER_X) < 20 && abs(prevGY - CENTER_Y) < 20) {
+            LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
+        }
     }
+    
+    // Draw G-force indicator at new position
+    LCD_FillCircle(gX, gY, 14, dotColor);
+    LCD_DrawCircle(gX, gY, 14, MX5_WHITE);
+    LCD_DrawCircle(gX, gY, 15, MX5_WHITE);
+    
+    // Save current position for next partial redraw
+    prevGX = gX;
+    prevGY = gY;
+    
+    // === G VALUES DISPLAY (Bottom) - always update ===
+    int infoY = SCREEN_HEIGHT - 60;
+    LCD_FillRoundRect(CENTER_X - 90, infoY, 180, 40, 10, COLOR_BG_CARD);
+    LCD_DrawRoundRect(CENTER_X - 90, infoY, 180, 40, 10, MX5_ACCENT);
+    
+    // Show current G values
+    char gStr[16];
+    snprintf(gStr, sizeof(gStr), "LAT: %.2fG", telemetry.gForceX);
+    LCD_DrawString(CENTER_X - 80, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
+    
+    snprintf(gStr, sizeof(gStr), "LON: %.2fG", telemetry.gForceY);
+    LCD_DrawString(CENTER_X - 80, infoY + 22, gStr, (telemetry.gForceY > 0) ? MX5_GREEN : MX5_RED, COLOR_BG_CARD, 1);
+    
+    snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
+    LCD_DrawString(CENTER_X + 40, infoY + 12, gStr, dotColor, COLOR_BG_CARD, 2);
 }
 
 // ============================================================================
@@ -837,18 +985,20 @@ void drawPageIndicator() {
 }
 
 void drawCard(int x, int y, int w, int h, uint16_t borderColor) {
-    LCD_FillRect(x, y, w, h, COLOR_BG_CARD);
-    LCD_DrawRect(x, y, w, h, borderColor);
+    LCD_FillRoundRect(x, y, w, h, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(x, y, w, h, CARD_RADIUS, borderColor);
 }
 
 void drawProgressBar(int x, int y, int w, int h, float percent, uint16_t color) {
     percent = constrain(percent, 0, 100);
-    LCD_FillRect(x, y, w, h, MX5_DARKGRAY);
+    LCD_FillRoundRect(x, y, w, h, BAR_RADIUS, MX5_DARKGRAY);
     int fillW = (int)(w * percent / 100.0);
-    if (fillW > 0) {
+    if (fillW > BAR_RADIUS * 2) {
+        LCD_FillRoundRect(x, y, fillW, h, BAR_RADIUS, color);
+    } else if (fillW > 0) {
         LCD_FillRect(x, y, fillW, h, color);
     }
-    LCD_DrawRect(x, y, w, h, MX5_GRAY);
+    LCD_DrawRoundRect(x, y, w, h, BAR_RADIUS, MX5_GRAY);
 }
 
 // ============================================================================
@@ -888,8 +1038,8 @@ void drawDiagnosticsScreen() {
         uint16_t statusColor = items[i].isWarning ? items[i].colorWarn : items[i].colorOk;
         int y = startY + i * (itemH + itemGap);
         
-        // Item background card
-        LCD_FillRect(startX, y, itemW, itemH, COLOR_BG_CARD);
+        // Item background card (rounded)
+        LCD_FillRoundRect(startX, y, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
         
         // Left status indicator (checkmark or X style)
         if (items[i].isWarning) {
@@ -906,6 +1056,13 @@ void drawDiagnosticsScreen() {
             LCD_DrawLine(startX + 23, y + itemH - 12, startX + 36, y + 12, statusColor);
         }
         
+        // TEXT LABEL - draw the item name
+        LCD_DrawString(startX + 50, y + 12, items[i].name, MX5_WHITE, COLOR_BG_CARD, 2);
+        
+        // Status text (OK or WARN)
+        const char* statusText = items[i].isWarning ? "WARN" : "OK";
+        LCD_DrawString(startX + 50, y + itemH - 20, statusText, statusColor, COLOR_BG_CARD, 1);
+        
         // Status circle on right
         int circleX = startX + itemW - 25;
         int circleY = y + itemH/2;
@@ -917,8 +1074,8 @@ void drawDiagnosticsScreen() {
             LCD_FillCircle(circleX, circleY, 5, MX5_WHITE);
         }
         
-        // Border with status color
-        LCD_DrawRect(startX, y, itemW, itemH, statusColor);
+        // Border with status color (rounded)
+        LCD_DrawRoundRect(startX, y, itemW, itemH, CARD_RADIUS, statusColor);
     }
     
     drawPageIndicator();
@@ -938,8 +1095,8 @@ void drawSystemScreen() {
     
     // === IMU STATUS ===
     uint16_t imuColor = imuAvailable ? MX5_GREEN : MX5_RED;
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, imuColor);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, imuColor);
     
     // IMU icon (accelerometer shape)
     int iconX = startX + 30;
@@ -949,6 +1106,11 @@ void drawSystemScreen() {
     LCD_DrawLine(iconX - 15, iconY, iconX + 15, iconY, imuColor);
     LCD_FillCircle(iconX, iconY, 4, imuColor);
     
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "IMU SENSOR", MX5_WHITE, COLOR_BG_CARD, 2);
+    const char* imuStatus = imuAvailable ? "READY" : "OFFLINE";
+    LCD_DrawString(startX + 55, startY + 32, imuStatus, imuColor, COLOR_BG_CARD, 1);
+    
     // Status indicator
     LCD_FillCircle(startX + itemW - 30, iconY, 10, imuColor);
     
@@ -956,8 +1118,8 @@ void drawSystemScreen() {
     
     // === SERIAL STATUS ===
     uint16_t serialColor = telemetry.connected ? MX5_GREEN : MX5_ORANGE;
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, serialColor);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, serialColor);
     
     // Serial/USB icon
     iconY = startY + itemH/2;
@@ -965,13 +1127,18 @@ void drawSystemScreen() {
     LCD_FillRect(iconX - 4, iconY + 6, 8, 4, serialColor);
     LCD_FillRect(iconX - 2, iconY - 10, 4, 4, serialColor);
     
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "PI SERIAL", MX5_WHITE, COLOR_BG_CARD, 2);
+    const char* serialStatus = telemetry.connected ? "CONNECTED" : "WAITING";
+    LCD_DrawString(startX + 55, startY + 32, serialStatus, serialColor, COLOR_BG_CARD, 1);
+    
     LCD_FillCircle(startX + itemW - 30, iconY, 10, serialColor);
     
     startY += itemH + itemGap;
     
     // === DISPLAY INFO ===
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, MX5_ACCENT);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_ACCENT);
     
     // Display icon
     iconY = startY + itemH/2;
@@ -980,14 +1147,18 @@ void drawSystemScreen() {
     LCD_FillRect(iconX - 4, iconY + 8, 8, 3, MX5_ACCENT);
     LCD_FillRect(iconX - 8, iconY + 11, 16, 2, MX5_ACCENT);
     
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "DISPLAY", MX5_WHITE, COLOR_BG_CARD, 2);
+    LCD_DrawString(startX + 55, startY + 32, "360x360 ST77916", MX5_ACCENT, COLOR_BG_CARD, 1);
+    
     // Info circle
     LCD_FillCircle(startX + itemW - 30, iconY, 10, MX5_ACCENT);
     
     startY += itemH + itemGap;
     
     // === MEMORY ===
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, MX5_PURPLE);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_PURPLE);
     
     // Memory chip icon
     iconY = startY + itemH/2;
@@ -997,13 +1168,19 @@ void drawSystemScreen() {
         LCD_FillRect(iconX + 8, iconY - 8 + p * 5, 4, 3, MX5_PURPLE);
     }
     
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "FREE MEMORY", MX5_WHITE, COLOR_BG_CARD, 2);
+    char memStr[16];
+    snprintf(memStr, sizeof(memStr), "%d KB", ESP.getFreeHeap() / 1024);
+    LCD_DrawString(startX + 55, startY + 32, memStr, MX5_PURPLE, COLOR_BG_CARD, 1);
+    
     LCD_FillCircle(startX + itemW - 30, iconY, 10, MX5_PURPLE);
     
     startY += itemH + itemGap;
     
     // === UPTIME ===
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, MX5_CYAN);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_CYAN);
     
     // Clock icon
     iconY = startY + itemH/2;
@@ -1012,6 +1189,16 @@ void drawSystemScreen() {
     LCD_DrawLine(iconX, iconY, iconX, iconY - 6, MX5_CYAN);
     LCD_DrawLine(iconX, iconY, iconX + 5, iconY + 2, MX5_CYAN);
     LCD_FillCircle(iconX, iconY, 2, MX5_CYAN);
+    
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "UPTIME", MX5_WHITE, COLOR_BG_CARD, 2);
+    unsigned long uptimeSec = millis() / 1000;
+    int hrs = uptimeSec / 3600;
+    int mins = (uptimeSec % 3600) / 60;
+    int secs = uptimeSec % 60;
+    char uptimeStr[16];
+    snprintf(uptimeStr, sizeof(uptimeStr), "%02d:%02d:%02d", hrs, mins, secs);
+    LCD_DrawString(startX + 55, startY + 32, uptimeStr, MX5_CYAN, COLOR_BG_CARD, 1);
     
     LCD_FillCircle(startX + itemW - 30, iconY, 10, MX5_CYAN);
     
@@ -1031,12 +1218,12 @@ void drawSettingsScreen() {
     int startX = CENTER_X - itemW/2;
     
     // === BRIGHTNESS (with slider) ===
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, MX5_YELLOW);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_YELLOW);
     
     // Sun icon
     int iconX = startX + 30;
-    int iconY = startY + itemH/2;
+    int iconY = startY + 18;
     LCD_FillCircle(iconX, iconY, 8, MX5_YELLOW);
     for (int r = 0; r < 8; r++) {
         float angle = r * 3.14159 / 4;
@@ -1047,19 +1234,23 @@ void drawSettingsScreen() {
         LCD_DrawLine(x1, y1, x2, y2, MX5_YELLOW);
     }
     
-    // Slider bar
-    int sliderX = startX + 70;
+    // Text label
+    LCD_DrawString(startX + 55, startY + 8, "BRIGHTNESS", MX5_WHITE, COLOR_BG_CARD, 2);
+    
+    // Slider bar (rounded)
+    int sliderX = startX + 55;
     int sliderW = 180;
-    int sliderY = iconY;
-    LCD_FillRect(sliderX, sliderY - 3, sliderW, 6, MX5_DARKGRAY);
-    LCD_FillRect(sliderX, sliderY - 3, (int)(sliderW * 0.75), 6, MX5_YELLOW);
-    LCD_FillCircle(sliderX + (int)(sliderW * 0.75), sliderY, 8, MX5_WHITE);
+    int sliderY = startY + 40;
+    LCD_FillRoundRect(sliderX, sliderY - 4, sliderW, 8, 4, MX5_DARKGRAY);
+    LCD_FillRoundRect(sliderX, sliderY - 4, (int)(sliderW * 0.75), 8, 4, MX5_YELLOW);
+    LCD_FillCircle(sliderX + (int)(sliderW * 0.75), sliderY, 7, MX5_WHITE);
+    LCD_DrawString(startX + itemW - 40, startY + 32, "75%", MX5_YELLOW, COLOR_BG_CARD, 1);
     
     startY += itemH + itemGap;
     
     // === UNITS (toggle) ===
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, MX5_ACCENT);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_ACCENT);
     
     // Speed icon
     iconX = startX + 30;
@@ -1068,19 +1259,23 @@ void drawSettingsScreen() {
     LCD_DrawLine(iconX, iconY, iconX + 6, iconY - 6, MX5_ACCENT);
     LCD_DrawLine(iconX, iconY, iconX + 7, iconY - 5, MX5_ACCENT);
     
-    // Toggle switch (ON position for MPH)
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "SPEED UNITS", MX5_WHITE, COLOR_BG_CARD, 2);
+    LCD_DrawString(startX + 55, startY + 32, "MPH", MX5_ACCENT, COLOR_BG_CARD, 1);
+    
+    // Toggle switch (ON position for MPH) - rounded
     int toggleX = startX + itemW - 70;
     int toggleW = 50;
     int toggleH = 24;
-    LCD_FillRect(toggleX, iconY - toggleH/2, toggleW, toggleH, MX5_GREEN);
-    LCD_DrawRect(toggleX, iconY - toggleH/2, toggleW, toggleH, MX5_WHITE);
+    LCD_FillRoundRect(toggleX, iconY - toggleH/2, toggleW, toggleH, 12, MX5_GREEN);
+    LCD_DrawRoundRect(toggleX, iconY - toggleH/2, toggleW, toggleH, 12, MX5_WHITE);
     LCD_FillCircle(toggleX + toggleW - 12, iconY, 9, MX5_WHITE);
     
     startY += itemH + itemGap;
     
     // === SHIFT LIGHT RPM (with value) ===
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, MX5_RED);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_RED);
     
     // Warning light icon
     iconX = startX + 30;
@@ -1089,18 +1284,19 @@ void drawSettingsScreen() {
     LCD_FillCircle(iconX, iconY, 6, COLOR_BG_CARD);
     LCD_FillCircle(iconX, iconY, 3, MX5_RED);
     
-    // RPM value box
-    int valueX = startX + itemW - 80;
-    int valueW = 60;
-    LCD_FillRect(valueX, iconY - 12, valueW, 24, COLOR_BG_ELEVATED);
-    LCD_DrawRect(valueX, iconY - 12, valueW, 24, MX5_RED);
-    LCD_FillCircle(valueX + valueW/2, iconY, 4, MX5_RED);  // Value indicator
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "SHIFT LIGHT", MX5_WHITE, COLOR_BG_CARD, 2);
+    LCD_DrawString(startX + 55, startY + 32, "Redline Alert", MX5_RED, COLOR_BG_CARD, 1);
+    
+    // RPM value
+    int valueX = startX + itemW - 70;
+    LCD_DrawString(valueX, startY + 18, "6500", MX5_WHITE, COLOR_BG_CARD, 2);
     
     startY += itemH + itemGap;
     
     // === SCREEN TIMEOUT (with value) ===
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, MX5_CYAN);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_CYAN);
     
     // Timer/clock icon
     iconX = startX + 30;
@@ -1111,32 +1307,39 @@ void drawSettingsScreen() {
     LCD_DrawLine(iconX, iconY, iconX + 5, iconY, MX5_CYAN);
     LCD_FillRect(iconX - 2, iconY - 14, 4, 4, MX5_CYAN);  // Top knob
     
-    // Timeout value box
-    valueX = startX + itemW - 80;
-    LCD_FillRect(valueX, iconY - 12, valueW, 24, COLOR_BG_ELEVATED);
-    LCD_DrawRect(valueX, iconY - 12, valueW, 24, MX5_CYAN);
-    LCD_FillCircle(valueX + valueW/2, iconY, 4, MX5_CYAN);  // Value indicator
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "TIMEOUT", MX5_WHITE, COLOR_BG_CARD, 2);
+    LCD_DrawString(startX + 55, startY + 32, "Screen Dim", MX5_CYAN, COLOR_BG_CARD, 1);
+    
+    // Timeout value
+    valueX = startX + itemW - 70;
+    LCD_DrawString(valueX, startY + 18, "30s", MX5_WHITE, COLOR_BG_CARD, 2);
     
     startY += itemH + itemGap;
     
     // === DEMO MODE (toggle) ===
-    LCD_FillRect(startX, startY, itemW, itemH, COLOR_BG_CARD);
-    LCD_DrawRect(startX, startY, itemW, itemH, MX5_PURPLE);
+    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
+    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_PURPLE);
     
-    // Play/demo icon
+    // Play/demo icon (rounded square)
     iconX = startX + 30;
     iconY = startY + itemH/2;
-    LCD_FillRect(iconX - 10, iconY - 10, 20, 20, MX5_PURPLE);
+    LCD_FillRoundRect(iconX - 10, iconY - 10, 20, 20, 4, MX5_PURPLE);
     // Play triangle inside
     LCD_DrawLine(iconX - 4, iconY - 6, iconX - 4, iconY + 6, COLOR_BG_CARD);
     LCD_DrawLine(iconX - 4, iconY - 6, iconX + 6, iconY, COLOR_BG_CARD);
     LCD_DrawLine(iconX - 4, iconY + 6, iconX + 6, iconY, COLOR_BG_CARD);
     
-    // Toggle switch (OFF position)
-    toggleX = startX + itemW - 70;
-    LCD_FillRect(toggleX, iconY - toggleH/2, toggleW, toggleH, MX5_DARKGRAY);
-    LCD_DrawRect(toggleX, iconY - toggleH/2, toggleW, toggleH, MX5_GRAY);
-    LCD_FillCircle(toggleX + 12, iconY, 9, MX5_WHITE);
+    // Text label
+    LCD_DrawString(startX + 55, startY + 10, "DEMO MODE", MX5_WHITE, COLOR_BG_CARD, 2);
+    LCD_DrawString(startX + 55, startY + 32, "Simulate Data", MX5_PURPLE, COLOR_BG_CARD, 1);
+    
+    // Toggle switch (OFF position) - rounded
+    int toggleX2 = startX + itemW - 70;
+    LCD_FillRoundRect(toggleX2, iconY - toggleH/2, toggleW, toggleH, 12, MX5_DARKGRAY);
+    LCD_DrawRoundRect(toggleX2, iconY - toggleH/2, toggleW, toggleH, 12, MX5_GRAY);
+    LCD_FillCircle(toggleX2 + 12, iconY, 9, MX5_WHITE);
+    LCD_DrawString(startX + itemW - 45, startY + 18, "OFF", MX5_GRAY, COLOR_BG_CARD, 1);
     
     drawPageIndicator();
 }
