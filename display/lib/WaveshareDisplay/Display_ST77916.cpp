@@ -481,6 +481,101 @@ void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color
     LCD_FillRect(x + w - 1, y, 1, h, color);
 }
 
+// Helper to draw corner arcs for rounded rectangles
+static void LCD_DrawCorner(int16_t x0, int16_t y0, int16_t r, uint8_t corner, uint16_t color) {
+    int f = 1 - r;
+    int ddF_x = 1;
+    int ddF_y = -2 * r;
+    int x = 0;
+    int y = r;
+    
+    while (x < y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+        x++;
+        ddF_x += 2;
+        f += ddF_x;
+        
+        if (corner & 0x1) { // Top-right
+            LCD_DrawPixel(x0 + x, y0 - y, color);
+            LCD_DrawPixel(x0 + y, y0 - x, color);
+        }
+        if (corner & 0x2) { // Bottom-right
+            LCD_DrawPixel(x0 + x, y0 + y, color);
+            LCD_DrawPixel(x0 + y, y0 + x, color);
+        }
+        if (corner & 0x4) { // Bottom-left
+            LCD_DrawPixel(x0 - x, y0 + y, color);
+            LCD_DrawPixel(x0 - y, y0 + x, color);
+        }
+        if (corner & 0x8) { // Top-left
+            LCD_DrawPixel(x0 - x, y0 - y, color);
+            LCD_DrawPixel(x0 - y, y0 - x, color);
+        }
+    }
+}
+
+// Helper to fill corner arcs for rounded rectangles
+static void LCD_FillCorner(int16_t x0, int16_t y0, int16_t r, uint8_t corner, int16_t delta, uint16_t color) {
+    int f = 1 - r;
+    int ddF_x = 1;
+    int ddF_y = -2 * r;
+    int x = 0;
+    int y = r;
+    
+    while (x < y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+        x++;
+        ddF_x += 2;
+        f += ddF_x;
+        
+        if (corner & 0x1) { // Right side
+            LCD_FillRect(x0 + x, y0 - y, 1, 2 * y + delta, color);
+            LCD_FillRect(x0 + y, y0 - x, 1, 2 * x + delta, color);
+        }
+        if (corner & 0x2) { // Left side
+            LCD_FillRect(x0 - x, y0 - y, 1, 2 * y + delta, color);
+            LCD_FillRect(x0 - y, y0 - x, 1, 2 * x + delta, color);
+        }
+    }
+}
+
+void LCD_DrawRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color) {
+    if (r > w/2) r = w/2;
+    if (r > h/2) r = h/2;
+    
+    // Draw four sides (excluding corners)
+    LCD_FillRect(x + r, y, w - 2*r, 1, color);           // Top
+    LCD_FillRect(x + r, y + h - 1, w - 2*r, 1, color);   // Bottom
+    LCD_FillRect(x, y + r, 1, h - 2*r, color);           // Left
+    LCD_FillRect(x + w - 1, y + r, 1, h - 2*r, color);   // Right
+    
+    // Draw four corners
+    LCD_DrawCorner(x + r, y + r, r, 0x8, color);             // Top-left
+    LCD_DrawCorner(x + w - r - 1, y + r, r, 0x1, color);     // Top-right
+    LCD_DrawCorner(x + w - r - 1, y + h - r - 1, r, 0x2, color); // Bottom-right
+    LCD_DrawCorner(x + r, y + h - r - 1, r, 0x4, color);     // Bottom-left
+}
+
+void LCD_FillRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color) {
+    if (r > w/2) r = w/2;
+    if (r > h/2) r = h/2;
+    
+    // Fill center rectangle
+    LCD_FillRect(x + r, y, w - 2*r, h, color);
+    
+    // Fill side rectangles and corners
+    LCD_FillCorner(x + w - r - 1, y + r, r, 0x1, h - 2*r - 1, color);  // Right side + corners
+    LCD_FillCorner(x + r, y + r, r, 0x2, h - 2*r - 1, color);          // Left side + corners
+}
+
 void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color) {
     int f = 1 - r;
     int ddF_x = 1;
@@ -735,6 +830,42 @@ void LCD_DrawImage(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_
     for (uint16_t row = 0; row < draw_h; row++) {
         // Copy row from PROGMEM (data is already byte-swapped by converter)
         memcpy_P(row_buf, &data[row * w], draw_w * 2);
+        esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + 1, row_buf);
+    }
+    
+    heap_caps_free(row_buf);
+}
+
+void LCD_DrawImageWithAlpha(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
+                            const uint16_t* rgb_data, const uint8_t* alpha_data,
+                            uint16_t bg_color) {
+    if (panel_handle == NULL) return;
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    
+    // Clip if necessary
+    uint16_t draw_w = (x + w > LCD_WIDTH) ? (LCD_WIDTH - x) : w;
+    uint16_t draw_h = (y + h > LCD_HEIGHT) ? (LCD_HEIGHT - y) : h;
+    
+    uint16_t* row_buf = (uint16_t*)heap_caps_malloc(draw_w * 2, MALLOC_CAP_DMA);
+    if (!row_buf) {
+        Serial.println("LCD_DrawImageWithAlpha: Failed to allocate row buffer");
+        return;
+    }
+    
+    for (uint16_t row = 0; row < draw_h; row++) {
+        for (uint16_t col = 0; col < draw_w; col++) {
+            uint16_t idx = row * w + col;
+            uint8_t alpha = pgm_read_byte(&alpha_data[idx]);
+            
+            // Simple threshold: if alpha > 128, draw pixel, else background
+            // This gives clean edges without muddy blending
+            if (alpha > 128) {
+                uint16_t pixel = pgm_read_word(&rgb_data[idx]);
+                row_buf[col] = pixel;
+            } else {
+                row_buf[col] = bg_color;
+            }
+        }
         esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + 1, row_buf);
     }
     
