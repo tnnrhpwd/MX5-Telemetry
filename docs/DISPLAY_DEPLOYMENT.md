@@ -286,6 +286,89 @@ pip3 install pygame
 
 ---
 
+## Remote Flashing via Raspberry Pi
+
+When the ESP32-S3 display is connected to the Raspberry Pi via USB (USB-C on ESP32-S3 to USB3 on Pi), you can flash firmware remotely over the network.
+
+### Prerequisites
+
+1. **Install esptool on the Raspberry Pi:**
+   ```bash
+   ssh pi@192.168.1.28 "pip3 install esptool"
+   ```
+
+2. **Verify ESP32-S3 is detected:**
+   ```bash
+   ssh pi@192.168.1.28 "lsusb | grep 303a"
+   # Should show: Bus 001 Device XXX: ID 303a:1001 (Espressif)
+   
+   ssh pi@192.168.1.28 "ls /dev/ttyACM*"
+   # Should show: /dev/ttyACM0
+   ```
+
+### Remote Flash Steps
+
+1. **Build firmware locally:**
+   ```powershell
+   # From workspace root
+   pio run -d display
+   ```
+
+2. **Create firmware directory on Pi:**
+   ```bash
+   ssh pi@192.168.1.28 "mkdir -p ~/esp_firmware"
+   ```
+
+3. **Transfer firmware files to Pi:**
+   ```powershell
+   scp "display\.pio\build\esp32s3_display\bootloader.bin" `
+       "display\.pio\build\esp32s3_display\firmware.bin" `
+       "display\.pio\build\esp32s3_display\partitions.bin" `
+       pi@192.168.1.28:~/esp_firmware/
+   ```
+
+4. **Flash the ESP32-S3 via Pi:**
+   ```bash
+   ssh pi@192.168.1.28 "python3 -m esptool \
+       --chip esp32s3 \
+       --port /dev/ttyACM0 \
+       --baud 921600 \
+       --before default_reset \
+       --after hard_reset \
+       write_flash -z \
+       --flash_mode dio \
+       --flash_freq 80m \
+       --flash_size 16MB \
+       0x0 ~/esp_firmware/bootloader.bin \
+       0x8000 ~/esp_firmware/partitions.bin \
+       0x10000 ~/esp_firmware/firmware.bin"
+   ```
+
+5. **Monitor serial output (optional):**
+   ```bash
+   ssh pi@192.168.1.28 "cat /dev/ttyACM0"
+   ```
+
+### Flash Address Map
+
+| File | Address | Description |
+|------|---------|-------------|
+| bootloader.bin | 0x0 | ESP32-S3 bootloader |
+| partitions.bin | 0x8000 | Partition table |
+| firmware.bin | 0x10000 | Application firmware |
+
+### Quick Reference
+
+**One-liner build and flash:**
+```powershell
+# Build, transfer, and flash in one go
+pio run -d display; `
+scp display\.pio\build\esp32s3_display\*.bin pi@192.168.1.28:~/esp_firmware/; `
+ssh pi@192.168.1.28 "python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 921600 write_flash -z --flash_mode dio --flash_freq 80m --flash_size 16MB 0x0 ~/esp_firmware/bootloader.bin 0x8000 ~/esp_firmware/partitions.bin 0x10000 ~/esp_firmware/firmware.bin"
+```
+
+---
+
 ## Development
 
 ### Running the Simulator

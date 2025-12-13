@@ -407,6 +407,8 @@ class PiDisplayApp:
         
         if self.settings.demo_mode:
             print("Data Source: DEMO MODE - using simulated data")
+            # Still try to connect ESP32 for display sync even in demo mode
+            self._init_esp32_handler()
             return
         
         # Production mode - initialize real data sources
@@ -425,18 +427,36 @@ class PiDisplayApp:
             print("  ✗ CAN library not available - install python-can")
         
         # ESP32 serial handler
+        self._init_esp32_handler()
+    
+    def _init_esp32_handler(self):
+        """Initialize ESP32 serial handler for display sync"""
         if SERIAL_AVAILABLE and ESP32SerialHandler:
             print("  Initializing ESP32 serial...")
-            self.esp32_handler = ESP32SerialHandler(self.telemetry)
+            self.esp32_handler = ESP32SerialHandler(
+                self.telemetry, 
+                on_screen_change=self._on_esp32_screen_change
+            )
             if self.esp32_handler.start():
-                print("  ✓ ESP32 connected - receiving TPMS and G-force data")
+                print("  ✓ ESP32 connected - display sync enabled")
                 # Sync initial screen
                 self._sync_esp32_screen()
             else:
-                print("  ✗ ESP32 serial failed - check USB or UART connection")
+                print("  ✗ ESP32 serial failed - check USB connection")
                 self.esp32_handler = None
         else:
             print("  ✗ Serial library not available - install pyserial")
+    
+    def _on_esp32_screen_change(self, screen_index: int):
+        """Callback when ESP32 display changes screen via touch (bidirectional sync)"""
+        # Map ESP32 screen index to Pi Screen enum
+        # ESP32: 0=Overview, 1=RPM, 2=TPMS, 3=Engine, 4=GForce, 5=Diagnostics, 6=System, 7=Settings
+        # Pi: 0=Overview, 1=RPM_SPEED, 2=TPMS, 3=ENGINE, 4=GFORCE, 5=DIAGNOSTICS, 6=SYSTEM, 7=SETTINGS
+        if 0 <= screen_index <= 7:
+            screens = list(Screen)
+            if screen_index < len(screens):
+                self.current_screen = screens[screen_index]
+                print(f"Pi: Synced to screen {screen_index} ({self.current_screen.name})")
     
     def _on_data_source_changed(self):
         """Called when demo_mode setting is toggled"""
@@ -619,13 +639,13 @@ class PiDisplayApp:
             self._sync_esp32_screen()
     
     def _sync_esp32_screen(self):
-        """Sync ESP32 display to match Pi screen (first 5 screens only)"""
+        """Sync ESP32 display to match Pi screen (all 8 screens)"""
         if self.esp32_handler:
-            # Map Pi screens to ESP32 screens (ESP32 has 5 screens: 0-4)
+            # Map Pi screens to ESP32 screens (ESP32 has 8 screens: 0-7)
             # Pi: OVERVIEW=0, RPM_SPEED=1, TPMS=2, ENGINE=3, GFORCE=4, DIAGNOSTICS=5, SYSTEM=6, SETTINGS=7
-            # ESP: OVERVIEW=0, RPM=1, TPMS=2, ENGINE=3, GFORCE=4
+            # ESP: OVERVIEW=0, RPM=1, TPMS=2, ENGINE=3, GFORCE=4, DIAGNOSTICS=5, SYSTEM=6, SETTINGS=7
             screen_idx = self.current_screen.value
-            if screen_idx <= 4:
+            if screen_idx <= 7:
                 self.esp32_handler.send_screen_change(screen_idx)
     
     def _handle_lap_timer_button(self, button: ButtonEvent):

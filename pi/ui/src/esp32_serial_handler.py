@@ -54,21 +54,26 @@ class ESP32SerialHandler:
     GPIO_PORT = '/dev/serial0'  # Pi GPIO UART (14/15)
     BAUD_RATE = 115200
     
-    # Screen mapping (must match ESP32 ScreenMode enum)
+    # Screen mapping (must match ESP32 ScreenMode enum - 8 screens)
     SCREEN_OVERVIEW = 0
     SCREEN_RPM = 1
     SCREEN_TPMS = 2
     SCREEN_ENGINE = 3
     SCREEN_GFORCE = 4
+    SCREEN_DIAGNOSTICS = 5
+    SCREEN_SYSTEM = 6
+    SCREEN_SETTINGS = 7
     
-    def __init__(self, telemetry_data, port: str = None):
+    def __init__(self, telemetry_data, port: str = None, on_screen_change=None):
         """
         Args:
             telemetry_data: TelemetryData object to update with received values
             port: Serial port path (default: auto-detect USB then GPIO)
+            on_screen_change: Callback function(screen_index) called when ESP32 changes screen
         """
         self.telemetry = telemetry_data
         self.port = port  # Will be auto-detected if None
+        self.on_screen_change = on_screen_change  # Callback for bidirectional sync
         
         self.serial_conn = None
         self._running = False
@@ -189,6 +194,16 @@ class ESP32SerialHandler:
                 self._parse_tpms(line[5:])
             elif line.startswith("IMU:"):
                 self._parse_imu(line[4:])
+            elif line.startswith("SCREEN_CHANGED:"):
+                # ESP32 user changed screen via touch - sync Pi display
+                try:
+                    new_screen = int(line[15:])
+                    self.esp32_screen = new_screen
+                    print(f"ESP32: Screen changed to {new_screen} via touch")
+                    if self.on_screen_change:
+                        self.on_screen_change(new_screen)
+                except ValueError:
+                    pass
             elif line.startswith("OK:SCREEN_"):
                 # Screen change acknowledgement
                 try:
@@ -277,19 +292,22 @@ class ESP32SerialHandler:
         Send screen change command to ESP32 display.
         
         Args:
-            screen_index: Screen number (0-4)
+            screen_index: Screen number (0-7)
                 0 = Overview
                 1 = RPM/Speed
                 2 = TPMS
                 3 = Engine
                 4 = G-Force
+                5 = Diagnostics
+                6 = System
+                7 = Settings
         """
         if not self.serial_conn or not self._running:
             return
         
         try:
-            # Clamp to valid range (ESP32 has 5 screens)
-            screen_index = max(0, min(4, screen_index))
+            # Clamp to valid range (ESP32 has 8 screens)
+            screen_index = max(0, min(7, screen_index))
             msg = f"SCREEN:{screen_index}\n"
             self.serial_conn.write(msg.encode('utf-8'))
             self.last_tx_time = time.time()
