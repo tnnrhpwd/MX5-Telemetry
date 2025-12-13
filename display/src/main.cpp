@@ -228,8 +228,13 @@ void loop() {
                 telemetry.gForceY = cos(millis() / 1500.0) * 0.3;
             }
             
-            // Only redraw in demo mode when animating
-            needsRedraw = true;
+            // Only G-Force screen needs frequent updates (smooth ball movement)
+            // All other screens are static - only update on screen change
+            if (currentScreen == SCREEN_GFORCE) {
+                needsRedraw = true;
+                // G-Force handles its own partial redraw, no needsFullRedraw
+            }
+            // Other screens don't need continuous demo updates - they redraw on screen change
         }
     }
     
@@ -342,10 +347,10 @@ void handleTouch() {
 }
 
 void drawOverviewScreen() {
-    // Only draw background on full redraw (screen change)
-    if (needsFullRedraw) {
-        drawBackground();
-    }
+    // Only draw on full redraw to prevent flickering overlaps
+    if (!needsFullRedraw) return;
+    
+    drawBackground();
     
     // === GEAR INDICATOR (Large center) ===
     int gearRadius = 55;
@@ -453,10 +458,10 @@ void drawOverviewScreen() {
 }
 
 void drawRPMScreen() {
-    // Only draw background on full redraw
-    if (needsFullRedraw) {
-        drawBackground();
-    }
+    // Only draw on full redraw to prevent flickering overlaps
+    if (!needsFullRedraw) return;
+    
+    drawBackground();
     
     // === RPM ARC GAUGE ===
     float rpmPercent = telemetry.rpm / 8000.0;
@@ -541,10 +546,10 @@ void drawRPMScreen() {
 }
 
 void drawTPMSScreen() {
-    // Only draw background on full redraw
-    if (needsFullRedraw) {
-        drawBackground();
-    }
+    // Only draw on full redraw to prevent flickering overlaps
+    if (!needsFullRedraw) return;
+    
+    drawBackground();
     
     // === CAR BODY OUTLINE ===
     // Main body
@@ -632,10 +637,10 @@ void drawTPMSScreen() {
 }
 
 void drawEngineScreen() {
-    // Only draw background on full redraw
-    if (needsFullRedraw) {
-        drawBackground();
-    }
+    // Only draw on full redraw to prevent flickering overlaps
+    if (!needsFullRedraw) return;
+    
+    drawBackground();
     
     int cardW = 115, cardH = 75;
     int gap = 15;
@@ -851,9 +856,10 @@ void drawProgressBar(int x, int y, int w, int h, float percent, uint16_t color) 
 // ============================================================================
 
 void drawDiagnosticsScreen() {
-    if (needsFullRedraw) {
-        drawBackground();
-    }
+    // Only draw on full redraw to prevent flickering overlaps
+    if (!needsFullRedraw) return;
+    
+    drawBackground();
     
     int startY = 40;
     int itemH = 42;
@@ -919,9 +925,10 @@ void drawDiagnosticsScreen() {
 }
 
 void drawSystemScreen() {
-    if (needsFullRedraw) {
-        drawBackground();
-    }
+    // Only draw on full redraw to prevent flickering overlaps
+    if (!needsFullRedraw) return;
+    
+    drawBackground();
     
     int startY = 40;
     int itemH = 50;
@@ -1012,9 +1019,10 @@ void drawSystemScreen() {
 }
 
 void drawSettingsScreen() {
-    if (needsFullRedraw) {
-        drawBackground();
-    }
+    // Only draw on full redraw to prevent flickering overlaps
+    if (!needsFullRedraw) return;
+    
+    drawBackground();
     
     int startY = 35;
     int itemH = 52;
