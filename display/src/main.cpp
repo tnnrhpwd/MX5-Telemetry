@@ -1147,9 +1147,13 @@ void drawEngineScreen() {
 }
 
 void drawGForceScreen() {
-    // Static variables to track previous ball position for partial redraw
+    // Static variables to track previous state for partial redraw
     static int prevGX = CENTER_X;
     static int prevGY = CENTER_Y;
+    static float prevGForceX = 0;
+    static float prevGForceY = 0;
+    static float prevTotalG = 0;
+    static bool firstDraw = true;
     
     // Calculate G-force dot position (1.5G = full radius)
     float maxG = 1.5;
@@ -1172,7 +1176,8 @@ void drawGForceScreen() {
     else if (totalG > 0.7) dotColor = MX5_ORANGE;
     else if (totalG > 0.4) dotColor = MX5_YELLOW;
     
-    if (needsFullRedraw) {
+    if (needsFullRedraw || firstDraw) {
+        firstDraw = false;
         // Full redraw - draw everything
         drawBackground();
         
@@ -1190,8 +1195,8 @@ void drawGForceScreen() {
         LCD_DrawLine(CENTER_X, CENTER_Y - 130, CENTER_X, CENTER_Y + 130, MX5_DARKGRAY);
         
         // Axis labels
-        LCD_DrawString(CENTER_X - 6, CENTER_Y - 145, "ACC", MX5_GREEN, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X - 6, CENTER_Y + 135, "BRK", MX5_RED, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X - 12, CENTER_Y - 145, "ACC", MX5_GREEN, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X - 12, CENTER_Y + 135, "BRK", MX5_RED, COLOR_BG, 1);
         LCD_DrawString(CENTER_X - 145, CENTER_Y - 4, "L", MX5_CYAN, COLOR_BG, 1);
         LCD_DrawString(CENTER_X + 138, CENTER_Y - 4, "R", MX5_CYAN, COLOR_BG, 1);
         
@@ -1202,71 +1207,109 @@ void drawGForceScreen() {
         // Fixed center reference point
         LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
         
+        // Draw G-force indicator ball
+        LCD_FillCircle(gX, gY, 14, dotColor);
+        LCD_DrawCircle(gX, gY, 14, MX5_WHITE);
+        LCD_DrawCircle(gX, gY, 15, MX5_WHITE);
+        
+        // === G VALUES DISPLAY (Bottom) - draw info box ===
+        int infoY = SCREEN_HEIGHT - 60;
+        LCD_FillRoundRect(CENTER_X - 90, infoY, 180, 40, 10, COLOR_BG_CARD);
+        LCD_DrawRoundRect(CENTER_X - 90, infoY, 180, 40, 10, MX5_ACCENT);
+        
+        // Labels (static)
+        LCD_DrawString(CENTER_X - 80, infoY + 6, "LAT:", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_DrawString(CENTER_X - 80, infoY + 22, "LON:", MX5_GRAY, COLOR_BG_CARD, 1);
+        
+        // Values
+        char gStr[16];
+        snprintf(gStr, sizeof(gStr), "%.2fG", telemetry.gForceX);
+        LCD_DrawString(CENTER_X - 48, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
+        
+        snprintf(gStr, sizeof(gStr), "%.2fG", telemetry.gForceY);
+        LCD_DrawString(CENTER_X - 48, infoY + 22, gStr, (telemetry.gForceY > 0) ? MX5_GREEN : MX5_RED, COLOR_BG_CARD, 1);
+        
+        snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
+        LCD_DrawString(CENTER_X + 20, infoY + 12, gStr, dotColor, COLOR_BG_CARD, 2);
+        
         drawPageIndicator();
         
-        // Reset previous position on full redraw
-        prevGX = CENTER_X;
-        prevGY = CENTER_Y;
+        // Save current state
+        prevGX = gX;
+        prevGY = gY;
+        prevGForceX = telemetry.gForceX;
+        prevGForceY = telemetry.gForceY;
+        prevTotalG = totalG;
     } else {
-        // Partial redraw - only update the moving ball and values
+        // Partial redraw - only update if position changed significantly
+        bool ballMoved = (abs(gX - prevGX) > 1 || abs(gY - prevGY) > 1);
+        bool valuesChanged = (abs(telemetry.gForceX - prevGForceX) > 0.005 || 
+                              abs(telemetry.gForceY - prevGForceY) > 0.005);
         
-        // Erase old ball position by filling with background color
-        LCD_FillCircle(prevGX, prevGY, 16, COLOR_BG);
-        
-        // Redraw any grid elements that might have been covered by the old ball
-        // Check if old position was near crosshairs or circles
-        if (abs(prevGY - CENTER_Y) < 20) {
-            // Redraw horizontal crosshair segment near old position
-            int lineStart = max(CENTER_X - 130, prevGX - 20);
-            int lineEnd = min(CENTER_X + 130, prevGX + 20);
-            LCD_DrawLine(lineStart, CENTER_Y, lineEnd, CENTER_Y, MX5_DARKGRAY);
-        }
-        if (abs(prevGX - CENTER_X) < 20) {
-            // Redraw vertical crosshair segment near old position
-            int lineStart = max(CENTER_Y - 130, prevGY - 20);
-            int lineEnd = min(CENTER_Y + 130, prevGY + 20);
-            LCD_DrawLine(CENTER_X, lineStart, CENTER_X, lineEnd, MX5_DARKGRAY);
-        }
-        
-        // Redraw any grid circles that might have been affected
-        for (int g = 1; g <= 3; g++) {
-            int radius = g * 40;
-            float prevDist = sqrt(pow(prevGX - CENTER_X, 2) + pow(prevGY - CENTER_Y, 2));
-            if (abs(prevDist - radius) < 20) {
-                LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
+        if (ballMoved) {
+            // Erase old ball position by filling with background color
+            LCD_FillCircle(prevGX, prevGY, 16, COLOR_BG);
+            
+            // Redraw any grid elements that might have been covered by the old ball
+            if (abs(prevGY - CENTER_Y) < 20) {
+                int lineStart = max(CENTER_X - 130, prevGX - 20);
+                int lineEnd = min(CENTER_X + 130, prevGX + 20);
+                LCD_DrawLine(lineStart, CENTER_Y, lineEnd, CENTER_Y, MX5_DARKGRAY);
             }
+            if (abs(prevGX - CENTER_X) < 20) {
+                int lineStart = max(CENTER_Y - 130, prevGY - 20);
+                int lineEnd = min(CENTER_Y + 130, prevGY + 20);
+                LCD_DrawLine(CENTER_X, lineStart, CENTER_X, lineEnd, MX5_DARKGRAY);
+            }
+            
+            // Redraw any grid circles that might have been affected
+            for (int g = 1; g <= 3; g++) {
+                int radius = g * 40;
+                float prevDist = sqrt(pow(prevGX - CENTER_X, 2) + pow(prevGY - CENTER_Y, 2));
+                if (abs(prevDist - radius) < 20) {
+                    LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
+                }
+            }
+            
+            // Redraw center reference if it was covered
+            if (abs(prevGX - CENTER_X) < 20 && abs(prevGY - CENTER_Y) < 20) {
+                LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
+            }
+            
+            // Draw G-force indicator at new position
+            LCD_FillCircle(gX, gY, 14, dotColor);
+            LCD_DrawCircle(gX, gY, 14, MX5_WHITE);
+            LCD_DrawCircle(gX, gY, 15, MX5_WHITE);
+            
+            prevGX = gX;
+            prevGY = gY;
         }
         
-        // Redraw center reference if it was covered
-        if (abs(prevGX - CENTER_X) < 20 && abs(prevGY - CENTER_Y) < 20) {
-            LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
+        if (valuesChanged) {
+            // Only update the value text, not the whole box
+            int infoY = SCREEN_HEIGHT - 60;
+            
+            // Clear only the value areas (not labels)
+            LCD_FillRect(CENTER_X - 48, infoY + 4, 58, 14, COLOR_BG_CARD);  // LAT value area
+            LCD_FillRect(CENTER_X - 48, infoY + 20, 58, 14, COLOR_BG_CARD); // LON value area
+            LCD_FillRect(CENTER_X + 18, infoY + 10, 60, 20, COLOR_BG_CARD); // Total G area
+            
+            // Redraw values
+            char gStr[16];
+            snprintf(gStr, sizeof(gStr), "%.2fG", telemetry.gForceX);
+            LCD_DrawString(CENTER_X - 48, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
+            
+            snprintf(gStr, sizeof(gStr), "%.2fG", telemetry.gForceY);
+            LCD_DrawString(CENTER_X - 48, infoY + 22, gStr, (telemetry.gForceY > 0) ? MX5_GREEN : MX5_RED, COLOR_BG_CARD, 1);
+            
+            snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
+            LCD_DrawString(CENTER_X + 20, infoY + 12, gStr, dotColor, COLOR_BG_CARD, 2);
+            
+            prevGForceX = telemetry.gForceX;
+            prevGForceY = telemetry.gForceY;
+            prevTotalG = totalG;
         }
     }
-    
-    // Draw G-force indicator at new position
-    LCD_FillCircle(gX, gY, 14, dotColor);
-    LCD_DrawCircle(gX, gY, 14, MX5_WHITE);
-    LCD_DrawCircle(gX, gY, 15, MX5_WHITE);
-    
-    // Save current position for next partial redraw
-    prevGX = gX;
-    prevGY = gY;
-    
-    // === G VALUES DISPLAY (Bottom) - always update ===
-    int infoY = SCREEN_HEIGHT - 60;
-    LCD_FillRoundRect(CENTER_X - 90, infoY, 180, 40, 10, COLOR_BG_CARD);
-    LCD_DrawRoundRect(CENTER_X - 90, infoY, 180, 40, 10, MX5_ACCENT);
-    
-    // Show current G values
-    char gStr[16];
-    snprintf(gStr, sizeof(gStr), "LAT: %.2fG", telemetry.gForceX);
-    LCD_DrawString(CENTER_X - 80, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
-    
-    snprintf(gStr, sizeof(gStr), "LON: %.2fG", telemetry.gForceY);
-    LCD_DrawString(CENTER_X - 80, infoY + 22, gStr, (telemetry.gForceY > 0) ? MX5_GREEN : MX5_RED, COLOR_BG_CARD, 1);
-    
-    snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
-    LCD_DrawString(CENTER_X + 40, infoY + 12, gStr, dotColor, COLOR_BG_CARD, 2);
 }
 
 // ============================================================================
