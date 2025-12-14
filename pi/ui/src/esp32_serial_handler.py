@@ -314,6 +314,27 @@ class ESP32SerialHandler:
             msg += f"{self.telemetry.oil_temp_f},{self.telemetry.voltage:.1f}\n"
             
             self.serial_conn.write(msg.encode('utf-8'))
+            
+            # Send diagnostics: DIAG:checkEngine,abs,oilWarn,battery
+            diag_msg = f"DIAG:{int(self.telemetry.check_engine_light)},{int(self.telemetry.abs_warning)},"
+            diag_msg += f"{int(self.telemetry.oil_pressure_warning)},{int(self.telemetry.battery_warning)}\n"
+            self.serial_conn.write(diag_msg.encode('utf-8'))
+            
+            # Send oil pressure
+            self.serial_conn.write(f"OILPSI:{self.telemetry.oil_pressure_psi:.1f}\n".encode('utf-8'))
+            
+            # Send fuel level
+            self.serial_conn.write(f"FUEL:{self.telemetry.fuel_level_percent:.1f}\n".encode('utf-8'))
+            
+            # Send tire pressure: TIRE:FL,FR,RL,RR
+            tp = self.telemetry.tire_pressure
+            tire_msg = f"TIRE:{tp[0]:.1f},{tp[1]:.1f},{tp[2]:.1f},{tp[3]:.1f}\n"
+            self.serial_conn.write(tire_msg.encode('utf-8'))
+            
+            # Send engine running status (based on RPM > 0)
+            engine_running = 1 if self.telemetry.rpm > 0 else 0
+            self.serial_conn.write(f"ENGINE:{engine_running}\n".encode('utf-8'))
+            
             self.last_tx_time = time.time()
             
         except Exception as e:

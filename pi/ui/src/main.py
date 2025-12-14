@@ -725,21 +725,52 @@ class PiDisplayApp:
     
     def _handle_navigation_button(self, button: ButtonEvent):
         """Handle normal screen navigation with transitions"""
-        # Ignore input during transitions
-        if self._is_transitioning():
-            return
-        
         screens = list(Screen)
-        idx = screens.index(self.current_screen)
         
+        # Determine target screen based on button
         if button in (ButtonEvent.RES_PLUS, ButtonEvent.VOL_DOWN):
             # UP or LEFT - previous screen
-            idx = (idx - 1) % len(screens)
-            self._navigate_to_screen(screens[idx], 'prev')
+            if self._is_transitioning():
+                # Update transition target to previous from current target
+                current_idx = screens.index(self.transition_to_screen)
+                new_idx = (current_idx - 1) % len(screens)
+                self._update_transition_target(screens[new_idx], 'prev')
+            else:
+                idx = screens.index(self.current_screen)
+                idx = (idx - 1) % len(screens)
+                self._navigate_to_screen(screens[idx], 'prev')
         elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
             # DOWN or RIGHT - next screen
-            idx = (idx + 1) % len(screens)
-            self._navigate_to_screen(screens[idx], 'next')
+            if self._is_transitioning():
+                # Update transition target to next from current target
+                current_idx = screens.index(self.transition_to_screen)
+                new_idx = (current_idx + 1) % len(screens)
+                self._update_transition_target(screens[new_idx], 'next')
+            else:
+                idx = screens.index(self.current_screen)
+                idx = (idx + 1) % len(screens)
+                self._navigate_to_screen(screens[idx], 'next')
+    
+    def _update_transition_target(self, new_target: Screen, direction: str):
+        """Update the transition target during an active transition"""
+        if new_target == self.transition_to_screen:
+            return  # Already going there
+        
+        # Update destination
+        self.transition_to_screen = new_target
+        
+        # Re-render the new destination screen
+        saved_screen = self.screen
+        self.screen = self.transition_surface_new
+        saved_current = self.current_screen
+        self.current_screen = new_target
+        self._render_screen_content()
+        self.current_screen = saved_current
+        self.screen = saved_screen
+        
+        # Sync ESP32 to new target
+        self._sync_esp32_screen_for_transition(new_target)
+        print(f"Updated transition target to: {new_target.name}")
     
     def _sync_esp32_screen(self):
         """Sync ESP32 display to match Pi screen (all 8 screens)"""
