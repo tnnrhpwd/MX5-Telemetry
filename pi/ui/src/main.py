@@ -483,12 +483,19 @@ class PiDisplayApp:
             screens = list(Screen)
             if screen_index < len(screens):
                 target_screen = screens[screen_index]
-                # Use transition animation when syncing from ESP32
-                if target_screen != self.current_screen:
+                # Only start transition if:
+                # 1. Not already on this screen
+                # 2. Not currently transitioning (Pi initiated the change)
+                # 3. Not transitioning TO this screen already
+                if (target_screen != self.current_screen and 
+                    not self._is_transitioning() and
+                    (not hasattr(self, 'transition_to_screen') or target_screen != self.transition_to_screen)):
                     direction = 'next' if screen_index > self.current_screen.value else 'prev'
                     self._start_transition(target_screen, 
                         TransitionType.SLIDE_LEFT if direction == 'next' else TransitionType.SLIDE_RIGHT)
-                print(f"Pi: Synced to screen {screen_index} ({target_screen.name})")
+                    print(f"Pi: Synced to screen {screen_index} ({target_screen.name})")
+                else:
+                    print(f"Pi: Screen {screen_index} already current/transitioning, skipping")
     
     def _on_esp32_setting_change(self, name: str, value: str):
         """Callback when ESP32 display changes a setting - sync to Pi settings"""
