@@ -64,7 +64,8 @@ struct TelemetryData {
     float gForceY;          // Longitudinal (accel/brake)
     float gForceZ;          // Vertical
     bool engineRunning;
-    bool connected;
+    bool connected;           // Serial connection to Pi is active
+    bool hasDiagnosticData;   // Received actual diagnostic data from Pi
     // Diagnostics
     bool checkEngine;
     bool absWarning;
@@ -392,25 +393,25 @@ void setup() {
     LCD_DrawImageCentered(BOOT_LOGO_DATA_WIDTH, BOOT_LOGO_DATA_HEIGHT, boot_logo_data);
     delay(1500);  // Show logo for 1.5 seconds
     
-    // Set demo values for testing (Fahrenheit for temps)
-    telemetry.rpm = 3500;
-    telemetry.speed = 65;
-    telemetry.gear = 3;
-    telemetry.throttle = 45;
+    // Initialize telemetry to zeros - will be populated by Pi
+    telemetry.rpm = 0;
+    telemetry.speed = 0;
+    telemetry.gear = 0;
+    telemetry.throttle = 0;
     telemetry.brake = 0;
-    telemetry.coolantTemp = 195;  // Fahrenheit
-    telemetry.oilTemp = 210;
-    telemetry.oilPressure = 45;
-    telemetry.fuelLevel = 75;
-    telemetry.voltage = 14.2;
-    telemetry.tirePressure[0] = 32; telemetry.tirePressure[1] = 32;
-    telemetry.tirePressure[2] = 30; telemetry.tirePressure[3] = 30;
-    telemetry.tireTemp[0] = 95; telemetry.tireTemp[1] = 98;
-    telemetry.tireTemp[2] = 92; telemetry.tireTemp[3] = 94;
+    telemetry.coolantTemp = 0;
+    telemetry.oilTemp = 0;
+    telemetry.oilPressure = 0;
+    telemetry.fuelLevel = 0;
+    telemetry.voltage = 0;
+    telemetry.tirePressure[0] = 0; telemetry.tirePressure[1] = 0;
+    telemetry.tirePressure[2] = 0; telemetry.tirePressure[3] = 0;
+    telemetry.tireTemp[0] = 0; telemetry.tireTemp[1] = 0;
+    telemetry.tireTemp[2] = 0; telemetry.tireTemp[3] = 0;
     telemetry.gForceX = 0;
     telemetry.gForceY = 0;
-    telemetry.engineRunning = true;
-    telemetry.connected = false;  // Start in demo mode
+    telemetry.engineRunning = false;
+    telemetry.connected = false;  // Will be set true when Pi sends data
     
     needsRedraw = true;
     needsFullRedraw = true;
@@ -437,39 +438,15 @@ void loop() {
         sendIMUData();
     }
     
-    // Update demo animation data at ~30Hz (only when in demo mode)
+    // Update display at ~30Hz
     if (millis() - lastUpdate > 33) {
         lastUpdate = millis();
         
-        // Demo animation when not receiving real data
-        if (!telemetry.connected) {
-            static float rpmDir = 50;
-            telemetry.rpm += rpmDir;
-            if (telemetry.rpm > 7000) rpmDir = -50;
-            if (telemetry.rpm < 1000) rpmDir = 50;
-            
-            // Calculate gear from RPM
-            if (telemetry.rpm < 2500) telemetry.gear = 1;
-            else if (telemetry.rpm < 4000) telemetry.gear = 2;
-            else if (telemetry.rpm < 5500) telemetry.gear = 3;
-            else if (telemetry.rpm < 6500) telemetry.gear = 4;
-            else telemetry.gear = 5;
-            
-            telemetry.speed = telemetry.rpm / 100.0;
-            
-            // Demo G-force (if no IMU)
-            if (!imuAvailable) {
-                telemetry.gForceX = sin(millis() / 1000.0) * 0.5;
-                telemetry.gForceY = cos(millis() / 1500.0) * 0.3;
-            }
-            
-            // Only G-Force screen needs frequent updates (smooth ball movement)
-            // All other screens are static - only update on screen change
-            if (currentScreen == SCREEN_GFORCE) {
-                needsRedraw = true;
-                // G-Force handles its own partial redraw, no needsFullRedraw
-            }
-            // Other screens don't need continuous demo updates - they redraw on screen change
+        // Only G-Force screen needs frequent updates (smooth ball movement)
+        // All other screens are static - only update on screen change
+        if (currentScreen == SCREEN_GFORCE) {
+            needsRedraw = true;
+            // G-Force handles its own partial redraw, no needsFullRedraw
         }
     }
     
@@ -1342,31 +1319,51 @@ void drawDiagnosticsScreen() {
     int startX = CENTER_X - itemW/2;
     
     // Warning indicator items
+    // When not connected, show "NO DATA" in gray instead of false "OK"
     struct DiagItem {
         const char* name;
         bool isWarning;
+        bool hasData;  // false when not connected (show gray "NO DATA")
         uint16_t colorOk;
         uint16_t colorWarn;
     };
     
     DiagItem items[] = {
-        {"CHECK ENGINE", telemetry.checkEngine, MX5_GREEN, MX5_RED},
-        {"ABS SYSTEM", telemetry.absWarning, MX5_GREEN, MX5_ORANGE},
-        {"OIL PRESSURE", telemetry.oilWarning, MX5_GREEN, MX5_RED},
-        {"BATTERY", telemetry.batteryWarning, MX5_GREEN, MX5_YELLOW},
-        {"ENGINE RUN", !telemetry.engineRunning, MX5_GREEN, MX5_RED},
-        {"CONNECTION", !telemetry.connected, MX5_GREEN, MX5_ORANGE},
+        {"CHECK ENGINE", telemetry.checkEngine, telemetry.hasDiagnosticData, MX5_GREEN, MX5_RED},
+        {"ABS SYSTEM", telemetry.absWarning, telemetry.hasDiagnosticData, MX5_GREEN, MX5_ORANGE},
+        {"OIL PRESSURE", telemetry.oilWarning, telemetry.hasDiagnosticData, MX5_GREEN, MX5_RED},
+        {"BATTERY", telemetry.batteryWarning, telemetry.hasDiagnosticData, MX5_GREEN, MX5_YELLOW},
+        {"ENGINE RUN", !telemetry.engineRunning, telemetry.hasDiagnosticData, MX5_GREEN, MX5_RED},
+        {"CONNECTION", !telemetry.connected, true, MX5_GREEN, MX5_ORANGE},  // Always has data
     };
     
     for (int i = 0; i < 6; i++) {
-        uint16_t statusColor = items[i].isWarning ? items[i].colorWarn : items[i].colorOk;
         int y = startY + i * (itemH + itemGap);
+        
+        // Determine status color and text based on connection state
+        uint16_t statusColor;
+        const char* statusText;
+        
+        if (!items[i].hasData) {
+            // No data - show gray "NO DATA"
+            statusColor = MX5_GRAY;
+            statusText = "NO DATA";
+        } else if (items[i].isWarning) {
+            statusColor = items[i].colorWarn;
+            statusText = "WARN";
+        } else {
+            statusColor = items[i].colorOk;
+            statusText = "OK";
+        }
         
         // Item background card (rounded)
         LCD_FillRoundRect(startX, y, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
         
-        // Left status indicator (checkmark or X style)
-        if (items[i].isWarning) {
+        // Left status indicator
+        if (!items[i].hasData) {
+            // Question mark for no data
+            LCD_DrawString(startX + 18, y + 12, "?", MX5_GRAY, COLOR_BG_CARD, 2);
+        } else if (items[i].isWarning) {
             // X shape for warning
             LCD_DrawLine(startX + 15, y + 13, startX + 30, y + itemH - 13, statusColor);
             LCD_DrawLine(startX + 16, y + 13, startX + 31, y + itemH - 13, statusColor);
@@ -1383,8 +1380,7 @@ void drawDiagnosticsScreen() {
         // TEXT LABEL - draw the item name
         LCD_DrawString(startX + 50, y + 12, items[i].name, MX5_WHITE, COLOR_BG_CARD, 2);
         
-        // Status text (OK or WARN)
-        const char* statusText = items[i].isWarning ? "WARN" : "OK";
+        // Status text
         LCD_DrawString(startX + 50, y + itemH - 20, statusText, statusColor, COLOR_BG_CARD, 1);
         
         // Status circle on right
@@ -1393,8 +1389,8 @@ void drawDiagnosticsScreen() {
         LCD_FillCircle(circleX, circleY, 12, statusColor);
         LCD_DrawCircle(circleX, circleY, 12, MX5_WHITE);
         
-        // Inner indicator
-        if (!items[i].isWarning) {
+        // Inner indicator (only for OK state with data)
+        if (items[i].hasData && !items[i].isWarning) {
             LCD_FillCircle(circleX, circleY, 5, MX5_WHITE);
         }
         
@@ -1895,13 +1891,27 @@ void parseCommand(String cmd) {
     // Navigation commands (swipe simulation) - use transitions
     if (cmd == "LEFT" || cmd == "left" || cmd == "l") {
         ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
-        startTransition(nextScreen, TRANSITION_SLIDE_LEFT);
+        if (isTransitioning()) {
+            // Update target during transition
+            nextScreen = (ScreenMode)((transitionToScreen + 1) % SCREEN_COUNT);
+            transitionToScreen = nextScreen;
+            Serial.printf("Updated transition target to: %s\n", SCREEN_NAMES[nextScreen]);
+        } else {
+            startTransition(nextScreen, TRANSITION_SLIDE_LEFT);
+        }
         telemetry.connected = true;
         Serial.println("OK:SCREEN_NEXT");
     }
     else if (cmd == "RIGHT" || cmd == "right" || cmd == "r") {
         ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
-        startTransition(prevScreen, TRANSITION_SLIDE_RIGHT);
+        if (isTransitioning()) {
+            // Update target during transition
+            prevScreen = (ScreenMode)((transitionToScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+            transitionToScreen = prevScreen;
+            Serial.printf("Updated transition target to: %s\n", SCREEN_NAMES[prevScreen]);
+        } else {
+            startTransition(prevScreen, TRANSITION_SLIDE_RIGHT);
+        }
         telemetry.connected = true;
         Serial.println("OK:SCREEN_PREV");
     }
@@ -1915,12 +1925,14 @@ void parseCommand(String cmd) {
         int screenNum = cmd.substring(7).toInt();
         if (screenNum >= 0 && screenNum < SCREEN_COUNT) {
             ScreenMode targetScreen = (ScreenMode)screenNum;
-            // Only transition if:
-            // 1. Not already on this screen
-            // 2. Not currently transitioning
-            // 3. Not within 300ms of a transition ending (debounce duplicate commands)
-            bool recentlyTransitioned = (millis() - lastTransitionEndTime) < 300;
-            if (targetScreen != currentScreen && !isTransitioning() && !recentlyTransitioned) {
+            
+            // If currently transitioning, update the target screen instead of ignoring
+            if (isTransitioning()) {
+                // Update transition target to new screen
+                transitionToScreen = targetScreen;
+                Serial.printf("Updated transition target to: %s\n", SCREEN_NAMES[targetScreen]);
+            } else if (targetScreen != currentScreen) {
+                // Not transitioning - start new transition
                 // Determine transition direction based on screen index
                 if (targetScreen > currentScreen) {
                     startTransition(targetScreen, TRANSITION_SLIDE_LEFT);
@@ -1987,6 +1999,57 @@ void parseCommand(String cmd) {
     else if (cmd.startsWith("ENGINE:")) {
         telemetry.engineRunning = (cmd.substring(7).toInt() == 1);
         telemetry.connected = true;
+    }
+    // Diagnostics update from Pi (format: DIAG:checkEngine,abs,oilWarn,battery)
+    else if (cmd.startsWith("DIAG:")) {
+        String data = cmd.substring(5);
+        int idx = 0;
+        int values[4] = {0};
+        int start = 0;
+        for (int i = 0; i <= data.length() && idx < 4; i++) {
+            if (i == data.length() || data[i] == ',') {
+                values[idx++] = data.substring(start, i).toInt();
+                start = i + 1;
+            }
+        }
+        if (idx >= 4) {
+            telemetry.checkEngine = values[0] != 0;
+            telemetry.absWarning = values[1] != 0;
+            telemetry.oilWarning = values[2] != 0;
+            telemetry.batteryWarning = values[3] != 0;
+            telemetry.connected = true;
+            telemetry.hasDiagnosticData = true;  // Mark that we have real diagnostic data
+            needsRedraw = true;
+        }
+    }
+    // Oil pressure update from Pi
+    else if (cmd.startsWith("OILPSI:")) {
+        telemetry.oilPressure = cmd.substring(7).toFloat();
+        telemetry.connected = true;
+    }
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage)
+    else if (cmd.startsWith("TEL:")) {
+        String data = cmd.substring(4);
+        int idx = 0;
+        float values[7] = {0};
+        int start = 0;
+        for (int i = 0; i <= data.length() && idx < 7; i++) {
+            if (i == data.length() || data[i] == ',') {
+                values[idx++] = data.substring(start, i).toFloat();
+                start = i + 1;
+            }
+        }
+        if (idx >= 7) {
+            telemetry.rpm = values[0];
+            telemetry.speed = values[1];
+            telemetry.gear = (int)values[2];
+            telemetry.throttle = values[3];
+            telemetry.coolantTemp = values[4];
+            telemetry.oilTemp = values[5];
+            telemetry.voltage = values[6];
+            telemetry.connected = true;
+            needsRedraw = true;  // Update display with new data
+        }
     }
     else if (cmd == "PING") {
         telemetry.connected = true;
