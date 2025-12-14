@@ -74,6 +74,21 @@ struct TelemetryData {
 
 TelemetryData telemetry = {0};
 
+// Settings structure (synced with Pi display)
+struct DisplaySettings {
+    int brightness = 80;          // 0-100%
+    int volume = 70;              // 0-100% (audio feedback)
+    int shiftRPM = 6500;          // Shift light RPM
+    int redlineRPM = 7200;        // Redline RPM
+    bool useMPH = true;           // true = MPH, false = KMH
+    float tireLowPSI = 28.0;      // Low tire pressure warning
+    int coolantWarnF = 220;       // Coolant warning temp (F)
+    bool demoMode = false;        // Demo mode toggle
+    int screenTimeout = 30;       // Screen dim timeout (seconds)
+};
+
+DisplaySettings settings;
+
 // IMU instance
 QMI8658 imu;
 bool imuAvailable = false;
@@ -104,6 +119,23 @@ unsigned long lastSerialSend = 0;
 bool needsRedraw = true;
 bool needsFullRedraw = true;  // Set to true on screen change to redraw background
 
+// Page transition animation state
+enum TransitionType {
+    TRANSITION_NONE = 0,
+    TRANSITION_SLIDE_LEFT,   // Going to next screen
+    TRANSITION_SLIDE_RIGHT,  // Going to previous screen
+    TRANSITION_FADE,         // Fade transition
+    TRANSITION_ZOOM_IN,      // Zoom in effect
+    TRANSITION_ZOOM_OUT      // Zoom out effect
+};
+
+TransitionType currentTransition = TRANSITION_NONE;
+unsigned long transitionStartTime = 0;
+int transitionDuration = 200;  // milliseconds
+float transitionProgress = 0.0;
+ScreenMode transitionFromScreen = SCREEN_OVERVIEW;
+ScreenMode transitionToScreen = SCREEN_OVERVIEW;
+
 // Function prototypes
 void drawBackground();
 void drawPageIndicator();
@@ -118,15 +150,210 @@ void drawDiagnosticsScreen();
 void drawSystemScreen();
 void drawSettingsScreen();
 void handleTouch();
+void handleSettingsTouch(int x, int y);
 void handleSerialCommands();
 void parseCommand(String cmd);
+void parseSettingsCommand(String data);
+void sendSettingToPI(const char* name, int value);
+void sendSettingToPI(const char* name, float value);
+void sendSettingToPI(const char* name, bool value);
+void sendAllSettingsToPI();
+void startTransition(ScreenMode toScreen, TransitionType type);
+void updateTransition();
+void drawTransition();
+bool isTransitioning();
 void updateIMU();
 void sendIMUData();
+
+// Settings menu state
+int settingsSelection = 0;
+int settingsScrollOffset = 0;  // For scrolling - which item is at top of visible area
+bool settingsEditMode = false;
+const int SETTINGS_COUNT = 8;  // Number of settings items (no Back button)
+const int SETTINGS_VISIBLE = 4;  // How many items fit on round screen (reduced from 5 to avoid edge clipping)
+
+// Settings item types for drawing
+enum SettingType {
+    SETTING_BACK,
+    SETTING_TOGGLE,
+    SETTING_SLIDER,
+    SETTING_VALUE
+};
 
 // Draw the background image (called on full redraw)
 void drawBackground() {
     LCD_DrawImage(0, 0, BACKGROUND_DATA_WIDTH, BACKGROUND_DATA_HEIGHT, background_data);
 }
+
+// === PAGE TRANSITION ANIMATION FUNCTIONS ===
+
+// Easing function - ease out cubic for smooth deceleration
+float easeOutCubic(float t) {
+    return 1.0 - pow(1.0 - t, 3);
+}
+
+// Easing function - ease in out for smoother transitions
+float easeInOutQuad(float t) {
+    return t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2;
+}
+
+bool isTransitioning() {
+    return currentTransition != TRANSITION_NONE;
+}
+
+void startTransition(ScreenMode toScreen, TransitionType type) {
+    if (toScreen == currentScreen) return;  // No transition needed
+    
+    transitionFromScreen = currentScreen;
+    transitionToScreen = toScreen;
+    currentTransition = type;
+    transitionStartTime = millis();
+    transitionProgress = 0.0;
+    
+    Serial.printf("Starting transition: %s -> %s (type %d)\n", 
+                  SCREEN_NAMES[transitionFromScreen], 
+                  SCREEN_NAMES[transitionToScreen], type);
+}
+
+void updateTransition() {
+    if (currentTransition == TRANSITION_NONE) return;
+    
+    unsigned long elapsed = millis() - transitionStartTime;
+    transitionProgress = (float)elapsed / transitionDuration;
+    
+    if (transitionProgress >= 1.0) {
+        // Transition complete
+        transitionProgress = 1.0;
+        currentScreen = transitionToScreen;
+        currentTransition = TRANSITION_NONE;
+        needsRedraw = true;
+        needsFullRedraw = true;
+        Serial.printf("Transition complete, now on screen: %s\n", SCREEN_NAMES[currentScreen]);
+    }
+}
+
+void drawTransitionSlide(bool slideLeft) {
+    // Calculate offset based on progress with easing
+    float easedProgress = easeOutCubic(transitionProgress);
+    int offset = (int)(SCREEN_WIDTH * easedProgress);
+    
+    if (slideLeft) {
+        // Old screen slides left (out), new screen slides in from right
+        // Draw a simple wipe effect with accent color divider
+        
+        // Clear and draw new screen position hint
+        int dividerX = SCREEN_WIDTH - offset;
+        
+        // Draw accent line at transition edge (use LCD_DrawLine for vertical line)
+        for (int i = 0; i < 4; i++) {
+            LCD_DrawLine(dividerX + i - 2, 0, dividerX + i - 2, SCREEN_HEIGHT - 1, MX5_ACCENT);
+        }
+        
+        // Fill the revealed area with a gradient hint
+        if (offset > 10) {
+            // Create a sweep effect - darker on left transitioning to normal
+            for (int x = dividerX; x < SCREEN_WIDTH; x++) {
+                float brightness = (float)(x - dividerX) / offset;
+                brightness = brightness * brightness; // Quadratic for softer gradient
+                uint16_t col = RGB565((int)(12 + 10 * brightness), 
+                                      (int)(12 + 10 * brightness), 
+                                      (int)(18 + 14 * brightness));
+                LCD_DrawLine(x, 0, x, SCREEN_HEIGHT - 1, col);
+            }
+        }
+    } else {
+        // Old screen slides right (out), new screen slides in from left
+        int dividerX = offset;
+        
+        // Draw accent line at transition edge
+        for (int i = 0; i < 4; i++) {
+            LCD_DrawLine(dividerX + i - 2, 0, dividerX + i - 2, SCREEN_HEIGHT - 1, MX5_ACCENT);
+        }
+        
+        // Fill the revealed area
+        if (offset > 10) {
+            for (int x = 0; x < dividerX; x++) {
+                float brightness = (float)(dividerX - x) / offset;
+                brightness = brightness * brightness;
+                uint16_t col = RGB565((int)(12 + 10 * brightness), 
+                                      (int)(12 + 10 * brightness), 
+                                      (int)(18 + 14 * brightness));
+                LCD_DrawLine(x, 0, x, SCREEN_HEIGHT - 1, col);
+            }
+        }
+    }
+}
+
+void drawTransitionFade() {
+    // Simple fade effect using concentric circles from center
+    float easedProgress = easeInOutQuad(transitionProgress);
+    int maxRadius = (int)(sqrt(CENTER_X * CENTER_X + CENTER_Y * CENTER_Y) + 20);
+    int currentRadius = (int)(maxRadius * easedProgress);
+    
+    // Draw expanding circle
+    for (int r = currentRadius - 20; r <= currentRadius; r++) {
+        if (r > 0) {
+            uint16_t col = MX5_ACCENT;
+            // Fade the circle edge
+            float fade = (float)(r - (currentRadius - 20)) / 20.0;
+            if (fade < 0.3) col = RGB565((int)(100 * fade / 0.3), (int)(140 * fade / 0.3), (int)(255 * fade / 0.3));
+            LCD_DrawCircle(CENTER_X, CENTER_Y, r, col);
+        }
+    }
+}
+
+void drawTransitionZoom() {
+    // Zoom effect with scaling rectangles
+    float easedProgress = easeOutCubic(transitionProgress);
+    
+    // Draw shrinking/growing rectangle
+    int rectW = (int)(SCREEN_WIDTH * (1.0 - easedProgress));
+    int rectH = (int)(SCREEN_HEIGHT * (1.0 - easedProgress));
+    int rectX = (SCREEN_WIDTH - rectW) / 2;
+    int rectY = (SCREEN_HEIGHT - rectH) / 2;
+    
+    if (rectW > 10 && rectH > 10) {
+        // Draw border
+        LCD_DrawRect(rectX, rectY, rectW, rectH, MX5_ACCENT);
+        LCD_DrawRect(rectX + 1, rectY + 1, rectW - 2, rectH - 2, MX5_BLUE);
+    }
+    
+    // Fill outside with dark color
+    if (easedProgress > 0.1) {
+        // Top
+        LCD_FillRect(0, 0, SCREEN_WIDTH, rectY, COLOR_BG);
+        // Bottom
+        LCD_FillRect(0, rectY + rectH, SCREEN_WIDTH, SCREEN_HEIGHT - rectY - rectH, COLOR_BG);
+        // Left
+        LCD_FillRect(0, rectY, rectX, rectH, COLOR_BG);
+        // Right
+        LCD_FillRect(rectX + rectW, rectY, SCREEN_WIDTH - rectX - rectW, rectH, COLOR_BG);
+    }
+}
+
+void drawTransition() {
+    if (currentTransition == TRANSITION_NONE) return;
+    
+    switch (currentTransition) {
+        case TRANSITION_SLIDE_LEFT:
+            drawTransitionSlide(true);
+            break;
+        case TRANSITION_SLIDE_RIGHT:
+            drawTransitionSlide(false);
+            break;
+        case TRANSITION_FADE:
+            drawTransitionFade();
+            break;
+        case TRANSITION_ZOOM_IN:
+        case TRANSITION_ZOOM_OUT:
+            drawTransitionZoom();
+            break;
+        default:
+            break;
+    }
+}
+
+// === END TRANSITION FUNCTIONS ===
 
 void setup() {
     Serial.begin(115200);
@@ -243,23 +470,55 @@ void loop() {
         }
     }
     
+    // Update page transition animation
+    if (isTransitioning()) {
+        updateTransition();
+        needsRedraw = true;  // Keep redrawing during transition
+    }
+    
     // Redraw screen if needed
     if (needsRedraw) {
         needsRedraw = false;
         
-        switch (currentScreen) {
-            case SCREEN_OVERVIEW:     drawOverviewScreen(); break;
-            case SCREEN_RPM:          drawRPMScreen(); break;
-            case SCREEN_TPMS:         drawTPMSScreen(); break;
-            case SCREEN_ENGINE:       drawEngineScreen(); break;
-            case SCREEN_GFORCE:       drawGForceScreen(); break;
-            case SCREEN_DIAGNOSTICS:  drawDiagnosticsScreen(); break;
-            case SCREEN_SYSTEM:       drawSystemScreen(); break;
-            case SCREEN_SETTINGS:     drawSettingsScreen(); break;
+        // If transitioning, draw transition effect
+        if (isTransitioning()) {
+            // First draw the destination screen (it will be revealed by the wipe)
+            ScreenMode savedScreen = currentScreen;
+            currentScreen = transitionToScreen;
+            needsFullRedraw = true;
+            
+            switch (currentScreen) {
+                case SCREEN_OVERVIEW:     drawOverviewScreen(); break;
+                case SCREEN_RPM:          drawRPMScreen(); break;
+                case SCREEN_TPMS:         drawTPMSScreen(); break;
+                case SCREEN_ENGINE:       drawEngineScreen(); break;
+                case SCREEN_GFORCE:       drawGForceScreen(); break;
+                case SCREEN_DIAGNOSTICS:  drawDiagnosticsScreen(); break;
+                case SCREEN_SYSTEM:       drawSystemScreen(); break;
+                case SCREEN_SETTINGS:     drawSettingsScreen(); break;
+            }
+            
+            currentScreen = savedScreen;
+            
+            // Draw transition wipe overlay effect on top
+            drawTransition();
+            needsFullRedraw = false;
+        } else {
+            // Normal screen draw
+            switch (currentScreen) {
+                case SCREEN_OVERVIEW:     drawOverviewScreen(); break;
+                case SCREEN_RPM:          drawRPMScreen(); break;
+                case SCREEN_TPMS:         drawTPMSScreen(); break;
+                case SCREEN_ENGINE:       drawEngineScreen(); break;
+                case SCREEN_GFORCE:       drawGForceScreen(); break;
+                case SCREEN_DIAGNOSTICS:  drawDiagnosticsScreen(); break;
+                case SCREEN_SYSTEM:       drawSystemScreen(); break;
+                case SCREEN_SETTINGS:     drawSettingsScreen(); break;
+            }
+            
+            // Clear fullRedraw flag after drawing
+            needsFullRedraw = false;
         }
-        
-        // Clear fullRedraw flag after drawing
-        needsFullRedraw = false;
     }
     
     delay(5);  // ~200Hz loop rate for responsive touch
@@ -302,32 +561,36 @@ void handleTouch() {
         }
     }
     
-    // Handle gestures with debounce
-    if (touch_data.gesture != NONE && millis() - lastTouchTime > 200) {
+    // Handle gestures with debounce (ignore gestures during transition)
+    if (touch_data.gesture != NONE && millis() - lastTouchTime > 200 && !isTransitioning()) {
         lastTouchTime = millis();
         Serial.printf("Gesture detected: %d\n", touch_data.gesture);
         
         switch (touch_data.gesture) {
-            case SWIPE_LEFT:
+            case SWIPE_LEFT: {
                 // Swipe left = finger moves left = go to NEXT screen
-                currentScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
-                needsRedraw = true;
-                needsFullRedraw = true;
-                Serial.printf("Screen: %d (swipe left -> next)\n", currentScreen);
+                ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
+                startTransition(nextScreen, TRANSITION_SLIDE_LEFT);
+                Serial.printf("Screen: %d (swipe left -> next)\n", nextScreen);
                 // Notify Pi of screen change for sync
-                Serial.printf("SCREEN_CHANGED:%d\n", currentScreen);
+                Serial.printf("SCREEN_CHANGED:%d\n", nextScreen);
                 break;
-            case SWIPE_RIGHT:
+            }
+            case SWIPE_RIGHT: {
                 // Swipe right = finger moves right = go to PREVIOUS screen
-                currentScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
-                needsRedraw = true;
-                needsFullRedraw = true;
-                Serial.printf("Screen: %d (swipe right -> prev)\n", currentScreen);
+                ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+                startTransition(prevScreen, TRANSITION_SLIDE_RIGHT);
+                Serial.printf("Screen: %d (swipe right -> prev)\n", prevScreen);
                 // Notify Pi of screen change for sync
-                Serial.printf("SCREEN_CHANGED:%d\n", currentScreen);
+                Serial.printf("SCREEN_CHANGED:%d\n", prevScreen);
                 break;
+            }
             case SINGLE_CLICK:
                 Serial.println("Single click detected");
+                // Handle settings touch if on settings screen
+                if (currentScreen == SCREEN_SETTINGS) {
+                    handleSettingsTouch(touch_data.x, touch_data.y);
+                }
                 break;
             case DOUBLE_CLICK:
                 Serial.println("Double click detected");
@@ -1205,143 +1468,347 @@ void drawSystemScreen() {
     drawPageIndicator();
 }
 
+// Old drawSettingsScreen removed - using new scrollable version below
+
+// Helper to draw a single settings item
+void drawSettingsItem(int index, int screenY, int itemW, int startX, bool isSelected) {
+    int itemH = 52;
+    int toggleW = 50;
+    int toggleH = 24;
+    int iconX = startX + 30;
+    int iconY = screenY + itemH/2;
+    
+    // Colors for each item type (no Back button)
+    uint16_t borderColors[] = {
+        MX5_PURPLE,  // 0: Data Source (Demo)
+        MX5_YELLOW,  // 1: Brightness
+        MX5_CYAN,    // 2: Volume
+        MX5_RED,     // 3: Shift RPM
+        MX5_ORANGE,  // 4: Redline
+        MX5_ACCENT,  // 5: Units
+        MX5_GREEN,   // 6: Low Tire PSI
+        MX5_BLUE,    // 7: Coolant Warn
+    };
+    
+    uint16_t borderColor = borderColors[index];
+    // Use a tinted background when selected for better visibility
+    uint16_t bgColor;
+    if (isSelected) {
+        // Create a darker version of the border color for the background
+        // Extract RGB from border color and dim it significantly
+        uint8_t r = ((borderColor >> 11) & 0x1F) * 2;  // Scale from 5-bit to ~6-bit
+        uint8_t g = ((borderColor >> 5) & 0x3F);        // Already 6-bit
+        uint8_t b = (borderColor & 0x1F) * 2;           // Scale from 5-bit to ~6-bit
+        bgColor = RGB565(r + 20, g/4 + 20, b + 20);     // Dim tint of the accent color
+    } else {
+        bgColor = COLOR_BG_CARD;
+    }
+    
+    // Draw card background
+    LCD_FillRoundRect(startX, screenY, itemW, itemH, CARD_RADIUS, bgColor);
+    LCD_DrawRoundRect(startX, screenY, itemW, itemH, CARD_RADIUS, borderColor);
+    if (isSelected) {
+        // Double border when selected
+        LCD_DrawRoundRect(startX + 1, screenY + 1, itemW - 2, itemH - 2, CARD_RADIUS - 1, borderColor);
+        LCD_DrawRoundRect(startX + 2, screenY + 2, itemW - 4, itemH - 4, CARD_RADIUS - 2, borderColor);
+    }
+    
+    char valueStr[16];
+    int valueX = startX + itemW - 70;
+    int toggleX = startX + itemW - 70;
+    
+    switch (index) {
+        case 0:  // Data Source (Demo Mode)
+            LCD_FillRoundRect(iconX - 10, iconY - 10, 20, 20, 4, MX5_PURPLE);
+            LCD_DrawLine(iconX - 4, iconY - 6, iconX - 4, iconY + 6, bgColor);
+            LCD_DrawLine(iconX - 4, iconY - 6, iconX + 6, iconY, bgColor);
+            LCD_DrawLine(iconX - 4, iconY + 6, iconX + 6, iconY, bgColor);
+            LCD_DrawString(startX + 55, screenY + 10, "DATA SOURCE", MX5_WHITE, bgColor, 2);
+            LCD_DrawString(startX + 55, screenY + 32, settings.demoMode ? "DEMO" : "CAN BUS", MX5_PURPLE, bgColor, 1);
+            // Toggle switch
+            if (settings.demoMode) {
+                LCD_FillRoundRect(toggleX, iconY - toggleH/2, toggleW, toggleH, 12, MX5_GREEN);
+                LCD_FillCircle(toggleX + toggleW - 12, iconY, 9, MX5_WHITE);
+            } else {
+                LCD_FillRoundRect(toggleX, iconY - toggleH/2, toggleW, toggleH, 12, MX5_DARKGRAY);
+                LCD_FillCircle(toggleX + 12, iconY, 9, MX5_WHITE);
+            }
+            break;
+            
+        case 1:  // Brightness
+            LCD_FillCircle(iconX, screenY + 18, 8, MX5_YELLOW);
+            for (int r = 0; r < 8; r++) {
+                float angle = r * 3.14159 / 4;
+                LCD_DrawLine(iconX + cos(angle) * 11, screenY + 18 + sin(angle) * 11,
+                           iconX + cos(angle) * 15, screenY + 18 + sin(angle) * 15, MX5_YELLOW);
+            }
+            LCD_DrawString(startX + 55, screenY + 8, "BRIGHTNESS", MX5_WHITE, bgColor, 2);
+            {
+                int sliderX = startX + 55;
+                int sliderW = 150;
+                int sliderY = screenY + 40;
+                float pct = settings.brightness / 100.0;
+                LCD_FillRoundRect(sliderX, sliderY - 4, sliderW, 8, 4, MX5_DARKGRAY);
+                LCD_FillRoundRect(sliderX, sliderY - 4, (int)(sliderW * pct), 8, 4, MX5_YELLOW);
+                LCD_FillCircle(sliderX + (int)(sliderW * pct), sliderY, 6, MX5_WHITE);
+            }
+            snprintf(valueStr, sizeof(valueStr), "%d%%", settings.brightness);
+            LCD_DrawString(startX + itemW - 45, screenY + 32, valueStr, MX5_YELLOW, bgColor, 1);
+            break;
+            
+        case 2:  // Volume
+            LCD_DrawCircle(iconX, iconY, 10, MX5_CYAN);
+            LCD_DrawLine(iconX - 3, iconY - 5, iconX - 3, iconY + 5, MX5_CYAN);
+            LCD_DrawLine(iconX - 3, iconY - 5, iconX + 5, iconY - 8, MX5_CYAN);
+            LCD_DrawLine(iconX - 3, iconY + 5, iconX + 5, iconY + 8, MX5_CYAN);
+            LCD_DrawString(startX + 55, screenY + 10, "VOLUME", MX5_WHITE, bgColor, 2);
+            {
+                int sliderX = startX + 55;
+                int sliderW = 150;
+                int sliderY = screenY + 40;
+                float pct = settings.volume / 100.0;
+                LCD_FillRoundRect(sliderX, sliderY - 4, sliderW, 8, 4, MX5_DARKGRAY);
+                LCD_FillRoundRect(sliderX, sliderY - 4, (int)(sliderW * pct), 8, 4, MX5_CYAN);
+                LCD_FillCircle(sliderX + (int)(sliderW * pct), sliderY, 6, MX5_WHITE);
+            }
+            snprintf(valueStr, sizeof(valueStr), "%d%%", settings.volume);
+            LCD_DrawString(startX + itemW - 45, screenY + 32, valueStr, MX5_CYAN, bgColor, 1);
+            break;
+            
+        case 3:  // Shift RPM
+            LCD_FillCircle(iconX, iconY, 10, MX5_RED);
+            LCD_FillCircle(iconX, iconY, 6, bgColor);
+            LCD_FillCircle(iconX, iconY, 3, MX5_RED);
+            LCD_DrawString(startX + 55, screenY + 10, "SHIFT RPM", MX5_WHITE, bgColor, 2);
+            snprintf(valueStr, sizeof(valueStr), "%d", settings.shiftRPM);
+            LCD_DrawString(valueX, screenY + 18, valueStr, MX5_WHITE, bgColor, 2);
+            break;
+            
+        case 4:  // Redline
+            LCD_FillCircle(iconX, iconY, 10, MX5_ORANGE);
+            LCD_DrawLine(iconX - 6, iconY, iconX + 6, iconY, bgColor);
+            LCD_DrawLine(iconX, iconY - 6, iconX, iconY + 6, bgColor);
+            LCD_DrawString(startX + 55, screenY + 10, "REDLINE", MX5_WHITE, bgColor, 2);
+            snprintf(valueStr, sizeof(valueStr), "%d", settings.redlineRPM);
+            LCD_DrawString(valueX, screenY + 18, valueStr, MX5_WHITE, bgColor, 2);
+            break;
+            
+        case 5:  // Units
+            LCD_DrawCircle(iconX, iconY, 10, MX5_ACCENT);
+            LCD_DrawLine(iconX, iconY, iconX + 6, iconY - 6, MX5_ACCENT);
+            LCD_DrawString(startX + 55, screenY + 10, "UNITS", MX5_WHITE, bgColor, 2);
+            LCD_DrawString(startX + 55, screenY + 32, settings.useMPH ? "MPH" : "KMH", MX5_ACCENT, bgColor, 1);
+            if (settings.useMPH) {
+                LCD_FillRoundRect(toggleX, iconY - toggleH/2, toggleW, toggleH, 12, MX5_GREEN);
+                LCD_FillCircle(toggleX + toggleW - 12, iconY, 9, MX5_WHITE);
+            } else {
+                LCD_FillRoundRect(toggleX, iconY - toggleH/2, toggleW, toggleH, 12, MX5_DARKGRAY);
+                LCD_FillCircle(toggleX + 12, iconY, 9, MX5_WHITE);
+            }
+            break;
+            
+        case 6:  // Low Tire PSI
+            LCD_DrawCircle(iconX, iconY, 10, MX5_GREEN);
+            LCD_DrawCircle(iconX, iconY, 6, MX5_GREEN);
+            LCD_DrawString(startX + 55, screenY + 10, "LOW TIRE PSI", MX5_WHITE, bgColor, 2);
+            snprintf(valueStr, sizeof(valueStr), "%.1f", settings.tireLowPSI);
+            LCD_DrawString(valueX, screenY + 18, valueStr, MX5_WHITE, bgColor, 2);
+            break;
+            
+        case 7:  // Coolant Warn
+            LCD_FillCircle(iconX, iconY, 10, MX5_BLUE);
+            LCD_DrawLine(iconX - 4, iconY + 4, iconX, iconY - 6, MX5_WHITE);
+            LCD_DrawLine(iconX, iconY - 6, iconX + 4, iconY + 4, MX5_WHITE);
+            LCD_DrawString(startX + 55, screenY + 10, "COOLANT WARN", MX5_WHITE, bgColor, 2);
+            snprintf(valueStr, sizeof(valueStr), "%dF", settings.coolantWarnF);
+            LCD_DrawString(valueX, screenY + 18, valueStr, MX5_WHITE, bgColor, 2);
+            break;
+    }
+}
+
 void drawSettingsScreen() {
-    // Only draw on full redraw to prevent flickering overlaps
     if (!needsFullRedraw) return;
     
     drawBackground();
     
-    int startY = 35;
+    int startY = 55;   // Pushed down to avoid round display top edge
     int itemH = 52;
-    int itemGap = 6;
-    int itemW = 290;
+    int itemGap = 8;
+    int itemW = 270;   // Slightly narrower to fit round display
     int startX = CENTER_X - itemW/2;
     
-    // === BRIGHTNESS (with slider) ===
-    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
-    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_YELLOW);
-    
-    // Sun icon
-    int iconX = startX + 30;
-    int iconY = startY + 18;
-    LCD_FillCircle(iconX, iconY, 8, MX5_YELLOW);
-    for (int r = 0; r < 8; r++) {
-        float angle = r * 3.14159 / 4;
-        int x1 = iconX + cos(angle) * 11;
-        int y1 = iconY + sin(angle) * 11;
-        int x2 = iconX + cos(angle) * 15;
-        int y2 = iconY + sin(angle) * 15;
-        LCD_DrawLine(x1, y1, x2, y2, MX5_YELLOW);
+    // Draw scroll indicator if needed (using lines to draw arrows)
+    if (settingsScrollOffset > 0) {
+        // Draw up arrow indicator using lines
+        LCD_DrawLine(CENTER_X - 10, 18, CENTER_X, 8, MX5_WHITE);
+        LCD_DrawLine(CENTER_X + 10, 18, CENTER_X, 8, MX5_WHITE);
+        LCD_DrawLine(CENTER_X - 10, 18, CENTER_X + 10, 18, MX5_WHITE);
+    }
+    if (settingsScrollOffset + SETTINGS_VISIBLE < SETTINGS_COUNT) {
+        // Draw down arrow indicator using lines
+        int baseY = SCREEN_HEIGHT - 28;
+        int tipY = SCREEN_HEIGHT - 18;
+        LCD_DrawLine(CENTER_X - 10, baseY, CENTER_X, tipY, MX5_WHITE);
+        LCD_DrawLine(CENTER_X + 10, baseY, CENTER_X, tipY, MX5_WHITE);
+        LCD_DrawLine(CENTER_X - 10, baseY, CENTER_X + 10, baseY, MX5_WHITE);
     }
     
-    // Text label
-    LCD_DrawString(startX + 55, startY + 8, "BRIGHTNESS", MX5_WHITE, COLOR_BG_CARD, 2);
+    // Draw visible settings items
+    for (int i = 0; i < SETTINGS_VISIBLE && (settingsScrollOffset + i) < SETTINGS_COUNT; i++) {
+        int itemIndex = settingsScrollOffset + i;
+        int screenY = startY + i * (itemH + itemGap);
+        bool isSelected = (itemIndex == settingsSelection);
+        drawSettingsItem(itemIndex, screenY, itemW, startX, isSelected);
+    }
     
-    // Slider bar (rounded)
-    int sliderX = startX + 55;
-    int sliderW = 180;
-    int sliderY = startY + 40;
-    LCD_FillRoundRect(sliderX, sliderY - 4, sliderW, 8, 4, MX5_DARKGRAY);
-    LCD_FillRoundRect(sliderX, sliderY - 4, (int)(sliderW * 0.75), 8, 4, MX5_YELLOW);
-    LCD_FillCircle(sliderX + (int)(sliderW * 0.75), sliderY, 7, MX5_WHITE);
-    LCD_DrawString(startX + itemW - 40, startY + 32, "75%", MX5_YELLOW, COLOR_BG_CARD, 1);
+    // Draw scroll position indicator (dots on the right side)
+    int dotStartY = CENTER_Y - (SETTINGS_COUNT * 6);
+    for (int i = 0; i < SETTINGS_COUNT; i++) {
+        int dotY = dotStartY + i * 12;
+        if (i == settingsSelection) {
+            LCD_FillCircle(SCREEN_WIDTH - 15, dotY, 4, MX5_WHITE);
+        } else {
+            LCD_FillCircle(SCREEN_WIDTH - 15, dotY, 2, MX5_GRAY);
+        }
+    }
+}
+
+// Handle touch on settings screen with scrolling
+void handleSettingsTouch(int x, int y) {
+    int startY = 55;   // Match drawing layout
+    int itemH = 52;
+    int itemGap = 8;
+    int itemW = 270;
+    int startX = CENTER_X - itemW/2;
     
-    startY += itemH + itemGap;
+    // Check for up/down scroll areas
+    if (y < 50 && settingsScrollOffset > 0) {
+        settingsScrollOffset--;
+        if (settingsSelection > settingsScrollOffset + SETTINGS_VISIBLE - 1) {
+            settingsSelection = settingsScrollOffset + SETTINGS_VISIBLE - 1;
+            Serial.printf("SELECTION:%d\n", settingsSelection);  // Sync to Pi
+        }
+        needsRedraw = true;
+        needsFullRedraw = true;
+        return;
+    }
+    if (y > SCREEN_HEIGHT - 35 && settingsScrollOffset + SETTINGS_VISIBLE < SETTINGS_COUNT) {
+        settingsScrollOffset++;
+        if (settingsSelection < settingsScrollOffset) {
+            settingsSelection = settingsScrollOffset;
+            Serial.printf("SELECTION:%d\n", settingsSelection);  // Sync to Pi
+        }
+        needsRedraw = true;
+        needsFullRedraw = true;
+        return;
+    }
     
-    // === UNITS (toggle) ===
-    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
-    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_ACCENT);
-    
-    // Speed icon
-    iconX = startX + 30;
-    iconY = startY + itemH/2;
-    LCD_DrawCircle(iconX, iconY, 10, MX5_ACCENT);
-    LCD_DrawLine(iconX, iconY, iconX + 6, iconY - 6, MX5_ACCENT);
-    LCD_DrawLine(iconX, iconY, iconX + 7, iconY - 5, MX5_ACCENT);
-    
-    // Text label
-    LCD_DrawString(startX + 55, startY + 10, "SPEED UNITS", MX5_WHITE, COLOR_BG_CARD, 2);
-    LCD_DrawString(startX + 55, startY + 32, "MPH", MX5_ACCENT, COLOR_BG_CARD, 1);
-    
-    // Toggle switch (ON position for MPH) - rounded
-    int toggleX = startX + itemW - 70;
-    int toggleW = 50;
-    int toggleH = 24;
-    LCD_FillRoundRect(toggleX, iconY - toggleH/2, toggleW, toggleH, 12, MX5_GREEN);
-    LCD_DrawRoundRect(toggleX, iconY - toggleH/2, toggleW, toggleH, 12, MX5_WHITE);
-    LCD_FillCircle(toggleX + toggleW - 12, iconY, 9, MX5_WHITE);
-    
-    startY += itemH + itemGap;
-    
-    // === SHIFT LIGHT RPM (with value) ===
-    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
-    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_RED);
-    
-    // Warning light icon
-    iconX = startX + 30;
-    iconY = startY + itemH/2;
-    LCD_FillCircle(iconX, iconY, 10, MX5_RED);
-    LCD_FillCircle(iconX, iconY, 6, COLOR_BG_CARD);
-    LCD_FillCircle(iconX, iconY, 3, MX5_RED);
-    
-    // Text label
-    LCD_DrawString(startX + 55, startY + 10, "SHIFT LIGHT", MX5_WHITE, COLOR_BG_CARD, 2);
-    LCD_DrawString(startX + 55, startY + 32, "Redline Alert", MX5_RED, COLOR_BG_CARD, 1);
-    
-    // RPM value
-    int valueX = startX + itemW - 70;
-    LCD_DrawString(valueX, startY + 18, "6500", MX5_WHITE, COLOR_BG_CARD, 2);
-    
-    startY += itemH + itemGap;
-    
-    // === SCREEN TIMEOUT (with value) ===
-    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
-    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_CYAN);
-    
-    // Timer/clock icon
-    iconX = startX + 30;
-    iconY = startY + itemH/2;
-    LCD_DrawCircle(iconX, iconY, 10, MX5_CYAN);
-    LCD_DrawCircle(iconX, iconY, 11, MX5_CYAN);
-    LCD_DrawLine(iconX, iconY - 7, iconX, iconY, MX5_CYAN);
-    LCD_DrawLine(iconX, iconY, iconX + 5, iconY, MX5_CYAN);
-    LCD_FillRect(iconX - 2, iconY - 14, 4, 4, MX5_CYAN);  // Top knob
-    
-    // Text label
-    LCD_DrawString(startX + 55, startY + 10, "TIMEOUT", MX5_WHITE, COLOR_BG_CARD, 2);
-    LCD_DrawString(startX + 55, startY + 32, "Screen Dim", MX5_CYAN, COLOR_BG_CARD, 1);
-    
-    // Timeout value
-    valueX = startX + itemW - 70;
-    LCD_DrawString(valueX, startY + 18, "30s", MX5_WHITE, COLOR_BG_CARD, 2);
-    
-    startY += itemH + itemGap;
-    
-    // === DEMO MODE (toggle) ===
-    LCD_FillRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, COLOR_BG_CARD);
-    LCD_DrawRoundRect(startX, startY, itemW, itemH, CARD_RADIUS, MX5_PURPLE);
-    
-    // Play/demo icon (rounded square)
-    iconX = startX + 30;
-    iconY = startY + itemH/2;
-    LCD_FillRoundRect(iconX - 10, iconY - 10, 20, 20, 4, MX5_PURPLE);
-    // Play triangle inside
-    LCD_DrawLine(iconX - 4, iconY - 6, iconX - 4, iconY + 6, COLOR_BG_CARD);
-    LCD_DrawLine(iconX - 4, iconY - 6, iconX + 6, iconY, COLOR_BG_CARD);
-    LCD_DrawLine(iconX - 4, iconY + 6, iconX + 6, iconY, COLOR_BG_CARD);
-    
-    // Text label
-    LCD_DrawString(startX + 55, startY + 10, "DEMO MODE", MX5_WHITE, COLOR_BG_CARD, 2);
-    LCD_DrawString(startX + 55, startY + 32, "Simulate Data", MX5_PURPLE, COLOR_BG_CARD, 1);
-    
-    // Toggle switch (OFF position) - rounded
-    int toggleX2 = startX + itemW - 70;
-    LCD_FillRoundRect(toggleX2, iconY - toggleH/2, toggleW, toggleH, 12, MX5_DARKGRAY);
-    LCD_DrawRoundRect(toggleX2, iconY - toggleH/2, toggleW, toggleH, 12, MX5_GRAY);
-    LCD_FillCircle(toggleX2 + 12, iconY, 9, MX5_WHITE);
-    LCD_DrawString(startX + itemW - 45, startY + 18, "OFF", MX5_GRAY, COLOR_BG_CARD, 1);
-    
-    drawPageIndicator();
+    // Check which visible setting item was touched
+    for (int i = 0; i < SETTINGS_VISIBLE && (settingsScrollOffset + i) < SETTINGS_COUNT; i++) {
+        int itemIndex = settingsScrollOffset + i;
+        int itemY = startY + i * (itemH + itemGap);
+        
+        if (x >= startX && x <= startX + itemW && y >= itemY && y <= itemY + itemH) {
+            int prevSelection = settingsSelection;
+            settingsSelection = itemIndex;
+            
+            // Send selection sync to Pi
+            if (settingsSelection != prevSelection) {
+                Serial.printf("SELECTION:%d\n", settingsSelection);
+            }
+            
+            bool changed = false;
+            
+            switch (itemIndex) {
+                case 0:  // Data Source (Demo Mode)
+                    settings.demoMode = !settings.demoMode;
+                    telemetry.connected = !settings.demoMode;
+                    sendSettingToPI("demo_mode", settings.demoMode);
+                    changed = true;
+                    break;
+                    
+                case 1:  // Brightness
+                    {
+                        int sliderX = startX + 55;
+                        int sliderW = 150;
+                        if (x >= sliderX && x <= sliderX + sliderW) {
+                            int newBrightness = ((x - sliderX) * 100) / sliderW;
+                            settings.brightness = constrain(newBrightness, 10, 100);
+                        } else {
+                            if (settings.brightness < 37) settings.brightness = 50;
+                            else if (settings.brightness < 62) settings.brightness = 75;
+                            else if (settings.brightness < 87) settings.brightness = 100;
+                            else settings.brightness = 25;
+                        }
+                        sendSettingToPI("brightness", settings.brightness);
+                        changed = true;
+                    }
+                    break;
+                    
+                case 2:  // Volume
+                    {
+                        int sliderX = startX + 55;
+                        int sliderW = 150;
+                        if (x >= sliderX && x <= sliderX + sliderW) {
+                            int newVolume = ((x - sliderX) * 100) / sliderW;
+                            settings.volume = constrain(newVolume, 0, 100);
+                        } else {
+                            if (settings.volume < 37) settings.volume = 50;
+                            else if (settings.volume < 62) settings.volume = 75;
+                            else if (settings.volume < 87) settings.volume = 100;
+                            else settings.volume = 25;
+                        }
+                        sendSettingToPI("volume", settings.volume);
+                        changed = true;
+                    }
+                    break;
+                    
+                case 3:  // Shift RPM
+                    if (settings.shiftRPM < 5500) settings.shiftRPM = 5500;
+                    else if (settings.shiftRPM < 6000) settings.shiftRPM = 6000;
+                    else if (settings.shiftRPM < 6500) settings.shiftRPM = 6500;
+                    else if (settings.shiftRPM < 7000) settings.shiftRPM = 7000;
+                    else settings.shiftRPM = 5000;
+                    sendSettingToPI("shift_rpm", settings.shiftRPM);
+                    changed = true;
+                    break;
+                    
+                case 4:  // Redline
+                    if (settings.redlineRPM < 6500) settings.redlineRPM = 6500;
+                    else if (settings.redlineRPM < 7000) settings.redlineRPM = 7000;
+                    else if (settings.redlineRPM < 7500) settings.redlineRPM = 7500;
+                    else if (settings.redlineRPM < 8000) settings.redlineRPM = 8000;
+                    else settings.redlineRPM = 6000;
+                    sendSettingToPI("redline_rpm", settings.redlineRPM);
+                    changed = true;
+                    break;
+                    
+                case 5:  // Units
+                    settings.useMPH = !settings.useMPH;
+                    sendSettingToPI("use_mph", settings.useMPH);
+                    changed = true;
+                    break;
+                    
+                case 6:  // Low Tire PSI
+                    settings.tireLowPSI += 0.5;
+                    if (settings.tireLowPSI > 35.0) settings.tireLowPSI = 25.0;
+                    sendSettingToPI("tire_low_psi", settings.tireLowPSI);
+                    changed = true;
+                    break;
+                    
+                case 7:  // Coolant Warn
+                    settings.coolantWarnF += 5;
+                    if (settings.coolantWarnF > 250) settings.coolantWarnF = 200;
+                    sendSettingToPI("coolant_warn", settings.coolantWarnF);
+                    changed = true;
+                    break;
+            }
+            
+            needsRedraw = true;
+            needsFullRedraw = true;
+            break;
+        }
+    }
 }
 
 // Serial command buffer
@@ -1364,32 +1831,32 @@ void handleSerialCommands() {
 void parseCommand(String cmd) {
     cmd.trim();
     
-    // Navigation commands (swipe simulation)
+    // Navigation commands (swipe simulation) - use transitions
     if (cmd == "LEFT" || cmd == "left" || cmd == "l") {
-        currentScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
-        needsRedraw = true;
-        needsFullRedraw = true;  // Required for screens that only draw on full redraw
-        LCD_Clear(MX5_BLACK);
+        ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
+        startTransition(nextScreen, TRANSITION_SLIDE_LEFT);
         Serial.println("OK:SCREEN_NEXT");
     }
     else if (cmd == "RIGHT" || cmd == "right" || cmd == "r") {
-        currentScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
-        needsRedraw = true;
-        needsFullRedraw = true;  // Required for screens that only draw on full redraw
-        LCD_Clear(MX5_BLACK);
+        ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+        startTransition(prevScreen, TRANSITION_SLIDE_RIGHT);
         Serial.println("OK:SCREEN_PREV");
     }
     else if (cmd == "CLICK" || cmd == "click" || cmd == "c") {
         // Single click action - toggle something or confirm
         Serial.println("OK:CLICK");
     }
-    // Direct screen selection
+    // Direct screen selection - use fade transition
     else if (cmd.startsWith("SCREEN:") || cmd.startsWith("screen:")) {
         int screenNum = cmd.substring(7).toInt();
         if (screenNum >= 0 && screenNum < SCREEN_COUNT) {
-            currentScreen = (ScreenMode)screenNum;
-            needsRedraw = true;
-            needsFullRedraw = true;  // Redraw background on screen change
+            ScreenMode targetScreen = (ScreenMode)screenNum;
+            // Determine transition direction based on screen index
+            if (targetScreen > currentScreen) {
+                startTransition(targetScreen, TRANSITION_SLIDE_LEFT);
+            } else if (targetScreen < currentScreen) {
+                startTransition(targetScreen, TRANSITION_SLIDE_RIGHT);
+            }
             Serial.printf("OK:SCREEN_%d\n", screenNum);
         }
     }
@@ -1459,10 +1926,120 @@ void parseCommand(String cmd) {
     }
     else if (cmd == "DEMO:ON") {
         telemetry.connected = false;  // Enable demo mode
+        settings.demoMode = true;
+        needsRedraw = true;
+        needsFullRedraw = true;
         Serial.println("OK:DEMO_ON");
     }
     else if (cmd == "DEMO:OFF") {
         telemetry.connected = true;   // Disable demo mode
+        settings.demoMode = false;
+        needsRedraw = true;
+        needsFullRedraw = true;
         Serial.println("OK:DEMO_OFF");
     }
+    // Settings synchronization from Pi
+    else if (cmd.startsWith("SET:")) {
+        parseSettingsCommand(cmd.substring(4));
+    }
+    else if (cmd == "GET_SETTINGS") {
+        sendAllSettingsToPI();
+    }
+    // Settings selection sync from Pi
+    else if (cmd.startsWith("SELECTION:")) {
+        int newSelection = cmd.substring(10).toInt();
+        if (newSelection >= 0 && newSelection < SETTINGS_COUNT) {
+            settingsSelection = newSelection;
+            // Auto-scroll to keep selection visible
+            if (settingsSelection < settingsScrollOffset) {
+                settingsScrollOffset = settingsSelection;
+            } else if (settingsSelection >= settingsScrollOffset + SETTINGS_VISIBLE) {
+                settingsScrollOffset = settingsSelection - SETTINGS_VISIBLE + 1;
+            }
+            if (currentScreen == SCREEN_SETTINGS) {
+                needsRedraw = true;
+                needsFullRedraw = true;
+            }
+            Serial.printf("OK:SELECTION:%d\n", newSelection);
+        }
+    }
+}
+
+// Parse incoming settings command (format: name=value)
+void parseSettingsCommand(String data) {
+    int eqPos = data.indexOf('=');
+    if (eqPos <= 0) return;
+    
+    String name = data.substring(0, eqPos);
+    String value = data.substring(eqPos + 1);
+    
+    bool changed = false;
+    
+    if (name == "brightness") {
+        settings.brightness = value.toInt();
+        changed = true;
+    }
+    else if (name == "volume") {
+        settings.volume = value.toInt();
+        changed = true;
+    }
+    else if (name == "shift_rpm") {
+        settings.shiftRPM = value.toInt();
+        changed = true;
+    }
+    else if (name == "redline_rpm") {
+        settings.redlineRPM = value.toInt();
+        changed = true;
+    }
+    else if (name == "use_mph") {
+        settings.useMPH = (value == "1" || value == "true");
+        changed = true;
+    }
+    else if (name == "tire_low_psi") {
+        settings.tireLowPSI = value.toFloat();
+        changed = true;
+    }
+    else if (name == "coolant_warn") {
+        settings.coolantWarnF = value.toInt();
+        changed = true;
+    }
+    else if (name == "demo_mode") {
+        settings.demoMode = (value == "1" || value == "true");
+        telemetry.connected = !settings.demoMode;
+        changed = true;
+    }
+    else if (name == "timeout") {
+        settings.screenTimeout = value.toInt();
+        changed = true;
+    }
+    
+    if (changed) {
+        Serial.printf("OK:SET:%s=%s\n", name.c_str(), value.c_str());
+        // Redraw settings screen if we're on it
+        if (currentScreen == SCREEN_SETTINGS) {
+            needsRedraw = true;
+            needsFullRedraw = true;
+        }
+    }
+}
+
+// Send a single setting to Pi
+void sendSettingToPI(const char* name, int value) {
+    Serial.printf("SETTING:%s=%d\n", name, value);
+}
+
+void sendSettingToPI(const char* name, float value) {
+    Serial.printf("SETTING:%s=%.1f\n", name, value);
+}
+
+void sendSettingToPI(const char* name, bool value) {
+    Serial.printf("SETTING:%s=%d\n", name, value ? 1 : 0);
+}
+
+// Send all current settings to Pi (for initial sync)
+void sendAllSettingsToPI() {
+    Serial.printf("SETTINGS:brightness=%d,volume=%d,shift_rpm=%d,redline_rpm=%d,use_mph=%d,tire_low_psi=%.1f,coolant_warn=%d,demo_mode=%d,timeout=%d\n",
+                  settings.brightness, settings.volume, settings.shiftRPM, settings.redlineRPM,
+                  settings.useMPH ? 1 : 0, settings.tireLowPSI, settings.coolantWarnF,
+                  settings.demoMode ? 1 : 0, settings.screenTimeout);
 }

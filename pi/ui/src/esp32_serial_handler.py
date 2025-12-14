@@ -64,16 +64,22 @@ class ESP32SerialHandler:
     SCREEN_SYSTEM = 6
     SCREEN_SETTINGS = 7
     
-    def __init__(self, telemetry_data, port: str = None, on_screen_change=None):
+    def __init__(self, telemetry_data, port: str = None, on_screen_change=None,
+                 on_setting_change=None, on_settings_sync=None):
         """
         Args:
             telemetry_data: TelemetryData object to update with received values
             port: Serial port path (default: auto-detect USB then GPIO)
             on_screen_change: Callback function(screen_index) called when ESP32 changes screen
+            on_setting_change: Callback function(name, value) called when single setting changes on ESP32
+            on_settings_sync: Callback function(settings_dict) called when full settings received
         """
         self.telemetry = telemetry_data
         self.port = port  # Will be auto-detected if None
         self.on_screen_change = on_screen_change  # Callback for bidirectional sync
+        self.on_setting_change = on_setting_change  # Callback for single setting change
+        self.on_settings_sync = on_settings_sync  # Callback for full settings sync
+        self.on_selection_change = None  # Callback for settings selection change
         
         self.serial_conn = None
         self._running = False
@@ -204,12 +210,29 @@ class ESP32SerialHandler:
                         self.on_screen_change(new_screen)
                 except ValueError:
                     pass
+            elif line.startswith("SETTING:"):
+                # Single setting changed on ESP32 - sync to Pi
+                self._parse_setting(line[8:])
+            elif line.startswith("SELECTION:"):
+                # Settings selection changed on ESP32 - sync to Pi
+                try:
+                    selection = int(line[10:])
+                    if self.on_selection_change:
+                        self.on_selection_change(selection)
+                except ValueError:
+                    pass
+            elif line.startswith("SETTINGS:"):
+                # All settings from ESP32 - full sync
+                self._parse_all_settings(line[9:])
             elif line.startswith("OK:SCREEN_"):
                 # Screen change acknowledgement
                 try:
                     self.esp32_screen = int(line[10:])
                 except ValueError:
                     pass
+            elif line.startswith("OK:SET:"):
+                # Setting change acknowledgement
+                print(f"ESP32: Setting confirmed - {line[7:]}")
             elif line.startswith("OK:"):
                 # Other acknowledgements (SCREEN_NEXT, SCREEN_PREV, etc.)
                 pass
@@ -221,6 +244,32 @@ class ESP32SerialHandler:
                 print(f"ESP32: {line}")
         except Exception as e:
             print(f"Error parsing ESP32 data '{line}': {e}")
+    
+    def _parse_setting(self, data: str):
+        """Parse a single setting from ESP32: name=value"""
+        if '=' not in data:
+            return
+        name, value = data.split('=', 1)
+        name = name.strip()
+        value = value.strip()
+        
+        # Call the callback if registered
+        if self.on_setting_change:
+            self.on_setting_change(name, value)
+        print(f"ESP32: Setting changed - {name}={value}")
+    
+    def _parse_all_settings(self, data: str):
+        """Parse all settings from ESP32: name1=val1,name2=val2,..."""
+        settings_dict = {}
+        for pair in data.split(','):
+            if '=' in pair:
+                name, value = pair.split('=', 1)
+                settings_dict[name.strip()] = value.strip()
+        
+        # Call callback with all settings
+        if self.on_settings_sync:
+            self.on_settings_sync(settings_dict)
+        print(f"ESP32: Full settings sync - {len(settings_dict)} settings received")
     
     def _parse_tpms(self, data: str):
         """Parse TPMS data: sensor_num,psi,temp_c,battery"""
@@ -334,6 +383,77 @@ class ESP32SerialHandler:
         
         try:
             self.serial_conn.write(b"RIGHT\n")
+            self.last_tx_time = time.time()
+        except Exception as e:
+            print(f"ESP32 serial write error: {e}")
+    
+    def send_setting(self, name: str, value):
+        """
+        Send a single setting to ESP32 display for synchronization.
+        
+        Args:
+            name: Setting name (brightness, volume, shift_rpm, redline_rpm, 
+                  use_mph, tire_low_psi, coolant_warn, demo_mode, timeout)
+            value: Setting value (int, float, or bool)
+        """
+        if not self.serial_conn or not self._running:
+            return
+        
+        try:
+            # Convert bool to int for transmission
+            if isinstance(value, bool):
+                value = 1 if value else 0
+            elif isinstance(value, float):
+                value = f"{value:.1f}"
+            
+            msg = f"SET:{name}={value}\n"
+            self.serial_conn.write(msg.encode('utf-8'))
+            self.last_tx_time = time.time()
+            print(f"ESP32: Sent setting {name}={value}")
+            
+        except Exception as e:
+            print(f"ESP32 serial write error: {e}")
+    
+    def send_selection(self, index: int):
+        """Send settings selection index to ESP32 for hover sync"""
+        if not self.serial_conn or not self._running:
+            return
+        
+        try:
+            msg = f"SELECTION:{index}\n"
+            self.serial_conn.write(msg.encode('utf-8'))
+            self.last_tx_time = time.time()
+        except Exception as e:
+            print(f"ESP32 serial write error: {e}")
+    
+    def send_all_settings(self, settings):
+        """
+        Send all settings to ESP32 for full synchronization.
+        
+        Args:
+            settings: Settings object with attributes:
+                brightness, volume, shift_rpm, redline_rpm, use_mph, 
+                tire_low_psi, coolant_warn_f, demo_mode
+        """
+        if not self.serial_conn or not self._running:
+            return
+        
+        self.send_setting("brightness", settings.brightness)
+        self.send_setting("volume", settings.volume)
+        self.send_setting("shift_rpm", settings.shift_rpm)
+        self.send_setting("redline_rpm", settings.redline_rpm)
+        self.send_setting("use_mph", settings.use_mph)
+        self.send_setting("tire_low_psi", settings.tire_low_psi)
+        self.send_setting("coolant_warn", settings.coolant_warn_f)
+        self.send_setting("demo_mode", settings.demo_mode)
+    
+    def request_settings(self):
+        """Request all current settings from ESP32"""
+        if not self.serial_conn or not self._running:
+            return
+        
+        try:
+            self.serial_conn.write(b"GET_SETTINGS\n")
             self.last_tx_time = time.time()
         except Exception as e:
             print(f"ESP32 serial write error: {e}")

@@ -338,6 +338,15 @@ class SoundManager:
 # MAIN APPLICATION
 # =============================================================================
 
+class TransitionType(Enum):
+    """Page transition animation types"""
+    NONE = auto()
+    SLIDE_LEFT = auto()   # Going to next screen
+    SLIDE_RIGHT = auto()  # Going to previous screen
+    FADE = auto()         # Fade transition
+    ZOOM = auto()         # Zoom effect
+
+
 class PiDisplayApp:
     def __init__(self, fullscreen: bool = False):
         pygame.init()
@@ -352,6 +361,18 @@ class PiDisplayApp:
         self.sleeping = False
         self.demo_rpm_dir = 1
         self.show_exit_dialog = False  # Exit confirmation dialog state
+        
+        # Page transition animation state
+        self.transition_type = TransitionType.NONE
+        self.transition_from_screen = Screen.OVERVIEW
+        self.transition_to_screen = Screen.OVERVIEW
+        self.transition_start_time = 0
+        self.transition_duration = 0.2  # 200ms
+        self.transition_progress = 0.0
+        
+        # Offscreen surfaces for transition effects
+        self.transition_surface_old = None
+        self.transition_surface_new = None
         
         # Lap timer state
         self.lap_timer_running = False
@@ -435,12 +456,18 @@ class PiDisplayApp:
             print("  Initializing ESP32 serial...")
             self.esp32_handler = ESP32SerialHandler(
                 self.telemetry, 
-                on_screen_change=self._on_esp32_screen_change
+                on_screen_change=self._on_esp32_screen_change,
+                on_setting_change=self._on_esp32_setting_change,
+                on_settings_sync=self._on_esp32_settings_sync
             )
+            # Set up selection change callback
+            self.esp32_handler.on_selection_change = self._on_esp32_selection_change
             if self.esp32_handler.start():
                 print("  ✓ ESP32 connected - display sync enabled")
                 # Sync initial screen
                 self._sync_esp32_screen()
+                # Send initial settings to ESP32
+                self._sync_settings_to_esp32()
             else:
                 print("  ✗ ESP32 serial failed - check USB connection")
                 self.esp32_handler = None
@@ -455,8 +482,77 @@ class PiDisplayApp:
         if 0 <= screen_index <= 7:
             screens = list(Screen)
             if screen_index < len(screens):
-                self.current_screen = screens[screen_index]
-                print(f"Pi: Synced to screen {screen_index} ({self.current_screen.name})")
+                target_screen = screens[screen_index]
+                # Use transition animation when syncing from ESP32
+                if target_screen != self.current_screen:
+                    direction = 'next' if screen_index > self.current_screen.value else 'prev'
+                    self._start_transition(target_screen, 
+                        TransitionType.SLIDE_LEFT if direction == 'next' else TransitionType.SLIDE_RIGHT)
+                print(f"Pi: Synced to screen {screen_index} ({target_screen.name})")
+    
+    def _on_esp32_setting_change(self, name: str, value: str):
+        """Callback when ESP32 display changes a setting - sync to Pi settings"""
+        changed = False
+        
+        if name == "brightness":
+            self.settings.brightness = int(value)
+            changed = True
+        elif name == "volume":
+            self.settings.volume = int(value)
+            self.sound.set_volume(self.settings.volume)
+            changed = True
+        elif name == "shift_rpm":
+            self.settings.shift_rpm = int(value)
+            changed = True
+        elif name == "redline_rpm":
+            self.settings.redline_rpm = int(value)
+            changed = True
+        elif name == "use_mph":
+            self.settings.use_mph = (value == "1" or value.lower() == "true")
+            changed = True
+        elif name == "tire_low_psi":
+            self.settings.tire_low_psi = float(value)
+            changed = True
+        elif name == "coolant_warn":
+            self.settings.coolant_warn_f = int(value)
+            changed = True
+        elif name == "demo_mode":
+            new_demo = (value == "1" or value.lower() == "true")
+            if new_demo != self.settings.demo_mode:
+                self.settings.demo_mode = new_demo
+                self._on_data_source_changed()
+            changed = True
+        elif name == "timeout":
+            # Screen timeout - Pi doesn't use this currently but store it
+            pass
+        
+        if changed:
+            print(f"Pi: Setting synced from ESP32 - {name}={value}")
+    
+    def _on_esp32_selection_change(self, index: int):
+        """Callback when ESP32 settings selection changes - sync to Pi"""
+        if self.current_screen == Screen.SETTINGS:
+            items = self._get_settings_items()
+            if 0 <= index < len(items):
+                self.settings_selection = index
+                print(f"Pi: Selection synced from ESP32 - index {index}")
+    
+    def _sync_selection_to_esp32(self):
+        """Send current settings selection to ESP32"""
+        if self.esp32_handler and self.esp32_handler.connected:
+            self.esp32_handler.send_selection(self.settings_selection)
+    
+    def _on_esp32_settings_sync(self, settings_dict: dict):
+        """Callback when ESP32 sends all settings - full sync to Pi"""
+        for name, value in settings_dict.items():
+            self._on_esp32_setting_change(name, value)
+        print(f"Pi: Full settings sync from ESP32 complete ({len(settings_dict)} settings)")
+    
+    def _sync_settings_to_esp32(self):
+        """Send all current Pi settings to ESP32 for initial sync"""
+        if self.esp32_handler and self.esp32_handler.connected:
+            self.esp32_handler.send_all_settings(self.settings)
+            print("Pi: Sent initial settings to ESP32")
     
     def _on_data_source_changed(self):
         """Called when demo_mode setting is toggled"""
@@ -621,22 +717,22 @@ class PiDisplayApp:
             self._handle_navigation_button(button)
     
     def _handle_navigation_button(self, button: ButtonEvent):
-        """Handle normal screen navigation"""
+        """Handle normal screen navigation with transitions"""
+        # Ignore input during transitions
+        if self._is_transitioning():
+            return
+        
         screens = list(Screen)
         idx = screens.index(self.current_screen)
         
         if button in (ButtonEvent.RES_PLUS, ButtonEvent.VOL_DOWN):
             # UP or LEFT - previous screen
             idx = (idx - 1) % len(screens)
-            self.current_screen = screens[idx]
-            self.sound.play('navigate')
-            self._sync_esp32_screen()
+            self._navigate_to_screen(screens[idx], 'prev')
         elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
             # DOWN or RIGHT - next screen
             idx = (idx + 1) % len(screens)
-            self.current_screen = screens[idx]
-            self.sound.play('navigate')
-            self._sync_esp32_screen()
+            self._navigate_to_screen(screens[idx], 'next')
     
     def _sync_esp32_screen(self):
         """Sync ESP32 display to match Pi screen (all 8 screens)"""
@@ -648,9 +744,190 @@ class PiDisplayApp:
             if screen_idx <= 7:
                 self.esp32_handler.send_screen_change(screen_idx)
     
+    # === PAGE TRANSITION ANIMATION METHODS ===
+    
+    def _is_transitioning(self) -> bool:
+        """Check if a page transition is in progress"""
+        return self.transition_type != TransitionType.NONE
+    
+    def _ease_out_cubic(self, t: float) -> float:
+        """Easing function - smooth deceleration"""
+        return 1.0 - pow(1.0 - t, 3)
+    
+    def _ease_in_out_quad(self, t: float) -> float:
+        """Easing function - smooth acceleration and deceleration"""
+        if t < 0.5:
+            return 2 * t * t
+        return 1 - pow(-2 * t + 2, 2) / 2
+    
+    def _start_transition(self, to_screen: Screen, transition_type: TransitionType):
+        """Start a page transition animation"""
+        if to_screen == self.current_screen:
+            return  # No transition needed
+        
+        # Capture current screen to offscreen surface
+        self.transition_surface_old = self.screen.copy()
+        
+        # Set up transition state
+        self.transition_from_screen = self.current_screen
+        self.transition_to_screen = to_screen
+        self.transition_type = transition_type
+        self.transition_start_time = time.time()
+        self.transition_progress = 0.0
+        
+        # Render destination screen to offscreen surface
+        self.transition_surface_new = pygame.Surface((PI_WIDTH, PI_HEIGHT))
+        saved_screen = self.screen
+        self.screen = self.transition_surface_new
+        self.current_screen = to_screen
+        self._render_screen_content()
+        self.current_screen = self.transition_from_screen
+        self.screen = saved_screen
+        
+        print(f"Starting transition: {self.transition_from_screen.name} -> {to_screen.name}")
+    
+    def _update_transition(self):
+        """Update transition animation progress"""
+        if self.transition_type == TransitionType.NONE:
+            return
+        
+        elapsed = time.time() - self.transition_start_time
+        self.transition_progress = elapsed / self.transition_duration
+        
+        if self.transition_progress >= 1.0:
+            # Transition complete
+            self.transition_progress = 1.0
+            self.current_screen = self.transition_to_screen
+            self.transition_type = TransitionType.NONE
+            self.transition_surface_old = None
+            self.transition_surface_new = None
+            print(f"Transition complete, now on: {self.current_screen.name}")
+    
+    def _render_transition(self):
+        """Render the transition animation effect"""
+        if self.transition_type == TransitionType.NONE:
+            return
+        
+        eased = self._ease_out_cubic(self.transition_progress)
+        
+        if self.transition_type == TransitionType.SLIDE_LEFT:
+            # Old screen slides left, new slides in from right
+            offset = int(PI_WIDTH * eased)
+            if self.transition_surface_old:
+                self.screen.blit(self.transition_surface_old, (-offset, 0))
+            if self.transition_surface_new:
+                self.screen.blit(self.transition_surface_new, (PI_WIDTH - offset, 0))
+            # Draw accent line at transition edge
+            line_x = PI_WIDTH - offset
+            pygame.draw.rect(self.screen, COLOR_ACCENT, (line_x - 2, 0, 4, PI_HEIGHT))
+            
+        elif self.transition_type == TransitionType.SLIDE_RIGHT:
+            # Old screen slides right, new slides in from left
+            offset = int(PI_WIDTH * eased)
+            if self.transition_surface_old:
+                self.screen.blit(self.transition_surface_old, (offset, 0))
+            if self.transition_surface_new:
+                self.screen.blit(self.transition_surface_new, (offset - PI_WIDTH, 0))
+            # Draw accent line at transition edge
+            line_x = offset
+            pygame.draw.rect(self.screen, COLOR_ACCENT, (line_x - 2, 0, 4, PI_HEIGHT))
+            
+        elif self.transition_type == TransitionType.FADE:
+            # Crossfade between screens
+            if self.transition_surface_old:
+                self.transition_surface_old.set_alpha(int(255 * (1 - eased)))
+                self.screen.blit(self.transition_surface_old, (0, 0))
+            if self.transition_surface_new:
+                self.transition_surface_new.set_alpha(int(255 * eased))
+                self.screen.blit(self.transition_surface_new, (0, 0))
+                
+        elif self.transition_type == TransitionType.ZOOM:
+            # Zoom out old, zoom in new
+            if eased < 0.5:
+                # First half: zoom out old screen
+                scale = 1.0 - eased
+                if self.transition_surface_old and scale > 0.1:
+                    w = int(PI_WIDTH * scale)
+                    h = int(PI_HEIGHT * scale)
+                    scaled = pygame.transform.scale(self.transition_surface_old, (w, h))
+                    x = (PI_WIDTH - w) // 2
+                    y = (PI_HEIGHT - h) // 2
+                    self.screen.fill(COLOR_BG_DARK)
+                    self.screen.blit(scaled, (x, y))
+            else:
+                # Second half: zoom in new screen
+                scale = (eased - 0.5) * 2
+                if self.transition_surface_new:
+                    w = int(PI_WIDTH * scale)
+                    h = int(PI_HEIGHT * scale)
+                    if w > 10 and h > 10:
+                        scaled = pygame.transform.scale(self.transition_surface_new, (w, h))
+                        x = (PI_WIDTH - w) // 2
+                        y = (PI_HEIGHT - h) // 2
+                        self.screen.fill(COLOR_BG_DARK)
+                        self.screen.blit(scaled, (x, y))
+    
+    def _render_screen_content(self):
+        """Render just the screen content (for transition capture)"""
+        self.screen.fill(COLOR_BG_DARK)
+        renderers = {
+            Screen.OVERVIEW: self._render_overview,
+            Screen.RPM_SPEED: self._render_rpm_speed,
+            Screen.TPMS: self._render_tpms,
+            Screen.ENGINE: self._render_engine,
+            Screen.GFORCE: self._render_gforce,
+            Screen.DIAGNOSTICS: self._render_diagnostics,
+            Screen.SYSTEM: self._render_system,
+            Screen.SETTINGS: self._render_settings,
+        }
+        renderers[self.current_screen]()
+        
+        # Title bar
+        pygame.draw.rect(self.screen, (30, 30, 45), (0, 0, PI_WIDTH, 50))
+        title = SCREEN_NAMES[self.current_screen]
+        txt = self.font_small.render(title, True, COLOR_WHITE)
+        self.screen.blit(txt, (20, 8))
+        
+        # Screen indicator dots
+        screens = list(Screen)
+        dot_x = PI_WIDTH - 20 - len(screens) * 18
+        for i, scr in enumerate(screens):
+            color = COLOR_ACCENT if scr == self.current_screen else COLOR_DARK_GRAY
+            pygame.draw.circle(self.screen, color, (dot_x + i * 18, 25), 6)
+    
+    def _navigate_to_screen(self, to_screen: Screen, direction: str = 'auto'):
+        """Navigate to a screen with animation"""
+        if to_screen == self.current_screen:
+            return
+        
+        # Determine transition type based on direction
+        if direction == 'next' or (direction == 'auto' and to_screen.value > self.current_screen.value):
+            trans_type = TransitionType.SLIDE_LEFT
+        elif direction == 'prev' or (direction == 'auto' and to_screen.value < self.current_screen.value):
+            trans_type = TransitionType.SLIDE_RIGHT
+        else:
+            trans_type = TransitionType.SLIDE_LEFT
+        
+        self._start_transition(to_screen, trans_type)
+        self.sound.play('navigate')
+        self._sync_esp32_screen_for_transition(to_screen)
+    
+    def _sync_esp32_screen_for_transition(self, to_screen: Screen):
+        """Sync ESP32 to destination screen during transition"""
+        if self.esp32_handler:
+            screen_idx = to_screen.value
+            if screen_idx <= 7:
+                self.esp32_handler.send_screen_change(screen_idx)
+    
+    # === END TRANSITION METHODS ===
+    
     def _handle_lap_timer_button(self, button: ButtonEvent):
         """Handle lap timer controls on RPM/Speed screen"""
         import time
+        
+        # Ignore input during transitions
+        if self._is_transitioning():
+            return
         
         # Navigation still works
         if button in (ButtonEvent.RES_PLUS, ButtonEvent.VOL_DOWN):
@@ -658,17 +935,13 @@ class PiDisplayApp:
             screens = list(Screen)
             idx = screens.index(self.current_screen)
             idx = (idx - 1) % len(screens)
-            self.current_screen = screens[idx]
-            self.sound.play('navigate')
-            self._sync_esp32_screen()
+            self._navigate_to_screen(screens[idx], 'prev')
         elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
             # DOWN or RIGHT - next screen
             screens = list(Screen)
             idx = screens.index(self.current_screen)
             idx = (idx + 1) % len(screens)
-            self.current_screen = screens[idx]
-            self.sound.play('navigate')
-            self._sync_esp32_screen()
+            self._navigate_to_screen(screens[idx], 'next')
         elif button == ButtonEvent.ON_OFF:
             # Enter/Select - Start/Stop lap timer
             if self.lap_timer_running:
@@ -692,34 +965,52 @@ class PiDisplayApp:
     
     def _handle_settings_button(self, button: ButtonEvent):
         """Handle settings screen navigation"""
+        # Ignore input during transitions
+        if self._is_transitioning():
+            return
+            
         items = self._get_settings_items()
+        
+        # Allow page navigation with VOL_UP/VOL_DOWN (< & >)
+        if button == ButtonEvent.VOL_DOWN and not self.settings_edit_mode:
+            # Previous screen
+            screens = list(Screen)
+            idx = screens.index(self.current_screen)
+            idx = (idx - 1) % len(screens)
+            self.settings_selection = 0
+            self._navigate_to_screen(screens[idx], 'prev')
+            return
+        elif button == ButtonEvent.VOL_UP and not self.settings_edit_mode:
+            # Next screen
+            screens = list(Screen)
+            idx = screens.index(self.current_screen)
+            idx = (idx + 1) % len(screens)
+            self.settings_selection = 0
+            self._navigate_to_screen(screens[idx], 'next')
+            return
         
         if button == ButtonEvent.RES_PLUS and not self.settings_edit_mode:
             if self.settings_selection > 0:
                 self.settings_selection -= 1
                 self.sound.play('navigate')
+                self._sync_selection_to_esp32()
         elif button == ButtonEvent.SET_MINUS and not self.settings_edit_mode:
             if self.settings_selection < len(items) - 1:
                 self.settings_selection += 1
                 self.sound.play('navigate')
+                self._sync_selection_to_esp32()
         elif button == ButtonEvent.ON_OFF:
-            if self.settings_selection == 0:  # Back is now at index 0
-                self.current_screen = Screen.OVERVIEW
-                self.settings_selection = 0
-                self.sound.play('back')
-                self._sync_esp32_screen()
-            else:
-                self.settings_edit_mode = not self.settings_edit_mode
-                self.sound.play('select')
+            # Toggle edit mode for current setting
+            self.settings_edit_mode = not self.settings_edit_mode
+            self.sound.play('select')
         elif button == ButtonEvent.CANCEL:
             if self.settings_edit_mode:
                 self.settings_edit_mode = False
                 self.sound.play('back')
             else:
-                self.current_screen = Screen.OVERVIEW
+                # Exit settings to overview
                 self.settings_selection = 0
-                self.sound.play('back')
-                self._sync_esp32_screen()
+                self._navigate_to_screen(Screen.OVERVIEW, 'prev')
         elif self.settings_edit_mode:
             delta = 1 if button == ButtonEvent.VOL_UP else (-1 if button == ButtonEvent.VOL_DOWN else 0)
             if delta != 0:
@@ -729,30 +1020,42 @@ class PiDisplayApp:
     def _adjust_setting(self, delta: int):
         """Adjust currently selected setting"""
         sel = self.settings_selection
-        # Index 0 is Back (no adjustment)
-        if sel == 1:  # Data Source (Demo Mode)
+        # Settings are now 0-indexed without Back button
+        if sel == 0:  # Data Source (Demo Mode)
             self.settings.demo_mode = not self.settings.demo_mode
             self._on_data_source_changed()
-        elif sel == 2:  # Brightness
+            self._sync_setting_to_esp32("demo_mode", self.settings.demo_mode)
+        elif sel == 1:  # Brightness
             self.settings.brightness = max(10, min(100, self.settings.brightness + delta * 5))
-        elif sel == 3:  # Volume
+            self._sync_setting_to_esp32("brightness", self.settings.brightness)
+        elif sel == 2:  # Volume
             self.settings.volume = max(0, min(100, self.settings.volume + delta * 5))
             self.sound.set_volume(self.settings.volume)
-        elif sel == 4:  # Shift RPM
+            self._sync_setting_to_esp32("volume", self.settings.volume)
+        elif sel == 3:  # Shift RPM
             self.settings.shift_rpm = max(4000, min(7500, self.settings.shift_rpm + delta * 100))
-        elif sel == 5:  # Redline
+            self._sync_setting_to_esp32("shift_rpm", self.settings.shift_rpm)
+        elif sel == 4:  # Redline
             self.settings.redline_rpm = max(5000, min(8000, self.settings.redline_rpm + delta * 100))
-        elif sel == 6:  # Units
+            self._sync_setting_to_esp32("redline_rpm", self.settings.redline_rpm)
+        elif sel == 5:  # Units
             self.settings.use_mph = not self.settings.use_mph
-        elif sel == 7:  # Low tire PSI
+            self._sync_setting_to_esp32("use_mph", self.settings.use_mph)
+        elif sel == 6:  # Low tire PSI
             self.settings.tire_low_psi = max(20, min(35, self.settings.tire_low_psi + delta * 0.5))
-        elif sel == 8:  # Coolant warn
+            self._sync_setting_to_esp32("tire_low_psi", self.settings.tire_low_psi)
+        elif sel == 7:  # Coolant warn
             self.settings.coolant_warn_f = max(180, min(250, self.settings.coolant_warn_f + delta * 5))
+            self._sync_setting_to_esp32("coolant_warn", self.settings.coolant_warn_f)
+    
+    def _sync_setting_to_esp32(self, name: str, value):
+        """Send a single setting to ESP32 for synchronization"""
+        if self.esp32_handler and self.esp32_handler.connected:
+            self.esp32_handler.send_setting(name, value)
     
     def _get_settings_items(self):
         """Return list of (name, value, unit) tuples"""
         return [
-            ("Back", "", ""),
             ("Data Source", "DEMO" if self.settings.demo_mode else "CAN BUS", ""),
             ("Brightness", self.settings.brightness, "%"),
             ("Volume", self.settings.volume, "%"),
@@ -921,6 +1224,10 @@ class PiDisplayApp:
         
         if self.sleeping:
             self._render_sleep()
+        elif self._is_transitioning():
+            # Update and render transition animation
+            self._update_transition()
+            self._render_transition()
         else:
             renderers = {
                 Screen.OVERVIEW: self._render_overview,
