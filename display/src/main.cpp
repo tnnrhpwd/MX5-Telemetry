@@ -8,6 +8,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <NimBLEDevice.h>
 #include "Display_ST77916.h"
 #include "Touch_CST816.h"
 #include "QMI8658.h"
@@ -94,6 +95,45 @@ DisplaySettings settings;
 QMI8658 imu;
 bool imuAvailable = false;
 
+// ============================================================================
+// BLE TPMS Scanner Configuration
+// ============================================================================
+// TPMS sensor MAC addresses - DIRECTLY MAPPED TO TIRE POSITIONS
+// Index 0 = Front Left (FL), Index 1 = Front Right (FR)
+// Index 2 = Rear Left (RL),  Index 3 = Rear Right (RR)
+// 
+// TODO: Once you identify which sensor is on which tire, update these MACs:
+const char* TPMS_MAC_FL = "14:27:4b:11:11:11";  // Front Left tire
+const char* TPMS_MAC_FR = "14:26:6d:11:11:11";  // Front Right tire
+const char* TPMS_MAC_RL = "14:10:50:11:11:11";  // Rear Left tire
+const char* TPMS_MAC_RR = "14:13:1f:11:11:11";  // Rear Right tire
+
+const char* TPMS_MAC_ADDRESSES[] = {
+    TPMS_MAC_FL,  // Index 0 = FL
+    TPMS_MAC_FR,  // Index 1 = FR
+    TPMS_MAC_RL,  // Index 2 = RL
+    TPMS_MAC_RR   // Index 3 = RR
+};
+const int TPMS_SENSOR_COUNT = 4;
+const char* TPMS_POSITION_NAMES[] = {"FL", "FR", "RL", "RR"};
+
+// TPMS data structure for each sensor
+struct TPMSSensorData {
+    bool valid;           // Data has been received
+    float pressurePSI;    // Tire pressure in PSI
+    float temperatureF;   // Temperature in Fahrenheit
+    unsigned long lastUpdate;  // millis() of last update
+    int8_t rssi;          // Signal strength
+};
+TPMSSensorData tpmsSensors[4] = {0};
+
+// BLE scan state
+NimBLEScan* pBLEScan = nullptr;
+bool bleInitialized = false;
+unsigned long lastBLEScanTime = 0;
+const unsigned long BLE_SCAN_INTERVAL = 5000;  // Scan every 5 seconds
+const unsigned long TPMS_DATA_TIMEOUT = 30000; // Data valid for 30 seconds
+
 // Display state - 8 screens to match Pi
 enum ScreenMode {
     SCREEN_OVERVIEW = 0,
@@ -166,6 +206,11 @@ void drawTransition();
 bool isTransitioning();
 void updateIMU();
 void sendIMUData();
+void initBLETPMS();
+void scanTPMSSensors();
+void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex);
+void sendTPMSDataToPi();
+void formatTimestamp(unsigned long millis_time, char* buf, size_t bufSize);
 
 // Settings menu state
 int settingsSelection = 0;
@@ -181,6 +226,19 @@ enum SettingType {
     SETTING_SLIDER,
     SETTING_VALUE
 };
+
+// Format a millis timestamp as HH:MM:SS (time since boot when data was received)
+void formatTimestamp(unsigned long millis_time, char* buf, size_t bufSize) {
+    if (millis_time == 0) {
+        snprintf(buf, bufSize, "--:--:--");
+        return;
+    }
+    unsigned long totalSecs = millis_time / 1000;
+    unsigned long hours = totalSecs / 3600;
+    unsigned long mins = (totalSecs % 3600) / 60;
+    unsigned long secs = totalSecs % 60;
+    snprintf(buf, bufSize, "%02lu:%02lu:%02lu", hours, mins, secs);
+}
 
 // Draw the background image (called on full redraw)
 void drawBackground() {
@@ -388,9 +446,10 @@ void setup() {
     LCD_Init();
     Serial.println("Display initialized!");
     
-    // Draw startup screen with boot logo
+    // Draw startup screen with boot logo - scaled to fill the entire screen
     LCD_Clear(COLOR_BG);
-    LCD_DrawImageCentered(BOOT_LOGO_DATA_WIDTH, BOOT_LOGO_DATA_HEIGHT, boot_logo_data);
+    LCD_DrawImageScaled(BOOT_LOGO_DATA_WIDTH, BOOT_LOGO_DATA_HEIGHT, boot_logo_data,
+                        0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     delay(1500);  // Show logo for 1.5 seconds
     
     // Initialize telemetry to zeros - will be populated by Pi
@@ -416,6 +475,9 @@ void setup() {
     needsRedraw = true;
     needsFullRedraw = true;
     Serial.println("Setup complete!");
+    
+    // Initialize BLE TPMS scanner (after display is ready)
+    initBLETPMS();
 }
 
 void loop() {
@@ -425,6 +487,19 @@ void loop() {
     
     // Handle serial commands from Pi
     handleSerialCommands();
+    
+    // BLE TPMS scanning - scan every 5 seconds
+    if (bleInitialized && millis() - lastBLEScanTime > BLE_SCAN_INTERVAL) {
+        lastBLEScanTime = millis();
+        scanTPMSSensors();
+    }
+    
+    // Send TPMS data to Pi every 5 seconds (offset from scan)
+    static unsigned long lastTPMSSend = 0;
+    if (millis() - lastTPMSSend > 5000) {
+        lastTPMSSend = millis();
+        sendTPMSDataToPi();
+    }
     
     // Update IMU at 50Hz
     if (imuAvailable && millis() - lastImuUpdate > 20) {
@@ -995,32 +1070,50 @@ void drawTPMSScreen() {
     int rrY = CENTER_Y + tireOffsetY - tireH/2;
     drawTire(rrX, rrY, rrColor);
     
-    // === PRESSURE VALUE LABELS ===
+    // === PRESSURE, TEMPERATURE, AND TIMESTAMP LABELS ===
     char psiStr[8];
+    char tempStr[8];
+    char timeStr[12];
     
     // Front Left
     snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[0]);
-    LCD_DrawString(flX - 42, flY + 8, psiStr, flColor, COLOR_BG, 2);
-    LCD_DrawString(flX - 42, flY + 26, "PSI", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(flX - 18, flY - 14, "FL", MX5_GRAY, COLOR_BG, 1);
+    snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[0]);
+    formatTimestamp(tpmsSensors[0].lastUpdate, timeStr, sizeof(timeStr));
+    LCD_DrawString(flX - 42, flY + 2, psiStr, flColor, COLOR_BG, 2);
+    LCD_DrawString(flX - 42, flY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(flX - 42, flY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
+    LCD_DrawString(flX - 58, flY - 14, "FL", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(flX - 42, flY - 14, timeStr, MX5_DARKGRAY, COLOR_BG, 1);
     
     // Front Right
     snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[1]);
-    LCD_DrawString(frX + tireW + 8, frY + 8, psiStr, frColor, COLOR_BG, 2);
-    LCD_DrawString(frX + tireW + 8, frY + 26, "PSI", MX5_GRAY, COLOR_BG, 1);
+    snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[1]);
+    formatTimestamp(tpmsSensors[1].lastUpdate, timeStr, sizeof(timeStr));
+    LCD_DrawString(frX + tireW + 8, frY + 2, psiStr, frColor, COLOR_BG, 2);
+    LCD_DrawString(frX + tireW + 8, frY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(frX + tireW + 8, frY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
     LCD_DrawString(frX + 6, frY - 14, "FR", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(frX + 24, frY - 14, timeStr, MX5_DARKGRAY, COLOR_BG, 1);
     
     // Rear Left
     snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[2]);
-    LCD_DrawString(rlX - 42, rlY + 8, psiStr, rlColor, COLOR_BG, 2);
-    LCD_DrawString(rlX - 42, rlY + 26, "PSI", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(rlX - 18, rlY + tireH + 4, "RL", MX5_GRAY, COLOR_BG, 1);
+    snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[2]);
+    formatTimestamp(tpmsSensors[2].lastUpdate, timeStr, sizeof(timeStr));
+    LCD_DrawString(rlX - 42, rlY + 2, psiStr, rlColor, COLOR_BG, 2);
+    LCD_DrawString(rlX - 42, rlY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(rlX - 42, rlY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
+    LCD_DrawString(rlX - 58, rlY + tireH + 4, "RL", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(rlX - 42, rlY + tireH + 4, timeStr, MX5_DARKGRAY, COLOR_BG, 1);
     
     // Rear Right
     snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[3]);
-    LCD_DrawString(rrX + tireW + 8, rrY + 8, psiStr, rrColor, COLOR_BG, 2);
-    LCD_DrawString(rrX + tireW + 8, rrY + 26, "PSI", MX5_GRAY, COLOR_BG, 1);
+    snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[3]);
+    formatTimestamp(tpmsSensors[3].lastUpdate, timeStr, sizeof(timeStr));
+    LCD_DrawString(rrX + tireW + 8, rrY + 2, psiStr, rrColor, COLOR_BG, 2);
+    LCD_DrawString(rrX + tireW + 8, rrY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(rrX + tireW + 8, rrY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
     LCD_DrawString(rrX + 6, rrY + tireH + 4, "RR", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(rrX + 24, rrY + tireH + 4, timeStr, MX5_DARKGRAY, COLOR_BG, 1);
     
     // === STATUS BAR ===
     bool allGood = (flColor == MX5_GREEN && frColor == MX5_GREEN && 
@@ -2221,4 +2314,152 @@ void sendAllSettingsToPI() {
                   settings.brightness, settings.volume, settings.shiftRPM, settings.redlineRPM,
                   settings.useMPH ? 1 : 0, settings.tireLowPSI, settings.coolantWarnF,
                   settings.demoMode ? 1 : 0, settings.screenTimeout);
+}
+
+// ============================================================================
+// BLE TPMS Sensor Functions
+// ============================================================================
+
+// Callback class for BLE scan results
+class TPMSScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
+    void onResult(NimBLEAdvertisedDevice* advertisedDevice) {
+        // Get the MAC address
+        std::string macStr = advertisedDevice->getAddress().toString();
+        
+        // Check if this is one of our TPMS sensors
+        for (int i = 0; i < TPMS_SENSOR_COUNT; i++) {
+            if (strcasecmp(macStr.c_str(), TPMS_MAC_ADDRESSES[i]) == 0) {
+                // Found a TPMS sensor - decode its data
+                decodeTPMSData(advertisedDevice, i);
+                break;
+            }
+        }
+    }
+};
+
+// Initialize BLE for TPMS scanning
+void initBLETPMS() {
+    Serial.println("Initializing BLE for TPMS scanning...");
+    
+    // Initialize NimBLE
+    NimBLEDevice::init("MX5-Display");
+    
+    // Get the scanner
+    pBLEScan = NimBLEDevice::getScan();
+    
+    // Set scan callbacks
+    pBLEScan->setAdvertisedDeviceCallbacks(new TPMSScanCallbacks(), false);
+    
+    // Active scan uses more power but gets scan response data
+    pBLEScan->setActiveScan(false);  // Passive scan is fine for TPMS
+    
+    // Scan parameters
+    pBLEScan->setInterval(100);  // How often to scan (in 0.625ms units) = 62.5ms
+    pBLEScan->setWindow(99);     // How long to scan during interval = 61.875ms
+    
+    bleInitialized = true;
+    Serial.println("BLE TPMS scanner initialized!");
+    Serial.println("TPMS MAC addresses:");
+    for (int i = 0; i < TPMS_SENSOR_COUNT; i++) {
+        Serial.printf("  Sensor %d: %s\n", i, TPMS_MAC_ADDRESSES[i]);
+    }
+}
+
+// Decode TPMS data from advertising packet
+void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex) {
+    // Get manufacturer data (Type 0xFF)
+    if (!device->haveManufacturerData()) {
+        return;
+    }
+    
+    std::string mfgData = device->getManufacturerData();
+    
+    // Expected manufacturer data format (17+ bytes):
+    // AC 00 85 3D 3C 00 0A 25 00 D0 28 11 11 11 1F 13 14
+    // Byte 2: Pressure (raw + 60 = kPa, / 6.895 = PSI)
+    // Byte 3: Temperature (raw - 55 = Celsius, convert to F)
+    
+    if (mfgData.length() >= 4) {
+        uint8_t pressureRaw = (uint8_t)mfgData[2];
+        uint8_t tempRaw = (uint8_t)mfgData[3];
+        
+        // Decode pressure: raw + 60 = kPa, then convert to PSI
+        float pressure_kPa = pressureRaw + 60.0f;
+        float pressure_psi = pressure_kPa / 6.895f;
+        
+        // Decode temperature: raw - 55 = Celsius, then convert to Fahrenheit
+        float temp_c = tempRaw - 55.0f;
+        float temp_f = temp_c * 9.0f / 5.0f + 32.0f;
+        
+        // Update sensor data
+        tpmsSensors[sensorIndex].valid = true;
+        tpmsSensors[sensorIndex].pressurePSI = pressure_psi;
+        tpmsSensors[sensorIndex].temperatureF = temp_f;
+        tpmsSensors[sensorIndex].lastUpdate = millis();
+        tpmsSensors[sensorIndex].rssi = device->getRSSI();
+        
+        // Debug output - show tire position name
+        Serial.printf("TPMS %s [%s]: %.1f PSI, %.1f°F (RSSI: %d)\n",
+                      TPMS_POSITION_NAMES[sensorIndex], TPMS_MAC_ADDRESSES[sensorIndex],
+                      pressure_psi, temp_f, device->getRSSI());
+    }
+}
+
+// Start a BLE scan for TPMS sensors
+void scanTPMSSensors() {
+    if (!bleInitialized || pBLEScan == nullptr) {
+        return;
+    }
+    
+    // Don't start new scan if one is running
+    if (pBLEScan->isScanning()) {
+        return;
+    }
+    
+    // Start scan (non-blocking, 3 second duration)
+    pBLEScan->start(3, false);
+}
+
+// Update telemetry with TPMS data and send to Pi
+void sendTPMSDataToPi() {
+    // Sensor indices directly map to tire positions:
+    // Index 0 = FL, Index 1 = FR, Index 2 = RL, Index 3 = RR
+    
+    bool anyValid = false;
+    float pressures[4] = {0, 0, 0, 0};
+    float temps[4] = {0, 0, 0, 0};
+    
+    for (int tirePos = 0; tirePos < 4; tirePos++) {
+        // Direct mapping: tirePos == sensorIndex
+        // Check if data is valid and not too old
+        if (tpmsSensors[tirePos].valid && 
+            (millis() - tpmsSensors[tirePos].lastUpdate) < TPMS_DATA_TIMEOUT) {
+            
+            pressures[tirePos] = tpmsSensors[tirePos].pressurePSI;
+            temps[tirePos] = tpmsSensors[tirePos].temperatureF;
+            
+            // Also update local telemetry for display
+            telemetry.tirePressure[tirePos] = pressures[tirePos];
+            telemetry.tireTemp[tirePos] = temps[tirePos];
+            
+            anyValid = true;
+        }
+    }
+    
+    // Send to Pi if we have valid data
+    if (anyValid) {
+        // Send tire pressures: TPMS_PSI:FL,FR,RL,RR
+        Serial.printf("TPMS_PSI:%.1f,%.1f,%.1f,%.1f\n",
+                      pressures[0], pressures[1], pressures[2], pressures[3]);
+        
+        // Send tire temperatures: TPMS_TEMP:FL,FR,RL,RR
+        Serial.printf("TPMS_TEMP:%.1f,%.1f,%.1f,%.1f\n",
+                      temps[0], temps[1], temps[2], temps[3]);
+        
+        // Trigger TPMS screen redraw if we're viewing it
+        if (currentScreen == SCREEN_TPMS) {
+            needsRedraw = true;
+            needsFullRedraw = true;  // TPMS screen requires full redraw for value updates
+        }
+    }
 }

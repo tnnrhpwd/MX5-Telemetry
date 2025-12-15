@@ -20,6 +20,8 @@ Protocol (ESP32 -> Pi):
     TPMS:1,31.8,24.1,92\n    - Tire 1
     TPMS:2,33.1,26.0,88\n    - Tire 2
     TPMS:3,32.9,25.8,90\n    - Tire 3
+    TPMS_PSI:FL,FR,RL,RR\n   - BLE TPMS pressures (all 4 tires)
+    TPMS_TEMP:FL,FR,RL,RR\n  - BLE TPMS temperatures (all 4 tires)
     IMU:0.25,-0.15\n         - G-force: lateral, longitudinal
     OK:SCREEN_X\n            - Confirmation of screen change
 
@@ -35,6 +37,8 @@ Protocol (Pi -> ESP32):
 import threading
 import time
 import glob
+import json
+import os
 from typing import Optional
 
 # Try to import serial library
@@ -44,6 +48,9 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
     print("Warning: pyserial not installed. ESP32 serial disabled.")
+
+# TPMS data persistence file
+TPMS_CACHE_FILE = "/home/pi/MX5-Telemetry/data/tpms_cache.json"
 
 
 class ESP32SerialHandler:
@@ -96,6 +103,70 @@ class ESP32SerialHandler:
         self.tpms_pressure = [0.0, 0.0, 0.0, 0.0]  # PSI
         self.tpms_temp = [0.0, 0.0, 0.0, 0.0]      # °C
         self.tpms_battery = [0, 0, 0, 0]           # %
+        self.tpms_last_update = 0                  # timestamp of last TPMS data
+        
+        # Load cached TPMS data from disk
+        self._load_tpms_cache()
+    
+    def _load_tpms_cache(self):
+        """Load cached TPMS data from disk to persist through reloads"""
+        try:
+            if os.path.exists(TPMS_CACHE_FILE):
+                with open(TPMS_CACHE_FILE, 'r') as f:
+                    data = json.load(f)
+                    
+                # Restore cached values - update in-place to preserve list references
+                if 'pressure' in data and len(data['pressure']) == 4:
+                    self.tpms_pressure = list(data['pressure'])
+                    for i in range(4):
+                        self.telemetry.tire_pressure[i] = data['pressure'][i]
+                    
+                if 'temp' in data and len(data['temp']) == 4:
+                    self.tpms_temp = list(data['temp'])
+                    for i in range(4):
+                        self.telemetry.tire_temp[i] = data['temp'][i]
+                    
+                if 'battery' in data and len(data['battery']) == 4:
+                    self.tpms_battery = list(data['battery'])
+                    
+                if 'timestamp' in data:
+                    self.tpms_last_update = data['timestamp']
+                    
+                # Mark as connected if we have recent cached data (within 24 hours)
+                age_hours = (time.time() - self.tpms_last_update) / 3600
+                if age_hours < 24 and any(p > 0 for p in self.tpms_pressure):
+                    self.telemetry.tpms_connected = True
+                    print(f"TPMS: Loaded cached data (age: {age_hours:.1f} hours)")
+                    print(f"  Pressures: FL={self.tpms_pressure[0]:.1f}, FR={self.tpms_pressure[1]:.1f}, RL={self.tpms_pressure[2]:.1f}, RR={self.tpms_pressure[3]:.1f} PSI")
+                    print(f"  Temps: FL={self.tpms_temp[0]:.1f}, FR={self.tpms_temp[1]:.1f}, RL={self.tpms_temp[2]:.1f}, RR={self.tpms_temp[3]:.1f} °C")
+                else:
+                    print(f"TPMS: Cache expired or empty (age: {age_hours:.1f} hours)")
+            else:
+                print(f"TPMS: No cache file found at {TPMS_CACHE_FILE}")
+        except Exception as e:
+            print(f"TPMS: Failed to load cache: {e}")
+    
+    def _save_tpms_cache(self):
+        """Save TPMS data to disk for persistence"""
+        try:
+            # Ensure directory exists
+            cache_dir = os.path.dirname(TPMS_CACHE_FILE)
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir)
+                
+            data = {
+                'pressure': self.tpms_pressure,
+                'temp': self.tpms_temp,
+                'battery': self.tpms_battery,
+                'timestamp': time.time()
+            }
+            
+            with open(TPMS_CACHE_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+            print(f"TPMS: Saved cache to {TPMS_CACHE_FILE}")
+        except Exception as e:
+            print(f"TPMS: Failed to save cache: {e}")
     
     def _find_serial_port(self) -> Optional[str]:
         """Auto-detect ESP32 serial port (USB preferred over GPIO)"""
@@ -198,6 +269,12 @@ class ESP32SerialHandler:
         try:
             if line.startswith("TPMS:"):
                 self._parse_tpms(line[5:])
+            elif line.startswith("TPMS_PSI:"):
+                # BLE TPMS pressure data: TPMS_PSI:FL,FR,RL,RR
+                self._parse_tpms_psi(line[9:])
+            elif line.startswith("TPMS_TEMP:"):
+                # BLE TPMS temperature data: TPMS_TEMP:FL,FR,RL,RR
+                self._parse_tpms_temp(line[10:])
             elif line.startswith("IMU:"):
                 self._parse_imu(line[4:])
             elif line.startswith("SCREEN_CHANGED:"):
@@ -290,6 +367,46 @@ class ESP32SerialHandler:
                 self.telemetry.tire_pressure[sensor] = psi
                 # Convert C to F for display
                 self.telemetry.tire_temp[sensor] = temp_c * 9.0 / 5.0 + 32.0
+    
+    def _parse_tpms_psi(self, data: str):
+        """Parse BLE TPMS pressure data: FL,FR,RL,RR (all in PSI)"""
+        parts = data.split(',')
+        if len(parts) >= 4:
+            data_updated = False
+            for i in range(4):
+                try:
+                    psi = float(parts[i])
+                    if psi > 0:  # Only update if valid (non-zero)
+                        self.tpms_pressure[i] = psi
+                        self.telemetry.tire_pressure[i] = psi
+                        self.telemetry.tpms_connected = True
+                        data_updated = True
+                except (ValueError, IndexError):
+                    pass
+            if data_updated:
+                self.tpms_last_update = time.time()
+                self._save_tpms_cache()  # Persist to disk
+            print(f"TPMS BLE PSI: {self.telemetry.tire_pressure}")
+    
+    def _parse_tpms_temp(self, data: str):
+        """Parse BLE TPMS temperature data: FL,FR,RL,RR (all in Fahrenheit)"""
+        parts = data.split(',')
+        if len(parts) >= 4:
+            data_updated = False
+            for i in range(4):
+                try:
+                    temp_f = float(parts[i])
+                    if temp_f != 0:  # Only update if valid
+                        self.tpms_temp[i] = (temp_f - 32) * 5.0 / 9.0  # Store as Celsius
+                        self.telemetry.tire_temp[i] = temp_f  # Already in F
+                        self.telemetry.tpms_connected = True
+                        data_updated = True
+                except (ValueError, IndexError):
+                    pass
+            if data_updated:
+                self.tpms_last_update = time.time()
+                self._save_tpms_cache()  # Persist to disk
+            print(f"TPMS BLE Temp: {self.telemetry.tire_temp}")
     
     def _parse_imu(self, data: str):
         """Parse IMU data: lateral_g,longitudinal_g"""

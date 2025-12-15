@@ -877,3 +877,39 @@ void LCD_DrawImageCentered(uint16_t w, uint16_t h, const uint16_t* data) {
     uint16_t y = (LCD_HEIGHT - h) / 2;
     LCD_DrawImage(x, y, w, h, data);
 }
+
+void LCD_DrawImageScaled(uint16_t src_w, uint16_t src_h, const uint16_t* data, 
+                         uint16_t dst_x, uint16_t dst_y, uint16_t dst_w, uint16_t dst_h) {
+    if (panel_handle == NULL) return;
+    if (dst_x >= LCD_WIDTH || dst_y >= LCD_HEIGHT) return;
+    
+    // Clip if necessary
+    uint16_t draw_w = (dst_x + dst_w > LCD_WIDTH) ? (LCD_WIDTH - dst_x) : dst_w;
+    uint16_t draw_h = (dst_y + dst_h > LCD_HEIGHT) ? (LCD_HEIGHT - dst_y) : dst_h;
+    
+    // Allocate buffer for one row of output pixels
+    uint16_t* row_buf = (uint16_t*)heap_caps_malloc(draw_w * sizeof(uint16_t), MALLOC_CAP_DMA);
+    if (!row_buf) {
+        Serial.println("LCD_DrawImageScaled: Failed to allocate row buffer");
+        return;
+    }
+    
+    // Fixed-point scaling factors (16.16 format for precision)
+    uint32_t x_ratio = ((src_w - 1) << 16) / draw_w;
+    uint32_t y_ratio = ((src_h - 1) << 16) / draw_h;
+    
+    for (uint16_t y = 0; y < draw_h; y++) {
+        uint32_t src_y = (y * y_ratio) >> 16;
+        const uint16_t* src_row = data + (src_y * src_w);
+        
+        for (uint16_t x = 0; x < draw_w; x++) {
+            uint32_t src_x = (x * x_ratio) >> 16;
+            row_buf[x] = pgm_read_word(&src_row[src_x]);
+        }
+        
+        // Draw this row using the panel API
+        esp_lcd_panel_draw_bitmap(panel_handle, dst_x, dst_y + y, dst_x + draw_w, dst_y + y + 1, row_buf);
+    }
+    
+    heap_caps_free(row_buf);
+}
