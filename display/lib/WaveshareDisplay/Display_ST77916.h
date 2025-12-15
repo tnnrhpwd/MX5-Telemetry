@@ -63,6 +63,8 @@ void LCD_DrawImageWithAlpha(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                             const uint16_t* rgb_data, const uint8_t* alpha_data,
                             uint16_t bg_color);
 void LCD_DrawImageCentered(uint16_t w, uint16_t h, const uint16_t* data);
+void LCD_DrawImageScaled(uint16_t src_w, uint16_t src_h, const uint16_t* data, 
+                         uint16_t dst_x, uint16_t dst_y, uint16_t dst_w, uint16_t dst_h);
 
 // Color helpers
 #define RGB565(r, g, b) (((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3))
