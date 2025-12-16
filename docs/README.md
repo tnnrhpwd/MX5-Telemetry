@@ -4,14 +4,17 @@ Complete documentation for the MX5-Telemetry system.
 
 ---
 
-## 🔄 Choose Your Setup
+## 🎯 System Architecture
 
-| Setup | Best For | Guide |
-|-------|----------|-------|
-| **🎯 Single Arduino** | RPM display only, fastest response | [WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) |
-| **📊 Dual Arduino** | Full logging with GPS & SD card | [WIRING_GUIDE_DUAL_ARDUINO.md](hardware/WIRING_GUIDE_DUAL_ARDUINO.md) |
+The current system uses a **three-device architecture**:
 
-> 💡 **Recommendation:** Use Single Arduino unless you need GPS/SD logging.
+| Device | Purpose | Connection |
+|--------|---------|------------|
+| **Raspberry Pi 4B** | CAN bus hub + HDMI display | Dual MCP2515 (HS + MS CAN) |
+| **ESP32-S3 Round Display** | Gauge display + BLE TPMS receiver | Serial from Pi |
+| **Arduino Nano** | RPM LED strip controller | Direct HS-CAN (MCP2515) |
+
+See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete architecture details.
 
 ---
 
@@ -19,8 +22,8 @@ Complete documentation for the MX5-Telemetry system.
 
 | Document | Description |
 |----------|-------------|
-| [**BUILD_AND_UPLOAD.md**](BUILD_AND_UPLOAD.md) | ⭐ **Start here!** Build and flash Arduinos |
-| [setup/DUAL_ARDUINO_SETUP.md](setup/DUAL_ARDUINO_SETUP.md) | Dual-Arduino configuration |
+| [**PI_DISPLAY_INTEGRATION.md**](PI_DISPLAY_INTEGRATION.md) | ⭐ **Start here!** Complete system architecture |
+| [**BUILD_AND_UPLOAD.md**](BUILD_AND_UPLOAD.md) | Build and flash Arduino/ESP32 firmware |
 | [setup/OUTDOOR_TEST_QUICKSTART.md](setup/OUTDOOR_TEST_QUICKSTART.md) | Field testing checklist |
 
 ---
@@ -29,11 +32,11 @@ Complete documentation for the MX5-Telemetry system.
 
 | Document | Description |
 |----------|-------------|
-| [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) | **Recommended** - Simple single Arduino wiring |
-| [hardware/WIRING_GUIDE_DUAL_ARDUINO.md](hardware/WIRING_GUIDE_DUAL_ARDUINO.md) | Dual Arduino wiring for full logging |
-| [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Legacy detailed pin assignments |
-| [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) | Bill of materials (~$80-140) |
-| [hardware/MASTER_SLAVE_ARCHITECTURE.md](hardware/MASTER_SLAVE_ARCHITECTURE.md) | Dual Arduino architecture |
+| [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) | **Primary** - Pi + ESP32 + Arduino system |
+| [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) | Arduino Nano standalone wiring |
+| [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Detailed Arduino pin assignments |
+| [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) | Bill of materials |
+| [hardware/TPMS_BLUETOOTH.md](hardware/TPMS_BLUETOOTH.md) | BLE TPMS sensor setup |
 
 ---
 
@@ -47,13 +50,11 @@ Complete documentation for the MX5-Telemetry system.
 | [features/LED_SIMULATOR_ARDUINO_CONNECTION.md](features/LED_SIMULATOR_ARDUINO_CONNECTION.md) | Python simulator setup |
 | [features/LED_SIMULATOR_TROUBLESHOOTING.md](features/LED_SIMULATOR_TROUBLESHOOTING.md) | Simulator debugging |
 
-### GPS & Logging
+### Display System
 | Document | Description |
 |----------|-------------|
-| [features/GPS_TROUBLESHOOTING.md](features/GPS_TROUBLESHOOTING.md) | GPS fix issues |
-| [features/COMPREHENSIVE_DATA_LOGGING.md](features/COMPREHENSIVE_DATA_LOGGING.md) | Data logging system |
-| [features/LOG_ROTATION_FEATURE.md](features/LOG_ROTATION_FEATURE.md) | Log file management |
-| [features/AUTO_START_FEATURE.md](features/AUTO_START_FEATURE.md) | Automatic logging startup |
+| [DISPLAY_DEPLOYMENT.md](DISPLAY_DEPLOYMENT.md) | ESP32-S3 display deployment |
+| [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) | Raspberry Pi + ESP32 integration |
 
 ---
 
@@ -78,109 +79,93 @@ Complete documentation for the MX5-Telemetry system.
 
 ## 📦 Archive
 
-Old/superseded documentation kept for historical reference:
+Old/superseded documentation kept for historical reference in `archive/dual-arduino/docs/`:
 
-| Document | Superseded By |
-|----------|---------------|
-| archive/FLASH_ARDUINOS.md | BUILD_AND_UPLOAD.md |
-| archive/UPLOAD_GUIDE.md | BUILD_AND_UPLOAD.md |
-| archive/BUILD_GUIDE.md | BUILD_AND_UPLOAD.md |
-| archive/QUICK_START.md | BUILD_AND_UPLOAD.md |
-| archive/QUICK_REFERENCE.md | BUILD_AND_UPLOAD.md |
-| archive/LED_QUICKREF.md | LED_STATE_SYSTEM.md |
-| archive/LED_AUTO_SYNC.md | (outdated) |
-| archive/STRUCTURE.md | (one-time setup) |
-| archive/PLATFORMIO_VERIFICATION.md | (one-time setup) |
-| archive/REORGANIZATION_SUMMARY.md | (one-time setup) |
+| Archived Document | Notes |
+|----------|-------|
+| WIRING_GUIDE_DUAL_ARDUINO.md | Dual Arduino wiring (replaced by single Arduino + Pi) |
+| MASTER_SLAVE_ARCHITECTURE.md | Dual Arduino architecture |
+| DUAL_ARDUINO_SETUP.md | Dual Arduino configuration |
+
+GPS & Logging features documentation (for future reference):
+- features/GPS_TROUBLESHOOTING.md
+- features/COMPREHENSIVE_DATA_LOGGING.md
+- features/LOG_ROTATION_FEATURE.md
+- features/AUTO_START_FEATURE.md
 
 ---
 
 ## Quick Commands
 
 ```powershell
-# Build both Arduinos
-pio run -d master; pio run -d slave
+# Build Arduino (LED controller)
+pio run -d arduino
 
-# Upload both (adjust COM ports)
-pio run -d master --target upload --upload-port COM3
-pio run -d slave --target upload --upload-port COM4
+# Upload Arduino
+pio run -d arduino --target upload
+
+# Build ESP32-S3 Display
+pio run -d display
+
+# Upload ESP32-S3 Display
+pio run -d display --target upload
 ```
-  - `THREE_STATE_SUMMARY.md` - Historical feature summary
-  - `PROJECT_INTEGRATION_SUMMARY.md` - Integration notes
 
 ## 🗂️ Project Structure
 
 ```
 MX5-Telemetry/
-├── platformio.ini              # PlatformIO configuration
-├── README.md                   # Main project documentation
-├── LICENSE                     # MIT license
+├── arduino/                    # Arduino Nano (CAN + LED)
+│   ├── src/main.cpp            # LED controller firmware
+│   └── platformio.ini
 │
-├── src/                        # Main application code
-│   ├── main.cpp                # Application entry point
-│   └── config.h                # Configuration
+├── display/                    # ESP32-S3 Round Display
+│   ├── src/main.cpp            # Display firmware
+│   ├── ui/                     # UI components
+│   └── scripts/                # Firmware backup/flash tools
 │
-├── lib/                        # Custom libraries (modular)
+├── pi/                         # Raspberry Pi 4B
+│   ├── ui/src/                 # Pi display application
+│   └── start_display.sh        # Startup script
+│
+├── lib/                        # Shared libraries
 │   ├── CANHandler/             # CAN bus module
 │   ├── LEDController/          # LED control module
-│   ├── GPSHandler/             # GPS module
-│   ├── DataLogger/             # SD logging module
-│   └── PowerManager/           # Power management module
+│   ├── Config/                 # Configuration
+│   └── ...
+│
+├── archive/                    # Archived (dual-arduino setup)
+│   └── dual-arduino/
 │
 ├── docs/                       # All documentation (you are here)
-│   ├── README.md               # Documentation index
-│   ├── QUICK_START.md          # Quick setup guide
-│   ├── WIRING_GUIDE.md         # Hardware assembly
-│   ├── PARTS_LIST.md           # Bill of materials
-│   ├── PLATFORMIO_GUIDE.md     # Development environment
-│   ├── LIBRARY_INSTALL_GUIDE.md # Library troubleshooting
-│   ├── DATA_ANALYSIS.md        # Data analysis tools
-│   └── libraries_needed.txt    # Library reference
-│
-├── scripts/                    # Helper scripts
-│   ├── pio_quick_start.bat     # Windows PlatformIO menu
-│   ├── pio_quick_start.sh      # Linux/Mac PlatformIO menu
-│   ├── install_libraries.bat   # Windows Arduino library installer
-│   └── install_libraries.sh    # Linux/Mac Arduino library installer
-│
-├── hardware/                   # Hardware design files
-│   ├── diagram.json            # Wokwi circuit diagram
-│   └── wokwi.toml              # Wokwi simulator config
-│
-├── test/                       # Unit tests
-│   └── test_telemetry.cpp      # 15 unit tests for core logic
-│
-└── .vscode/                    # VS Code workspace config
-    └── tasks.json              # Build/upload/test tasks
+├── tools/                      # Simulators & utilities
+├── build-automation/           # Build scripts
+└── hardware/                   # Wokwi circuit files
 ```
 
 ## 🚀 Quick Navigation
 
 ### I want to...
 
-- **Build the hardware** → Start with [PARTS_LIST.md](PARTS_LIST.md), then [WIRING_GUIDE.md](WIRING_GUIDE.md)
-- **Set up software quickly** → [QUICK_START.md](QUICK_START.md)
-- **Use PlatformIO IDE** → [PLATFORMIO_GUIDE.md](PLATFORMIO_GUIDE.md)
-- **Fix library errors** → [LIBRARY_INSTALL_GUIDE.md](LIBRARY_INSTALL_GUIDE.md)
-- **Analyze my track data** → [DATA_ANALYSIS.md](DATA_ANALYSIS.md)
-- **Run simulation** → [PLATFORMIO_GUIDE.md](PLATFORMIO_GUIDE.md#wokwi-simulator)
+- **Understand the system** → Start with [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md)
+- **Build Arduino LED strip** → [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md)
+- **Set up ESP32-S3 display** → [DISPLAY_DEPLOYMENT.md](DISPLAY_DEPLOYMENT.md)
+- **Set up Pi display** → [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md)
+- **Use PlatformIO IDE** → [development/PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md)
+- **Run UI simulators** → See VS Code tasks
 
 ## 🎯 Recommended Reading Order
 
 ### For First-Time Users:
-1. Main [README.md](../README.md) - Project overview and features
-2. [PARTS_LIST.md](PARTS_LIST.md) - Order components
-3. [WIRING_GUIDE.md](WIRING_GUIDE.md) - Assemble hardware
-4. [QUICK_START.md](QUICK_START.md) - Upload and test firmware
+1. Main [README.md](../README.md) - Project overview
+2. [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) - Full architecture
+3. [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) - Order components
+4. [BUILD_AND_UPLOAD.md](BUILD_AND_UPLOAD.md) - Flash firmware
 
 ### For Developers:
-1. [PLATFORMIO_GUIDE.md](PLATFORMIO_GUIDE.md) - Set up development environment
-2. [Unit Tests](../test/test_telemetry.cpp) - Review test cases
-3. [Main Firmware](../MX5_Telemetry.ino) - Study code structure
-
-### For Data Analysis:
-1. [DATA_ANALYSIS.md](DATA_ANALYSIS.md) - Python visualization tools
-2. CSV output format (see main [README.md](../README.md#data-format))
+1. [development/PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md) - Set up dev environment
+2. Review source code in `arduino/`, `display/`, `pi/`
+3. Use simulators in VS Code tasks
 
 ## 📞 Support
 
