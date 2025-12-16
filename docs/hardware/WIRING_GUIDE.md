@@ -100,9 +100,9 @@ Connect to ground rail:
 | SO (MISO)   | D12         | Blue                   | SPI Data Out |
 | SI (MOSI)   | D11         | Green                  | SPI Data In |
 | SCK         | D13         | Yellow                 | SPI Clock |
-| INT         | D7          | White                  | **REQUIRED** - Interrupt signal |
+| INT         | D2          | White                  | **REQUIRED** - Interrupt signal |
 
-**⚠️ IMPORTANT: The INT pin MUST be connected for the MCP2515 to signal when CAN messages are available!**
+**⚠️ IMPORTANT: The INT pin MUST be connected to D2 for hardware interrupt (INT0)!**
 
 ### CAN Transceiver Connections
 
@@ -125,7 +125,61 @@ Connect to ground rail:
 4. **Test continuity** with multimeter
 5. **Connect SPI pins** to Arduino using Dupont wires
 
-## 🔗 Two-Arduino CAN Test Setup (Troubleshooting)
+## � Raspberry Pi to Arduino Serial (LED Sequence Control)
+
+The Raspberry Pi sends LED sequence settings to the Arduino via serial. This is a separate connection from the CAN bus and is used only for configuration commands (not time-critical RPM data).
+
+### Pi → Arduino Connection
+
+| Pi Pin | Arduino Pin | Description |
+|--------|-------------|-------------|
+| GPIO 14 (TXD0) | D3 | Pi transmits → Arduino receives (SoftwareSerial RX) |
+| GPIO 15 (RXD0) | D4 | Arduino transmits → Pi receives (optional, for responses) |
+| GND | GND | Common ground (REQUIRED) |
+
+### Wiring Diagram
+
+```
+Raspberry Pi 4B                 Arduino Nano
+┌──────────────┐                ┌──────────────┐
+│              │                │              │
+│  GPIO 14 ────┼────────────────┤ D3 (RX)      │
+│  (TXD0)      │                │              │
+│              │                │              │
+│  GPIO 15 ────┼────────────────┤ D4 (TX)      │
+│  (RXD0)      │  (optional)    │              │
+│              │                │              │
+│  GND ────────┼────────────────┤ GND          │
+│              │                │              │
+└──────────────┘                └──────────────┘
+```
+
+### Connection Notes
+
+- **Baud Rate**: 9600 bps (low speed for reliability)
+- **Protocol**: Simple text commands (`SEQ:1\n` through `SEQ:4\n`)
+- **Level Shifting**: Arduino D3 input is 5V tolerant, Pi 3.3V output is safe
+- **Common Ground**: REQUIRED - without it, serial will not work!
+
+### Serial Protocol
+
+| Command | Description | Arduino Response |
+|---------|-------------|------------------|
+| `SEQ:1\n` | Set Center-Out sequence (default) | `OK:1\n` |
+| `SEQ:2\n` | Set Left-to-Right sequence | `OK:2\n` |
+| `SEQ:3\n` | Set Right-to-Left sequence | `OK:3\n` |
+| `SEQ:4\n` | Set Center-In sequence | `OK:4\n` |
+| `SEQ?\n` | Query current sequence | `SEQ:n\n` |
+| `PING\n` | Connection test | `PONG\n` |
+
+### Why Serial for Settings (Not CAN)?
+
+- **RPM uses direct CAN**: Time-critical, needs <1ms latency
+- **Settings use serial**: Changed rarely (once per trip), latency doesn't matter
+- **Keeps CAN simple**: Arduino CAN only reads RPM, no bidirectional traffic
+- **Pi already has UART**: GPIO 14/15 available after SPI for CAN modules
+
+## �🔗 Two-Arduino CAN Test Setup (Troubleshooting)
 
 If you're having trouble receiving CAN messages from your car, you can test your MCP2515 modules by connecting two Arduinos together. This verifies your CAN hardware works before connecting to the vehicle.
 

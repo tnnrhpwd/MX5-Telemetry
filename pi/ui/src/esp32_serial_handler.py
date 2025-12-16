@@ -612,7 +612,7 @@ class ESP32SerialHandler:
         Args:
             settings: Settings object with attributes:
                 brightness, volume, shift_rpm, redline_rpm, use_mph, 
-                tire_low_psi, coolant_warn_f, demo_mode
+                tire_low_psi, coolant_warn_f, demo_mode, led_sequence
         """
         if not self.serial_conn or not self._running:
             return
@@ -625,6 +625,9 @@ class ESP32SerialHandler:
         self.send_setting("tire_low_psi", settings.tire_low_psi)
         self.send_setting("coolant_warn", settings.coolant_warn_f)
         self.send_setting("demo_mode", settings.demo_mode)
+        # LED sequence - syncs to ESP32 display settings
+        if hasattr(settings, 'led_sequence'):
+            self.send_setting("led_sequence", settings.led_sequence)
     
     def request_settings(self):
         """Request all current settings from ESP32"""

@@ -77,6 +77,23 @@ struct TelemetryData {
 
 TelemetryData telemetry = {0};
 
+// LED Sequence modes (must match Arduino enum)
+enum LEDSequence {
+    SEQ_CENTER_OUT = 1,     // Default: Fill from edges toward center (mirrored)
+    SEQ_LEFT_TO_RIGHT = 2,  // Fill left to right (double resolution)
+    SEQ_RIGHT_TO_LEFT = 3,  // Fill right to left
+    SEQ_CENTER_IN = 4,      // Fill from center outward to edges
+    SEQ_COUNT = 4           // Total number of sequences
+};
+
+const char* LED_SEQUENCE_NAMES[] = {
+    "",                     // Index 0 unused (sequences start at 1)
+    "Center-Out",           // 1: Default mirrored
+    "Left-Right",           // 2: Double resolution L->R
+    "Right-Left",           // 3: Double resolution R->L
+    "Center-In"             // 4: From center outward
+};
+
 // Settings structure (synced with Pi display)
 struct DisplaySettings {
     int brightness = 80;          // 0-100%
@@ -88,6 +105,7 @@ struct DisplaySettings {
     int coolantWarnF = 220;       // Coolant warning temp (F)
     bool demoMode = false;        // Demo mode toggle
     int screenTimeout = 30;       // Screen dim timeout (seconds)
+    int ledSequence = SEQ_CENTER_OUT;  // LED sequence mode (1-4)
 };
 
 DisplaySettings settings;
@@ -224,7 +242,7 @@ void loadTPMSFromNVS();
 int settingsSelection = 0;
 int settingsScrollOffset = 0;  // For scrolling - which item is at top of visible area
 bool settingsEditMode = false;
-const int SETTINGS_COUNT = 8;  // Number of settings items (no Back button)
+const int SETTINGS_COUNT = 9;  // Number of settings items (added LED Sequence)
 const int SETTINGS_VISIBLE = 4;  // How many items fit on round screen (reduced from 5 to avoid edge clipping)
 
 // Settings item types for drawing
@@ -232,7 +250,8 @@ enum SettingType {
     SETTING_BACK,
     SETTING_TOGGLE,
     SETTING_SLIDER,
-    SETTING_VALUE
+    SETTING_VALUE,
+    SETTING_SELECTOR  // New: multi-option selector (like LED sequence)
 };
 
 // Format a millis timestamp as HH:MM:SS (time since boot when data was received)
@@ -1691,6 +1710,7 @@ void drawSettingsItem(int index, int screenY, int itemW, int startX, bool isSele
         MX5_ACCENT,  // 5: Units
         MX5_GREEN,   // 6: Low Tire PSI
         MX5_BLUE,    // 7: Coolant Warn
+        MX5_PURPLE,  // 8: LED Sequence
     };
     
     uint16_t borderColor = borderColors[index];
@@ -1825,6 +1845,22 @@ void drawSettingsItem(int index, int screenY, int itemW, int startX, bool isSele
             LCD_DrawString(startX + 55, screenY + 10, "COOLANT WARN", MX5_WHITE, bgColor, 2);
             snprintf(valueStr, sizeof(valueStr), "%dF", settings.coolantWarnF);
             LCD_DrawString(valueX, screenY + 18, valueStr, MX5_WHITE, bgColor, 2);
+            break;
+            
+        case 8:  // LED Sequence
+            // Draw LED strip icon
+            for (int led = 0; led < 5; led++) {
+                int ledX = iconX - 8 + led * 4;
+                LCD_FillRect(ledX, iconY - 6, 3, 12, (led < 3) ? MX5_GREEN : MX5_DARKGRAY);
+            }
+            LCD_DrawString(startX + 55, screenY + 10, "LED SEQUENCE", MX5_WHITE, bgColor, 2);
+            // Display current sequence name
+            if (settings.ledSequence >= 1 && settings.ledSequence <= SEQ_COUNT) {
+                LCD_DrawString(startX + 55, screenY + 32, LED_SEQUENCE_NAMES[settings.ledSequence], MX5_PURPLE, bgColor, 1);
+            }
+            // Draw sequence number indicator
+            snprintf(valueStr, sizeof(valueStr), "%d/%d", settings.ledSequence, SEQ_COUNT);
+            LCD_DrawString(valueX + 20, screenY + 18, valueStr, MX5_WHITE, bgColor, 2);
             break;
     }
 }
@@ -2003,6 +2039,13 @@ void handleSettingsTouch(int x, int y) {
                     settings.coolantWarnF += 5;
                     if (settings.coolantWarnF > 250) settings.coolantWarnF = 200;
                     sendSettingToPI("coolant_warn", settings.coolantWarnF);
+                    changed = true;
+                    break;
+                    
+                case 8:  // LED Sequence
+                    settings.ledSequence++;
+                    if (settings.ledSequence > SEQ_COUNT) settings.ledSequence = 1;
+                    sendSettingToPI("led_sequence", settings.ledSequence);
                     changed = true;
                     break;
             }
@@ -2334,6 +2377,13 @@ void parseSettingsCommand(String data) {
         settings.screenTimeout = value.toInt();
         changed = true;
     }
+    else if (name == "led_sequence") {
+        int seq = value.toInt();
+        if (seq >= 1 && seq <= SEQ_COUNT) {
+            settings.ledSequence = seq;
+            changed = true;
+        }
+    }
     
     if (changed) {
         Serial.printf("OK:SET:%s=%s\n", name.c_str(), value.c_str());
@@ -2360,10 +2410,10 @@ void sendSettingToPI(const char* name, bool value) {
 
 // Send all current settings to Pi (for initial sync)
 void sendAllSettingsToPI() {
-    Serial.printf("SETTINGS:brightness=%d,volume=%d,shift_rpm=%d,redline_rpm=%d,use_mph=%d,tire_low_psi=%.1f,coolant_warn=%d,demo_mode=%d,timeout=%d\n",
+    Serial.printf("SETTINGS:brightness=%d,volume=%d,shift_rpm=%d,redline_rpm=%d,use_mph=%d,tire_low_psi=%.1f,coolant_warn=%d,demo_mode=%d,timeout=%d,led_sequence=%d\n",
                   settings.brightness, settings.volume, settings.shiftRPM, settings.redlineRPM,
                   settings.useMPH ? 1 : 0, settings.tireLowPSI, settings.coolantWarnF,
-                  settings.demoMode ? 1 : 0, settings.screenTimeout);
+                  settings.demoMode ? 1 : 0, settings.screenTimeout, settings.ledSequence);
 }
 
 // ============================================================================
