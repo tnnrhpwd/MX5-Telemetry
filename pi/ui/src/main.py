@@ -179,6 +179,21 @@ class TelemetryData:
     wheel_slip: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
 
 
+# LED Sequence modes (must match Arduino enum)
+LED_SEQ_CENTER_OUT = 1      # Default: Fill from edges toward center (mirrored)
+LED_SEQ_LEFT_TO_RIGHT = 2   # Fill left to right (double resolution)
+LED_SEQ_RIGHT_TO_LEFT = 3   # Fill right to left
+LED_SEQ_CENTER_IN = 4       # Fill from center outward to edges
+LED_SEQ_COUNT = 4           # Total number of sequences
+
+LED_SEQUENCE_NAMES = {
+    LED_SEQ_CENTER_OUT: "Center-Out",
+    LED_SEQ_LEFT_TO_RIGHT: "Left-Right",
+    LED_SEQ_RIGHT_TO_LEFT: "Right-Left",
+    LED_SEQ_CENTER_IN: "Center-In",
+}
+
+
 @dataclass
 class Settings:
     brightness: int = 80
@@ -191,6 +206,7 @@ class Settings:
     coolant_warn_f: int = 220
     oil_warn_f: int = 260
     demo_mode: bool = False  # False = use real CAN data, True = simulated data
+    led_sequence: int = LED_SEQ_CENTER_OUT  # LED sequence mode (1-4)
 
 
 # =============================================================================
@@ -415,6 +431,9 @@ class PiDisplayApp:
         # ESP32 serial handler (for TPMS + IMU data)
         self.esp32_handler = None
         
+        # Arduino serial handler (for LED sequence commands)
+        self.arduino_serial = None
+        
         # Initialize data sources based on settings
         self._init_data_sources()
     
@@ -427,6 +446,9 @@ class PiDisplayApp:
         if self.esp32_handler:
             self.esp32_handler.stop()
             self.esp32_handler = None
+        
+        # Initialize Arduino serial for LED sequence commands (always try)
+        self._init_arduino_serial()
         
         if self.settings.demo_mode:
             print("Data Source: DEMO MODE - using simulated data")
@@ -451,6 +473,42 @@ class PiDisplayApp:
         
         # ESP32 serial handler
         self._init_esp32_handler()
+    
+    def _init_arduino_serial(self):
+        """Initialize serial connection to Arduino for LED sequence commands"""
+        if not SERIAL_AVAILABLE:
+            print("  ✗ Serial library not available for Arduino - install pyserial")
+            return
+        
+        # Close existing connection if any
+        if self.arduino_serial:
+            try:
+                self.arduino_serial.close()
+            except:
+                pass
+            self.arduino_serial = None
+        
+        # Arduino serial port options (different from ESP32)
+        # Pi GPIO UART: /dev/serial0 (pins 14/15 - TXD0/RXD0) 
+        # Or USB: /dev/ttyUSB0, /dev/ttyUSB1
+        arduino_ports = ['/dev/serial0', '/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyAMA0']
+        
+        for port in arduino_ports:
+            try:
+                import serial
+                self.arduino_serial = serial.Serial(
+                    port=port,
+                    baudrate=9600,  # Match Arduino SoftwareSerial baud rate
+                    timeout=0.1
+                )
+                print(f"  ✓ Arduino serial connected on {port} (LED sequence control)")
+                # Send current LED sequence setting on connect
+                self._send_led_sequence_to_arduino()
+                return
+            except Exception as e:
+                continue
+        
+        print("  ✗ Arduino serial not found - LED sequences will use Arduino default")
     
     def _init_esp32_handler(self):
         """Initialize ESP32 serial handler for display sync"""
@@ -531,6 +589,12 @@ class PiDisplayApp:
                 self.settings.demo_mode = new_demo
                 self._on_data_source_changed()
             changed = True
+        elif name == "led_sequence":
+            new_seq = int(value)
+            if 1 <= new_seq <= LED_SEQ_COUNT:
+                self.settings.led_sequence = new_seq
+                self._send_led_sequence_to_arduino()
+            changed = True
         elif name == "timeout":
             # Screen timeout - Pi doesn't use this currently but store it
             pass
@@ -550,6 +614,18 @@ class PiDisplayApp:
         """Send current settings selection to ESP32"""
         if self.esp32_handler and self.esp32_handler.connected:
             self.esp32_handler.send_selection(self.settings_selection)
+    
+    def _send_led_sequence_to_arduino(self):
+        """Send LED sequence command to Arduino via dedicated serial port"""
+        if hasattr(self, 'arduino_serial') and self.arduino_serial and self.arduino_serial.is_open:
+            try:
+                cmd = f"SEQ:{self.settings.led_sequence}\n"
+                self.arduino_serial.write(cmd.encode())
+                print(f"Pi: Sent LED sequence {self.settings.led_sequence} to Arduino")
+            except Exception as e:
+                print(f"Pi: Failed to send LED sequence to Arduino: {e}")
+        else:
+            print(f"Pi: Arduino serial not connected - LED sequence {self.settings.led_sequence} not sent")
     
     def _on_esp32_settings_sync(self, settings_dict: dict):
         """Callback when ESP32 sends all settings - full sync to Pi"""
@@ -1089,6 +1165,17 @@ class PiDisplayApp:
         elif sel == 7:  # Coolant warn
             self.settings.coolant_warn_f = max(180, min(250, self.settings.coolant_warn_f + delta * 5))
             self._sync_setting_to_esp32("coolant_warn", self.settings.coolant_warn_f)
+        elif sel == 8:  # LED Sequence
+            # Cycle through LED sequences (1-4)
+            new_seq = self.settings.led_sequence + delta
+            if new_seq > LED_SEQ_COUNT:
+                new_seq = 1
+            elif new_seq < 1:
+                new_seq = LED_SEQ_COUNT
+            self.settings.led_sequence = new_seq
+            self._sync_setting_to_esp32("led_sequence", self.settings.led_sequence)
+            # Also send to Arduino via ESP32 serial handler
+            self._send_led_sequence_to_arduino()
     
     def _sync_setting_to_esp32(self, name: str, value):
         """Send a single setting to ESP32 for synchronization"""
@@ -1097,6 +1184,7 @@ class PiDisplayApp:
     
     def _get_settings_items(self):
         """Return list of (name, value, unit) tuples"""
+        led_seq_name = LED_SEQUENCE_NAMES.get(self.settings.led_sequence, "Unknown")
         return [
             ("Data Source", "DEMO" if self.settings.demo_mode else "CAN BUS", ""),
             ("Brightness", self.settings.brightness, "%"),
@@ -1106,6 +1194,7 @@ class PiDisplayApp:
             ("Units", "MPH" if self.settings.use_mph else "KMH", ""),
             ("Low Tire PSI", self.settings.tire_low_psi, ""),
             ("Coolant Warn", self.settings.coolant_warn_f, "°F"),
+            ("LED Sequence", led_seq_name, f"({self.settings.led_sequence}/{LED_SEQ_COUNT})"),
         ]
     
     def _update_demo(self):

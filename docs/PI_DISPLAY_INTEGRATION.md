@@ -278,7 +278,8 @@ Serial communication is prone to **EMI corruption** in automotive environments:
 │   │  • Reads RPM direct │                                                    │
 │   │    from HS-CAN      │                                                    │
 │   │  • Drives WS2812B   │                                                    │
-│   │  • NO SERIAL needed │                                                    │
+│   │  • LED Sequence Ctrl│◄──────── Pi Serial (GPIO 14 → Arduino D3)         │
+│   │    via Serial (9600)│          (settings only, not time-critical)       │
 │   └─────────────────────┘                                                    │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -473,13 +474,15 @@ From `arduino/src/main.cpp` (current working setup):
 | Pin | Function | Connection |
 |-----|----------|------------|
 | **D2** | CAN INT | MCP2515 INT (hardware interrupt for fast response) |
+| **D3** | Serial RX | Pi GPIO 14 (TXD) - LED sequence commands (SoftwareSerial) |
+| **D4** | Serial TX | Pi GPIO 15 (RXD) - LED sequence responses (SoftwareSerial) |
 | **D5** | LED Data | WS2812B Data In (330Ω resistor recommended) |
 | **D10** | CAN CS | MCP2515 CS (SPI chip select) |
 | **D11** | SPI MOSI | MCP2515 SI |
 | **D12** | SPI MISO | MCP2515 SO |
 | **D13** | SPI SCK | MCP2515 SCK |
 | **5V** | Power | VCC from LM2596 buck converter |
-| **GND** | Ground | Common ground |
+| **GND** | Ground | Common ground (shared with Pi) |
 
 ### LED Configuration
 
@@ -578,6 +581,71 @@ From `arduino/src/main.cpp`:
 3. **Independent**: LEDs work even if Pi/ESP32 are offline
 4. **Proven**: Current code is tested and working in-car
 5. **No Protocol Overhead**: Direct RPM parsing, no serial framing
+
+### Pi → Arduino Serial (LED Sequence Settings)
+
+While RPM data comes from direct CAN for time-critical performance, **LED sequence settings** are sent via serial from the Pi. This is acceptable because:
+
+1. **Not time-critical**: Sequence changes happen once at startup or on user input
+2. **Short, infrequent messages**: `SEQ:1\n` to `SEQ:4\n` commands only
+3. **Arduino caches in EEPROM**: Setting persists across power cycles
+
+#### Serial Connection
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PI → ARDUINO SERIAL (LED SEQUENCE)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Raspberry Pi 4B                    Arduino Nano                            │
+│   ═══════════════                    ═══════════════                         │
+│                                                                              │
+│   GPIO 14 (TXD0) ─────────────────→ D3 (SoftwareSerial RX)                  │
+│   GND ────────────────────────────→ GND (shared)                            │
+│                                                                              │
+│   ⚠️  Optional: GPIO 15 (RXD0) ←── D4 (SoftwareSerial TX) for responses    │
+│   ⚠️  3.3V/5V level: Arduino input is 3.3V tolerant, TX divider optional   │
+│   ⚠️  Baud rate: 9600 bps (low speed for reliability)                       │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### LED Sequence Serial Protocol
+
+| Command | Description | Arduino Response |
+|---------|-------------|------------------|
+| `SEQ:1\n` | Center-Out (default) | `OK:1\n` |
+| `SEQ:2\n` | Left-to-Right (2x resolution) | `OK:2\n` |
+| `SEQ:3\n` | Right-to-Left | `OK:3\n` |
+| `SEQ:4\n` | Center-In | `OK:4\n` |
+| `SEQ?\n` | Query current sequence | `SEQ:n\n` |
+| `PING\n` | Connection test | `PONG\n` |
+
+#### LED Sequence Modes
+
+| Mode | Name | Description | Use Case |
+|------|------|-------------|----------|
+| 1 | **Center-Out** | LEDs fill from center toward edges | Default, symmetric look |
+| 2 | **Left-to-Right** | LEDs fill from left to right | 2x resolution (no center split) |
+| 3 | **Right-to-Left** | LEDs fill from right to left | Mirror of L→R |
+| 4 | **Center-In** | LEDs fill from edges toward center | Inverse of default |
+
+#### EEPROM Storage
+
+Arduino saves LED sequence to EEPROM (survives power loss):
+- **Address 0**: Magic byte (0xA5) to detect valid data
+- **Address 1**: LED sequence (1-4)
+
+```cpp
+// On startup, load from EEPROM
+if (EEPROM.read(0) == 0xA5) {
+    currentSequence = EEPROM.read(1);
+}
+
+// On serial command, save to EEPROM
+EEPROM.write(0, 0xA5);
+EEPROM.write(1, currentSequence);
+```
 
 ### Arduino CAN Message Parsing
 

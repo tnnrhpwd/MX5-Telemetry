@@ -22,6 +22,12 @@
  * 5. Loop unrolling for critical paths
  * 6. Zero-copy CAN message parsing
  * 
+ * LED SEQUENCES (configurable via serial):
+ * 1. Center-Out (default): LEDs fill from both edges toward center
+ * 2. Left-to-Right: LEDs fill from left to right (2x resolution)
+ * 3. Right-to-Left: LEDs fill from right to left
+ * 4. Center-In: LEDs fill from center outward to edges
+ * 
  * HARDWARE:
  * - Arduino Nano V3.0 (ATmega328P, 16MHz, 5V logic)
  * - MCP2515 CAN Controller + TJA1050 (500 kbaud, 8MHz crystal)
@@ -31,16 +37,17 @@
  * 
  * PINS:
  * - D2: MCP2515 INT (hardware interrupt - CRITICAL for performance)
+ * - D3: Serial RX from Pi/ESP32 (SoftwareSerial for LED sequence commands)
+ * - D4: Serial TX to Pi/ESP32 (SoftwareSerial - optional feedback)
  * - D5: WS2812B LED Data
  * - D10: MCP2515 CS (SPI)
  * - D11: MOSI (SPI)
  * - D12: MISO (SPI)
  * - D13: SCK (SPI)
  * - A6: Brightness potentiometer (optional)
- * - D3: Haptic motor PWM (optional)
  * 
- * VERSION: 1.0.0 - Single Arduino Optimized
- * DATE: December 3, 2025
+ * VERSION: 1.1.0 - Added LED Sequence Selection with EEPROM persistence
+ * DATE: December 16, 2025
  * LICENSE: MIT
  * ============================================================================
  */
@@ -49,6 +56,8 @@
 #include <SPI.h>
 #include <mcp_can.h>
 #include <Adafruit_NeoPixel.h>
+#include <EEPROM.h>
+#include <SoftwareSerial.h>
 
 // ============================================================================
 // CONFIGURATION - Tune these for your setup
@@ -58,8 +67,12 @@
 #define CAN_CS_PIN          10      // MCP2515 Chip Select (SPI)
 #define CAN_INT_PIN         2       // MCP2515 Interrupt (MUST be D2 for INT0)
 #define LED_DATA_PIN        5       // WS2812B Data Pin
-#define HAPTIC_PIN          3       // Haptic motor PWM (optional)
+#define HAPTIC_PIN          6       // Haptic motor PWM (optional) - moved from D3
 #define BRIGHTNESS_POT_PIN  A6      // Brightness potentiometer (optional)
+
+// Serial communication pins (for LED sequence commands from Pi/ESP32)
+#define SERIAL_RX_PIN       3       // Receive commands from Pi/ESP32
+#define SERIAL_TX_PIN       4       // Send acknowledgements (optional)
 
 // LED strip configuration  
 #ifndef LED_COUNT
@@ -70,6 +83,7 @@
 #define ENABLE_HAPTIC       false   // Haptic motor feedback at redline
 #define ENABLE_BRIGHTNESS   true    // Potentiometer brightness control
 #define ENABLE_SERIAL_DEBUG false   // USB serial debugging (disable for production)
+#define ENABLE_SERIAL_CMD   true    // Serial commands from Pi/ESP32 for LED sequence
 
 // CAN bus configuration
 #define CAN_SPEED           CAN_500KBPS  // MX-5 NC HS-CAN bus speed
@@ -93,12 +107,32 @@
 #define BRIGHTNESS_INTERVAL 50000   // Read pot every 50ms (20Hz)
 #define TIMEOUT_MS          3000    // Error mode if no CAN data for 3 seconds
 
+// EEPROM addresses for persistent settings
+#define EEPROM_MAGIC_ADDR   0       // Magic byte to check if EEPROM is initialized
+#define EEPROM_SEQ_ADDR     1       // LED sequence setting (1 byte)
+#define EEPROM_MAGIC_VALUE  0xA5    // Magic value to verify EEPROM is initialized
+
+// ============================================================================
+// LED SEQUENCE MODES
+// ============================================================================
+enum LEDSequence {
+    SEQ_CENTER_OUT = 1,     // Default: Fill from edges toward center (mirrored)
+    SEQ_LEFT_TO_RIGHT = 2,  // Fill left to right (double resolution)
+    SEQ_RIGHT_TO_LEFT = 3,  // Fill right to left
+    SEQ_CENTER_IN = 4,      // Fill from center outward to edges
+    SEQ_COUNT = 4           // Total number of sequences
+};
+
 // ============================================================================
 // GLOBAL OBJECTS & STATE
 // ============================================================================
 
 MCP_CAN canBus(CAN_CS_PIN);
 Adafruit_NeoPixel strip(LED_COUNT, LED_DATA_PIN, NEO_GRB + NEO_KHZ800);
+
+#if ENABLE_SERIAL_CMD
+SoftwareSerial cmdSerial(SERIAL_RX_PIN, SERIAL_TX_PIN);  // RX, TX for commands
+#endif
 
 // State variables - volatile for interrupt safety
 volatile uint16_t g_rpm = 0;
@@ -109,6 +143,15 @@ uint16_t currentRPM = 0;
 uint8_t currentBrightness = 255;
 bool errorMode = false;
 bool canInitialized = false;
+
+// LED sequence setting (persisted in EEPROM)
+uint8_t ledSequence = SEQ_CENTER_OUT;  // Default: center-out (mirrored)
+
+// Serial command buffer
+#if ENABLE_SERIAL_CMD
+char cmdBuffer[32];
+uint8_t cmdIndex = 0;
+#endif
 
 // Timing
 unsigned long lastCANPoll = 0;
@@ -131,6 +174,14 @@ unsigned long errorStartTime = 0;  // When error condition started
 // ============================================================================
 
 void updateErrorAnimation();
+void loadSettingsFromEEPROM();
+void saveSettingsToEEPROM();
+void handleSerialCommands();
+void setLEDSequence(uint8_t seq);
+void updateLEDsCenterOut();
+void updateLEDsLeftToRight();
+void updateLEDsRightToLeft();
+void updateLEDsCenterIn();
 
 // ============================================================================
 // CAN INTERRUPT HANDLER - Triggered on MCP2515 INT pin falling edge
@@ -142,6 +193,109 @@ void updateErrorAnimation();
 void canInterrupt() {
     g_canDataReceived = 1;
 }
+
+// ============================================================================
+// EEPROM FUNCTIONS - Persist LED sequence setting across power cycles
+// ============================================================================
+
+void loadSettingsFromEEPROM() {
+    // Check if EEPROM has been initialized
+    if (EEPROM.read(EEPROM_MAGIC_ADDR) != EEPROM_MAGIC_VALUE) {
+        // First boot - initialize with defaults
+        EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_VALUE);
+        EEPROM.write(EEPROM_SEQ_ADDR, SEQ_CENTER_OUT);
+        ledSequence = SEQ_CENTER_OUT;
+        #if ENABLE_SERIAL_DEBUG
+        Serial.println(F("EEPROM init: defaults"));
+        #endif
+    } else {
+        // Load saved sequence
+        uint8_t savedSeq = EEPROM.read(EEPROM_SEQ_ADDR);
+        if (savedSeq >= 1 && savedSeq <= SEQ_COUNT) {
+            ledSequence = savedSeq;
+        } else {
+            ledSequence = SEQ_CENTER_OUT;
+        }
+        #if ENABLE_SERIAL_DEBUG
+        Serial.print(F("EEPROM load: seq="));
+        Serial.println(ledSequence);
+        #endif
+    }
+}
+
+void saveSettingsToEEPROM() {
+    // Only write if value changed (EEPROM has limited write cycles)
+    if (EEPROM.read(EEPROM_SEQ_ADDR) != ledSequence) {
+        EEPROM.write(EEPROM_SEQ_ADDR, ledSequence);
+        #if ENABLE_SERIAL_DEBUG
+        Serial.print(F("EEPROM save: seq="));
+        Serial.println(ledSequence);
+        #endif
+    }
+}
+
+void setLEDSequence(uint8_t seq) {
+    if (seq >= 1 && seq <= SEQ_COUNT) {
+        ledSequence = seq;
+        saveSettingsToEEPROM();
+        
+        #if ENABLE_SERIAL_CMD
+        // Send acknowledgement
+        cmdSerial.print(F("OK:SEQ:"));
+        cmdSerial.println(ledSequence);
+        #endif
+        
+        #if ENABLE_SERIAL_DEBUG
+        Serial.print(F("Seq changed: "));
+        Serial.println(ledSequence);
+        #endif
+    }
+}
+
+// ============================================================================
+// SERIAL COMMAND HANDLER - Process commands from Pi/ESP32
+// ============================================================================
+// Protocol:
+//   SEQ:1  - Set LED sequence to Center-Out (default)
+//   SEQ:2  - Set LED sequence to Left-to-Right (2x resolution)
+//   SEQ:3  - Set LED sequence to Right-to-Left
+//   SEQ:4  - Set LED sequence to Center-In
+//   SEQ?   - Query current sequence (responds with SEQ:n)
+// ============================================================================
+
+#if ENABLE_SERIAL_CMD
+void handleSerialCommands() {
+    while (cmdSerial.available()) {
+        char c = cmdSerial.read();
+        
+        if (c == '\n' || c == '\r') {
+            if (cmdIndex > 0) {
+                cmdBuffer[cmdIndex] = '\0';
+                
+                // Parse command
+                if (strncmp(cmdBuffer, "SEQ:", 4) == 0) {
+                    // Set sequence: SEQ:1, SEQ:2, etc.
+                    int seq = atoi(cmdBuffer + 4);
+                    setLEDSequence(seq);
+                }
+                else if (strcmp(cmdBuffer, "SEQ?") == 0) {
+                    // Query current sequence
+                    cmdSerial.print(F("SEQ:"));
+                    cmdSerial.println(ledSequence);
+                }
+                else if (strcmp(cmdBuffer, "PING") == 0) {
+                    // Health check
+                    cmdSerial.println(F("PONG"));
+                }
+                
+                cmdIndex = 0;
+            }
+        } else if (cmdIndex < sizeof(cmdBuffer) - 1) {
+            cmdBuffer[cmdIndex++] = c;
+        }
+    }
+}
+#endif
 
 // ============================================================================
 // CAN BUS FUNCTIONS
@@ -235,42 +389,45 @@ inline void updateLEDs() {
         return;
     }
     
-    // RPM = 0: Show single blue LED on each edge
+    // RPM = 0: Show single blue LED based on sequence mode
     if (currentRPM == 0) {
         strip.clear();
-        SET_LED(0, 0, 0, 255);
-        SET_LED(LED_COUNT - 1, 0, 0, 255);
+        switch (ledSequence) {
+            case SEQ_LEFT_TO_RIGHT:
+                SET_LED(0, 0, 0, 255);  // Left edge only
+                break;
+            case SEQ_RIGHT_TO_LEFT:
+                SET_LED(LED_COUNT - 1, 0, 0, 255);  // Right edge only
+                break;
+            case SEQ_CENTER_IN:
+                SET_LED(LED_COUNT / 2, 0, 0, 255);  // Center only
+                break;
+            case SEQ_CENTER_OUT:
+            default:
+                SET_LED(0, 0, 0, 255);
+                SET_LED(LED_COUNT - 1, 0, 0, 255);  // Both edges
+                break;
+        }
         strip.show();
         return;
     }
     
-    // Calculate LEDs per side using integer math only
-    // Linear map: RPM 1-6200 → 1 to (LED_COUNT/2) LEDs
-    uint16_t clampedRPM = currentRPM;
-    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
-    
-    uint8_t maxPerSide = LED_COUNT / 2;
-    // Integer division: ledsPerSide = 1 + (rpm-1) * (maxPerSide-1) / (RPM_MAX-1)
-    uint8_t ledsPerSide = 1 + (((uint32_t)(clampedRPM - 1) * (maxPerSide - 1)) / (RPM_MAX - 1));
-    if (ledsPerSide > maxPerSide) ledsPerSide = maxPerSide;
-    
-    // Get color for current RPM
-    uint8_t r, g, b;
-    getRPMColor(currentRPM, &r, &g, &b);
-    
-    // Draw mirrored bar from edges toward center
-    // Unrolled for common LED counts
-    for (uint8_t i = 0; i < LED_COUNT; i++) {
-        // Left side: LEDs 0 to ledsPerSide-1
-        // Right side: LEDs (LED_COUNT - ledsPerSide) to LED_COUNT-1
-        if (i < ledsPerSide || i >= (LED_COUNT - ledsPerSide)) {
-            SET_LED(i, r, g, b);
-        } else {
-            CLEAR_LED(i);
-        }
+    // Dispatch to appropriate sequence handler
+    switch (ledSequence) {
+        case SEQ_LEFT_TO_RIGHT:
+            updateLEDsLeftToRight();
+            break;
+        case SEQ_RIGHT_TO_LEFT:
+            updateLEDsRightToLeft();
+            break;
+        case SEQ_CENTER_IN:
+            updateLEDsCenterIn();
+            break;
+        case SEQ_CENTER_OUT:
+        default:
+            updateLEDsCenterOut();
+            break;
     }
-    
-    strip.show();
     
     // Haptic feedback at redline
     #if ENABLE_HAPTIC
@@ -284,6 +441,105 @@ inline void updateLEDs() {
         }
     }
     #endif
+}
+
+// Sequence 1: Center-Out (Original default - LEDs fill from edges toward center)
+void updateLEDsCenterOut() {
+    uint16_t clampedRPM = currentRPM;
+    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
+    
+    uint8_t maxPerSide = LED_COUNT / 2;
+    uint8_t ledsPerSide = 1 + (((uint32_t)(clampedRPM - 1) * (maxPerSide - 1)) / (RPM_MAX - 1));
+    if (ledsPerSide > maxPerSide) ledsPerSide = maxPerSide;
+    
+    uint8_t r, g, b;
+    getRPMColor(currentRPM, &r, &g, &b);
+    
+    // Draw mirrored bar from edges toward center
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        if (i < ledsPerSide || i >= (LED_COUNT - ledsPerSide)) {
+            SET_LED(i, r, g, b);
+        } else {
+            CLEAR_LED(i);
+        }
+    }
+    
+    strip.show();
+}
+
+// Sequence 2: Left-to-Right (Double resolution - all LEDs fill from left)
+void updateLEDsLeftToRight() {
+    uint16_t clampedRPM = currentRPM;
+    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
+    
+    // Full strip resolution: RPM 1-6200 → 1 to LED_COUNT LEDs
+    uint8_t litLEDs = 1 + (((uint32_t)(clampedRPM - 1) * (LED_COUNT - 1)) / (RPM_MAX - 1));
+    if (litLEDs > LED_COUNT) litLEDs = LED_COUNT;
+    
+    uint8_t r, g, b;
+    getRPMColor(currentRPM, &r, &g, &b);
+    
+    // Fill from left (LED 0) to right
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        if (i < litLEDs) {
+            SET_LED(i, r, g, b);
+        } else {
+            CLEAR_LED(i);
+        }
+    }
+    
+    strip.show();
+}
+
+// Sequence 3: Right-to-Left (Double resolution - all LEDs fill from right)
+void updateLEDsRightToLeft() {
+    uint16_t clampedRPM = currentRPM;
+    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
+    
+    // Full strip resolution: RPM 1-6200 → 1 to LED_COUNT LEDs
+    uint8_t litLEDs = 1 + (((uint32_t)(clampedRPM - 1) * (LED_COUNT - 1)) / (RPM_MAX - 1));
+    if (litLEDs > LED_COUNT) litLEDs = LED_COUNT;
+    
+    uint8_t r, g, b;
+    getRPMColor(currentRPM, &r, &g, &b);
+    
+    // Fill from right (LED_COUNT-1) to left
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        if (i >= (LED_COUNT - litLEDs)) {
+            SET_LED(i, r, g, b);
+        } else {
+            CLEAR_LED(i);
+        }
+    }
+    
+    strip.show();
+}
+
+// Sequence 4: Center-In (LEDs fill from center outward to edges)
+void updateLEDsCenterIn() {
+    uint16_t clampedRPM = currentRPM;
+    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
+    
+    uint8_t maxPerSide = LED_COUNT / 2;
+    uint8_t ledsPerSide = 1 + (((uint32_t)(clampedRPM - 1) * (maxPerSide - 1)) / (RPM_MAX - 1));
+    if (ledsPerSide > maxPerSide) ledsPerSide = maxPerSide;
+    
+    uint8_t r, g, b;
+    getRPMColor(currentRPM, &r, &g, &b);
+    
+    uint8_t center = LED_COUNT / 2;
+    
+    // Fill from center outward
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        int distFromCenter = abs((int)i - (int)center);
+        if (distFromCenter < ledsPerSide) {
+            SET_LED(i, r, g, b);
+        } else {
+            CLEAR_LED(i);
+        }
+    }
+    
+    strip.show();
 }
 
 // Error animation - Cylon scanner effect
@@ -401,7 +657,20 @@ void startupAnimation() {
 void setup() {
     #if ENABLE_SERIAL_DEBUG
     Serial.begin(115200);
-    Serial.println(F("MX5-Single v1.0"));
+    Serial.println(F("MX5-Single v1.1"));
+    #endif
+    
+    // Load LED sequence from EEPROM
+    loadSettingsFromEEPROM();
+    
+    #if ENABLE_SERIAL_DEBUG
+    Serial.print(F("LED Seq: "));
+    Serial.println(ledSequence);
+    #endif
+    
+    // Initialize serial for LED sequence commands from Pi/ESP32
+    #if ENABLE_SERIAL_CMD
+    cmdSerial.begin(9600);  // Lower baud rate for reliability with SoftwareSerial
     #endif
     
     // Initialize haptic motor
@@ -443,6 +712,13 @@ void setup() {
 void loop() {
     unsigned long now = micros();
     unsigned long nowMs = millis();
+    
+    // ========================================================================
+    // SERIAL COMMAND PROCESSING - Handle LED sequence commands from Pi/ESP32
+    // ========================================================================
+    #if ENABLE_SERIAL_CMD
+    handleSerialCommands();
+    #endif
     
     // ========================================================================
     // CAN BUS READING - Highest priority
@@ -503,6 +779,8 @@ void loop() {
         lastDebug = nowMs;
         Serial.print(F("RPM:"));
         Serial.print(currentRPM);
+        Serial.print(F(" SEQ:"));
+        Serial.print(ledSequence);
         Serial.print(F(" ERR:"));
         Serial.println(errorMode ? 'Y' : 'N');
     }
