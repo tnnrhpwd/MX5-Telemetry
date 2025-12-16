@@ -954,8 +954,10 @@ class PiDisplayApp:
     
     def _sync_esp32_screen_for_transition(self, to_screen: Screen):
         """Sync ESP32 to destination screen during transition"""
+        print(f"DEBUG: _sync_esp32_screen_for_transition called with {to_screen.name} (value={to_screen.value})")
         if self.esp32_handler:
             screen_idx = to_screen.value
+            print(f"DEBUG: Sending screen change to ESP32: {screen_idx}")
             if screen_idx <= 7:
                 self.esp32_handler.send_screen_change(screen_idx)
     

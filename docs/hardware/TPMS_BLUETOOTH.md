@@ -95,14 +95,16 @@ Offset  Hex   Decimal  Notes
 
 ```cpp
 // Pressure decoding (returns PSI)
+// Calibrated 2025-12-15 against manufacturer app
 float decodePressure(uint8_t raw) {
-    float kPa = raw + 60.0f;  // or: raw * 1.45f
+    float kPa = raw + 56.0f;  // Calibrated offset
     return kPa / 6.895f;
 }
 
 // Temperature decoding (returns Fahrenheit)
+// Calibrated 2025-12-15 against manufacturer app
 float decodeTemperature(uint8_t raw) {
-    float celsius = raw - 55.0f;  // offset may be 55-58
+    float celsius = raw - 40.0f;  // Calibrated offset
     return celsius * 9.0f / 5.0f + 32.0f;
 }
 ```

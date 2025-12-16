@@ -103,11 +103,11 @@ bool imuAvailable = false;
 // Index 0 = Front Left (FL), Index 1 = Front Right (FR)
 // Index 2 = Rear Left (RL),  Index 3 = Rear Right (RR)
 // 
-// TODO: Once you identify which sensor is on which tire, update these MACs:
-const char* TPMS_MAC_FL = "14:27:4b:11:11:11";  // Front Left tire
-const char* TPMS_MAC_FR = "14:26:6d:11:11:11";  // Front Right tire
+// Calibrated 2025-12-15: Based on temperature patterns (front ~64°F, rear ~62°F)
+const char* TPMS_MAC_FL = "14:27:4b:11:11:11";  // Front Left tire (29.2 PSI, 64.4°F)
+const char* TPMS_MAC_FR = "14:13:1f:11:11:11";  // Front Right tire (was RR, has front temp 64°F)
 const char* TPMS_MAC_RL = "14:10:50:11:11:11";  // Rear Left tire
-const char* TPMS_MAC_RR = "14:13:1f:11:11:11";  // Rear Right tire
+const char* TPMS_MAC_RR = "14:26:6d:11:11:11";  // Rear Right tire (was FR)
 
 const char* TPMS_MAC_ADDRESSES[] = {
     TPMS_MAC_FL,  // Index 0 = FL
@@ -875,7 +875,7 @@ void drawOverviewScreen() {
         // Tire name + PSI on same line
         LCD_DrawString(tireX + 5, tireY + 4, tireNames[i], MX5_GRAY, COLOR_BG_CARD, 1);
         char psiStr[8];
-        snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[i]);
+        snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[i]);
         LCD_DrawString(tireX + 5, tireY + 18, psiStr, tireColor, COLOR_BG_CARD, 2);
     }
     
@@ -1086,7 +1086,7 @@ void drawTPMSScreen() {
     char tempStr[8];
     
     // Front Left - use per-tire timestamp from Pi
-    snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[0]);
+    snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[0]);
     snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[0]);
     uint16_t fl_time_color = (tpmsLastUpdateStr[0][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(flX - 42, flY + 2, psiStr, flColor, COLOR_BG, 2);
@@ -1096,7 +1096,7 @@ void drawTPMSScreen() {
     LCD_DrawString(flX - 42, flY - 14, tpmsLastUpdateStr[0], fl_time_color, COLOR_BG, 1);
     
     // Front Right - use per-tire timestamp from Pi
-    snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[1]);
+    snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[1]);
     snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[1]);
     uint16_t fr_time_color = (tpmsLastUpdateStr[1][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(frX + tireW + 8, frY + 2, psiStr, frColor, COLOR_BG, 2);
@@ -1106,7 +1106,7 @@ void drawTPMSScreen() {
     LCD_DrawString(frX + 24, frY - 14, tpmsLastUpdateStr[1], fr_time_color, COLOR_BG, 1);
     
     // Rear Left - use per-tire timestamp from Pi
-    snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[2]);
+    snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[2]);
     snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[2]);
     uint16_t rl_time_color = (tpmsLastUpdateStr[2][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(rlX - 42, rlY + 2, psiStr, rlColor, COLOR_BG, 2);
@@ -1116,7 +1116,7 @@ void drawTPMSScreen() {
     LCD_DrawString(rlX - 42, rlY + tireH + 4, tpmsLastUpdateStr[2], rl_time_color, COLOR_BG, 1);
     
     // Rear Right - use per-tire timestamp from Pi
-    snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[3]);
+    snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[3]);
     snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[3]);
     uint16_t rr_time_color = (tpmsLastUpdateStr[3][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(rrX + tireW + 8, rrY + 2, psiStr, rrColor, COLOR_BG, 2);
@@ -2034,30 +2034,35 @@ void handleSerialCommands() {
 void parseCommand(String cmd) {
     cmd.trim();
     
-    // Navigation commands (swipe simulation) - use transitions
+    // Only log screen-related commands for debugging
+    if (cmd.startsWith("SCREEN") || cmd == "LEFT" || cmd == "RIGHT") {
+        Serial.printf("CMD: '%s'\n", cmd.c_str());
+    }
+    
+    // Navigation commands (swipe simulation) - immediate change
     if (cmd == "LEFT" || cmd == "left" || cmd == "l") {
-        ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
+        // Cancel any in-progress transition
         if (isTransitioning()) {
-            // Update target during transition
-            nextScreen = (ScreenMode)((transitionToScreen + 1) % SCREEN_COUNT);
-            transitionToScreen = nextScreen;
-            Serial.printf("Updated transition target to: %s\n", SCREEN_NAMES[nextScreen]);
-        } else {
-            startTransition(nextScreen, TRANSITION_SLIDE_LEFT);
+            currentScreen = transitionToScreen;
+            currentTransition = TRANSITION_NONE;
         }
+        ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
+        currentScreen = nextScreen;
+        needsRedraw = true;
+        needsFullRedraw = true;
         telemetry.connected = true;
         Serial.println("OK:SCREEN_NEXT");
     }
     else if (cmd == "RIGHT" || cmd == "right" || cmd == "r") {
-        ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+        // Cancel any in-progress transition
         if (isTransitioning()) {
-            // Update target during transition
-            prevScreen = (ScreenMode)((transitionToScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
-            transitionToScreen = prevScreen;
-            Serial.printf("Updated transition target to: %s\n", SCREEN_NAMES[prevScreen]);
-        } else {
-            startTransition(prevScreen, TRANSITION_SLIDE_RIGHT);
+            currentScreen = transitionToScreen;
+            currentTransition = TRANSITION_NONE;
         }
+        ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+        currentScreen = prevScreen;
+        needsRedraw = true;
+        needsFullRedraw = true;
         telemetry.connected = true;
         Serial.println("OK:SCREEN_PREV");
     }
@@ -2066,25 +2071,23 @@ void parseCommand(String cmd) {
         telemetry.connected = true;
         Serial.println("OK:CLICK");
     }
-    // Direct screen selection - use fade transition
+    // Direct screen selection - immediate change (no transition for serial commands)
     else if (cmd.startsWith("SCREEN:") || cmd.startsWith("screen:")) {
         int screenNum = cmd.substring(7).toInt();
         if (screenNum >= 0 && screenNum < SCREEN_COUNT) {
             ScreenMode targetScreen = (ScreenMode)screenNum;
             
-            // If currently transitioning, update the target screen instead of ignoring
+            // Cancel any in-progress transition
             if (isTransitioning()) {
-                // Update transition target to new screen
-                transitionToScreen = targetScreen;
-                Serial.printf("Updated transition target to: %s\n", SCREEN_NAMES[targetScreen]);
-            } else if (targetScreen != currentScreen) {
-                // Not transitioning - start new transition
-                // Determine transition direction based on screen index
-                if (targetScreen > currentScreen) {
-                    startTransition(targetScreen, TRANSITION_SLIDE_LEFT);
-                } else {
-                    startTransition(targetScreen, TRANSITION_SLIDE_RIGHT);
-                }
+                currentTransition = TRANSITION_NONE;
+            }
+            
+            // Immediately change to target screen (skip animation for responsiveness)
+            if (targetScreen != currentScreen) {
+                currentScreen = targetScreen;
+                needsRedraw = true;
+                needsFullRedraw = true;
+                Serial.printf("Screen changed to: %s\n", SCREEN_NAMES[currentScreen]);
             }
             telemetry.connected = true;
             Serial.printf("OK:SCREEN_%d\n", screenNum);
@@ -2245,6 +2248,25 @@ void parseCommand(String cmd) {
     else if (cmd == "GET_SETTINGS") {
         sendAllSettingsToPI();
     }
+    // Clear TPMS cache command (useful when formula changes)
+    else if (cmd == "CLEAR_TPMS") {
+        tpmsPrefs.begin("tpms", false);
+        tpmsPrefs.clear();
+        tpmsPrefs.end();
+        // Reset all TPMS data
+        for (int i = 0; i < 4; i++) {
+            tpmsSensors[i].valid = false;
+            tpmsSensors[i].pressurePSI = 0;
+            tpmsSensors[i].temperatureF = 0;
+            telemetry.tirePressure[i] = 0;
+            telemetry.tireTemp[i] = 0;
+            strncpy(tpmsLastUpdateStr[i], "--:--:--", sizeof(tpmsLastUpdateStr[i]));
+        }
+        tpmsDataFromCache = false;
+        needsRedraw = true;
+        needsFullRedraw = true;
+        Serial.println("OK:TPMS_CACHE_CLEARED");
+    }
     // Settings selection sync from Pi
     else if (cmd.startsWith("SELECTION:")) {
         int newSelection = cmd.substring(10).toInt();
@@ -2404,19 +2426,22 @@ void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex) {
     
     // Expected manufacturer data format (17+ bytes):
     // AC 00 85 3D 3C 00 0A 25 00 D0 28 11 11 11 1F 13 14
-    // Byte 2: Pressure (raw + 60 = kPa, / 6.895 = PSI)
-    // Byte 3: Temperature (raw - 55 = Celsius, convert to F)
+    // Byte 2: Pressure (raw + 56 = kPa, / 6.895 = PSI)
+    // Byte 3: Temperature (raw - 45 = Celsius, convert to F)
+    // Note: Calibrated against manufacturer app readings on 2025-12-15
     
     if (mfgData.length() >= 4) {
         uint8_t pressureRaw = (uint8_t)mfgData[2];
         uint8_t tempRaw = (uint8_t)mfgData[3];
         
-        // Decode pressure: raw + 60 = kPa, then convert to PSI
-        float pressure_kPa = pressureRaw + 60.0f;
+        // Decode pressure: raw + 56 = kPa, then convert to PSI
+        // Calibrated: 29.2 PSI manufacturer = 29.2 PSI decoded
+        float pressure_kPa = pressureRaw + 56.0f;
         float pressure_psi = pressure_kPa / 6.895f;
         
-        // Decode temperature: raw - 55 = Celsius, then convert to Fahrenheit
-        float temp_c = tempRaw - 55.0f;
+        // Decode temperature: raw - 45 = Celsius, then convert to Fahrenheit
+        // Calibrated: 64.4°F manufacturer ≈ 64°F decoded
+        float temp_c = tempRaw - 45.0f;
         float temp_f = temp_c * 9.0f / 5.0f + 32.0f;
         
         // Update sensor data
@@ -2429,10 +2454,10 @@ void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex) {
         // Save to NVS for persistence across power cycles
         saveTPMSToNVS();
         
-        // Debug output - show tire position name
-        Serial.printf("TPMS %s [%s]: %.1f PSI, %.1f°F (RSSI: %d)\n",
-                      TPMS_POSITION_NAMES[sensorIndex], TPMS_MAC_ADDRESSES[sensorIndex],
-                      pressure_psi, temp_f, device->getRSSI());
+        // Debug output - show MAC, raw bytes, and decoded values for tire mapping
+        Serial.printf("TPMS_DEBUG: MAC=%s RAW_P=%d RAW_T=%d -> %.1f PSI, %.1f°F [%s]\n",
+                      TPMS_MAC_ADDRESSES[sensorIndex], pressureRaw, tempRaw,
+                      pressure_psi, temp_f, TPMS_POSITION_NAMES[sensorIndex]);
     }
 }
 
@@ -2531,9 +2556,7 @@ void saveTPMSToNVS() {
     tpmsPrefs.end();
     
     tpmsDataFromCache = false;  // Data is fresh, not from cache
-    Serial.printf("TPMS: Saved to NVS (times: %s, %s, %s, %s)\n", 
-                  tpmsLastUpdateStr[0], tpmsLastUpdateStr[1], 
-                  tpmsLastUpdateStr[2], tpmsLastUpdateStr[3]);
+    // Removed verbose logging to prevent serial collisions
 }
 
 void loadTPMSFromNVS() {
