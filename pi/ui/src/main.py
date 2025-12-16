@@ -448,7 +448,8 @@ class PiDisplayApp:
             self.esp32_handler = None
         
         # Initialize Arduino serial for LED sequence commands (always try)
-        self._init_arduino_serial()
+        # DISABLED FOR DEBUGGING - this may block/hang on serial port open
+        # self._init_arduino_serial()
         
         if self.settings.demo_mode:
             print("Data Source: DEMO MODE - using simulated data")
