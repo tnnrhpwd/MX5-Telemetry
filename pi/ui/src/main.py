@@ -1361,17 +1361,24 @@ class PiDisplayApp:
             self._update_transition()
             self._render_transition()
         else:
-            renderers = {
-                Screen.OVERVIEW: self._render_overview,
-                Screen.RPM_SPEED: self._render_rpm_speed,
-                Screen.TPMS: self._render_tpms,
-                Screen.ENGINE: self._render_engine,
-                Screen.GFORCE: self._render_gforce,
-                Screen.DIAGNOSTICS: self._render_diagnostics,
-                Screen.SYSTEM: self._render_system,
-                Screen.SETTINGS: self._render_settings,
-            }
-            renderers[self.current_screen]()
+            try:
+                renderers = {
+                    Screen.OVERVIEW: self._render_overview,
+                    Screen.RPM_SPEED: self._render_rpm_speed,
+                    Screen.TPMS: self._render_tpms,
+                    Screen.ENGINE: self._render_engine,
+                    Screen.GFORCE: self._render_gforce,
+                    Screen.DIAGNOSTICS: self._render_diagnostics,
+                    Screen.SYSTEM: self._render_system,
+                    Screen.SETTINGS: self._render_settings,
+                }
+                renderers[self.current_screen]()
+            except Exception as e:
+                # DEBUG: Show exception on screen
+                import traceback
+                traceback.print_exc()
+                err_txt = self.font_small.render(f"RENDER ERROR: {e}", True, (255, 0, 0))
+                self.screen.blit(err_txt, (20, 100))
             
             # Title bar
             pygame.draw.rect(self.screen, (30, 30, 45), (0, 0, PI_WIDTH, 50))
