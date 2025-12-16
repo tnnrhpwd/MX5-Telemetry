@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 #include "Display_ST77916.h"
 #include "Touch_CST816.h"
 #include "QMI8658.h"
@@ -134,6 +135,11 @@ unsigned long lastBLEScanTime = 0;
 const unsigned long BLE_SCAN_INTERVAL = 5000;  // Scan every 5 seconds
 const unsigned long TPMS_DATA_TIMEOUT = 30000; // Data valid for 30 seconds
 
+// TPMS persistence storage
+Preferences tpmsPrefs;
+char tpmsLastUpdateStr[4][12] = {"--:--:--", "--:--:--", "--:--:--", "--:--:--"};  // HH:MM:SS per tire
+bool tpmsDataFromCache = false;  // True if current data was loaded from NVS cache
+
 // Display state - 8 screens to match Pi
 enum ScreenMode {
     SCREEN_OVERVIEW = 0,
@@ -211,6 +217,8 @@ void scanTPMSSensors();
 void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex);
 void sendTPMSDataToPi();
 void formatTimestamp(unsigned long millis_time, char* buf, size_t bufSize);
+void saveTPMSToNVS();
+void loadTPMSFromNVS();
 
 // Settings menu state
 int settingsSelection = 0;
@@ -478,6 +486,9 @@ void setup() {
     
     // Initialize BLE TPMS scanner (after display is ready)
     initBLETPMS();
+    
+    // Load cached TPMS data from NVS
+    loadTPMSFromNVS();
 }
 
 void loop() {
@@ -1073,47 +1084,46 @@ void drawTPMSScreen() {
     // === PRESSURE, TEMPERATURE, AND TIMESTAMP LABELS ===
     char psiStr[8];
     char tempStr[8];
-    char timeStr[12];
     
-    // Front Left
+    // Front Left - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[0]);
     snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[0]);
-    formatTimestamp(tpmsSensors[0].lastUpdate, timeStr, sizeof(timeStr));
+    uint16_t fl_time_color = (tpmsLastUpdateStr[0][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(flX - 42, flY + 2, psiStr, flColor, COLOR_BG, 2);
     LCD_DrawString(flX - 42, flY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
     LCD_DrawString(flX - 42, flY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
     LCD_DrawString(flX - 58, flY - 14, "FL", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(flX - 42, flY - 14, timeStr, MX5_DARKGRAY, COLOR_BG, 1);
+    LCD_DrawString(flX - 42, flY - 14, tpmsLastUpdateStr[0], fl_time_color, COLOR_BG, 1);
     
-    // Front Right
+    // Front Right - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[1]);
     snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[1]);
-    formatTimestamp(tpmsSensors[1].lastUpdate, timeStr, sizeof(timeStr));
+    uint16_t fr_time_color = (tpmsLastUpdateStr[1][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(frX + tireW + 8, frY + 2, psiStr, frColor, COLOR_BG, 2);
     LCD_DrawString(frX + tireW + 8, frY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
     LCD_DrawString(frX + tireW + 8, frY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
     LCD_DrawString(frX + 6, frY - 14, "FR", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(frX + 24, frY - 14, timeStr, MX5_DARKGRAY, COLOR_BG, 1);
+    LCD_DrawString(frX + 24, frY - 14, tpmsLastUpdateStr[1], fr_time_color, COLOR_BG, 1);
     
-    // Rear Left
+    // Rear Left - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[2]);
     snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[2]);
-    formatTimestamp(tpmsSensors[2].lastUpdate, timeStr, sizeof(timeStr));
+    uint16_t rl_time_color = (tpmsLastUpdateStr[2][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(rlX - 42, rlY + 2, psiStr, rlColor, COLOR_BG, 2);
     LCD_DrawString(rlX - 42, rlY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
     LCD_DrawString(rlX - 42, rlY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
     LCD_DrawString(rlX - 58, rlY + tireH + 4, "RL", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(rlX - 42, rlY + tireH + 4, timeStr, MX5_DARKGRAY, COLOR_BG, 1);
+    LCD_DrawString(rlX - 42, rlY + tireH + 4, tpmsLastUpdateStr[2], rl_time_color, COLOR_BG, 1);
     
-    // Rear Right
+    // Rear Right - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.0f", telemetry.tirePressure[3]);
     snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[3]);
-    formatTimestamp(tpmsSensors[3].lastUpdate, timeStr, sizeof(timeStr));
+    uint16_t rr_time_color = (tpmsLastUpdateStr[3][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(rrX + tireW + 8, rrY + 2, psiStr, rrColor, COLOR_BG, 2);
     LCD_DrawString(rrX + tireW + 8, rrY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
     LCD_DrawString(rrX + tireW + 8, rrY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
     LCD_DrawString(rrX + 6, rrY + tireH + 4, "RR", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(rrX + 24, rrY + tireH + 4, timeStr, MX5_DARKGRAY, COLOR_BG, 1);
+    LCD_DrawString(rrX + 24, rrY + tireH + 4, tpmsLastUpdateStr[3], rr_time_color, COLOR_BG, 1);
     
     // === STATUS BAR ===
     bool allGood = (flColor == MX5_GREEN && frColor == MX5_GREEN && 
@@ -2122,6 +2132,24 @@ void parseCommand(String cmd) {
         }
         telemetry.connected = true;
     }
+    // Per-tire timestamps from Pi (format: TIRE_TIME:HH:MM:SS,HH:MM:SS,HH:MM:SS,HH:MM:SS)
+    else if (cmd.startsWith("TIRE_TIME:")) {
+        String timeData = cmd.substring(10);
+        int idx = 0;
+        int start = 0;
+        for (int i = 0; i <= timeData.length() && idx < 4; i++) {
+            if (i == timeData.length() || timeData[i] == ',') {
+                String timestamp = timeData.substring(start, i);
+                strncpy(tpmsLastUpdateStr[idx], timestamp.c_str(), sizeof(tpmsLastUpdateStr[idx]) - 1);
+                tpmsLastUpdateStr[idx][sizeof(tpmsLastUpdateStr[idx]) - 1] = '\0';
+                idx++;
+                start = i + 1;
+            }
+        }
+        tpmsDataFromCache = false;  // Data is fresh from Pi
+        // Save to NVS
+        saveTPMSToNVS();
+    }
     else if (cmd.startsWith("GFORCE:")) {
         // Format: GFORCE:X,Y
         String gData = cmd.substring(7);
@@ -2398,6 +2426,9 @@ void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex) {
         tpmsSensors[sensorIndex].lastUpdate = millis();
         tpmsSensors[sensorIndex].rssi = device->getRSSI();
         
+        // Save to NVS for persistence across power cycles
+        saveTPMSToNVS();
+        
         // Debug output - show tire position name
         Serial.printf("TPMS %s [%s]: %.1f PSI, %.1f°F (RSSI: %d)\n",
                       TPMS_POSITION_NAMES[sensorIndex], TPMS_MAC_ADDRESSES[sensorIndex],
@@ -2461,5 +2492,107 @@ void sendTPMSDataToPi() {
             needsRedraw = true;
             needsFullRedraw = true;  // TPMS screen requires full redraw for value updates
         }
+    }
+}
+
+// ============================================================================
+// TPMS NVS Persistence Functions
+// ============================================================================
+
+void saveTPMSToNVS() {
+    // Only save if we have valid timestamp data from Pi
+    bool anyValid = false;
+    for (int i = 0; i < 4; i++) {
+        if (tpmsLastUpdateStr[i][0] != '-') {
+            anyValid = true;
+            break;
+        }
+    }
+    if (!anyValid) return;
+    
+    tpmsPrefs.begin("tpms", false);  // Read-write mode
+    
+    // Save pressure and temperature for each tire
+    tpmsPrefs.putFloat("psi0", telemetry.tirePressure[0]);
+    tpmsPrefs.putFloat("psi1", telemetry.tirePressure[1]);
+    tpmsPrefs.putFloat("psi2", telemetry.tirePressure[2]);
+    tpmsPrefs.putFloat("psi3", telemetry.tirePressure[3]);
+    tpmsPrefs.putFloat("temp0", telemetry.tireTemp[0]);
+    tpmsPrefs.putFloat("temp1", telemetry.tireTemp[1]);
+    tpmsPrefs.putFloat("temp2", telemetry.tireTemp[2]);
+    tpmsPrefs.putFloat("temp3", telemetry.tireTemp[3]);
+    
+    // Save per-tire timestamps from Pi
+    tpmsPrefs.putString("time0", tpmsLastUpdateStr[0]);
+    tpmsPrefs.putString("time1", tpmsLastUpdateStr[1]);
+    tpmsPrefs.putString("time2", tpmsLastUpdateStr[2]);
+    tpmsPrefs.putString("time3", tpmsLastUpdateStr[3]);
+    
+    tpmsPrefs.end();
+    
+    tpmsDataFromCache = false;  // Data is fresh, not from cache
+    Serial.printf("TPMS: Saved to NVS (times: %s, %s, %s, %s)\n", 
+                  tpmsLastUpdateStr[0], tpmsLastUpdateStr[1], 
+                  tpmsLastUpdateStr[2], tpmsLastUpdateStr[3]);
+}
+
+void loadTPMSFromNVS() {
+    tpmsPrefs.begin("tpms", true);  // Read-only mode
+    
+    // Check if we have saved data
+    if (!tpmsPrefs.isKey("psi0")) {
+        Serial.println("TPMS: No cached data in NVS");
+        tpmsPrefs.end();
+        return;
+    }
+    
+    // Load pressure and temperature for each tire
+    for (int i = 0; i < 4; i++) {
+        char keyPsi[8], keyTemp[8], keyTime[8];
+        snprintf(keyPsi, sizeof(keyPsi), "psi%d", i);
+        snprintf(keyTemp, sizeof(keyTemp), "temp%d", i);
+        snprintf(keyTime, sizeof(keyTime), "time%d", i);
+        
+        float psi = tpmsPrefs.getFloat(keyPsi, 0.0f);
+        float temp = tpmsPrefs.getFloat(keyTemp, 0.0f);
+        String timestamp = tpmsPrefs.getString(keyTime, "--:--:--");
+        
+        if (psi > 0) {
+            tpmsSensors[i].valid = true;
+            tpmsSensors[i].pressurePSI = psi;
+            tpmsSensors[i].temperatureF = temp;
+            tpmsSensors[i].lastUpdate = millis();
+            
+            // Update telemetry for display
+            telemetry.tirePressure[i] = psi;
+            telemetry.tireTemp[i] = temp;
+        }
+        
+        // Load per-tire timestamp
+        strncpy(tpmsLastUpdateStr[i], timestamp.c_str(), sizeof(tpmsLastUpdateStr[i]) - 1);
+        tpmsLastUpdateStr[i][sizeof(tpmsLastUpdateStr[i]) - 1] = '\0';
+    }
+    
+    tpmsPrefs.end();
+    
+    tpmsDataFromCache = true;  // Mark that this data came from cache
+    
+    // Check if any valid data was loaded
+    bool anyValid = false;
+    for (int i = 0; i < 4; i++) {
+        if (tpmsSensors[i].valid) {
+            anyValid = true;
+            break;
+        }
+    }
+    
+    if (anyValid) {
+        Serial.printf("TPMS: Loaded cached data from NVS\n");
+        Serial.printf("  Pressures: FL=%.1f, FR=%.1f, RL=%.1f, RR=%.1f PSI\n",
+                      tpmsSensors[0].pressurePSI, tpmsSensors[1].pressurePSI,
+                      tpmsSensors[2].pressurePSI, tpmsSensors[3].pressurePSI);
+        Serial.printf("  Times: FL=%s, FR=%s, RL=%s, RR=%s\n",
+                      tpmsLastUpdateStr[0], tpmsLastUpdateStr[1],
+                      tpmsLastUpdateStr[2], tpmsLastUpdateStr[3]);
     }
 }

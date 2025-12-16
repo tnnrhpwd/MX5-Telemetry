@@ -150,6 +150,8 @@ class TelemetryData:
     voltage: float = 0.0
     tire_pressure: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     tire_temp: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
+    tpms_last_update_str: List[str] = field(default_factory=lambda: ["--:--:--", "--:--:--", "--:--:--", "--:--:--"])  # HH:MM:SS per tire
+    tpms_connected: bool = False  # True if TPMS data has been received
     g_lateral: float = 0.0
     g_longitudinal: float = 0.0
     lap_time_ms: int = 0
@@ -1629,6 +1631,7 @@ class PiDisplayApp:
         for x, y, label, idx in positions:
             psi = self.telemetry.tire_pressure[idx]
             temp = self.telemetry.tire_temp[idx]
+            last_update = self.telemetry.tpms_last_update_str[idx]
             
             # Determine color
             if psi < self.settings.tire_low_psi:
@@ -1651,9 +1654,14 @@ class PiDisplayApp:
             pygame.draw.rect(self.screen, color,
                            (x - box_w//2, y - box_h//2, 5, box_h))
             
-            # Label
+            # Label and timestamp on same line
             txt = self.font_small.render(label, True, COLOR_GRAY)
-            self.screen.blit(txt, txt.get_rect(center=(x + 5, y - 38)))
+            self.screen.blit(txt, (x - box_w//2 + 12, y - box_h//2 + 5))
+            
+            # Per-tire timestamp (right side of label)
+            timestamp_color = COLOR_GREEN if last_update != "--:--:--" else COLOR_DARK_GRAY
+            time_txt = self.font_tiny.render(last_update, True, timestamp_color)
+            self.screen.blit(time_txt, (x + box_w//2 - time_txt.get_width() - 8, y - box_h//2 + 8))
             
             # PSI value (large)
             txt = self.font_large.render(f"{psi:.1f}", True, color)
