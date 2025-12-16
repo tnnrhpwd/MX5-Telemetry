@@ -104,6 +104,7 @@ class ESP32SerialHandler:
         self.tpms_temp = [0.0, 0.0, 0.0, 0.0]      # °C
         self.tpms_battery = [0, 0, 0, 0]           # %
         self.tpms_last_update = 0                  # timestamp of last TPMS data
+        self.tpms_last_update_str = ["--:--:--", "--:--:--", "--:--:--", "--:--:--"]  # HH:MM:SS per tire
         
         # Load cached TPMS data from disk
         self._load_tpms_cache()
@@ -122,9 +123,10 @@ class ESP32SerialHandler:
                         self.telemetry.tire_pressure[i] = data['pressure'][i]
                     
                 if 'temp' in data and len(data['temp']) == 4:
-                    self.tpms_temp = list(data['temp'])
+                    self.tpms_temp = list(data['temp'])  # Stored as Celsius
                     for i in range(4):
-                        self.telemetry.tire_temp[i] = data['temp'][i]
+                        # Convert Celsius to Fahrenheit for telemetry display
+                        self.telemetry.tire_temp[i] = data['temp'][i] * 9.0 / 5.0 + 32
                     
                 if 'battery' in data and len(data['battery']) == 4:
                     self.tpms_battery = list(data['battery'])
@@ -132,11 +134,26 @@ class ESP32SerialHandler:
                 if 'timestamp' in data:
                     self.tpms_last_update = data['timestamp']
                     
+                # Restore per-tire HH:MM:SS timestamp strings
+                if 'last_update_str' in data:
+                    cached_timestamps = data['last_update_str']
+                    # Handle both old single-string format and new list format
+                    if isinstance(cached_timestamps, list) and len(cached_timestamps) == 4:
+                        self.tpms_last_update_str = list(cached_timestamps)
+                        for i in range(4):
+                            self.telemetry.tpms_last_update_str[i] = cached_timestamps[i]
+                    elif isinstance(cached_timestamps, str):
+                        # Old format - apply same timestamp to all tires
+                        self.tpms_last_update_str = [cached_timestamps] * 4
+                        for i in range(4):
+                            self.telemetry.tpms_last_update_str[i] = cached_timestamps
+                    
                 # Mark as connected if we have recent cached data (within 24 hours)
                 age_hours = (time.time() - self.tpms_last_update) / 3600
                 if age_hours < 24 and any(p > 0 for p in self.tpms_pressure):
                     self.telemetry.tpms_connected = True
                     print(f"TPMS: Loaded cached data (age: {age_hours:.1f} hours)")
+                    print(f"  Last updates: FL={self.tpms_last_update_str[0]}, FR={self.tpms_last_update_str[1]}, RL={self.tpms_last_update_str[2]}, RR={self.tpms_last_update_str[3]}")
                     print(f"  Pressures: FL={self.tpms_pressure[0]:.1f}, FR={self.tpms_pressure[1]:.1f}, RL={self.tpms_pressure[2]:.1f}, RR={self.tpms_pressure[3]:.1f} PSI")
                     print(f"  Temps: FL={self.tpms_temp[0]:.1f}, FR={self.tpms_temp[1]:.1f}, RL={self.tpms_temp[2]:.1f}, RR={self.tpms_temp[3]:.1f} °C")
                 else:
@@ -146,25 +163,44 @@ class ESP32SerialHandler:
         except Exception as e:
             print(f"TPMS: Failed to load cache: {e}")
     
-    def _save_tpms_cache(self):
-        """Save TPMS data to disk for persistence"""
+    def _save_tpms_cache(self, updated_tires=None):
+        """Save TPMS data to disk for persistence
+        
+        Args:
+            updated_tires: List of tire indices (0-3) that were updated, or None for all
+        """
         try:
             # Ensure directory exists
             cache_dir = os.path.dirname(TPMS_CACHE_FILE)
             if not os.path.exists(cache_dir):
                 os.makedirs(cache_dir)
+            
+            # Generate HH:MM:SS timestamp from current time
+            now = time.localtime()
+            current_time_str = f"{now.tm_hour:02d}:{now.tm_min:02d}:{now.tm_sec:02d}"
+            
+            # Update timestamps for specific tires or all tires
+            if updated_tires is not None:
+                for i in updated_tires:
+                    self.tpms_last_update_str[i] = current_time_str
+                    self.telemetry.tpms_last_update_str[i] = current_time_str
+            else:
+                for i in range(4):
+                    self.tpms_last_update_str[i] = current_time_str
+                    self.telemetry.tpms_last_update_str[i] = current_time_str
                 
             data = {
                 'pressure': self.tpms_pressure,
                 'temp': self.tpms_temp,
                 'battery': self.tpms_battery,
-                'timestamp': time.time()
+                'timestamp': time.time(),
+                'last_update_str': self.tpms_last_update_str
             }
             
             with open(TPMS_CACHE_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
                 
-            print(f"TPMS: Saved cache to {TPMS_CACHE_FILE}")
+            print(f"TPMS: Saved cache (updated tires: {updated_tires if updated_tires else 'all'})")
         except Exception as e:
             print(f"TPMS: Failed to save cache: {e}")
     
@@ -372,7 +408,7 @@ class ESP32SerialHandler:
         """Parse BLE TPMS pressure data: FL,FR,RL,RR (all in PSI)"""
         parts = data.split(',')
         if len(parts) >= 4:
-            data_updated = False
+            updated_tires = []
             for i in range(4):
                 try:
                     psi = float(parts[i])
@@ -380,19 +416,19 @@ class ESP32SerialHandler:
                         self.tpms_pressure[i] = psi
                         self.telemetry.tire_pressure[i] = psi
                         self.telemetry.tpms_connected = True
-                        data_updated = True
+                        updated_tires.append(i)
                 except (ValueError, IndexError):
                     pass
-            if data_updated:
+            if updated_tires:
                 self.tpms_last_update = time.time()
-                self._save_tpms_cache()  # Persist to disk
+                self._save_tpms_cache(updated_tires)  # Persist with per-tire timestamps
             print(f"TPMS BLE PSI: {self.telemetry.tire_pressure}")
     
     def _parse_tpms_temp(self, data: str):
         """Parse BLE TPMS temperature data: FL,FR,RL,RR (all in Fahrenheit)"""
         parts = data.split(',')
         if len(parts) >= 4:
-            data_updated = False
+            updated_tires = []
             for i in range(4):
                 try:
                     temp_f = float(parts[i])
@@ -400,12 +436,12 @@ class ESP32SerialHandler:
                         self.tpms_temp[i] = (temp_f - 32) * 5.0 / 9.0  # Store as Celsius
                         self.telemetry.tire_temp[i] = temp_f  # Already in F
                         self.telemetry.tpms_connected = True
-                        data_updated = True
+                        updated_tires.append(i)
                 except (ValueError, IndexError):
                     pass
-            if data_updated:
+            if updated_tires:
                 self.tpms_last_update = time.time()
-                self._save_tpms_cache()  # Persist to disk
+                self._save_tpms_cache(updated_tires)  # Persist with per-tire timestamps
             print(f"TPMS BLE Temp: {self.telemetry.tire_temp}")
     
     def _parse_imu(self, data: str):
@@ -447,6 +483,11 @@ class ESP32SerialHandler:
             tp = self.telemetry.tire_pressure
             tire_msg = f"TIRE:{tp[0]:.1f},{tp[1]:.1f},{tp[2]:.1f},{tp[3]:.1f}\n"
             self.serial_conn.write(tire_msg.encode('utf-8'))
+            
+            # Send per-tire timestamps: TIRE_TIME:HH:MM:SS,HH:MM:SS,HH:MM:SS,HH:MM:SS
+            ts = self.telemetry.tpms_last_update_str
+            time_msg = f"TIRE_TIME:{ts[0]},{ts[1]},{ts[2]},{ts[3]}\n"
+            self.serial_conn.write(time_msg.encode('utf-8'))
             
             # Send engine running status (based on RPM > 0)
             engine_running = 1 if self.telemetry.rpm > 0 else 0
