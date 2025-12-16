@@ -6,111 +6,113 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 
 | Category | Estimated Cost (USD) |
 |----------|---------------------|
-| Electronics | $35-45 |
+| Raspberry Pi 4B + Accessories | $60-80 |
+| ESP32-S3 Round Display | $25-35 |
+| Arduino Nano + CAN Module | $10-20 |
+| MCP2515 Modules (x3 total) | $10-20 |
+| LED Strip + Power | $15-25 |
+| BLE TPMS Sensors (x4) | $25-40 |
 | Wiring & Connectors | $15-25 |
-| Enclosure & Mounting | $10-20 |
-| Tools (if needed) | $20-50 |
-| **Total** | **$80-140** |
+| **Total** | **$160-245** |
 
 *Note: Prices are approximate and vary by supplier/location.*
 
 ---
 
-## 📦 Core Electronics
+## 🖥️ Raspberry Pi 4B (CAN Hub)
 
-### Microcontroller
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| Raspberry Pi 4B | 2GB+ RAM | 1 | $35-55 | 4GB recommended |
+| MicroSD Card | 32GB Class 10 | 1 | $8-15 | SanDisk recommended |
+| Pi Power Supply | 5V 3A USB-C | 1 | $10-15 | Official Pi PSU recommended |
+| MCP2515 CAN Module | 8MHz crystal | 2 | $6-14 | HS-CAN + MS-CAN |
+| Heatsink/Cooling | Passive or fan | 1 | $5-10 | Recommended for Pi 4 |
 
-| Item | Specifications | Qty | Price | Link/Notes |
-|------|---------------|-----|-------|------------|
-| Arduino Nano V3.0 | ATmega328P, 16MHz, 5V | 1 | $3-8 | Amazon, AliExpress, eBay |
-
-**Alternatives**: Arduino Nano Every, Arduino Nano 33 IoT (requires code modifications)
-
----
-
-### CAN Bus Module
-
-| Item | Specifications | Qty | Price | Link/Notes |
-|------|---------------|-----|-------|------------|
-| MCP2515 CAN Module | MCP2515 + TJA1050, 8MHz or 16MHz crystal | 1 | $3-7 | Must specify 16MHz crystal version |
-
-**Critical**: Ensure your module has a **16MHz crystal** (check product description or visually inspect). The code is configured for 16MHz. If you have an 8MHz version, change `MCP_16MHZ` to `MCP_8MHZ` in the code.
-
-**Recommended suppliers**: 
-- Amazon: Search "MCP2515 16MHz"
-- AliExpress: Look for "MCP2515 TJA1050 16MHz"
+### Pi GPIO Connections
+- **SPI Bus** (shared): GPIO 10 (MOSI), GPIO 9 (MISO), GPIO 11 (SCLK)
+- **MCP2515 #1 CS**: GPIO 8 (CE0) - HS-CAN
+- **MCP2515 #2 CS**: GPIO 7 (CE1) - MS-CAN
+- **Interrupts**: GPIO 25 (HS), GPIO 24 (MS)
 
 ---
 
-### LED Strip
+## 📺 ESP32-S3 Round Display
 
-| Item | Specifications | Qty | Price | Link/Notes |
-|------|---------------|-----|-------|------------|
-| WS2812B LED Strip | 30 LEDs/meter, 5V, addressable RGB | 1m | $5-12 | Waterproof (IP65) recommended |
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| Waveshare ESP32-S3-Touch-LCD-1.85 | 360x360 IPS, Touch | 1 | $25-35 | Built-in IMU (QMI8658) |
+| USB-C Cable | Data capable | 1 | $5-10 | For Pi connection |
+
+**Built-in Features**:
+- 1.85" Round IPS LCD (360×360)
+- Capacitive touch (CST816)
+- QMI8658 IMU (accelerometer/gyroscope)
+- ESP32-S3 (dual-core 240MHz, BLE 5.0)
+
+---
+
+## 🎯 Arduino Nano (LED Controller)
+
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| Arduino Nano V3.0 | ATmega328P, 16MHz, 5V | 1 | $3-8 | Clone or official |
+| MCP2515 CAN Module | MCP2515 + TJA1050, 8MHz crystal | 1 | $3-7 | Arduino's dedicated CAN |
+
+**Alternatives**: Arduino Nano Every (requires code modifications)
+
+---
+
+## 💡 LED Strip
+
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| WS2812B LED Strip | 20 LEDs, 5V, addressable RGB | 1 | $5-12 | IP65 waterproof recommended |
 
 **Options**:
-- **30 LEDs** (1 meter): Good for compact dashboard mounting
-- **60 LEDs** (1 meter): More resolution, higher power consumption
-- **144 LEDs** (1 meter): Maximum resolution, requires 5A+ power supply
-
-**Note**: Adjust `LED_COUNT` in code to match your LED count.
+- **20 LEDs**: Recommended for shift light bar
+- **30 LEDs/meter**: Good resolution
+- **60 LEDs/meter**: Maximum resolution
 
 ---
 
-### GPS Module
+## 📡 BLE TPMS Sensors
 
-| Item | Specifications | Qty | Price | Link/Notes |
-|------|---------------|-----|-------|------------|
-| Neo-6M GPS Module | UART, external antenna | 1 | $8-15 | Includes ceramic antenna |
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| BLE TPMS Cap Sensors | Bluetooth 4.0, cap-mount | 4 | $25-40 | One per tire |
 
 **Features to look for**:
-- External antenna (better reception than internal)
-- EEPROM for backup (retains satellite data after power off)
-- LED indicators (helpful for debugging)
+- BLE broadcast (not proprietary app only)
+- Pressure range: 0-80 PSI
+- Temperature sensing
+- Battery included
 
 ---
 
-### SD Card Module
+## 🔌 CAN Bus Interface
 
-| Item | Specifications | Qty | Price | Link/Notes |
-|------|---------------|-----|-------|------------|
-| MicroSD Card Module | SPI interface, 5V tolerant | 1 | $1-3 | Look for "Arduino SD Card Module" |
-| MicroSD Card | Class 10, 8-32GB, FAT32 | 1 | $5-10 | SanDisk or Samsung recommended |
+### OBD-II Connection
 
-**SD Card Notes**:
-- Use Class 10 or higher for reliable write speeds
-- Format as FAT32 before first use
-- 32GB max for FAT32 compatibility
-- Keep a spare card
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| OBD-II Extension Cable | Male-to-female, 1m | 1 | $8-15 | For easier access |
+| OBD-II Breakout | Screw terminals | 1 | $5-10 | Alternative to splicing |
 
----
-
-### Power Supply
-
-| Item | Specifications | Qty | Price | Link/Notes |
-|------|---------------|-----|-------|------------|
-| LM2596 Buck Converter | 12V → 5V, 3A output | 1 | $2-5 | Adjustable voltage (use potentiometer) |
-| 2A Blade Fuse + Holder | 12V automotive | 1 | $2-5 | For OBD-II power protection |
-
-**Buck Converter Notes**:
-- Must be adjustable (has potentiometer)
-- 3A minimum output rating (for LED strip)
-- Look for "LM2596 DC-DC Buck Converter"
+### MX5 NC CAN Bus Pins
+- **HS-CAN (500k)**: Pin 6 (High), Pin 14 (Low)
+- **MS-CAN (125k)**: Pin 3 (High), Pin 11 (Low)
+- **Ground**: Pin 5
+- **12V Power**: Pin 16
 
 ---
 
-### GoPro Power Control
+## 🔋 Power Supply
 
-| Item | Specifications | Qty | Price | Link/Notes |
-|------|---------------|-----|-------|------------|
-| N-Channel MOSFET | IRF540N or IRLZ44N | 1 | $0.50-2 | Logic-level, VDS ≥20V, ID ≥2A |
-| 10kΩ Resistor | 1/4W | 1 | $0.10 | Pull-down resistor for MOSFET gate |
-| Small Perfboard | 3×7cm | 1 | $1-3 | For mounting MOSFET circuit |
-
-**MOSFET Alternatives**:
-- IRF540N (most common, cheap)
-- IRLZ44N (better logic-level performance)
-- 2N7000 (lower current, works for GoPro)
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| LM2596 Buck Converter | 12V → 5V, 3A output | 1 | $2-5 | Adjustable voltage |
+| 2A Blade Fuse + Holder | 12V automotive | 1 | $2-5 | Protection |
 
 ---
 
@@ -122,8 +124,20 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | 18 AWG Stranded Wire | For LED strip power | 2m | $3-5 | Red and black only |
 | Heat Shrink Tubing Kit | Assorted sizes | 1 set | $5-10 | Various diameters |
 | Dupont Jumper Wires | Female-to-female | 20pcs | $3-5 | For module connections |
-| OBD-II Extension Cable | Male-to-female, 1m | 1 | $8-15 | Optional: for easy access |
 | JST Connectors | 3-pin, for LED strip | 2pcs | $1-3 | Makes LED strip detachable |
+
+---
+
+## 🖼️ Display Output (Optional)
+
+For Pioneer head unit HDMI input:
+
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| Micro HDMI to HDMI Cable | 1-2m | 1 | $5-10 | Pi 4 uses micro HDMI |
+| Pioneer AVH-W4500NEX | 800x480 HDMI input | 1 | N/A | Or similar HDMI-capable head unit |
+
+Alternative: 7" Raspberry Pi HDMI display (~$30-50)
 
 ---
 
@@ -131,16 +145,16 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
-| Project Enclosure | 100×60×25mm plastic | 1 | $3-8 | Weatherproof recommended |
+| Project Enclosure | For Pi + modules | 1 | $10-20 | 3D printed or purchased |
 | Zip Ties | 100mm, various colors | 20pcs | $2-5 | Cable management |
-| Double-Sided Tape | 3M VHB or similar | 1 roll | $5-10 | For mounting enclosure |
+| Double-Sided Tape | 3M VHB or similar | 1 roll | $5-10 | For mounting |
 | Velcro Strips | For removable mounting | 1 set | $3-7 | Alternative to tape |
 
 ---
 
 ## 🔧 Tools Required
 
-If you don't already have these, budget accordingly:
+If you don't already have these:
 
 | Tool | Purpose | Approx. Cost |
 |------|---------|--------------|
@@ -158,11 +172,10 @@ If you don't already have these, budget accordingly:
 | Item | Purpose | Qty | Price | Notes |
 |------|---------|-----|-------|-------|
 | Mini Breadboard | Testing before soldering | 1 | $2-5 | 400 tie-points |
-| Logic Level Converter | If SD module is 3.3V only | 1 | $2-5 | Bi-directional, 4-channel |
 | 1000µF Capacitor | LED strip power filtering | 1 | $0.50-2 | 6.3V or higher |
 | 470Ω Resistor | LED data line protection | 1 | $0.10 | 1/4W |
 | Spare Fuses | Replacement fuses | 3 | $1-3 | 2A blade fuses |
-| Cable Labels | Wire identification | 1 sheet | $2-5 | Printable or write-on |
+| Shielded Cable | Pi to ESP32 serial | 1m | $3-5 | EMI protection |
 | Hot Glue Gun + Sticks | Strain relief | 1 | $5-10 | For connector reinforcement |
 
 ---

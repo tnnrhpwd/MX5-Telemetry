@@ -1,33 +1,33 @@
 # 🚀 Build and Upload Guide
 
-**One-stop guide for building and uploading firmware to both Arduinos.**
+**One-stop guide for building and uploading firmware to all devices.**
 
 ---
 
 ## Quick Reference
 
-| Arduino | Purpose | Build Command | Upload Command |
-|---------|---------|---------------|----------------|
-| **Master** | Logger (CAN, GPS, SD) | `pio run -d master` | `pio run -d master --target upload --upload-port COM3` |
-| **Slave** | LED Controller | `pio run -d slave` | `pio run -d slave --target upload --upload-port COM4` |
+| Device | Purpose | Build Command | Upload Command |
+|--------|---------|---------------|----------------|
+| **Arduino Nano** | LED Controller | `pio run -d arduino` | `pio run -d arduino --target upload` |
+| **ESP32-S3** | Round Display | `pio run -d display` | `pio run -d display --target upload` |
 
 ---
 
 ## 🔧 Prerequisites
 
 - **VS Code** with PlatformIO extension installed
-- **Two Arduino Nano boards** (CH340 or FTDI)
-- **USB data cables** (not charge-only)
+- **Arduino Nano** (CH340 or FTDI) with USB cable
+- **ESP32-S3** (Waveshare 1.85" Round Display) with USB-C cable
 
 ---
 
 ## Method 1: VS Code Tasks (Easiest)
 
 Press `Ctrl+Shift+B` and select:
-- **PlatformIO: Build Master** - Build master firmware
-- **PlatformIO: Build Slave** - Build slave firmware
-- **PlatformIO: Upload Master** - Upload to master Arduino
-- **PlatformIO: Upload Slave** - Upload to slave Arduino
+- **PlatformIO: Build Arduino** - Build Arduino firmware
+- **PlatformIO: Upload Arduino** - Upload to Arduino Nano
+- **PlatformIO: Build Display (ESP32-S3)** - Build ESP32 firmware
+- **PlatformIO: Upload Display (ESP32-S3)** - Upload to ESP32-S3
 
 ---
 
@@ -40,118 +40,96 @@ Press `Ctrl+Shift+B` and select:
 Get-WmiObject Win32_SerialPort | Select-Object DeviceID, Description
 ```
 
-### Build Both
+### Arduino Nano (LED Controller)
 
 ```powershell
 cd C:\Users\tanne\Documents\Github\MX5-Telemetry
-pio run -d master   # Build master
-pio run -d slave    # Build slave
+
+# Build
+pio run -d arduino
+
+# Upload
+pio run -d arduino --target upload
+
+# Upload with specific port
+pio run -d arduino --target upload --upload-port COM3
+
+# Monitor serial
+pio device monitor -b 115200
 ```
 
-### Upload Both
+### ESP32-S3 Display
 
 ```powershell
-# Upload Master (adjust COM port as needed)
-pio run -d master --target upload --upload-port COM3
+# Build
+pio run -d display
 
-# Upload Slave (adjust COM port as needed)
-pio run -d slave --target upload --upload-port COM4
-```
+# Upload
+pio run -d display --target upload
 
-### Upload Both in One Command
+# Upload with specific port
+pio run -d display --target upload --upload-port COM4
 
-```powershell
-pio run -d master --target upload --upload-port COM3; pio run -d slave --target upload --upload-port COM4
-```
-
----
-
-## Method 3: PowerShell Scripts
-
-```powershell
-.\build-automation\upload_master.ps1
-.\build-automation\upload_slave.ps1
-.\build-automation\upload_both.ps1    # Interactive
+# Monitor serial
+pio device monitor -b 115200
 ```
 
 ---
 
 ## 🧪 Verify Upload
 
-### Master Arduino (115200 baud)
+### Arduino Nano
 
-1. Open Serial Monitor at **115200 baud**
-2. Press reset or type `STATUS`
-3. Expected output:
-   ```
-   MX5-Telemetry v3.2
-   CAN: OK
-   GPS: Waiting...
-   SD: OK
-   Ready
-   ```
+1. LEDs should show startup animation (rainbow scan)
+2. Open Serial Monitor at **115200 baud** (if ENABLE_SERIAL_DEBUG is true)
+3. Without CAN bus connected, LEDs will show error animation after 3 seconds
+4. With CAN bus connected, LEDs display RPM-based colors
 
-### Slave Arduino (9600 baud for USB, 1200 baud from Master)
+### ESP32-S3 Display
 
-1. LEDs should show startup animation
-2. Open Serial Monitor at **9600 baud**
-3. Type `R3000` to test RPM display
-4. Type `C` to clear
+1. Display shows boot logo on startup
+2. Screen cycles through Overview, RPM, TPMS, Engine screens
+3. Touch to change screens (or use steering wheel buttons via Pi)
+4. Serial monitor shows BLE TPMS scanning status
 
 ---
 
 ## 🔌 Hardware Setup
 
-### Wiring Diagram
+### Arduino Nano Wiring
 
 ```
-┌──────────────────┐                    ┌──────────────────┐
-│   MASTER         │                    │   SLAVE          │
-│   (Logger)       │                    │   (LEDs)         │
-│                  │                    │                  │
-│  D6 (TX) ────────┼──── 1200 baud ────►│ D2 (RX)          │
-│  GND ────────────┼────────────────────│ GND              │
-│                  │                    │  D5 ─────────────┼──► LED Strip Data
-│  D10 ← CAN CS    │                    │                  │
-│  D4  ← SD CS     │                    │                  │
-│  D2  ← GPS TX    │                    │                  │
-│  D3  → GPS RX    │                    │                  │
-└──────────────────┘                    └──────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                        ARDUINO NANO                          │
+│                                                              │
+│   D2 ←──── INT (MCP2515 Interrupt - CRITICAL!)              │
+│   D5 ────→ WS2812B Data                                      │
+│   D10 ───→ MCP2515 CS                                        │
+│   D11 ───→ MCP2515 MOSI                                      │
+│   D12 ←─── MCP2515 MISO                                      │
+│   D13 ───→ MCP2515 SCK                                       │
+│   A6 ←──── Brightness Pot (optional)                         │
+│   D3 ────→ Haptic Motor (optional)                           │
+│   5V ────→ MCP2515 VCC, LED Strip VCC                        │
+│   GND ───→ MCP2515 GND, LED Strip GND                        │
+└──────────────────────────────────────────────────────────────┘
+
+MCP2515 → OBD-II Port:
+  CANH → Pin 6 (HS-CAN High)
+  CANL → Pin 14 (HS-CAN Low)
 ```
 
-### Pin Assignments
+### ESP32-S3 Round Display
 
-**Master Arduino:**
-| Pin | Function |
-|-----|----------|
-| D2 | GPS RX (from GPS TX) |
-| D3 | GPS TX (to GPS RX) |
-| D4 | SD Card CS |
-| D6 | Serial TX to Slave (1200 baud) |
-| D10 | MCP2515 CAN CS |
-| D11-D13 | SPI (MOSI, MISO, SCK) |
+The Waveshare ESP32-S3-Touch-LCD-1.85 is pre-wired. Connect via USB-C to Pi for serial data.
 
-**Slave Arduino:**
-| Pin | Function |
-|-----|----------|
-| D2 | Serial RX from Master (1200 baud) |
-| D5 | WS2812B LED Data |
-| A6 | Brightness potentiometer (optional) |
+**Serial Connection (USB preferred):**
+- Pi USB-A port → ESP32-S3 USB-C port
+- Shows as `/dev/ttyACM0` on Pi
 
----
+### Raspberry Pi 4B
 
-## 📡 Communication Protocol
-
-**Master → Slave (1200 baud, bit-bang serial):**
-
-| Command | Format | Example | Description |
-|---------|--------|---------|-------------|
-| RPM | `R<value>` | `R3500` | Set RPM display |
-| Speed | `S<value>` | `S65` | Set speed (km/h) |
-| Clear | `C` | `C` | Clear all LEDs |
-| Error | `E` | `E` | Show error animation |
-| Wave | `W` | `W` | Rainbow wave |
-| Brightness | `B<value>` | `B128` | Set brightness (0-255) |
+See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for full Pi wiring with dual MCP2515 modules.
 
 ---
 
@@ -170,34 +148,40 @@ pio run -d master --target upload --upload-port COM3; pio run -d slave --target 
 2. Close Serial Monitor in VS Code
 3. Restart VS Code
 
-### Upload works but LEDs don't respond
+### Arduino: LEDs stuck on error animation
 
-1. Check D6→D2 wire connection
-2. Verify shared GND between Arduinos
-3. Check LED strip data wire on D5
-4. Verify 5V power to LED strip
+1. Check MCP2515 wiring (especially INT → D2)
+2. Verify CAN bus is connected and active
+3. Check OBD-II CANH/CANL connections
+
+### ESP32-S3: Upload fails
+
+1. Hold BOOT button while clicking upload
+2. Release BOOT when upload starts
+3. Try different USB-C cable (some are charge-only)
 
 ### Old bootloader (clone Nanos)
 
-Some clone Nanos use the old bootloader. Use these commands instead:
+Some clone Nanos use the old bootloader:
 ```powershell
-pio run -d master -e nano_old_bootloader --target upload
-pio run -d slave -e nano_old_bootloader --target upload
+# Edit arduino/platformio.ini and add:
+# board_upload.speed = 57600
 ```
 
 ---
 
 ## 📊 Expected Memory Usage
 
-| Arduino | RAM | Flash |
-|---------|-----|-------|
-| Master | ~77% (1584/2048 bytes) | ~83% (25416/30720 bytes) |
-| Slave | ~46% (934/2048 bytes) | ~33% (10122/30720 bytes) |
+| Device | RAM | Flash |
+|--------|-----|-------|
+| Arduino Nano | ~35% | ~45% |
+| ESP32-S3 | ~25% | ~60% |
 
 ---
 
 ## See Also
 
-- [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) - Detailed wiring diagrams
-- [MASTER_SLAVE_ARCHITECTURE.md](hardware/MASTER_SLAVE_ARCHITECTURE.md) - System architecture
-- [LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md) - LED behavior documentation
+- [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) - Detailed Arduino wiring
+- [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) - Full system architecture
+- [features/LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md) - LED behavior documentation
+- [DISPLAY_DEPLOYMENT.md](DISPLAY_DEPLOYMENT.md) - ESP32-S3 display deployment

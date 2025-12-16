@@ -1,8 +1,43 @@
 # MX5 Telemetry - Next Session To-Do List
 
 **Date Created:** December 1, 2025  
-**Last Updated:** December 3, 2025  
-**Status:** ✅ Single Arduino optimized setup created!
+**Last Updated:** December 16, 2025  
+**Status:** ✅ Pi + Arduino + ESP32-S3 architecture complete!
+
+---
+
+## 🎯 Current Architecture
+
+| Device | Purpose | Status |
+|--------|---------|--------|
+| **Raspberry Pi 4B** | CAN hub + HDMI display | ✅ Implemented |
+| **ESP32-S3 Round Display** | Gauge display + BLE TPMS | ✅ Implemented |
+| **Arduino Nano** | Direct CAN → LED strip | ✅ Implemented |
+
+See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for full architecture.
+
+---
+
+## 🎉 COMPLETED - December 16, 2025: Documentation Cleanup
+
+### What Was Done
+
+1. **Archived Dual-Arduino Documentation**
+   - Moved to `archive/dual-arduino/docs/`:
+     - `MASTER_SLAVE_ARCHITECTURE.md`
+     - `WIRING_GUIDE_DUAL_ARDUINO.md`
+     - `DUAL_ARDUINO_SETUP.md`
+     - `GPS_TROUBLESHOOTING.md`
+     - `COMPREHENSIVE_DATA_LOGGING.md`
+     - `LOG_ROTATION_FEATURE.md`
+     - `AUTO_START_FEATURE.md`
+
+2. **Updated Documentation**
+   - `docs/README.md` - Reflects Pi + ESP32 + Arduino architecture
+   - `README.md` - Updated project overview
+   - `docs/BUILD_AND_UPLOAD.md` - Updated for current build targets
+   - `docs/hardware/PARTS_LIST.md` - Added Pi, ESP32, TPMS components
+   - `archive/dual-arduino/README.md` - Updated archive description
 
 ---
 
@@ -10,74 +45,44 @@
 
 ### What Was Done
 
-1. **Created Single Arduino Optimized Build** (`single/`)
+1. **Created Single Arduino Optimized Build** (`arduino/`)
    - Direct CAN→LED path with <1ms latency
-   - 100Hz LED update rate (was 10Hz)
+   - 100Hz LED update rate
    - Hardware interrupt on D2 for CAN messages
    - No serial communication = no data corruption
-   - Simplified wiring (one Arduino instead of two)
 
-2. **Backed Up Dual Arduino Setup** (`backup_dual_arduino/`)
-   - Complete backup of master/slave/lib for future use
-   - Dual setup still available for GPS/SD logging needs
+2. **Created ESP32-S3 Display** (`display/`)
+   - 360x360 round LCD with modern UI
+   - 8 screens: Overview, RPM, TPMS, Engine, G-Force, Diagnostics, System, Settings
+   - BLE TPMS scanner for tire pressure sensors
+   - QMI8658 IMU for G-force display
 
-3. **Updated Documentation**
-   - `docs/hardware/WIRING_GUIDE_SINGLE_ARDUINO.md` - New single setup guide
-   - `docs/hardware/WIRING_GUIDE_DUAL_ARDUINO.md` - Dual setup guide
-   - Updated README.md to show both options
-   - Updated docs/README.md with setup comparison
-
-### Build Commands
-
-**Single Arduino (Recommended):**
-```powershell
-pio run -d single -t upload --upload-port COM6
-```
-
-**Dual Arduino (for GPS/SD logging):**
-```powershell
-# Master
-pio run -d master -t upload --upload-port COM6
-# Slave (swap USB cable)
-pio run -d slave -t upload --upload-port COM6
-```
+3. **Created Raspberry Pi UI** (`pi/ui/src/`)
+   - Python/Pygame application
+   - Dual CAN bus reading (HS + MS)
+   - Serial communication with ESP32-S3
+   - HDMI output to Pioneer head unit
 
 ---
 
-## 🎯 Priority 1: Fix LED Update Speed (CRITICAL)
+## 📋 Remaining Tasks
 
-### ✅ COMPLETED - Single Arduino fixes this completely
+### Hardware
+- [ ] Test Pi with actual MCP2515 modules in car
+- [ ] Verify BLE TPMS sensor pairing
+- [ ] Mount ESP32-S3 round display in dash
+- [ ] Run shielded cable from Pi to ESP32
 
-The single Arduino setup eliminates the serial link delay entirely:
-- **Before:** 70ms serial transmission + 100ms update interval = ~170ms minimum
-- **After:** Direct CAN read → LED update in <1ms
+### Software
+- [ ] Fine-tune Pi CAN bus timing
+- [ ] Add data logging to Pi (SD card or USB)
+- [ ] Implement lap timer on RPM/Speed screen
+- [ ] Add TPMS low-pressure alerts with audio
 
----
-
-## 🔧 Priority 2: Simplify Wiring Circuit
-
-### ✅ COMPLETED - Single Arduino setup
-
-- [x] **Created single Arduino solution** - `single/src/main.cpp`
-- [x] **Documented simplified wiring** - `WIRING_GUIDE_SINGLE_ARDUINO.md`
-- [x] **Reduced wire count by 50%** - No inter-Arduino connection needed
-- [x] **Hardware interrupt** - D2 for CAN INT (required for single setup)
-
-### Single Arduino Pin Usage
-| Pin | Function |
-|-----|----------|
-| D2 | MCP2515 INT (hardware interrupt) |
-| D5 | WS2812B LED Data |
-| D10 | MCP2515 CS |
-| D11 | MOSI |
-| D12 | MISO |
-| D13 | SCK |
-| A6 | Brightness pot (optional) |
-| D3 | Haptic motor (optional) |
-
----
-
-## 💻 Priority 3: Simplify Programming Logic
+### Testing
+- [ ] Full car test with all components
+- [ ] Verify steering wheel button mapping
+- [ ] Test G-force calibration during driving
 
 ### ✅ COMPLETED - Single Arduino code
 
@@ -156,91 +161,49 @@ The single Arduino setup eliminates the serial link delay entirely:
 
 ---
 
-## 🔌 Priority 6: Hardware Improvements
-
-### Connector System
-- [ ] Design quick-disconnect for CAN bus connection
-- [ ] Add inline fuse for 12V power
-- [ ] Create mounting solution for LED strip
-- [ ] Weatherproof connections if needed
-
-### Power
-- [ ] Verify current draw at full brightness
-- [ ] Add capacitor for LED power stability
-- [ ] Consider voltage regulator improvements
-
----
-
-## 📝 Priority 7: Documentation Updates
-
-- [ ] Update wiring diagram with simplified circuit
-- [ ] Create "Minimal Build" guide
-- [ ] Document CAN message IDs used from MX5
-- [ ] Record successful test configuration for reference
-
----
-
-## 🧪 Testing Checklist
-
-Before next car test:
-- [ ] Verify LED update rate on bench with simulated CAN
-- [ ] Test with Serial debugging completely disabled
-- [ ] Measure loop time with oscilloscope or timing pins
-- [ ] Test potentiometer during startup animation
-- [ ] Confirm brightness range is good for daylight visibility
-
----
-
-## 💡 Future Ideas (Lower Priority)
-
-- [ ] Shift light with configurable RPM threshold
-- [ ] Color themes (selectable via potentiometer on startup?)
-- [ ] Bluetooth configuration app
-- [ ] Rev-match downshift indicator
-- [ ] Lap timer integration
-- [ ] OBD-II PID expansion (coolant temp, throttle position)
-
----
-
 ## Quick Reference: Current Architecture
 
 ```
-[Car CAN Bus] 
-     ↓ (CAN-H, CAN-L)
-[MCP2515 Module] 
-     ↓ (SPI)
-[Master Arduino - Uno] ← Reads CAN, sends RPM over serial
-     ↓ (TX→RX Serial)
-[Slave Arduino - Nano] ← Receives RPM, controls LEDs
-     ↓ (Data pin D5)
-[WS2812B LED Strip - 20 LEDs]
-     ↑
-[B20K Potentiometer - A6] → Brightness control
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  OBD-II Port    │     │  Raspberry Pi 4B │     │ Pioneer AVH     │
+│  HS-CAN (500k)  │────►│  (CAN Hub)       │────►│ W4500NEX        │
+│  MS-CAN (125k)  │     │  + Python UI     │     │ (HDMI Display)  │
+└─────────────────┘     └────────┬─────────┘     └─────────────────┘
+                                 │ Serial
+        ┌────────────────────────┼────────────────────────┐
+        │                        ▼                        │
+        │                ┌──────────────────┐             │
+        │                │ ESP32-S3 Round   │◄── BLE TPMS │
+        │                │ Display (1.85")  │    Sensors  │
+        │                └──────────────────┘             │
+        │                                                 │
+┌───────┴───────┐                                         │
+│ Arduino Nano  │◄── MCP2515 (Direct HS-CAN)             │
+│ + WS2812B LED │    <1ms latency for shift light        │
+└───────────────┘                                         │
 ```
 
-### Proposed Simplified Architecture
+### Build Commands
 
-```
-[Car CAN Bus]
-     ↓ (CAN-H, CAN-L)
-[MCP2515 Module]
-     ↓ (SPI)
-[Single Arduino Nano] ← Reads CAN directly, controls LEDs
-     ↓ (Data pin D5)
-[WS2812B LED Strip - 20 LEDs]
-     ↑
-[B20K Potentiometer - A6] → Brightness control
-```
+```powershell
+# Arduino LED Controller
+pio run -d arduino --target upload
 
-**Wires eliminated:** Serial TX/RX between Arduinos, second Arduino power
+# ESP32-S3 Display  
+pio run -d display --target upload
+
+# Pi Display (run on Pi)
+python3 pi/ui/src/main.py --fullscreen
+```
 
 ---
 
 ## Session Notes
 
-_Add notes here during tomorrow's session:_
+_Add notes here during next session:_
 
 - 
 - 
 - 
+
 
