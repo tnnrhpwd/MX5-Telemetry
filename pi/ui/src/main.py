@@ -447,9 +447,11 @@ class PiDisplayApp:
             self.esp32_handler.stop()
             self.esp32_handler = None
         
-        # Initialize Arduino serial for LED sequence commands (always try)
-        # DISABLED FOR DEBUGGING - this may block/hang on serial port open
-        # self._init_arduino_serial()
+        # Initialize Arduino serial for LED sequence commands (optional, non-blocking)
+        try:
+            self._init_arduino_serial()
+        except Exception as e:
+            print(f"  ✗ Arduino serial init failed: {e}")
         
         if self.settings.demo_mode:
             print("Data Source: DEMO MODE - using simulated data")
@@ -476,9 +478,9 @@ class PiDisplayApp:
         self._init_esp32_handler()
     
     def _init_arduino_serial(self):
-        """Initialize serial connection to Arduino for LED sequence commands"""
+        """Initialize serial connection to Arduino for LED sequence commands (optional)"""
         if not SERIAL_AVAILABLE:
-            print("  ✗ Serial library not available for Arduino - install pyserial")
+            # Serial not available - this is fine, LED sequences just won't sync
             return
         
         # Close existing connection if any
@@ -500,16 +502,19 @@ class PiDisplayApp:
                 self.arduino_serial = serial.Serial(
                     port=port,
                     baudrate=9600,  # Match Arduino SoftwareSerial baud rate
-                    timeout=0.1
+                    timeout=0.05,   # Very short timeout to avoid blocking
+                    write_timeout=0.05
                 )
                 print(f"  ✓ Arduino serial connected on {port} (LED sequence control)")
                 # Send current LED sequence setting on connect
                 self._send_led_sequence_to_arduino()
                 return
-            except Exception as e:
+            except Exception:
+                # Port not available - try next one
                 continue
         
-        print("  ✗ Arduino serial not found - LED sequences will use Arduino default")
+        # No Arduino serial found - this is normal if not wired up
+        # LED sequences will just use Arduino's default
     
     def _init_esp32_handler(self):
         """Initialize ESP32 serial handler for display sync"""
@@ -618,15 +623,16 @@ class PiDisplayApp:
     
     def _send_led_sequence_to_arduino(self):
         """Send LED sequence command to Arduino via dedicated serial port"""
-        if hasattr(self, 'arduino_serial') and self.arduino_serial and self.arduino_serial.is_open:
-            try:
+        try:
+            if hasattr(self, 'arduino_serial') and self.arduino_serial and self.arduino_serial.is_open:
                 cmd = f"SEQ:{self.settings.led_sequence}\n"
                 self.arduino_serial.write(cmd.encode())
                 print(f"Pi: Sent LED sequence {self.settings.led_sequence} to Arduino")
-            except Exception as e:
-                print(f"Pi: Failed to send LED sequence to Arduino: {e}")
-        else:
-            print(f"Pi: Arduino serial not connected - LED sequence {self.settings.led_sequence} not sent")
+            else:
+                # Arduino serial not connected - this is normal if not wired up
+                pass
+        except Exception as e:
+            print(f"Pi: Failed to send LED sequence to Arduino: {e}")
     
     def _on_esp32_settings_sync(self, settings_dict: dict):
         """Callback when ESP32 sends all settings - full sync to Pi"""
