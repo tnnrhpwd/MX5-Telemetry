@@ -57,7 +57,7 @@ ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx
 
 ### Flash ESP32 via Pi
 ```bash
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.platformio/penv/bin/pio run -d display --target upload'
+ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 ```
 
 ### View Pi Display Logs
@@ -98,7 +98,7 @@ pio run -d display
 git add -A && git commit -m "Your message" && git push
 
 # Flash ESP32 and restart Pi
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.platformio/penv/bin/pio run -d display --target upload && sudo systemctl restart mx5-display'
+ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload && sudo systemctl restart mx5-display'
 ```
 
 ### 3. If only Pi code changed (no ESP32):
