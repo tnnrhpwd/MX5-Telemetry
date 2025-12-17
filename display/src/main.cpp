@@ -269,9 +269,7 @@ void formatTimestamp(unsigned long millis_time, char* buf, size_t bufSize) {
 
 // Draw the background image (called on full redraw)
 void drawBackground() {
-    // Use solid fill for faster screen transitions
-    // The background image is mostly dark anyway
-    LCD_Clear(COLOR_BG);
+    LCD_DrawImage(0, 0, BACKGROUND_DATA_WIDTH, BACKGROUND_DATA_HEIGHT, background_data);
 }
 
 // === PAGE TRANSITION ANIMATION FUNCTIONS ===
