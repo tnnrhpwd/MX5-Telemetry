@@ -23,6 +23,12 @@
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static uint8_t backlight_level = 100;
 
+// Static buffer for small fills to avoid heap fragmentation
+// 4KB is enough for most UI elements (e.g., 45x45 rect = 4050 bytes)
+#define STATIC_FILL_BUFFER_SIZE 4096
+static uint16_t* static_fill_buffer = NULL;
+static bool static_buffer_initialized = false;
+
 // Vendor-specific initialization for newer hardware revision
 static const st77916_lcd_init_cmd_t vendor_specific_init_new[] = {
   {0xF0, (uint8_t []){0x28}, 1, 0},
@@ -433,10 +439,37 @@ void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color
     if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
     
     uint32_t size = w * h;
-    uint16_t* buf = (uint16_t*)heap_caps_malloc(size * 2, MALLOC_CAP_DMA);
-    if (!buf) {
-        Serial.println("LCD_FillRect: Failed to allocate buffer");
-        return;
+    uint16_t* buf = NULL;
+    bool use_static = false;
+    
+    // Initialize static buffer on first use (DMA-capable memory)
+    if (!static_buffer_initialized) {
+        static_fill_buffer = (uint16_t*)heap_caps_malloc(STATIC_FILL_BUFFER_SIZE, MALLOC_CAP_DMA);
+        static_buffer_initialized = true;
+    }
+    
+    // Use static buffer for small fills to avoid heap fragmentation
+    if (size * 2 <= STATIC_FILL_BUFFER_SIZE && static_fill_buffer != NULL) {
+        buf = static_fill_buffer;
+        use_static = true;
+    } else {
+        // Large fill - must allocate dynamically
+        buf = (uint16_t*)heap_caps_malloc(size * 2, MALLOC_CAP_DMA);
+        if (!buf) {
+            // Fallback: fill row by row using static buffer
+            if (static_fill_buffer != NULL && w * 2 <= STATIC_FILL_BUFFER_SIZE) {
+                uint16_t swapped = ((color >> 8) & 0xFF) | ((color << 8) & 0xFF00);
+                for (uint32_t i = 0; i < w; i++) {
+                    static_fill_buffer[i] = swapped;
+                }
+                for (uint16_t row = 0; row < h; row++) {
+                    esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + w, y + row + 1, static_fill_buffer);
+                }
+                return;
+            }
+            Serial.println("LCD_FillRect: Failed to allocate buffer");
+            return;
+        }
     }
     
     // Byte swap for BIG endian (matching reference LCD_addWindow)
@@ -446,7 +479,11 @@ void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color
     }
     
     esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + w, y + h, buf);
-    heap_caps_free(buf);
+    
+    // Only free if dynamically allocated
+    if (!use_static) {
+        heap_caps_free(buf);
+    }
 }
 
 void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color) {
