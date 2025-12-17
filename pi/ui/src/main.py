@@ -1020,6 +1020,7 @@ class PiDisplayApp:
     
     def _navigate_to_screen(self, to_screen: Screen, direction: str = 'auto'):
         """Navigate to a screen with animation"""
+        print(f"DEBUG: _navigate_to_screen called: {self.current_screen.name} -> {to_screen.name}")
         if to_screen == self.current_screen:
             return
         
@@ -1034,6 +1035,7 @@ class PiDisplayApp:
         self._start_transition(to_screen, trans_type)
         self.sound.play('navigate')
         self._sync_esp32_screen_for_transition(to_screen)
+        print(f"DEBUG: _navigate_to_screen completed")
     
     def _sync_esp32_screen_for_transition(self, to_screen: Screen):
         """Sync ESP32 to destination screen during transition"""
