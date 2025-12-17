@@ -2120,23 +2120,26 @@ void parseCommand(String cmd) {
     // Direct screen selection - immediate change (no transition for serial commands)
     else if (cmd.startsWith("SCREEN:") || cmd.startsWith("screen:")) {
         int screenNum = cmd.substring(7).toInt();
+        Serial.printf("SCREEN CMD received: %d (current=%d)\n", screenNum, currentScreen);
+        
         if (screenNum >= 0 && screenNum < SCREEN_COUNT) {
             ScreenMode targetScreen = (ScreenMode)screenNum;
             
-            // Cancel any in-progress transition
-            if (isTransitioning()) {
-                currentTransition = TRANSITION_NONE;
-            }
+            // ALWAYS cancel any transition - even if same screen
+            currentTransition = TRANSITION_NONE;
             
-            // Immediately change to target screen (skip animation for responsiveness)
+            // Change to target screen immediately
             if (targetScreen != currentScreen) {
                 currentScreen = targetScreen;
                 needsRedraw = true;
                 needsFullRedraw = true;
-                Serial.printf("Screen changed to: %s\n", SCREEN_NAMES[currentScreen]);
+                Serial.printf("Screen CHANGED to: %s (%d)\n", SCREEN_NAMES[currentScreen], currentScreen);
+            } else {
+                Serial.printf("Screen already at: %s (%d)\n", SCREEN_NAMES[currentScreen], currentScreen);
             }
             telemetry.connected = true;
-            Serial.printf("OK:SCREEN_%d\n", screenNum);
+        } else {
+            Serial.printf("Invalid screen number: %d\n", screenNum);
         }
     }
     // Telemetry data updates from Pi (format: KEY:VALUE)
