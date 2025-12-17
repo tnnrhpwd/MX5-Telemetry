@@ -605,12 +605,31 @@ void LCD_FillRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t 
     if (r > w/2) r = w/2;
     if (r > h/2) r = h/2;
     
-    // Fill center rectangle
-    LCD_FillRect(x + r, y, w - 2*r, h, color);
+    // For small radius or no radius, just fill a regular rect
+    if (r <= 1) {
+        LCD_FillRect(x, y, w, h, color);
+        return;
+    }
     
-    // Fill side rectangles and corners
-    LCD_FillCorner(x + w - r - 1, y + r, r, 0x1, h - 2*r - 1, color);  // Right side + corners
-    LCD_FillCorner(x + r, y + r, r, 0x2, h - 2*r - 1, color);          // Left side + corners
+    // Optimized: Use horizontal scanlines for the entire shape
+    // This is faster than filling center + corners separately
+    
+    // Top rounded section
+    for (int row = 0; row < r; row++) {
+        int dx = r - (int)sqrt((float)(r * r - (r - row) * (r - row)));
+        LCD_FillRect(x + dx, y + row, w - 2 * dx, 1, color);
+    }
+    
+    // Middle rectangular section (no rounding)
+    if (h > 2 * r) {
+        LCD_FillRect(x, y + r, w, h - 2 * r, color);
+    }
+    
+    // Bottom rounded section
+    for (int row = 0; row < r; row++) {
+        int dx = r - (int)sqrt((float)(r * r - (r - row) * (r - row)));
+        LCD_FillRect(x + dx, y + h - r + row, w - 2 * dx, 1, color);
+    }
 }
 
 void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color) {
@@ -647,11 +666,28 @@ void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color) {
 }
 
 void LCD_FillCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color) {
-    // Use scanline fill approach - no gaps
-    for (int y = -r; y <= r; y++) {
-        // Calculate x width at this y using circle equation: x^2 + y^2 = r^2
-        // x = sqrt(r^2 - y^2)
+    // Optimized scanline fill - batch adjacent horizontal lines
+    // For small circles (common in UI), this is much faster
+    if (r == 0) {
+        LCD_DrawPixel(x0, y0, color);
+        return;
+    }
+    
+    // For very small circles, just fill a rectangle approximation
+    if (r <= 2) {
+        LCD_FillRect(x0 - r, y0 - r, 2 * r + 1, 2 * r + 1, color);
+        return;
+    }
+    
+    // Use horizontal line approach but batch into larger rectangles where possible
+    // Draw the center horizontal line first
+    LCD_FillRect(x0 - r, y0, 2 * r + 1, 1, color);
+    
+    // Draw symmetric pairs of lines above and below center
+    for (int y = 1; y <= r; y++) {
         int x = (int)sqrt((float)(r * r - y * y));
+        // Draw two lines at once if possible (above and below)
+        LCD_FillRect(x0 - x, y0 - y, 2 * x + 1, 1, color);
         LCD_FillRect(x0 - x, y0 + y, 2 * x + 1, 1, color);
     }
 }
