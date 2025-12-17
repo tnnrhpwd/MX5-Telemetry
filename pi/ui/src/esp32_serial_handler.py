@@ -39,6 +39,7 @@ import time
 import glob
 import json
 import os
+import queue
 from typing import Optional
 
 # Try to import serial library
@@ -92,6 +93,11 @@ class ESP32SerialHandler:
         self._running = False
         self._read_thread = None
         self._write_lock = threading.Lock()  # Lock for serial writes
+        
+        # Async write queue - screen changes are queued and processed by background thread
+        # This prevents blocking the main UI thread when navigating pages
+        self._write_queue = queue.Queue()
+        self._pending_screen = None  # Last queued screen (only latest matters)
         
         self.connected = False
         self.last_rx_time = 0
@@ -278,11 +284,32 @@ class ESP32SerialHandler:
         self.connected = False
     
     def _read_loop(self):
-        """Read incoming data from ESP32 in background thread"""
+        """Read incoming data from ESP32 and process write queue in background thread"""
         buffer = ""
+        last_screen_send = 0  # Rate limiting for screen commands
         
         while self._running and self.serial_conn:
             try:
+                # Process any pending screen changes from queue (non-blocking)
+                # Only send latest screen command (skip intermediate ones)
+                if self._pending_screen is not None:
+                    now = time.time()
+                    # Rate limit to 10Hz (100ms between screen commands)
+                    if now - last_screen_send >= 0.10:
+                        screen_idx = self._pending_screen
+                        self._pending_screen = None  # Clear pending
+                        try:
+                            with self._write_lock:
+                                msg = f"SCREEN:{screen_idx}\n"
+                                self.serial_conn.write(msg.encode('utf-8'))
+                                # No flush() - let it send naturally to avoid blocking
+                                last_screen_send = now
+                                self.last_tx_time = now
+                                print(f"ESP32: Sent SCREEN:{screen_idx} (async)")
+                        except Exception as e:
+                            print(f"ESP32 screen write error: {e}")
+                
+                # Read incoming data
                 if self.serial_conn.in_waiting > 0:
                     data = self.serial_conn.read(self.serial_conn.in_waiting)
                     buffer += data.decode('utf-8', errors='ignore')
@@ -517,8 +544,11 @@ class ESP32SerialHandler:
     
     def send_screen_change(self, screen_index: int):
         """
-        Send screen change command to ESP32 display.
-        Rate-limited to give ESP32 time to process (it has memory constraints).
+        Queue screen change command to ESP32 display (async/non-blocking).
+        
+        The command is queued and sent by the background thread.
+        Only the latest screen is kept - intermediate screens are skipped.
+        This prevents UI blocking when navigating between pages.
         
         Args:
             screen_index: Screen number (0-7)
@@ -527,33 +557,14 @@ class ESP32SerialHandler:
             print(f"ESP32: Cannot send screen {screen_index} - not connected")
             return
         
-        try:
-            # Clamp to valid range (ESP32 has 8 screens)
-            screen_index = max(0, min(7, screen_index))
-            
-            # Rate limit to 10Hz max (100ms between commands) to give ESP32 time to process
-            # ESP32 has memory constraints and can't handle rapid screen changes
-            now = time.time()
-            if hasattr(self, '_last_screen_send_time'):
-                elapsed = now - self._last_screen_send_time
-                if elapsed < 0.10:
-                    # Store the pending screen - will be sent on next allowed slot
-                    self._pending_screen_index = screen_index
-                    print(f"ESP32: Queued SCREEN:{screen_index} (rate limited)")
-                    return
-            
-            # Use lock to prevent collision with telemetry sends
-            with self._write_lock:
-                msg = f"SCREEN:{screen_index}\n"
-                self.serial_conn.write(msg.encode('utf-8'))
-                self.serial_conn.flush()  # Force immediate send
-                self._last_screen_send_time = now
-                self._pending_screen_index = None  # Clear any pending
-                self.last_tx_time = now
-                print(f"ESP32: Sent SCREEN:{screen_index}")
-            
-        except Exception as e:
-            print(f"ESP32 serial write error: {e}")
+        # Clamp to valid range (ESP32 has 8 screens)
+        screen_index = max(0, min(7, screen_index))
+        
+        # Queue for async send by background thread
+        # Only keep latest screen command (overwrite any pending)
+        self._pending_screen = screen_index
+        print(f"ESP32: Queued SCREEN:{screen_index} (async)")
+    
     
     def send_next_screen(self):
         """Send next screen command to ESP32"""
