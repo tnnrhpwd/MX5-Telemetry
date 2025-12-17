@@ -511,12 +511,12 @@ void setup() {
 }
 
 void loop() {
-    // Handle touch input - check more frequently for responsiveness
+    // Handle serial commands FIRST - highest priority for Pi sync
+    handleSerialCommands();
+    
+    // Handle touch input
     Touch_Loop();
     handleTouch();
-    
-    // Handle serial commands from Pi
-    handleSerialCommands();
     
     // BLE TPMS scanning - scan every 5 seconds
     if (bleInitialized && millis() - lastBLEScanTime > BLE_SCAN_INTERVAL) {
@@ -604,6 +604,9 @@ void loop() {
             // Clear fullRedraw flag after drawing
             needsFullRedraw = false;
         }
+        
+        // Process serial again after drawing in case commands arrived
+        handleSerialCommands();
     }
     
     delay(5);  // ~200Hz loop rate for responsive touch

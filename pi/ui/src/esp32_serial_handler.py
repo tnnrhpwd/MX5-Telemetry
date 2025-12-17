@@ -518,7 +518,6 @@ class ESP32SerialHandler:
     def send_screen_change(self, screen_index: int):
         """
         Send screen change command to ESP32 display.
-        Rate-limited to prevent flooding during rapid navigation.
         
         Args:
             screen_index: Screen number (0-7)
@@ -535,23 +534,17 @@ class ESP32SerialHandler:
             return
         
         try:
-            # Rate limit screen changes to prevent serial buffer overflow
-            # Min 50ms between screen change commands
-            if hasattr(self, '_last_screen_change_time'):
-                elapsed = time.time() - self._last_screen_change_time
-                if elapsed < 0.05:
-                    # Skip this command - too soon after last one
-                    # The next navigation will send the correct final screen
-                    return
-            
             # Clamp to valid range (ESP32 has 8 screens)
             screen_index = max(0, min(7, screen_index))
+            
+            # Track the target screen - always update this
+            self._pending_screen = screen_index
+            
+            # Send immediately - ESP32 handles rapid changes
             msg = f"SCREEN:{screen_index}\n"
             self.serial_conn.write(msg.encode('utf-8'))
             self.serial_conn.flush()  # Ensure it's sent immediately
-            self._last_screen_change_time = time.time()
             self.last_tx_time = time.time()
-            print(f"ESP32: Sent screen change to {screen_index}")
             
         except Exception as e:
             print(f"ESP32 serial write error: {e}")
