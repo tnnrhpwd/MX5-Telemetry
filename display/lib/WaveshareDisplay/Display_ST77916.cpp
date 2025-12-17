@@ -856,18 +856,28 @@ void LCD_DrawImage(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_
     uint16_t draw_w = (x + w > LCD_WIDTH) ? (LCD_WIDTH - x) : w;
     uint16_t draw_h = (y + h > LCD_HEIGHT) ? (LCD_HEIGHT - y) : h;
     
-    // For images stored in PROGMEM, we need to copy to RAM for DMA
-    // Draw row by row to limit memory usage
-    uint16_t* row_buf = (uint16_t*)heap_caps_malloc(draw_w * 2, MALLOC_CAP_DMA);
+    // Draw multiple rows at once for better performance
+    // Use 8KB buffer = ~11 rows at 360 width, or 22 rows at 180 width
+    const uint32_t MAX_BUF_SIZE = 8192;
+    uint16_t rows_per_batch = MAX_BUF_SIZE / (draw_w * 2);
+    if (rows_per_batch < 1) rows_per_batch = 1;
+    if (rows_per_batch > draw_h) rows_per_batch = draw_h;
+    
+    uint16_t* row_buf = (uint16_t*)heap_caps_malloc(rows_per_batch * draw_w * 2, MALLOC_CAP_DMA);
     if (!row_buf) {
         Serial.println("LCD_DrawImage: Failed to allocate row buffer");
         return;
     }
     
-    for (uint16_t row = 0; row < draw_h; row++) {
-        // Copy row from PROGMEM (data is already byte-swapped by converter)
-        memcpy_P(row_buf, &data[row * w], draw_w * 2);
-        esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + 1, row_buf);
+    for (uint16_t row = 0; row < draw_h; row += rows_per_batch) {
+        uint16_t batch_rows = rows_per_batch;
+        if (row + batch_rows > draw_h) batch_rows = draw_h - row;
+        
+        // Copy multiple rows from PROGMEM (data is already byte-swapped by converter)
+        for (uint16_t r = 0; r < batch_rows; r++) {
+            memcpy_P(&row_buf[r * draw_w], &data[(row + r) * w], draw_w * 2);
+        }
+        esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + batch_rows, row_buf);
     }
     
     heap_caps_free(row_buf);
