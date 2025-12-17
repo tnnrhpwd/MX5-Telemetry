@@ -488,7 +488,7 @@ class ESP32SerialHandler:
                 now = time.time()
                 if hasattr(self, '_last_screen_send_time'):
                     elapsed = now - self._last_screen_send_time
-                    if elapsed >= 0.25:
+                    if elapsed >= 0.10:
                         # Enough time has passed, send the pending screen
                         pending = self._pending_screen_index
                         self._pending_screen_index = None
@@ -531,12 +531,12 @@ class ESP32SerialHandler:
             # Clamp to valid range (ESP32 has 8 screens)
             screen_index = max(0, min(7, screen_index))
             
-            # Rate limit to 4Hz max (250ms between commands) to give ESP32 time to process
+            # Rate limit to 10Hz max (100ms between commands) to give ESP32 time to process
             # ESP32 has memory constraints and can't handle rapid screen changes
             now = time.time()
             if hasattr(self, '_last_screen_send_time'):
                 elapsed = now - self._last_screen_send_time
-                if elapsed < 0.25:
+                if elapsed < 0.10:
                     # Store the pending screen - will be sent on next allowed slot
                     self._pending_screen_index = screen_index
                     print(f"ESP32: Queued SCREEN:{screen_index} (rate limited)")
