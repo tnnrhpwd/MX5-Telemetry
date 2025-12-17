@@ -483,6 +483,18 @@ class ESP32SerialHandler:
                 self.serial_conn.flush()
                 self.last_tx_time = time.time()
             
+            # Check for pending screen change that was rate limited
+            if hasattr(self, '_pending_screen_index') and self._pending_screen_index is not None:
+                now = time.time()
+                if hasattr(self, '_last_screen_send_time'):
+                    elapsed = now - self._last_screen_send_time
+                    if elapsed >= 0.25:
+                        # Enough time has passed, send the pending screen
+                        pending = self._pending_screen_index
+                        self._pending_screen_index = None
+                        # Use recursive call - will acquire lock again
+                        self.send_screen_change(pending)
+            
         except Exception as e:
             print(f"ESP32 serial write error: {e}")
     
@@ -506,7 +518,7 @@ class ESP32SerialHandler:
     def send_screen_change(self, screen_index: int):
         """
         Send screen change command to ESP32 display.
-        This is HIGH PRIORITY - uses lock and flush.
+        Rate-limited to give ESP32 time to process (it has memory constraints).
         
         Args:
             screen_index: Screen number (0-7)
@@ -519,12 +531,25 @@ class ESP32SerialHandler:
             # Clamp to valid range (ESP32 has 8 screens)
             screen_index = max(0, min(7, screen_index))
             
+            # Rate limit to 4Hz max (250ms between commands) to give ESP32 time to process
+            # ESP32 has memory constraints and can't handle rapid screen changes
+            now = time.time()
+            if hasattr(self, '_last_screen_send_time'):
+                elapsed = now - self._last_screen_send_time
+                if elapsed < 0.25:
+                    # Store the pending screen - will be sent on next allowed slot
+                    self._pending_screen_index = screen_index
+                    print(f"ESP32: Queued SCREEN:{screen_index} (rate limited)")
+                    return
+            
             # Use lock to prevent collision with telemetry sends
             with self._write_lock:
                 msg = f"SCREEN:{screen_index}\n"
                 self.serial_conn.write(msg.encode('utf-8'))
                 self.serial_conn.flush()  # Force immediate send
-                self.last_tx_time = time.time()
+                self._last_screen_send_time = now
+                self._pending_screen_index = None  # Clear any pending
+                self.last_tx_time = now
                 print(f"ESP32: Sent SCREEN:{screen_index}")
             
         except Exception as e:
