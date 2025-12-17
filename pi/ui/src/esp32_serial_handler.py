@@ -461,6 +461,18 @@ class ESP32SerialHandler:
         if not self.serial_conn or not self._running:
             return
         
+        # Priority: If there's a pending screen change, send it first and skip telemetry
+        if hasattr(self, '_pending_screen_index') and self._pending_screen_index is not None:
+            now = time.time()
+            if hasattr(self, '_last_screen_send_time'):
+                elapsed = now - self._last_screen_send_time
+                if elapsed >= 0.10:
+                    pending = self._pending_screen_index
+                    self._pending_screen_index = None
+                    self.send_screen_change(pending)
+                    return  # Skip telemetry this cycle to let ESP32 process screen change
+            return  # Skip telemetry while screen change is pending
+        
         try:
             # Use lock to prevent collision with screen commands
             with self._write_lock:
@@ -482,18 +494,6 @@ class ESP32SerialHandler:
                 # Flush all at once
                 self.serial_conn.flush()
                 self.last_tx_time = time.time()
-            
-            # Check for pending screen change that was rate limited
-            if hasattr(self, '_pending_screen_index') and self._pending_screen_index is not None:
-                now = time.time()
-                if hasattr(self, '_last_screen_send_time'):
-                    elapsed = now - self._last_screen_send_time
-                    if elapsed >= 0.10:
-                        # Enough time has passed, send the pending screen
-                        pending = self._pending_screen_index
-                        self._pending_screen_index = None
-                        # Use recursive call - will acquire lock again
-                        self.send_screen_change(pending)
             
         except Exception as e:
             print(f"ESP32 serial write error: {e}")
