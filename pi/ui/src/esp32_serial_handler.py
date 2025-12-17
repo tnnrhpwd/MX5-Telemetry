@@ -531,20 +531,19 @@ class ESP32SerialHandler:
                 7 = Settings
         """
         if not self.serial_conn or not self._running:
+            print(f"ESP32: Cannot send screen {screen_index} - not connected")
             return
         
         try:
             # Clamp to valid range (ESP32 has 8 screens)
             screen_index = max(0, min(7, screen_index))
             
-            # Track the target screen - always update this
-            self._pending_screen = screen_index
-            
             # Send immediately - ESP32 handles rapid changes
             msg = f"SCREEN:{screen_index}\n"
             self.serial_conn.write(msg.encode('utf-8'))
             self.serial_conn.flush()  # Ensure it's sent immediately
             self.last_tx_time = time.time()
+            print(f"ESP32: Sent SCREEN:{screen_index}")
             
         except Exception as e:
             print(f"ESP32 serial write error: {e}")
