@@ -1115,7 +1115,7 @@ void drawTPMSScreen() {
     
     // Front Left - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[0]);
-    snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[0]);
+    snprintf(tempStr, sizeof(tempStr), "%.1fF", telemetry.tireTemp[0]);
     uint16_t fl_time_color = (tpmsLastUpdateStr[0][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(flX - 42, flY + 2, psiStr, flColor, COLOR_BG, 2);
     LCD_DrawString(flX - 42, flY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
@@ -1125,7 +1125,7 @@ void drawTPMSScreen() {
     
     // Front Right - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[1]);
-    snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[1]);
+    snprintf(tempStr, sizeof(tempStr), "%.1fF", telemetry.tireTemp[1]);
     uint16_t fr_time_color = (tpmsLastUpdateStr[1][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(frX + tireW + 8, frY + 2, psiStr, frColor, COLOR_BG, 2);
     LCD_DrawString(frX + tireW + 8, frY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
@@ -1135,7 +1135,7 @@ void drawTPMSScreen() {
     
     // Rear Left - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[2]);
-    snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[2]);
+    snprintf(tempStr, sizeof(tempStr), "%.1fF", telemetry.tireTemp[2]);
     uint16_t rl_time_color = (tpmsLastUpdateStr[2][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(rlX - 42, rlY + 2, psiStr, rlColor, COLOR_BG, 2);
     LCD_DrawString(rlX - 42, rlY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
@@ -1145,7 +1145,7 @@ void drawTPMSScreen() {
     
     // Rear Right - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[3]);
-    snprintf(tempStr, sizeof(tempStr), "%.0fF", telemetry.tireTemp[3]);
+    snprintf(tempStr, sizeof(tempStr), "%.1fF", telemetry.tireTemp[3]);
     uint16_t rr_time_color = (tpmsLastUpdateStr[3][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
     LCD_DrawString(rrX + tireW + 8, rrY + 2, psiStr, rrColor, COLOR_BG, 2);
     LCD_DrawString(rrX + tireW + 8, rrY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);

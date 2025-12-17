@@ -1549,7 +1549,7 @@ class PiDisplayApp:
             self.screen.blit(txt, txt.get_rect(center=(x, y - 18)))
             txt = self.font_small.render(f"{psi:.0f}", True, color)
             self.screen.blit(txt, txt.get_rect(center=(x, y + 2)))
-            txt = self.font_tiny.render(f"{temp:.0f}F", True, COLOR_GRAY)
+            txt = self.font_tiny.render(f"{temp:.1f}F", True, COLOR_GRAY)
             self.screen.blit(txt, txt.get_rect(center=(x, y + 20)))
         
         # Right panel: Alerts
@@ -1779,7 +1779,7 @@ class PiDisplayApp:
             self.screen.blit(txt, txt.get_rect(center=(x + 5, y + 22)))
             
             # Temperature
-            txt = self.font_small.render(f"{temp:.0f}°F", True, COLOR_GRAY)
+            txt = self.font_small.render(f"{temp:.1f}°F", True, COLOR_GRAY)
             self.screen.blit(txt, txt.get_rect(center=(x + 5, y + 42)))
         
         # Status bar at bottom
