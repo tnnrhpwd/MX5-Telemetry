@@ -91,6 +91,7 @@ class ESP32SerialHandler:
         self.serial_conn = None
         self._running = False
         self._read_thread = None
+        self._write_lock = threading.Lock()  # Lock for serial writes
         
         self.connected = False
         self.last_rx_time = 0
@@ -461,39 +462,26 @@ class ESP32SerialHandler:
             return
         
         try:
-            # Format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage
-            msg = f"TEL:{self.telemetry.rpm},{self.telemetry.speed_kmh},{self.telemetry.gear},"
-            msg += f"{self.telemetry.throttle_percent},{self.telemetry.coolant_temp_f},"
-            msg += f"{self.telemetry.oil_temp_f},{self.telemetry.voltage:.1f}\n"
-            
-            self.serial_conn.write(msg.encode('utf-8'))
-            
-            # Send diagnostics: DIAG:checkEngine,abs,oilWarn,battery
-            diag_msg = f"DIAG:{int(self.telemetry.check_engine_light)},{int(self.telemetry.abs_warning)},"
-            diag_msg += f"{int(self.telemetry.oil_pressure_warning)},{int(self.telemetry.battery_warning)}\n"
-            self.serial_conn.write(diag_msg.encode('utf-8'))
-            
-            # Send oil pressure
-            self.serial_conn.write(f"OILPSI:{self.telemetry.oil_pressure_psi:.1f}\n".encode('utf-8'))
-            
-            # Send fuel level
-            self.serial_conn.write(f"FUEL:{self.telemetry.fuel_level_percent:.1f}\n".encode('utf-8'))
-            
-            # Send tire pressure: TIRE:FL,FR,RL,RR
-            tp = self.telemetry.tire_pressure
-            tire_msg = f"TIRE:{tp[0]:.1f},{tp[1]:.1f},{tp[2]:.1f},{tp[3]:.1f}\n"
-            self.serial_conn.write(tire_msg.encode('utf-8'))
-            
-            # Send per-tire timestamps: TIRE_TIME:HH:MM:SS,HH:MM:SS,HH:MM:SS,HH:MM:SS
-            ts = self.telemetry.tpms_last_update_str
-            time_msg = f"TIRE_TIME:{ts[0]},{ts[1]},{ts[2]},{ts[3]}\n"
-            self.serial_conn.write(time_msg.encode('utf-8'))
-            
-            # Send engine running status (based on RPM > 0)
-            engine_running = 1 if self.telemetry.rpm > 0 else 0
-            self.serial_conn.write(f"ENGINE:{engine_running}\n".encode('utf-8'))
-            
-            self.last_tx_time = time.time()
+            # Use lock to prevent collision with screen commands
+            with self._write_lock:
+                # Combine all telemetry into fewer messages to reduce serial traffic
+                # Format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage,fuel,oilpsi,engine
+                msg = f"TEL:{self.telemetry.rpm:.0f},{self.telemetry.speed_kmh:.0f},{self.telemetry.gear},"
+                msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
+                msg += f"{self.telemetry.oil_temp_f:.0f},{self.telemetry.voltage:.1f},"
+                msg += f"{self.telemetry.fuel_level_percent:.0f},{self.telemetry.oil_pressure_psi:.0f},"
+                engine_running = 1 if self.telemetry.rpm > 0 else 0
+                msg += f"{engine_running}\n"
+                self.serial_conn.write(msg.encode('utf-8'))
+                
+                # Send diagnostics (less frequently important)
+                diag_msg = f"DIAG:{int(self.telemetry.check_engine_light)},{int(self.telemetry.abs_warning)},"
+                diag_msg += f"{int(self.telemetry.oil_pressure_warning)},{int(self.telemetry.battery_warning)}\n"
+                self.serial_conn.write(diag_msg.encode('utf-8'))
+                
+                # Flush all at once
+                self.serial_conn.flush()
+                self.last_tx_time = time.time()
             
         except Exception as e:
             print(f"ESP32 serial write error: {e}")
@@ -518,17 +506,10 @@ class ESP32SerialHandler:
     def send_screen_change(self, screen_index: int):
         """
         Send screen change command to ESP32 display.
+        This is HIGH PRIORITY - uses lock and flush.
         
         Args:
             screen_index: Screen number (0-7)
-                0 = Overview
-                1 = RPM/Speed
-                2 = TPMS
-                3 = Engine
-                4 = G-Force
-                5 = Diagnostics
-                6 = System
-                7 = Settings
         """
         if not self.serial_conn or not self._running:
             print(f"ESP32: Cannot send screen {screen_index} - not connected")
@@ -538,12 +519,13 @@ class ESP32SerialHandler:
             # Clamp to valid range (ESP32 has 8 screens)
             screen_index = max(0, min(7, screen_index))
             
-            # Send immediately - ESP32 handles rapid changes
-            msg = f"SCREEN:{screen_index}\n"
-            self.serial_conn.write(msg.encode('utf-8'))
-            self.serial_conn.flush()  # Ensure it's sent immediately
-            self.last_tx_time = time.time()
-            print(f"ESP32: Sent SCREEN:{screen_index}")
+            # Use lock to prevent collision with telemetry sends
+            with self._write_lock:
+                msg = f"SCREEN:{screen_index}\n"
+                self.serial_conn.write(msg.encode('utf-8'))
+                self.serial_conn.flush()  # Force immediate send
+                self.last_tx_time = time.time()
+                print(f"ESP32: Sent SCREEN:{screen_index}")
             
         except Exception as e:
             print(f"ESP32 serial write error: {e}")
