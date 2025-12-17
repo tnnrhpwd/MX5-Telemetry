@@ -757,12 +757,12 @@ class PiDisplayApp:
             
             # Forward telemetry to ESP32 (if connected)
             if self.esp32_handler and self.esp32_handler.connected:
-                # Send telemetry at ~10Hz (every 3 frames at 30fps)
+                # Send telemetry at ~5Hz (every 6 frames at 30fps) - reduced to avoid serial congestion
                 if hasattr(self, '_esp32_tx_counter'):
                     self._esp32_tx_counter += 1
                 else:
                     self._esp32_tx_counter = 0
-                if self._esp32_tx_counter >= 3:
+                if self._esp32_tx_counter >= 6:
                     self._esp32_tx_counter = 0
                     self.esp32_handler.send_telemetry()
             
