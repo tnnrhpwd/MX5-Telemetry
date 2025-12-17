@@ -122,10 +122,16 @@ bool imuAvailable = false;
 // Index 2 = Rear Left (RL),  Index 3 = Rear Right (RR)
 // 
 // Calibrated 2025-12-15: Based on temperature patterns (front ~64°F, rear ~62°F)
-const char* TPMS_MAC_FL = "14:27:4b:11:11:11";  // Front Left tire (29.2 PSI, 64.4°F)
-const char* TPMS_MAC_FR = "14:13:1f:11:11:11";  // Front Right tire (was RR, has front temp 64°F)
+// TPMS MAC addresses mapped by physical tire position
+// Calibrated against manufacturer app on 2025-12-16:
+// - App FL (29.6 PSI, 69.8°F) = highest pressure/temp = MAC 14:26:6d
+// - App FR (28.7 PSI, 66.2°F) = MAC 14:13:1f  
+// - App RL (28.7 PSI, 64.4°F) = MAC 14:10:50
+// - App RR (28.7 PSI, 64.4°F) = MAC 14:27:4b
+const char* TPMS_MAC_FL = "14:26:6d:11:11:11";  // Front Left tire (was RR, has highest pressure)
+const char* TPMS_MAC_FR = "14:13:1f:11:11:11";  // Front Right tire
 const char* TPMS_MAC_RL = "14:10:50:11:11:11";  // Rear Left tire
-const char* TPMS_MAC_RR = "14:26:6d:11:11:11";  // Rear Right tire (was FR)
+const char* TPMS_MAC_RR = "14:27:4b:11:11:11";  // Rear Right tire (was FL)
 
 const char* TPMS_MAC_ADDRESSES[] = {
     TPMS_MAC_FL,  // Index 0 = FL
