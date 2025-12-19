@@ -1,42 +1,76 @@
 # Build System Architecture
 
-## Overview
-The MX5-Telemetry project separates **Arduino firmware** from **development tools** to keep the hardware build lean and efficient.
+## System Overview
 
-## What Gets Uploaded to Arduino?
+The MX5-Telemetry project uses a **three-device architecture**:
 
-✅ **ONLY these folders are compiled into the firmware:**
-- `src/` - Your main application code (main.cpp)
-- `lib/` - Custom libraries (CANHandler, LEDController, DataLogger, etc.)
+| Device | Build Location | Tools |
+|--------|----------------|-------|
+| **Arduino Nano** | `arduino/` | PlatformIO |
+| **ESP32-S3 Display** | `display/` | PlatformIO |
+| **Raspberry Pi 4B** | `pi/` | Python (no build) |
+
+## What Gets Uploaded to Hardware?
+
+### Arduino Nano (`arduino/`)
+
+✅ **Compiled into firmware:**
+- `arduino/src/` - Main application code (main.cpp)
+- `lib/` - Custom libraries (CANHandler, LEDController, etc.)
 - Platform libraries from `lib_deps` in platformio.ini
 
 📦 **Approximate firmware size:** ~20-30KB (plenty of room on Arduino Nano's 32KB flash)
 
+### ESP32-S3 Display (`display/`)
+
+✅ **Compiled into firmware:**
+- `display/src/` - Main application code (main.cpp, ui_config.h)
+- `display/include/` - Header files (display_config.h, boot_logo.h, etc.)
+- `display/lib/` - Display-specific libraries (WaveshareDisplay)
+- LVGL and LovyanGFX libraries from `lib_deps`
+
+📦 **Approximate firmware size:** ~1-2MB (ESP32-S3 has 4MB+ flash)
+
+### Raspberry Pi (`pi/`)
+
+✅ **Runs directly (no compilation):**
+- `pi/ui/` - Python UI application
+- `pi/start_display.sh` - Startup script
+
 ## What NEVER Gets Uploaded?
 
-❌ **These folders stay on your computer:**
-- `tools/` - Python scripts (LED simulator, parsers)
+❌ **These folders stay on your development computer:**
+- `tools/` - Python simulators, utilities
 - `docs/` - Documentation
-- `examples/` - Example code
 - `test/` - Unit tests
-- `scripts/` - Build scripts
+- `archive/` - Legacy code
 - `hardware/` - Wokwi simulation files
+- `build-automation/` - Build/upload scripts
 
-## How PlatformIO Builds
+## PlatformIO Build Process
 
 ```
 ┌─────────────────────────────────────┐
-│  PlatformIO Build Process           │
+│  Arduino Build (pio run -d arduino) │
 ├─────────────────────────────────────┤
-│ 1. Read platformio.ini              │
-│ 2. Compile src/*.cpp                │
+│ 1. Read arduino/platformio.ini      │
+│ 2. Compile arduino/src/*.cpp        │
 │ 3. Compile lib/*/*.cpp              │
 │ 4. Link platform libraries          │
 │ 5. Generate .hex file               │
 │ 6. Upload ONLY .hex to Arduino      │
 └─────────────────────────────────────┘
 
-❌ Ignored: tools/, docs/, examples/, test/
+┌─────────────────────────────────────┐
+│  ESP32 Build (pio run -d display)   │
+├─────────────────────────────────────┤
+│ 1. Read display/platformio.ini      │
+│ 2. Compile display/src/*.cpp        │
+│ 3. Compile display/lib/*/*.cpp      │
+│ 4. Link LVGL + LovyanGFX            │
+│ 5. Generate .bin file               │
+│ 6. Upload to ESP32-S3               │
+└─────────────────────────────────────┘
 ```
 
 ## LED Simulator Architecture

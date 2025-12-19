@@ -1,7 +1,16 @@
 # LED Timing and Performance Analysis
 
-**Last Updated:** December 3, 2025  
-**Status:** ✅ Single Arduino setup achieves <1ms latency
+**Last Updated:** December 2025  
+**Status:** ✅ Production single Arduino setup achieves <1ms latency
+
+## Architecture Context
+
+The LED system runs on the **Arduino Nano**, which:
+- Reads RPM directly from HS-CAN bus (shared with Raspberry Pi)
+- Controls WS2812B LED strip (20 LEDs around gauge cluster)
+- Receives settings (brightness, thresholds) from Pi via serial
+
+This direct CAN→LED path achieves **<1ms latency**, which is 170× faster than the legacy dual-arduino serial link.
 
 ---
 

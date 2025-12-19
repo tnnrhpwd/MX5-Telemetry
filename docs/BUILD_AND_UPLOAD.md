@@ -6,10 +6,16 @@
 
 ## Quick Reference
 
-| Device | Purpose | Build Command | Upload Command |
-|--------|---------|---------------|----------------|
-| **Arduino Nano** | LED Controller | `pio run -d arduino` | `pio run -d arduino --target upload` |
-| **ESP32-S3** | Round Display | `pio run -d display` | `pio run -d display --target upload` |
+| Device | Upload Method | Connection | Command |
+|--------|---------------|------------|----------|
+| **Arduino Nano** | **Local** (plug into PC) | USB-C to PC | `pio run -d arduino --target upload` |
+| **ESP32-S3** | **Remote** (via Pi SSH) | USB-C to Pi | `ssh pi@192.168.1.28 '... pio run -d display --target upload'` |
+| **Pi App** | **Remote** (SSH) | Network | `ssh pi@192.168.1.28 '... systemctl restart mx5-display'` |
+
+### Physical Setup
+- **Arduino Nano**: Disconnected from vehicle, plug into PC for upload
+- **ESP32-S3**: Permanently connected to Pi USB (`/dev/ttyACM0`) - upload remotely
+- **Pi (192.168.1.28)**: Always on network, git pull + restart service
 
 ---
 
@@ -21,57 +27,66 @@
 
 ---
 
-## Method 1: VS Code Tasks (Easiest)
+## Method 1: VS Code Tasks (Recommended)
 
-Press `Ctrl+Shift+B` and select:
-- **PlatformIO: Build Arduino** - Build Arduino firmware
-- **PlatformIO: Upload Arduino** - Upload to Arduino Nano
-- **PlatformIO: Build Display (ESP32-S3)** - Build ESP32 firmware
-- **PlatformIO: Upload Display (ESP32-S3)** - Upload to ESP32-S3
+Press `Ctrl+Shift+P` → "Tasks: Run Task":
+
+### Remote Deployment (Default - ESP32 & Pi)
+- **Deploy All: Build, Push, Flash ESP32, Restart Pi** - Full deployment
+- **Pi: Flash ESP32 (Remote)** - Git pull on Pi + flash ESP32 via USB
+- **Pi: Git Pull & Restart UI** - Update Pi code only
+
+### Local Upload (Arduino Only)
+- **PlatformIO: Upload Arduino** - Upload to Arduino Nano (must be plugged into PC)
+- **PlatformIO: Upload and Monitor Arduino** - Upload + serial monitor
 
 ---
 
 ## Method 2: Command Line
 
-### Find Your COM Ports
+### Arduino Nano (Local - Plug into PC)
+
+The Arduino must be physically connected to your PC:
 
 ```powershell
-# Windows - List COM ports
+# Find COM port (Windows)
 Get-WmiObject Win32_SerialPort | Select-Object DeviceID, Description
-```
 
-### Arduino Nano (LED Controller)
-
-```powershell
-cd C:\Users\tanne\Documents\Github\MX5-Telemetry
-
-# Build
-pio run -d arduino
-
-# Upload
+# Build and upload
 pio run -d arduino --target upload
 
-# Upload with specific port
+# Or specify COM port
 pio run -d arduino --target upload --upload-port COM3
 
 # Monitor serial
 pio device monitor -b 115200
 ```
 
-### ESP32-S3 Display
+### ESP32-S3 Display (Remote via Pi SSH)
+
+The ESP32 is permanently connected to the Pi. Upload remotely:
 
 ```powershell
-# Build
-pio run -d display
+# First, push your changes to GitHub
+git add -A && git commit -m "Your message" && git push
 
-# Upload
-pio run -d display --target upload
+# Then SSH to Pi and flash
+ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
+```
 
-# Upload with specific port
-pio run -d display --target upload --upload-port COM4
+### Pi Application (Remote Update)
 
-# Monitor serial
-pio device monitor -b 115200
+```powershell
+# Push changes, then update and restart
+git push
+ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
+```
+
+### Full Deploy (All in One)
+
+```powershell
+# Build locally, push, flash ESP32, restart Pi
+pio run -d display; git add -A; git commit -m 'Deploy update' --allow-empty; git push; ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload && sudo systemctl restart mx5-display'
 ```
 
 ---
@@ -84,6 +99,7 @@ pio device monitor -b 115200
 2. Open Serial Monitor at **115200 baud** (if ENABLE_SERIAL_DEBUG is true)
 3. Without CAN bus connected, LEDs will show error animation after 3 seconds
 4. With CAN bus connected, LEDs display RPM-based colors
+5. **When connected to Pi**: Arduino receives LED sequence/pattern selection via serial
 
 ### ESP32-S3 Display
 
@@ -91,43 +107,63 @@ pio device monitor -b 115200
 2. Screen cycles through Overview, RPM, TPMS, Engine screens
 3. Touch to change screens (or use steering wheel buttons via Pi)
 4. Serial monitor shows BLE TPMS scanning status
+5. **When connected to Pi**: Receives all CAN telemetry + SWC buttons, sends TPMS + G-force data back
 
 ---
 
 ## 🔌 Hardware Setup
+
+### System Overview
+
+| Device | Location | CAN | Serial |
+|--------|----------|-----|--------|
+| **Pi 4B** | Hidden (console/trunk) | MCP2515 x2 (HS + MS) | To ESP32 + Arduino |
+| **ESP32-S3** | **Stock oil gauge hole** | None | From Pi (telemetry in, TPMS/G-force out) |
+| **Arduino Nano** | Gauge cluster bezel | MCP2515 (shared HS-CAN) | From Pi (LED settings) |
 
 ### Arduino Nano Wiring
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                        ARDUINO NANO                          │
+│              (Located in gauge cluster bezel)                │
 │                                                              │
 │   D2 ←──── INT (MCP2515 Interrupt - CRITICAL!)              │
-│   D5 ────→ WS2812B Data                                      │
+│   D5 ────→ WS2812B Data (LED strip around gauges)           │
 │   D10 ───→ MCP2515 CS                                        │
 │   D11 ───→ MCP2515 MOSI                                      │
 │   D12 ←─── MCP2515 MISO                                      │
 │   D13 ───→ MCP2515 SCK                                       │
+│   D0 ←──── Pi Serial TX (for LED sequence selection)        │
 │   A6 ←──── Brightness Pot (optional)                         │
 │   D3 ────→ Haptic Motor (optional)                           │
 │   5V ────→ MCP2515 VCC, LED Strip VCC                        │
 │   GND ───→ MCP2515 GND, LED Strip GND                        │
 └──────────────────────────────────────────────────────────────┘
 
-MCP2515 → OBD-II Port:
+MCP2515 → OBD-II Port (SHARED with Pi MCP2515 #1):
   CANH → Pin 6 (HS-CAN High)
   CANL → Pin 14 (HS-CAN Low)
 ```
 
 ### ESP32-S3 Round Display
 
-The Waveshare ESP32-S3-Touch-LCD-1.85 is pre-wired. Connect via USB-C to Pi for serial data.
+- **Location**: Mounted in stock oil gauge hole (1.85" fits perfectly)
+- **Connection**: USB-C to Pi for serial data
+- **Shows as**: `/dev/ttyACM0` on Pi
 
-**Serial Connection (USB preferred):**
-- Pi USB-A port → ESP32-S3 USB-C port
-- Shows as `/dev/ttyACM0` on Pi
+The Waveshare ESP32-S3-Touch-LCD-1.85 is pre-wired internally.
+
+**Data Flow**:
+- Receives from Pi: CAN telemetry, SWC buttons, settings sync
+- Sends to Pi: BLE TPMS data, G-force IMU data
 
 ### Raspberry Pi 4B
+
+- **Location**: Hidden in center console or trunk
+- **CAN**: Dual MCP2515 (HS-CAN shared with Arduino, MS-CAN exclusive)
+- **Output**: HDMI to Pioneer head unit
+- **Serial**: To ESP32-S3 and Arduino
 
 See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for full Pi wiring with dual MCP2515 modules.
 

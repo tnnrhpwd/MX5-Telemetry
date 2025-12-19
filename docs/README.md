@@ -1,56 +1,78 @@
 # 📚 MX5-Telemetry Documentation
 
-Complete documentation for the MX5-Telemetry system.
+Complete documentation for the MX5-Telemetry system - a real-time automotive telemetry system for Mazda MX-5 (NC) vehicles.
 
 ---
 
 ## 🎯 System Architecture
 
-The current system uses a **three-device architecture**:
+The system uses a **three-device architecture** with the Pi as central hub:
 
-| Device | Purpose | Connection |
-|--------|---------|------------|
-| **Raspberry Pi 4B** | CAN bus hub + HDMI display | Dual MCP2515 (HS + MS CAN) |
-| **ESP32-S3 Round Display** | Gauge display + BLE TPMS receiver | Serial from Pi |
-| **Arduino Nano** | RPM LED strip controller | Direct HS-CAN (MCP2515) |
+| Device | Purpose | Location | Connection |
+|--------|---------|----------|------------|
+| **Raspberry Pi 4B** | CAN hub + settings cache + HDMI display | Hidden (console/trunk) | MCP2515 (HS + MS CAN) |
+| **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force IMU | **Stock oil gauge hole** | Serial from Pi |
+| **Arduino Nano** | RPM LED strip controller | Gauge cluster bezel | Direct HS-CAN + Serial from Pi |
+
+### Data Flow Summary
+
+```
+OBD-II Port
+    │
+    ├─── HS-CAN (500k) ──┬──► Pi MCP2515 #1 ──► Pi processes all data
+    │                    │
+    │                    └──► Arduino MCP2515 ──► RPM → LED strip (direct, <1ms)
+    │
+    └─── MS-CAN (125k) ──────► Pi MCP2515 #2 ──► Steering wheel buttons
+    
+Pi (Central Hub)
+    │
+    ├──► ESP32-S3 (Serial) ──► Telemetry + SWC buttons + settings sync
+    │    ◄─── ESP32-S3 ◄───── TPMS + G-force data
+    │
+    ├──► Arduino (Serial) ───► LED sequence selection + settings sync
+    │
+    └──► Pioneer (HDMI) ─────► Full dashboard display
+```
 
 See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete architecture details.
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Getting Started (New Users)
 
-| Document | Description |
-|----------|-------------|
-| [**PI_DISPLAY_INTEGRATION.md**](PI_DISPLAY_INTEGRATION.md) | ⭐ **Start here!** Complete system architecture |
-| [**BUILD_AND_UPLOAD.md**](BUILD_AND_UPLOAD.md) | Build and flash Arduino/ESP32 firmware |
-| [setup/OUTDOOR_TEST_QUICKSTART.md](setup/OUTDOOR_TEST_QUICKSTART.md) | Field testing checklist |
+| Step | Document | Description |
+|------|----------|-------------|
+| 1️⃣ | [**PI_DISPLAY_INTEGRATION.md**](PI_DISPLAY_INTEGRATION.md) | ⭐ Understand the system architecture |
+| 2️⃣ | [**hardware/PARTS_LIST.md**](hardware/PARTS_LIST.md) | Get the required hardware |
+| 3️⃣ | [**hardware/WIRING_GUIDE.md**](hardware/WIRING_GUIDE.md) | Wire up all components |
+| 4️⃣ | [**BUILD_AND_UPLOAD.md**](BUILD_AND_UPLOAD.md) | Build and flash firmware |
+| 5️⃣ | [**DEPLOYMENT.md**](DEPLOYMENT.md) | Deploy to the car |
 
 ---
 
-## 🔧 Hardware
+## 🔧 Hardware Documentation
 
 | Document | Description |
 |----------|-------------|
-| [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) | **Primary** - Pi + ESP32 + Arduino system |
-| [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) | Arduino Nano standalone wiring |
-| [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Detailed Arduino pin assignments |
+| [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Complete wiring for all devices |
+| [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) | Arduino-only quick reference |
 | [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) | Bill of materials |
-| [hardware/TPMS_BLUETOOTH.md](hardware/TPMS_BLUETOOTH.md) | BLE TPMS sensor setup |
+| [hardware/TPMS_BLUETOOTH.md](hardware/TPMS_BLUETOOTH.md) | BLE TPMS sensor setup (ESP32) |
 
 ---
 
-## ✨ Features
+## ✨ Feature Documentation
 
-### LED System
+### LED System (Arduino)
 | Document | Description |
 |----------|-------------|
-| [features/LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md) | Complete LED state documentation |
-| [features/LED_TIMING_AND_PERFORMANCE.md](features/LED_TIMING_AND_PERFORMANCE.md) | Update rate and latency analysis |
-| [features/LED_SIMULATOR_ARDUINO_CONNECTION.md](features/LED_SIMULATOR_ARDUINO_CONNECTION.md) | Python simulator setup |
+| [features/LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md) | 7-state LED visual system |
+| [features/LED_TIMING_AND_PERFORMANCE.md](features/LED_TIMING_AND_PERFORMANCE.md) | <1ms latency analysis |
+| [features/LED_SIMULATOR_ARDUINO_CONNECTION.md](features/LED_SIMULATOR_ARDUINO_CONNECTION.md) | Python simulator → Arduino |
 | [features/LED_SIMULATOR_TROUBLESHOOTING.md](features/LED_SIMULATOR_TROUBLESHOOTING.md) | Simulator debugging |
 
-### Display System
+### Display System (ESP32 + Pi)
 | Document | Description |
 |----------|-------------|
 | [DISPLAY_DEPLOYMENT.md](DISPLAY_DEPLOYMENT.md) | ESP32-S3 display deployment |
@@ -58,18 +80,18 @@ See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete architec
 
 ---
 
-## 💻 Development
+## 💻 Development Documentation
 
 | Document | Description |
 |----------|-------------|
-| [development/PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md) | PlatformIO deep-dive (CLI, simulation) |
-| [development/BUILD_ARCHITECTURE.md](development/BUILD_ARCHITECTURE.md) | Code architecture |
-| [development/DATA_ANALYSIS.md](development/DATA_ANALYSIS.md) | CSV data visualization |
-| [development/CLEANUP_GUIDE.md](development/CLEANUP_GUIDE.md) | Code cleanup notes |
+| [development/PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md) | PlatformIO setup and usage |
+| [development/BUILD_ARCHITECTURE.md](development/BUILD_ARCHITECTURE.md) | Project structure |
+| [development/DATA_ANALYSIS.md](development/DATA_ANALYSIS.md) | Telemetry data visualization |
+| [development/REQUIREMENTS_COMPLIANCE.md](development/REQUIREMENTS_COMPLIANCE.md) | System requirements checklist |
 
 ---
 
-## 📋 Session Notes
+## 📋 Project Management
 
 | Document | Description |
 |----------|-------------|
@@ -77,114 +99,60 @@ See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete architec
 
 ---
 
-## 📦 Archive
+## 📦 Archived Documentation
 
 Old/superseded documentation kept for historical reference in `archive/dual-arduino/docs/`:
 
-| Archived Document | Notes |
-|----------|-------|
-| WIRING_GUIDE_DUAL_ARDUINO.md | Dual Arduino wiring (replaced by single Arduino + Pi) |
-| MASTER_SLAVE_ARCHITECTURE.md | Dual Arduino architecture |
-| DUAL_ARDUINO_SETUP.md | Dual Arduino configuration |
-
-GPS & Logging features documentation (for future reference):
-- features/GPS_TROUBLESHOOTING.md
-- features/COMPREHENSIVE_DATA_LOGGING.md
-- features/LOG_ROTATION_FEATURE.md
-- features/AUTO_START_FEATURE.md
+- **Dual Arduino Architecture** - Replaced by single Arduino + Pi
+- **GPS & SD Card Logging** - Now handled by Pi
+- **GoPro Power Control** - Legacy feature
 
 ---
 
-## Quick Commands
+## ⚡ Quick Commands
 
+### Remote Deployment (Default - ESP32 & Pi)
 ```powershell
-# Build Arduino (LED controller)
-pio run -d arduino
+# Flash ESP32 via Pi (ESP32 is plugged into Pi USB)
+git push
+ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 
-# Upload Arduino
-pio run -d arduino --target upload
+# Update Pi application
+ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
 
-# Build ESP32-S3 Display
-pio run -d display
-
-# Upload ESP32-S3 Display
-pio run -d display --target upload
+# Or use VS Code tasks: "Pi: Flash ESP32 (Remote)" / "Pi: Git Pull & Restart UI"
 ```
+
+### Local Upload (Arduino Only - Must Plug into PC)
+```powershell
+# Arduino must be connected to PC via USB
+pio run -d arduino --target upload
+```
+
+### Simulators & Monitoring
+```powershell
+# Run LED Simulator
+python tools/simulators/led_simulator/led_simulator_v2.1.py
+
+# Monitor serial output (local device)
+pio device monitor -b 115200
+```
+
+---
 
 ## 🗂️ Project Structure
 
 ```
 MX5-Telemetry/
 ├── arduino/                    # Arduino Nano (CAN + LED)
-│   ├── src/main.cpp            # LED controller firmware
-│   └── platformio.ini
-│
+│   └── src/main.cpp            # LED controller firmware
 ├── display/                    # ESP32-S3 Round Display
-│   ├── src/main.cpp            # Display firmware
-│   ├── ui/                     # UI components
-│   └── scripts/                # Firmware backup/flash tools
-│
+│   └── src/main.cpp            # Display firmware
 ├── pi/                         # Raspberry Pi 4B
-│   ├── ui/src/                 # Pi display application
-│   └── start_display.sh        # Startup script
-│
-├── lib/                        # Shared libraries
-│   ├── CANHandler/             # CAN bus module
-│   ├── LEDController/          # LED control module
-│   ├── Config/                 # Configuration
-│   └── ...
-│
-├── archive/                    # Archived (dual-arduino setup)
-│   └── dual-arduino/
-│
+│   └── ui/                     # Pi display application
+├── lib/                        # Shared Arduino libraries
 ├── docs/                       # All documentation (you are here)
-├── tools/                      # Simulators & utilities
-├── build-automation/           # Build scripts
-└── hardware/                   # Wokwi circuit files
+├── tools/simulators/           # LED & UI simulators
+├── archive/                    # Archived (dual-arduino setup)
+└── build-automation/           # Build scripts
 ```
-
-## 🚀 Quick Navigation
-
-### I want to...
-
-- **Understand the system** → Start with [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md)
-- **Build Arduino LED strip** → [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md)
-- **Set up ESP32-S3 display** → [DISPLAY_DEPLOYMENT.md](DISPLAY_DEPLOYMENT.md)
-- **Set up Pi display** → [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md)
-- **Use PlatformIO IDE** → [development/PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md)
-- **Run UI simulators** → See VS Code tasks
-
-## 🎯 Recommended Reading Order
-
-### For First-Time Users:
-1. Main [README.md](../README.md) - Project overview
-2. [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) - Full architecture
-3. [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) - Order components
-4. [BUILD_AND_UPLOAD.md](BUILD_AND_UPLOAD.md) - Flash firmware
-
-### For Developers:
-1. [development/PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md) - Set up dev environment
-2. Review source code in `arduino/`, `display/`, `pi/`
-3. Use simulators in VS Code tasks
-
-## 📞 Support
-
-If you can't find what you need in the documentation:
-
-1. Check the main [README.md](../README.md) troubleshooting section
-2. Review existing GitHub issues
-3. Open a new issue with detailed information
-
-## 🤝 Contributing to Documentation
-
-Documentation improvements are always welcome! When contributing:
-
-- Keep guides concise but complete
-- Include code examples where helpful
-- Add screenshots for complex procedures
-- Test all commands before submitting
-- Update this index when adding new docs
-
----
-
-**💡 Tip**: All documentation files are written in Markdown. View them in any text editor, or on GitHub for formatted rendering.

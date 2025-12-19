@@ -1,5 +1,16 @@
 # LED Mirrored Progress Bar System
 
+## Architecture Context
+
+This document describes the LED behavior on the **Arduino Nano**, which is mounted behind the gauge cluster and controls a WS2812B LED strip. The Arduino reads RPM directly from the HS-CAN bus (shared with the Raspberry Pi) for <1ms CAN→LED latency.
+
+**Related Components:**
+- Arduino Nano: LED strip controller (this document)
+- Raspberry Pi 4B: Sends LED settings (brightness, thresholds) via serial
+- ESP32-S3: Not involved in LED control (handles display + TPMS + G-force)
+
+---
+
 ## Overview
 
 The MX5-Telemetry project uses a sophisticated **mirrored progress bar** LED system that provides intuitive visual feedback for different driving conditions. The progress bar grows from both edges **inward toward the center**, creating a symmetric visual that's easy to read peripherally while driving.
