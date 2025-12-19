@@ -2,14 +2,26 @@
 
 ## Project Overview
 
-Integrate a Raspberry Pi 4 (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Round Display into the 2008 MX5 NC GT, controlled via stock steering wheel buttons through CAN bus.
+Integrate a Raspberry Pi 4B (HDMI output to Pioneer AVH-W4500NEX) and ESP32-S3 Round Display (mounted in stock oil gauge location) into the 2008 MX5 NC GT, controlled via stock steering wheel buttons through CAN bus.
 
 ### Goals ✅ IMPLEMENTED
-- Display telemetry data on ESP32-S3 round LCD (gauges, RPM, speed)
-- Display telemetry data on Raspberry Pi via HDMI to Pioneer head unit
+- Display telemetry data on ESP32-S3 round LCD (gauges, RPM, speed) - **replaces stock oil gauge**
+- Display telemetry data on Raspberry Pi via HDMI to Pioneer aftermarket head unit
 - Display tire pressure from BLE TPMS sensors on both displays
+- Display G-force data from ESP32-S3's onboard IMU on both displays
 - Control both devices using stock MX5 steering wheel buttons (no touch needed)
 - Read vehicle data from HS-CAN and MS-CAN buses
+- Arduino LED strip around gauge cluster for RPM visualization (direct CAN for <1ms latency)
+- Pi caches all settings and syncs to ESP32 and Arduino on startup
+
+### Physical Mounting
+
+| Device | Location | Notes |
+|--------|----------|-------|
+| **Raspberry Pi 4B** | Hidden (center console/trunk) | Central hub |
+| **ESP32-S3 Round Display** | **Stock oil gauge hole** | 1.85" fits perfectly |
+| **Arduino Nano + LEDs** | Gauge cluster bezel | LED strip surrounds instruments |
+| **Pioneer Head Unit** | Stock head unit location | Aftermarket with HDMI input |
 
 ### UI Implementation Summary
 
@@ -24,7 +36,7 @@ Both displays share a synchronized **8-screen interface**:
 | 4 | **G-Force** | IMU-based lateral/longitudinal G |
 | 5 | **Diagnostics** | CEL, ABS, DTC codes, wheel slip |
 | 6 | **System** | CPU, memory, network, CAN status |
-| 7 | **Settings** | Brightness, shift RPM, warnings, units |
+| 7 | **Settings** | Brightness, shift RPM, warnings, units, LED pattern |
 
 **Navigation**: RES+/SET- (↑/↓) to cycle screens, VOL+/VOL- (→/←) also navigates, ON/OFF to select, CANCEL to back, MUTE for sleep mode. **RPM/Speed screen**: ON/OFF starts/stops lap timer, CANCEL resets.
 
@@ -32,17 +44,17 @@ Both displays share a synchronized **8-screen interface**:
 
 ## Hardware Components
 
-| Component | Purpose | Docs |
-|-----------|---------|------|
-| Raspberry Pi 4B | CAN hub + HDMI output to Pioneer AVH-W4500NEX | - |
-| ESP32-S3 Round Display | 1.85" gauge display + BLE TPMS receiver | - |
-| Arduino Nano | RPM LED strip controller (direct CAN) | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
-| MCP2515 Module x3 | Pi (HS + MS), Arduino (HS) - hardwired for reliability | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
-| Pioneer AVH-W4500NEX | Head unit with HDMI input | - |
-| WS2812B LED Strip | RPM shift light (20 LEDs) | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
-| OBD-II Breakout | Access CAN bus pins | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
-| LM2596 Buck Converter | 12V → 5V power | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
-| BLE TPMS Sensors (4x) | Tire pressure + temp | Cap-mounted, BLE broadcast ✅ Ordered |
+| Component | Purpose | Location | Docs |
+|-----------|---------|----------|------|
+| Raspberry Pi 4B | CAN hub + settings cache + HDMI output | Hidden (console/trunk) | - |
+| ESP32-S3 Round Display | 1.85" gauge display + BLE TPMS + IMU | **Stock oil gauge hole** | - |
+| Arduino Nano | RPM LED strip controller (direct CAN) | Gauge cluster bezel | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| MCP2515 Module x3 | Pi (HS + MS), Arduino (HS) - **HS-CAN shared** | - | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| Pioneer AVH-W4500NEX | Aftermarket head unit with HDMI input | Stock head unit location | - |
+| WS2812B LED Strip | RPM shift light (20 LEDs) | Around gauge cluster | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| OBD-II Breakout/Splitter | Access CAN bus pins | Under dash | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| LM2596 Buck Converter | 12V → 5V power | - | [WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) |
+| BLE TPMS Sensors (4x) | Tire pressure + temp → ESP32 BLE | On each tire valve | ✅ Ordered |
 
 ---
 
@@ -210,20 +222,21 @@ Serial communication is prone to **EMI corruption** in automotive environments:
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    MX5 NC TELEMETRY ARCHITECTURE                             │
-│                  (Pi as Hub, Arduino Direct CAN for RPM)                     │
+│           (Pi as Hub + Settings Cache, Arduino Direct CAN for RPM)          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
 │   │                         OBD-II PORT                                  │   │
-│   │   Pin 6 ───┬─── HS-CAN High (500kbps)                               │   │
+│   │   Pin 6 ───┬─── HS-CAN High (500kbps) ─── SHARED: Pi + Arduino      │   │
 │   │   Pin 14 ──┼─── HS-CAN Low                                          │   │
-│   │   Pin 3 ───┼─── MS-CAN High (125kbps)                               │   │
+│   │   Pin 3 ───┼─── MS-CAN High (125kbps) ─── Pi only                   │   │
 │   │   Pin 11 ──┴─── MS-CAN Low                                          │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                 │                              │                             │
 │                 ▼                              ▼                             │
 │   ════════════════════════        ════════════════════════                  │
 │      HS-CAN BUS (500k)               MS-CAN BUS (125k)                      │
+│       (SHARED by Pi + Arduino)           (Pi only)                          │
 │   ════════════════════════        ════════════════════════                  │
 │         │         │                      │                                   │
 │         │         │                      ▼                                   │
@@ -243,44 +256,41 @@ Serial communication is prone to **EMI corruption** in automotive environments:
 │        │             │                 │                                    │
 │        ▼             ▼                 ▼                                    │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │                    RASPBERRY PI 4B (MAIN HUB)                        │   │
+│   │             RASPBERRY PI 4B (CENTRAL HUB + SETTINGS CACHE)           │   │
+│   │                        [Hidden in console/trunk]                     │   │
 │   │                                                                      │   │
 │   │  • Reads HS-CAN (RPM, Speed, Throttle, Temps, Gear)                 │   │
 │   │  • Reads MS-CAN (Steering Wheel Buttons, Cruise, Body)              │   │
 │   │  • Receives BLE TPMS data from ESP32-S3                             │   │
-│   │  • Sends all data to ESP32-S3 via Serial (short, shielded cable)    │   │
+│   │  • Receives G-Force IMU data from ESP32-S3                          │   │
+│   │  • Sends all telemetry + SWC to ESP32-S3 via Serial                 │   │
+│   │  • Sends LED sequence selection to Arduino via Serial               │   │
+│   │  • CACHES ALL SETTINGS - syncs to devices on startup                │   │
 │   │  • Displays telemetry on HDMI → Pioneer AVH-W4500NEX                │   │
-│   │  • Handles button commands for Pi apps                              │   │
 │   │                                                                      │   │
-│   └────────┬────────────────────────────┬───────────────────────────────┘   │
-│            │                            │                                    │
-│            │ Serial/UART                │ HDMI                               │
-│            │ (GPIO 14/15)               │                                    │
-│            │ ~20cm shielded             │                                    │
-│            ▼                            ▼                                    │
-│   ┌─────────────────────┐     ┌─────────────────────┐                       │
-│   │     ESP32-S3        │     │  Pioneer AVH-W4500  │                       │
-│   │   Round Display     │     │    (800x480)        │                       │
-│   │                     │     └─────────────────────┘                       │
-│   │  • Receives data    │                                                    │
-│   │    from Pi (Serial) │                                                    │
-│   │  • BLE TPMS Rx      │◄──────── BLE TPMS Cap Sensors (x4)                │
-│   │  • Round LCD gauge  │                                                    │
-│   │  • Forwards TPMS    │                                                    │
-│   │    to Pi (Serial)   │                                                    │
-│   │  • NO CAN MODULE    │                                                    │
-│   └─────────────────────┘                                                    │
-│                                                                              │
-│   ┌─────────────────────┐                                                    │
-│   │    Arduino Nano     │◄──────── MCP2515 #3 (DIRECT HS-CAN)               │
-│   │     RPM LEDs        │          (separate from Pi, EMI-resistant)        │
-│   │                     │                                                    │
-│   │  • Reads RPM direct │                                                    │
-│   │    from HS-CAN      │                                                    │
-│   │  • Drives WS2812B   │                                                    │
-│   │  • LED Sequence Ctrl│◄──────── Pi Serial (GPIO 14 → Arduino D3)         │
-│   │    via Serial (9600)│          (settings only, not time-critical)       │
-│   └─────────────────────┘                                                    │
+│   └────────┬─────────────────────────┬────────────────┬─────────────────┘   │
+│            │                         │                │                      │
+│            │ Serial/UART             │ HDMI           │ Serial/UART          │
+│            │ (GPIO 14/15)            │                │ (to Arduino)         │
+│            │ ~20cm shielded          │                │                      │
+│            ▼                         ▼                ▼                      │
+│   ┌─────────────────────┐   ┌─────────────────┐   ┌─────────────────────┐   │
+│   │     ESP32-S3        │   │  Pioneer AVH    │   │    Arduino Nano     │   │
+│   │   Round Display     │   │    -W4500NEX    │   │     RPM LEDs        │   │
+│   │                     │   │   (800x480)     │   │                     │   │
+│   │ [Oil gauge hole]    │   └─────────────────┘   │ [Gauge cluster      │   │
+│   │                     │                         │  bezel]             │   │
+│   │  • Receives data    │                         │                     │   │
+│   │    from Pi (Serial) │                         │  • Reads RPM direct │   │
+│   │  • Receives SWC     │                         │    from HS-CAN      │   │
+│   │    button events    │                         │  • Receives LED     │   │
+│   │  • BLE TPMS Rx ─────│◄──── BLE TPMS Sensors   │    sequence from Pi │   │
+│   │  • Round LCD gauge  │      (x4 cap-mount)     │  • Drives WS2812B   │   │
+│   │  • Forwards TPMS    │                         │    LED strip        │   │
+│   │    to Pi (Serial)   │                         │  • Works offline    │   │
+│   │  • QMI8658 IMU ─────│──── G-Force data to Pi  │    (defaults)       │   │
+│   │  • NO CAN MODULE    │                         │                     │   │
+│   └─────────────────────┘                         └─────────────────────┘   │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -294,37 +304,46 @@ Serial communication is prone to **EMI corruption** in automotive environments:
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │                     RASPBERRY PI 4B (CAN HUB)                        │   │
+│   │               RASPBERRY PI 4B (CAN HUB + SETTINGS CACHE)             │   │
 │   │                                                                      │   │
 │   │  INPUTS:                          OUTPUTS:                           │   │
 │   │  ├─ MCP2515 #1 (HS-CAN 500k)      ├─► ESP32-S3 (Serial TX)          │   │
 │   │  │  • RPM, Speed, Throttle        │   • All CAN telemetry            │   │
-│   │  │  • Temps, Gear, Brake          │   • SWC button events ◄──────┐  │   │
-│   │  │  • Wheel Speeds, Steering      │   (short cable, low EMI)     │  │   │
-│   │  │                                │                              │  │   │
-│   │  ├─ MCP2515 #2 (MS-CAN 125k)      │                              │  │   │
-│   │  │  • SWC Buttons ────────────────┼──────────────────────────────┘  │   │
+│   │  │  • Temps, Gear, Brake          │   • SWC button events            │   │
+│   │  │  • Wheel Speeds, Steering      │   • Settings sync on startup     │   │
+│   │  │                                │   (short cable, low EMI)         │   │
+│   │  ├─ MCP2515 #2 (MS-CAN 125k)      │                                  │   │
+│   │  │  • SWC Buttons (screen nav) ───┼─► ESP32 + Pi UI control         │   │
 │   │  │  • Cruise Control              │                                  │   │
-│   │  │  • Lights, Doors, Climate      ├─► Pioneer (HDMI)                │   │
-│   │  │  • Fuel Level/Consumption      │   • Full UI display              │   │
-│   │  │                                │                                  │   │
-│   │  └─ ESP32-S3 (Serial RX) ◄────────┼─── TPMS + IMU data from ESP32   │   │
-│   │     • Tire Pressure (x4)          │                                  │   │
-│   │     • Tire Temp (x4)              │                                  │   │
+│   │  │  • Lights, Doors, Climate      ├─► Arduino (Serial TX)           │   │
+│   │  │  • Fuel Level/Consumption      │   • LED sequence selection       │   │
+│   │  │                                │   • Settings sync on startup     │   │
+│   │  └─ ESP32-S3 (Serial RX) ◄────────│                                  │   │
+│   │     • Tire Pressure (x4)          ├─► Pioneer (HDMI)                │   │
+│   │     • Tire Temp (x4)              │   • Full UI display              │   │
 │   │     • TPMS Battery %              │                                  │   │
 │   │     • G-Force (lateral/long)      │◄── QMI8658 IMU on ESP32          │   │
+│   │                                   │                                  │   │
+│   │  SETTINGS CACHE:                  │                                  │   │
+│   │  • Brightness levels              │                                  │   │
+│   │  • Shift RPM threshold            │                                  │   │
+│   │  • LED pattern/sequence           │ ← Sends to Arduino on startup   │   │
+│   │  • Warning thresholds             │                                  │   │
+│   │  • Units (mph/kph, °F/°C)         │                                  │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │                        ESP32-S3 ROUND DISPLAY                        │   │
-│   │                         (NO CAN - Serial Only)                       │   │
+│   │                   ESP32-S3 ROUND DISPLAY                             │   │
+│   │             (Mounted in stock oil gauge hole)                        │   │
+│   │                    (NO CAN - Serial Only)                            │   │
 │   │                                                                      │   │
 │   │  INPUTS:                          OUTPUTS:                           │   │
 │   │  ├─ Pi (Serial RX)                ├─► Pi (Serial TX)                │   │
 │   │  │  • All CAN telemetry           │   • TPMS data (BLE sensors)     │   │
 │   │  │  • SWC button events ──────────┼─► Round LCD Display             │   │
 │   │  │    (to control ESP UI)         │   • Gauges, TPMS, Alerts        │   │
-│   │  │                                │   • G-Force data (QMI8658 IMU)  │   │
+│   │  │  • Settings sync on startup    │   • G-Force data (QMI8658 IMU)  │   │
+│   │  │                                │                                  │   │
 │   │  ├─ BLE (built-in)                │                                  │   │
 │   │  │  • TPMS cap sensors (x4)       │                                  │   │
 │   │  │                                │                                  │   │
@@ -335,26 +354,37 @@ Serial communication is prone to **EMI corruption** in automotive environments:
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
 │   │                    ARDUINO NANO (DIRECT HS-CAN)                      │   │
-│   │                     (Independent, EMI-Resistant)                     │   │
+│   │              (LED strip around gauge cluster bezel)                  │   │
 │   │                                                                      │   │
 │   │  INPUTS:                          OUTPUTS:                           │   │
-│   │  └─ MCP2515 #3 (HS-CAN 500k)      └─► WS2812B LED Strip             │   │
-│   │     • RPM (0x201)                     • 20 LEDs, shift light         │   │
-│   │     • Direct from OBD-II              • <1ms CAN-to-LED latency      │   │
-│   │     • No serial dependency            • Works even if Pi offline     │   │
+│   │  ├─ MCP2515 #3 (HS-CAN 500k)      └─► WS2812B LED Strip             │   │
+│   │  │  • RPM (0x201)                     • 20 LEDs, shift light         │   │
+│   │  │  • Direct from OBD-II              • <1ms CAN-to-LED latency      │   │
+│   │  │  • SHARED bus with Pi MCP2515#1    • Works even if Pi offline     │   │
+│   │  │                                                                   │   │
+│   │  └─ Pi (Serial RX)                                                   │   │
+│   │     • LED sequence/pattern selection                                 │   │
+│   │     • Settings sync on startup (which LED animation to use)         │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 │   SUMMARY:                                                                   │
 │   ═══════                                                                    │
-│   Pi → ESP32:  All CAN data + SWC buttons (short serial, ~20cm)             │
+│   Pi → ESP32:  CAN data + SWC buttons + settings sync (serial)              │
 │   ESP32 → Pi:  TPMS data + G-Force IMU data                                 │
-│   Arduino:     DIRECT HS-CAN via MCP2515 #3 (no serial, no corruption)      │
+│   Pi → Arduino: LED sequence selection + settings sync (serial)             │
+│   Arduino CAN: DIRECT HS-CAN via MCP2515 #3 (shared bus with Pi)            │
 │                                                                              │
-│   WHY ARDUINO USES DIRECT CAN:                                               │
+│   WHY ARDUINO USES DIRECT CAN FOR RPM:                                       │
 │   • RPM timing critical (<50ms for shift light)                             │
 │   • Long wire run through high-EMI engine bay                               │
 │   • CAN differential signaling resists noise                                │
 │   • Already working and proven reliable                                      │
+│   • Serial from Pi only for LED pattern selection (not time-critical)       │
+│                                                                              │
+│   SETTINGS CACHE (Pi manages all settings):                                  │
+│   • Pi stores all user preferences in config file                           │
+│   • On startup, Pi sends settings to ESP32 and Arduino                      │
+│   • Settings changed via SWC navigation → saved to Pi → synced to devices   │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```

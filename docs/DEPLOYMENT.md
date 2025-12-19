@@ -1,22 +1,56 @@
 # MX5 Telemetry Deployment Guide
 
-## Hardware Setup
+## System Overview
 
-### Raspberry Pi 4B
+The MX5 Telemetry system uses three devices:
+
+| Device | Purpose | Location |
+|--------|---------|----------|
+| **Raspberry Pi 4B** | CAN hub + settings cache + HDMI display | Hidden (console/trunk) |
+| **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force | **Stock oil gauge hole** |
+| **Arduino Nano** | RPM LED strip (direct CAN) | Gauge cluster bezel |
+
+### Data Flow
+
+- **Pi → ESP32**: All CAN telemetry + SWC buttons + settings sync (serial)
+- **ESP32 → Pi**: TPMS data (BLE) + G-force data (IMU)
+- **Pi → Arduino**: LED sequence/pattern selection + settings sync (serial)
+- **Arduino**: Reads RPM directly from shared HS-CAN bus
+
+### Settings Cache
+
+The Pi caches all user settings and syncs them to ESP32 and Arduino on startup:
+- Brightness levels
+- Shift RPM threshold
+- LED pattern/sequence
+- Warning thresholds
+- Units (mph/kph, °F/°C)
+
+---
+
+## Hardware Setup & Upload Methods
+
+### Raspberry Pi 4B (Remote Access)
 - **IP Address**: `192.168.1.28`
 - **User**: `pi`
 - **SSH**: `ssh pi@192.168.1.28`
 - **Project Path**: `~/MX5-Telemetry`
 - **Display Service**: `mx5-display.service` (systemd)
+- **Upload Method**: `git pull` + `systemctl restart` via SSH
 
-### ESP32-S3 Round Display
-- **Connection**: USB to Raspberry Pi (`/dev/ttyACM0`)
+### ESP32-S3 Round Display (Remote Upload via Pi)
+- **Location**: Mounted in stock oil gauge hole (1.85" display fits perfectly)
+- **Connection**: USB-C to Raspberry Pi (`/dev/ttyACM0`)
 - **Baud Rate**: 115200
-- **Flash via Pi**: PlatformIO installed on Pi
+- **Upload Method**: **Remote** - Flash via Pi using PlatformIO over SSH
+- **Command**: `ssh pi@192.168.1.28 '~/.local/bin/pio run -d display --target upload'`
 
-### Arduino Nano (LED Controller)
-- **Connection**: USB to Raspberry Pi
-- **Purpose**: RPM LED strip control
+### Arduino Nano (Local Upload Required)
+- **Location**: Gauge cluster bezel (LED strip surrounds instruments)
+- **Connection**: USB to PC (disconnect from vehicle, plug into dev machine)
+- **Upload Method**: **Local** - Must plug into PC to flash
+- **Command**: `pio run -d arduino --target upload`
+- **Purpose**: RPM LED strip control (direct CAN) + receives LED pattern from Pi
 
 ---
 

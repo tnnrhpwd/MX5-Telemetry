@@ -2,6 +2,48 @@
 
 Detailed step-by-step wiring instructions for the MX5-Telemetry system.
 
+## 🏎️ System Architecture Overview
+
+The production system uses **three devices**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         MX5-Telemetry System                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────┐    Serial     ┌──────────────────┐                   │
+│  │ Raspberry Pi 4B  │───(UART)─────>│  Arduino Nano    │                   │
+│  │ (Console/Trunk)  │   Settings    │ (Behind Cluster) │                   │
+│  │                  │               │                  │                   │
+│  │  • Dual MCP2515  │               │  • MCP2515       │                   │
+│  │  • HDMI→Pioneer  │               │  • WS2812B LEDs  │                   │
+│  │  • Settings cache│               │  • <1ms latency  │                   │
+│  └────────┬─────────┘               └────────┬─────────┘                   │
+│           │                                  │                              │
+│           │ Serial (UART)                    │ SPI                          │
+│           ▼                                  │                              │
+│  ┌──────────────────┐                        │                              │
+│  │ ESP32-S3 Display │                        │                              │
+│  │ (Oil Gauge Hole) │                        │                              │
+│  │                  │                        │                              │
+│  │  • 1.85" Round   │                        │                              │
+│  │  • BLE TPMS      │                        │                              │
+│  │  • QMI8658 IMU   │                        │                              │
+│  └──────────────────┘                        │                              │
+│                                              │                              │
+│  ┌───────────────────────────────────────────┴──────────────────────────┐  │
+│  │                           OBD-II Port                                 │  │
+│  │   Pin 6/14: HS-CAN (500k) ─── shared by Pi AND Arduino                │  │
+│  │   Pin 3/11: MS-CAN (125k) ─── Pi only (steering wheel buttons)        │  │
+│  │   Pin 5: Ground                                                       │  │
+│  │   Pin 16: 12V Battery                                                 │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## ⚠️ Safety First
 
 - **Disconnect vehicle battery** when making permanent connections
@@ -35,7 +77,30 @@ Detailed step-by-step wiring instructions for the MX5-Telemetry system.
 
 ## 🔋 Power System
 
-### LM2596 Buck Converter Setup
+### Power Distribution Overview
+
+```
+OBD-II Pin 16 (12V)
+        │
+        ▼
+   [2A Fuse] 
+        │
+        ▼
+┌───────────────────────┐
+│  LM2596 Buck Conv #1  │──────► Arduino Nano + MCP2515 + LEDs
+│  (5V 3A)              │
+└───────────────────────┘
+
+(Separate power for Pi and ESP32)
+┌───────────────────────┐
+│  USB-C PD or 12V→5V   │──────► Raspberry Pi 4B (3A required)
+│  Buck Converter #2    │
+└───────────────────────┘
+
+Raspberry Pi USB port ──────────► ESP32-S3 (500mA typical)
+```
+
+### Arduino Power (LM2596 Buck Converter)
 
 1. **Input Side** (12V from vehicle):
    ```
@@ -55,9 +120,9 @@ Detailed step-by-step wiring instructions for the MX5-Telemetry system.
    Buck Converter OUT- → Arduino Nano GND pin
    ```
 
-### Power Distribution
+### Power Distribution (Arduino)
 
-Create a common 5V and GND rail:
+Create a common 5V and GND rail for the Arduino system:
 
 ```
 Arduino 5V Pin → Power Rail (+)
@@ -65,17 +130,26 @@ Arduino GND Pin → Ground Rail (-)
 
 Connect to power rail:
 - MCP2515 VCC
-- SD Card VCC
-- GPS Module VCC
 - WS2812B 5V (connect directly to buck converter for high current)
 
 Connect to ground rail:
 - MCP2515 GND
-- SD Card GND
-- GPS Module GND
 - WS2812B GND
-- MOSFET Source
 ```
+
+### Raspberry Pi Power
+
+The Pi requires a stable 5V 3A power source. Options:
+- USB-C PD adapter with automotive 12V input
+- High-current buck converter (5V 5A recommended)
+- Quality USB cable (avoid thin cables)
+
+### ESP32-S3 Power
+
+The ESP32-S3 is powered via USB from the Raspberry Pi:
+- Typical draw: ~500mA
+- Peak draw: ~1A during WiFi/BLE activity
+- Use a good quality USB cable
 
 ## 🚗 CAN Bus Connection (MCP2515)
 
@@ -356,56 +430,21 @@ WWZMDIB MicroSD Reader          Arduino Nano
 3. **Insert card**: Push until it clicks, label facing up
 4. **Test detection**: Card should be detected on Arduino startup
 
-## 💡 WS2812B LED Strip (Slave Arduino)
+## 💡 WS2812B LED Strip (Arduino Nano)
 
-### Dual Arduino Architecture
+### LED Strip Overview
 
-The LED strip is controlled by a **separate Slave Arduino** to avoid interrupt conflicts with SD card logging. See [MASTER_SLAVE_ARCHITECTURE.md](MASTER_SLAVE_ARCHITECTURE.md) for details.
+The LED strip is controlled by the **Arduino Nano**, which reads RPM directly from the HS-CAN bus for <1ms latency. The Raspberry Pi sends configuration settings (brightness, thresholds) via serial.
 
-### Master to Slave Communication
+### LED Strip Wiring
 
-| Master Pin | Slave Pin | Description |
-|------------|-----------|-------------|
-| D6         | D2        | Serial data (1200 baud bit-bang) |
-| GND        | GND       | Common ground (REQUIRED) |
-
-```
-Master Arduino (Logger)         Slave Arduino (LED Controller)
-┌──────────────────┐            ┌──────────────────┐
-│                  │            │                  │
-│  D6 (TX) ────────┼────────────┤ D2 (RX)          │
-│                  │            │                  │
-│  GND ────────────┼────────────┤ GND              │
-│                  │            │                  │
-└──────────────────┘            └──────────────────┘
-```
-
-**IMPORTANT:**
-- Master uses **D6** (NOT D1/TX which is USB Serial)
-- Slave uses **D2** (SoftwareSerial RX)
-- Communication is **1200 baud** (bit-bang on Master, SoftwareSerial on Slave)
-- Slow baud rate ensures reliability despite interrupt conflicts (CAN/GPS/SD)
-- **Common ground is essential** - without it, serial communication will fail!
-
-### Power Considerations
-
-LED strips draw significant current:
-- Each LED: ~60mA at full white brightness
-- 20 LEDs: up to 1.2A
-
-**Critical**: Power the LED strip directly from the buck converter, NOT from Arduino's 5V pin!
-
-### Slave Arduino Wiring
-
-| Component | Slave Pin | Notes |
-|-----------|-----------|-------|
-| LED Strip Data | D5 | 470Ω resistor recommended |
+| Component | Arduino Pin | Notes |
+|-----------|-------------|-------|
+| LED Strip Data | D5 | 470Ω resistor recommended in series |
 | LED Strip 5V | Buck Converter OUT+ | Use thick wire (18-20 AWG) |
 | LED Strip GND | Common GND | Shared with Arduino GND |
-| Brightness Pot | A6 | B10K-B100K potentiometer (center wiper) |
-| Brightness Pot VCC | 5V | Potentiometer outer leg |
-| Brightness Pot GND | GND | Potentiometer outer leg |
-| Haptic Motor + | D3 | Optional vibration feedback |
+| Brightness Pot | A6 | Optional: B10K-B100K potentiometer |
+| Haptic Motor + | D3 | Optional vibration feedback at redline |
 | Haptic Motor - | GND | |
 | Master TX | D2 | SoftwareSerial RX |
 | Master GND | GND | Common ground |
@@ -472,93 +511,77 @@ LED Strip Power:
 4. **Add capacitor** (1000µF, 6.3V or higher) across power at LED strip
 5. **Test with low brightness first** before full brightness
 
-## 📡 GPS Module (Neo-6M)
+## 📡 ESP32-S3 Serial Connection (Pi ↔ ESP32)
 
-| GPS Module Pin | Arduino Pin | Wire Color |
-|----------------|-------------|------------|
-| VCC            | 5V          | Red        |
-| GND            | GND         | Black      |
-| TX             | D2 (RX)     | Yellow     |
-| RX             | D3 (TX)     | Green      |
+The Raspberry Pi communicates with the ESP32-S3 via serial UART:
 
-**Note**: GPS TX connects to Arduino RX (D2), and GPS RX connects to Arduino TX (D3)
+### Pi → ESP32 Connection
 
-### Antenna Placement
+| Pi GPIO | ESP32-S3 Pin | Description |
+|---------|--------------|-------------|
+| GPIO 14 (TXD) | RX | Pi sends telemetry data |
+| GPIO 15 (RXD) | TX | ESP32 sends TPMS/G-force |
+| GND | GND | Common ground (REQUIRED) |
 
-- Mount GPS module near window or windshield
-- Keep antenna away from metal surfaces (at least 5cm clearance)
-- Ensure clear view of sky for best satellite reception
-- Use extension cable if needed (4-conductor)
+### Data Flow
 
-## 🎥 GoPro Power Control (MOSFET Circuit)
+**Pi → ESP32:**
+- CAN telemetry (RPM, speed, temps)
+- Steering wheel button presses
+- Settings updates
 
-### Component Selection
+**ESP32 → Pi:**
+- TPMS data (4 tires)
+- G-force readings (lateral/longitudinal)
+- UI status
 
-**MOSFET Requirements**:
-- N-channel logic-level MOSFET
-- VDS ≥ 20V
-- ID ≥ 2A
-- RDS(on) < 0.1Ω
-- Suggested: IRF540N, IRLZ44N, or 2N7000
+### Serial Protocol
 
-### Circuit Diagram
+- Baud rate: 115200
+- Format: JSON or structured binary
+- Example: `{"rpm":3500,"speed":65,"tpms":{"fl":32,"fr":32,"rl":31,"rr":31}}`
 
-```
-                  ┌──────────────┐
-                  │   IRF540N    │
-Arduino D5 ───┬───┤ Gate         │
-              │   │              │
-           [10kΩ] │              │
-              │   │              │
-         GND──┴───┤ Source       │
-                  │              │
-                  │              │  To GoPro
-    5V+ ──────────┤ Drain        ├─────► USB 5V+
-    (Buck Conv.)  │              │
-                  └──────────────┘
+---
 
-    GoPro USB GND ──────► Common GND
-```
+## 📓 Archived Features
 
-### Component Connections
+The following features were part of the **dual-arduino architecture** and are no longer used in production. Documentation has been moved to `archive/dual-arduino/docs/`:
 
-| Connection | From | To |
-|------------|------|-----|
-| Gate       | Arduino D5 | MOSFET Gate pin |
-| Pull-down Resistor | MOSFET Gate | GND (10kΩ) |
-| Source     | GND | MOSFET Source pin |
-| Drain      | Buck Converter 5V | MOSFET Drain pin |
-| Output     | MOSFET Drain | GoPro USB 5V+ |
+- **GPS Module (Neo-6M)** - See `archive/dual-arduino/docs/GPS_TROUBLESHOOTING.md`
+- **SD Card Logging** - See `archive/dual-arduino/docs/COMPREHENSIVE_DATA_LOGGING.md`
+- **GoPro Power Control** - See `archive/dual-arduino/docs/`
+- **Dual Arduino Serial Link** - See `archive/dual-arduino/docs/MASTER_SLAVE_ARCHITECTURE.md`
 
-### Assembly Steps
-
-1. **Solder MOSFET** to small perfboard or use breadboard
-2. **Add 10kΩ pull-down resistor** between Gate and Source
-3. **Connect Gate** to Arduino D5
-4. **Cut GoPro USB cable** 5V+ wire (red wire)
-5. **Splice MOSFET** into 5V+ line:
-   - Buck converter 5V → MOSFET Drain
-   - MOSFET Source → GoPro USB 5V+
-6. **Leave GND wire intact** (common ground)
-7. **Insulate all connections** with heat shrink
-8. **Test with multimeter**:
-   - D5 LOW → No voltage at MOSFET output
-   - D5 HIGH → 5V at MOSFET output
+---
 
 ## 🧰 Complete Assembly Checklist
 
-### Before Powering On
+### Arduino Nano System
 
+- [ ] Buck converter output verified at 5.0V
 - [ ] All VCC connections go to 5V rail
 - [ ] All GND connections go to common ground
-- [ ] Buck converter output verified at 5.0V
 - [ ] No short circuits between power and ground
 - [ ] All solder joints are clean and secure
 - [ ] Heat shrink applied to all exposed connections
-- [ ] SPI pins correctly connected (D10-D13)
-- [ ] GPS TX/RX not reversed
-- [ ] LED strip powered from buck converter, not Arduino
-- [ ] MOSFET pull-down resistor installed
+- [ ] MCP2515 SPI pins correctly connected (D10-D13)
+- [ ] MCP2515 INT connected to D2 (hardware interrupt)
+- [ ] LED strip powered from buck converter, not Arduino 5V pin
+- [ ] LED strip data on D5 with 470Ω resistor
+
+### Raspberry Pi System
+
+- [ ] Pi powered with stable 5V 3A supply
+- [ ] Dual MCP2515 (HS-CAN + MS-CAN) on Pi SPI
+- [ ] Serial connection to ESP32-S3 (GPIO 14/15)
+- [ ] Serial connection to Arduino (GPIO pins TBD)
+- [ ] HDMI connected to Pioneer head unit
+
+### ESP32-S3 Display
+
+- [ ] USB power from Pi or buck converter
+- [ ] Serial RX/TX to Pi GPIO 14/15
+- [ ] Display mounted securely in oil gauge hole
 - [ ] All modules mechanically secured
 - [ ] Wires secured with zip ties
 - [ ] No wires near hot or moving parts

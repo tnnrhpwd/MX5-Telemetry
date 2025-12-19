@@ -2,201 +2,173 @@
 
 How to analyze and visualize your MX5 telemetry data.
 
-## 📥 Exporting Data from SD Card
+## 🏎️ Current Architecture
 
-1. **Power off the vehicle** completely
-2. **Remove the MicroSD card** from the module
-3. **Insert into computer** (use USB card reader if needed)
-4. **Copy CSV files** to your computer
-   - Files are named: `LOG_YYMMDD_HHMM.CSV`
-5. **Safely eject** the card and reinsert into module
+Data logging is handled by the **Raspberry Pi 4B**, which:
+- Reads HS-CAN (RPM, speed, throttle, temps) and MS-CAN (steering wheel buttons)
+- Receives TPMS and G-force data from ESP32-S3
+- Logs to local storage or streams to external services
 
-## 📋 CSV Data Structure
+> **Note**: The legacy Arduino-based SD card logging (GPS, CSV files) has been archived.  
+> See `archive/dual-arduino/docs/` for historical CSV format documentation.
 
-Your log files contain these columns:
+---
 
-```
-Timestamp, Date, Time, Latitude, Longitude, Altitude, Satellites, RPM, Speed, Throttle, CoolantTemp
-```
+## 📋 Data Sources
 
-### Column Descriptions
+### CAN Bus Data (Pi reads directly)
 
-| Column | Type | Unit | Example | Description |
-|--------|------|------|---------|-------------|
-| Timestamp | Integer | milliseconds | 125430 | Time since system startup |
-| Date | Integer | YYYYMMDD | 20251120 | GPS date |
-| Time | Integer | HHMMSS | 143052 | GPS time (UTC) |
-| Latitude | Float | degrees | 34.052235 | GPS latitude (WGS84) |
-| Longitude | Float | degrees | -118.243683 | GPS longitude (WGS84) |
-| Altitude | Float | meters | 125.4 | GPS altitude above sea level |
-| Satellites | Integer | count | 8 | Number of GPS satellites |
-| RPM | Integer | rev/min | 3450 | Engine RPM |
-| Speed | Integer | km/h | 65 | Vehicle speed |
-| Throttle | Integer | percent | 45 | Throttle position (0-100%) |
-| CoolantTemp | Integer | °C | 88 | Engine coolant temperature |
+| Data | CAN ID | Source |
+|------|--------|--------|
+| Engine RPM | 0x201 | HS-CAN (500 kbaud) |
+| Vehicle Speed | 0x420 | HS-CAN |
+| Throttle Position | 0x201 | HS-CAN |
+| Coolant Temperature | OBD-II PID | HS-CAN |
+| Steering Wheel Buttons | MS-CAN IDs | MS-CAN (125 kbaud) |
 
-## 🖥️ Opening in Spreadsheet Software
+### Sensor Data (ESP32-S3 → Pi via serial)
 
-### Microsoft Excel
+| Data | Source | Update Rate |
+|------|--------|-------------|
+| TPMS (4 tires) | BLE sensors | ~1 Hz |
+| G-Force (lateral/longitudinal) | QMI8658 IMU | ~50 Hz |
 
-1. Open Excel
-2. **File** → **Open**
-3. Select your CSV file
-4. Data should auto-import with correct columns
-5. If not formatted:
-   - **Data** → **Text to Columns**
-   - Choose "Delimited" → "Comma"
-
-### Google Sheets
-
-1. Open Google Sheets
-2. **File** → **Import**
-3. **Upload** tab → Select CSV file
-4. Import location: **Create new spreadsheet**
-5. Separator type: **Comma**
-6. Click **Import data**
-
-### LibreOffice Calc
-
-1. Open LibreOffice Calc
-2. **File** → **Open**
-3. Select CSV file
-4. Text Import dialog:
-   - Separated by: **Comma**
-   - String delimiter: **"**
-5. Click **OK**
+---
 
 ## 📈 Basic Analysis Tasks
 
 ### 1. Max RPM per Session
 
-**Excel Formula**:
-```excel
-=MAX(H2:H10000)
+If your logging system outputs CSV:
+```python
+import pandas as pd
+df = pd.read_csv('telemetry_log.csv')
+max_rpm = df['RPM'].max()
+print(f"Max RPM: {max_rpm}")
 ```
-(Assuming RPM is in column H)
-
-**Result**: Shows highest RPM reached during the drive
 
 ---
 
 ### 2. Average Speed
 
-**Excel Formula**:
-```excel
-=AVERAGE(I2:I10000)
-```
-(Assuming Speed is in column I)
-
-**Filter for moving only** (Speed > 5 km/h):
-```excel
-=AVERAGEIF(I2:I10000,">5")
+```python
+avg_speed = df[df['Speed'] > 5]['Speed'].mean()  # Exclude idle
+print(f"Average moving speed: {avg_speed:.1f} km/h")
 ```
 
 ---
 
 ### 3. Time in RPM Ranges
 
-Create a helper column to categorize RPM:
+```python
+def rpm_category(rpm):
+    if rpm < 2000: return 'Idle'
+    elif rpm < 4000: return 'Cruising'
+    elif rpm < 6000: return 'Sport'
+    else: return 'Redline'
 
-**Excel Formula** (in new column L):
-```excel
-=IF(H2<2000,"Idle",IF(H2<4000,"Cruising",IF(H2<6000,"Sport","Redline")))
+df['RPM_Category'] = df['RPM'].apply(rpm_category)
+print(df['RPM_Category'].value_counts())
 ```
-
-Then use **PivotTable**:
-- Rows: RPM Category
-- Values: Count of entries
 
 ---
 
-### 4. GPS Track Distance
-
-Calculate distance between consecutive GPS points using Haversine formula.
-
-**Excel** (add helper column for distance):
-```excel
-=ACOS(COS(RADIANS(90-D2))*COS(RADIANS(90-D3))+SIN(RADIANS(90-D2))*SIN(RADIANS(90-D3))*COS(RADIANS(E2-E3)))*6371
-```
-(Where D=Latitude, E=Longitude)
-
-Sum all distances for total track length.
-
----
-
-### 5. Shift Point Analysis
+### 4. Shift Point Analysis
 
 Find average RPM at gear changes (look for sudden RPM drops):
 
-1. Create helper column: `RPM Change = H3 - H2`
-2. Filter for large negative changes (< -1000 RPM)
-3. Average the "before shift" RPM values
+```python
+df['RPM_Change'] = df['RPM'].diff()
+shifts = df[df['RPM_Change'] < -1000]
+avg_shift_rpm = df.loc[shifts.index - 1, 'RPM'].mean()
+print(f"Average shift point: {avg_shift_rpm:.0f} RPM")
+```
+
+---
 
 ## 📊 Visualization Examples
 
 ### 1. RPM vs Time Graph
 
-**Excel**:
-1. Select **Timestamp** (column A) and **RPM** (column H)
-2. **Insert** → **Line Chart**
-3. Format:
-   - X-axis: Timestamp (convert to minutes: `=A2/60000`)
-   - Y-axis: RPM
-   - Title: "Engine RPM Over Time"
+```python
+import matplotlib.pyplot as plt
 
-**Result**: See RPM behavior throughout your drive
-
----
-
-### 2. Speed vs RPM Scatter Plot
-
-**Excel**:
-1. Select **RPM** (column H) and **Speed** (column I)
-2. **Insert** → **Scatter Plot**
-3. Add trendline to see gear ratios
-
-**Analysis**: Different clusters represent different gears
+plt.figure(figsize=(12, 4))
+plt.plot(df['Timestamp'] / 60000, df['RPM'], linewidth=0.5)
+plt.xlabel('Time (minutes)')
+plt.ylabel('RPM')
+plt.title('Engine RPM Over Time')
+plt.grid(True, alpha=0.3)
+plt.show()
+```
 
 ---
 
-### 3. GPS Track Map
+### 2. Speed vs RPM Scatter (Gear Detection)
 
-**Google Maps**:
-1. Create KML file (see script below)
-2. Upload to **My Maps** (https://www.google.com/mymaps)
-3. Visualize your driving route
+```python
+plt.figure(figsize=(8, 6))
+plt.scatter(df['RPM'], df['Speed'], alpha=0.1, s=1)
+plt.xlabel('RPM')
+plt.ylabel('Speed (km/h)')
+plt.title('Speed vs RPM - Gear Clusters')
+plt.grid(True, alpha=0.3)
+plt.show()
+```
 
-**Google Earth**:
-1. Export to KML format
-2. **File** → **Open** in Google Earth
+Different clusters in this plot represent different gears.
 
 ---
 
-### 4. Throttle Position Heatmap
+### 3. G-Force Plot (from ESP32 IMU)
 
-**Excel**:
-1. Select **Timestamp** and **Throttle** columns
-2. **Insert** → **Line Chart** with color gradient
-3. Format data series with color scale:
-   - 0% = Green
-   - 50% = Yellow
-   - 100% = Red
+```python
+plt.figure(figsize=(8, 8))
+plt.scatter(df['G_Lateral'], df['G_Longitudinal'], alpha=0.3, s=1)
+plt.xlabel('Lateral G (Left/Right)')
+plt.ylabel('Longitudinal G (Accel/Brake)')
+plt.title('G-Force Circle')
+plt.axhline(y=0, color='k', linewidth=0.5)
+plt.axvline(x=0, color='k', linewidth=0.5)
+circle = plt.Circle((0, 0), 1.0, fill=False, color='r', linestyle='--')
+plt.gca().add_patch(circle)
+plt.axis('equal')
+plt.show()
+```
+
+---
+
+### 4. TPMS Pressure Over Time
+
+```python
+fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+positions = ['FL', 'FR', 'RL', 'RR']
+
+for ax, pos in zip(axes.flat, positions):
+    ax.plot(df['Timestamp'] / 60000, df[f'TPMS_{pos}'])
+    ax.set_title(f'{pos} Tire Pressure')
+    ax.set_xlabel('Time (min)')
+    ax.set_ylabel('PSI')
+    ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
 
 ---
 
 ### 5. Coolant Temperature Trend
 
-**Excel**:
-1. Select **Timestamp** and **CoolantTemp** columns
-2. **Insert** → **Line Chart**
-3. Add horizontal reference line at 90°C (normal operating temp)
-
-## 🐍 Python Analysis Scripts
-
-### Installation
-
-```bash
-pip install pandas matplotlib numpy gpxpy
+```python
+plt.figure(figsize=(12, 4))
+plt.plot(df['Timestamp'] / 60000, df['CoolantTemp'])
+plt.axhline(y=90, color='r', linestyle='--', label='Normal Temp')
+plt.xlabel('Time (minutes)')
+plt.ylabel('Coolant Temp (°C)')
+plt.title('Engine Coolant Temperature')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
 ```
 
 ### Script 1: Basic Statistics
@@ -391,170 +363,93 @@ plt.show()
 
 ### Lap Time Calculation
 
-If you drive the same circuit multiple times:
+With the current Pi-based architecture, you can implement lap timing by detecting when you cross a virtual start/finish line:
 
 ```python
 import pandas as pd
-from scipy.signal import find_peaks
 
-df = pd.read_csv('track_session.CSV')
+df = pd.read_csv('telemetry_log.csv')
 
-# Detect laps by finding when you cross start/finish line
-# Example: find when latitude crosses a specific value
-start_line_lat = 34.052235  # Your start/finish latitude
+# Option 1: Use speed pattern (crossing pit lane)
+# Option 2: Use a GPS dongle connected to Pi if installed
 
-crossings = []
-for i in range(1, len(df)):
-    if (df.loc[i-1, 'Latitude'] < start_line_lat and 
-        df.loc[i, 'Latitude'] >= start_line_lat):
-        crossings.append(df.loc[i, 'Timestamp'])
-
-# Calculate lap times
-lap_times = []
-for i in range(1, len(crossings)):
-    lap_time = (crossings[i] - crossings[i-1]) / 1000  # seconds
-    lap_times.append(lap_time)
-    print(f"Lap {i}: {lap_time:.2f} seconds ({lap_time/60:.2f} min)")
-
-print(f"\nBest lap: {min(lap_times):.2f} seconds")
-print(f"Average lap: {sum(lap_times)/len(lap_times):.2f} seconds")
+# Example: detect lap completion by RPM pattern (WOT at start/finish)
+# Find sequences where throttle goes from high to low to high
+high_throttle = df['Throttle'] > 90
+lap_markers = []
+# ... implement your detection logic based on track characteristics
 ```
 
-### Cornering Analysis
+### G-Force Analysis (from ESP32 IMU)
 
-Find maximum lateral G-forces (requires calculating speed changes):
+The ESP32-S3's QMI8658 IMU provides accurate G-force data:
 
 ```python
 import pandas as pd
 import numpy as np
 
-df = pd.read_csv('track_session.CSV')
+df = pd.read_csv('telemetry_log.csv')
 
-# Calculate speed change rate (approximation of acceleration)
-df['Speed_change'] = df['Speed'].diff() / (df['Timestamp'].diff() / 1000)
+# Find peak G-forces
+max_lateral = df['G_Lateral'].abs().max()
+max_braking = df[df['G_Longitudinal'] < 0]['G_Longitudinal'].min()
+max_accel = df[df['G_Longitudinal'] > 0]['G_Longitudinal'].max()
 
-# Find aggressive cornering (negative acceleration while speed > 50)
-cornering = df[(df['Speed'] > 50) & (df['Speed_change'] < -5)]
+print(f"Max lateral G: {max_lateral:.2f} G")
+print(f"Max braking G: {abs(max_braking):.2f} G")
+print(f"Max acceleration G: {max_accel:.2f} G")
 
-print(f"Aggressive corners detected: {len(cornering)}")
-print(f"Max deceleration: {cornering['Speed_change'].min():.1f} km/h/s")
+# G-force friction circle
+total_g = np.sqrt(df['G_Lateral']**2 + df['G_Longitudinal']**2)
+print(f"Max combined G: {total_g.max():.2f} G")
 ```
 
-## 🔗 Advanced Tools
+---
 
-### RaceRender (Video Overlay)
+## 🔗 Integration Options
 
-Create professional race videos with telemetry overlay:
+### Video Overlay Tools
 
-1. **Export to RaceRender format**:
-   - CSV with GPS, Speed, RPM columns
-   - Sync with GoPro video using timestamp
-   
-2. **Import to RaceRender**:
-   - Download: https://racerender.com
-   - Import CSV and video
-   - Add gauges, track map, graphs
+For track day videos with telemetry overlay:
+- **RaceRender** - https://racerender.com (import CSV + video)
+- **Race Chrono** - Mobile app with video sync
+- **Harry's Lap Timer** - iOS app with import support
 
-### Race Technology Analysis
-
-Use professional racing software:
-
-1. **Circuit Tools** - Free track analysis software
-   - Website: http://www.circuittools.com
-   
-2. **AiM Race Studio** - Professional data analysis
-   - Website: https://www.aim-sportline.com
-
-### Motorsport Data Analysis
-
-For serious track day analysis:
-
-- **MoTeC i2** - Industry standard (expensive)
-- **Race Studio 3** - AiM's analysis software
-- **PI Toolbox** - Professional analysis platform
-
-## 📱 Mobile Apps
-
-### Track Addict (iOS/Android)
-
-- Import GPX files from your telemetry
-- Overlay on track maps
-- Compare multiple sessions
-
-### Harry's Lap Timer (iOS)
-
-- Import CSV data
-- Analyze lap times
-- Video overlay support
-
-### RaceChrono (iOS/Android)
-
-- Professional lap timing
-- Import telemetry data
-- Video synchronization
+---
 
 ## 💡 Pro Tips
 
 ### 1. Data Quality Checks
 
-Before analyzing, verify:
-- GPS satellite count > 6 for accurate positioning
-- No large gaps in data (SD card write errors)
-- RPM values are reasonable (0-7500 for Miata)
-- Timestamps are monotonically increasing
+Before analyzing:
+- Verify RPM values are reasonable (0-7500 for Miata)
+- Check TPMS values for outliers (sensor disconnects)
+- Ensure G-force readings are calibrated (zero at rest)
 
 ### 2. Filtering Noise
 
-GPS data can be noisy. Apply smoothing:
+Apply smoothing for cleaner visualizations:
 
 ```python
 df['Speed_smooth'] = df['Speed'].rolling(window=5).mean()
 df['RPM_smooth'] = df['RPM'].rolling(window=3).mean()
+df['G_Lat_smooth'] = df['G_Lateral'].rolling(window=10).mean()
 ```
 
-### 3. Synchronizing with Video
+### 3. Backup Your Data
 
-1. Note exact time when you start recording (both systems)
-2. Use a visual/audio cue (e.g., honk horn)
-3. Find that moment in both video and CSV data
-4. Align timestamps
-
-### 4. Backup Your Data
-
-- Copy CSV files immediately after each session
-- Name files descriptively: `track_name_YYMMDD.CSV`
+- Export logs from Pi regularly
+- Name files descriptively: `track_name_YYMMDD.csv`
 - Keep raw data + processed analysis separately
-
-### 5. Track-Specific Analysis
-
-Create a template spreadsheet for your favorite track:
-- Known lap time records
-- Sector timing gates (GPS coordinates)
-- Best speed for each corner
-- Optimal shift points
-
-## 📚 Learning Resources
-
-### Books
-
-- "Speed Secrets" by Ross Bentley
-- "Going Faster!" by Carl Lopez
-- "Data Acquisition in Motorsports" by Jorge Segers
-
-### Websites
-
-- **MotorsportReg.com** - Track day events
-- **Gridlife.com** - Time attack series
-- **NASA Racing** - Club racing organization
-
-### YouTube Channels
-
-- "Engineering Explained" - Technical automotive content
-- "Driver61" - Driving technique and data analysis
-- "Speed Academy" - Track day content
 
 ---
 
-**Ready to analyze your data?** Start with basic spreadsheet analysis, then move to Python for advanced visualizations!
+## 🔗 Related Documentation
+
+- [PI Display Integration](../PI_DISPLAY_INTEGRATION.md) - Architecture overview
+- [TPMS Bluetooth](../hardware/TPMS_BLUETOOTH.md) - BLE sensor decoding
+- [LED State System](../features/LED_STATE_SYSTEM.md) - Visual feedback states
+
+---
 
 **Questions or cool analysis techniques?** Share them in the GitHub issues!

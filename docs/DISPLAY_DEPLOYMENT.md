@@ -5,26 +5,38 @@ This guide covers deploying the telemetry UI to both the ESP32-S3 and Raspberry 
 ## Overview
 
 The MX5 Telemetry system uses two displays:
-1. **ESP32-S3** (360×360 round display) - In-dash gauge cluster
-2. **Raspberry Pi 4B** (800×480 LCD) - Center console information display
+1. **ESP32-S3** (360×360 round display) - **Mounted in stock oil gauge hole** 
+2. **Raspberry Pi 4B** (HDMI output) - Aftermarket Pioneer head unit
 
-Both displays show the same 6 screens, synchronized:
-1. **Overview** - Gear, speed, TPMS summary, alerts
-2. **RPM/Speed** - Primary driving data with large gauge
-3. **TPMS** - Tire pressure and temperature details
-4. **Engine** - Coolant, oil, fuel, voltage gauges
-5. **G-Force** - Lateral and longitudinal acceleration
-6. **Settings** - Configuration options
+Both displays show synchronized screens, controlled via steering wheel buttons:
+
+| Screen | Name | Key Data |
+|--------|------|----------|
+| 0 | **Overview** | Gear, speed, TPMS summary, alerts |
+| 1 | **RPM/Speed** | Primary driving data with large gauge |
+| 2 | **TPMS** | Tire pressure and temperature details |
+| 3 | **Engine** | Coolant, oil, fuel, voltage gauges |
+| 4 | **G-Force** | Lateral and longitudinal acceleration (from ESP32 IMU) |
+| 5 | **Diagnostics** | CEL, ABS, DTC codes |
+| 6 | **System** | CPU, memory, CAN status |
+| 7 | **Settings** | Brightness, shift RPM, warnings, units, LED pattern |
+
+### Data Flow
+
+- **ESP32-S3 receives**: All CAN telemetry + SWC buttons from Pi (serial)
+- **ESP32-S3 sends**: BLE TPMS data + G-force IMU data to Pi (serial)
+- **Pi caches all settings** and syncs to ESP32 on startup
 
 ---
 
 ## ESP32-S3 Deployment
 
 ### Hardware
-- Waveshare ESP32-S3 Round Display (1.85" 360×360)
-- GC9A01 LCD driver
-- QMI8658 IMU for G-force data
-- Touch screen for navigation
+- **Model**: Waveshare ESP32-S3 Round Display (1.85" 360×360)
+- **Location**: **Mounted in stock oil gauge hole** (fits perfectly)
+- **Display Driver**: GC9A01 LCD driver
+- **Sensors**: QMI8658 IMU for G-force data, BLE for TPMS
+- **Touch**: Capacitive touch for navigation (backup to SWC)
 
 ### Prerequisites
 1. Install [PlatformIO](https://platformio.org/install/ide?install=vscode) VS Code extension
@@ -96,9 +108,10 @@ display/
 ## Raspberry Pi Deployment
 
 ### Hardware
-- Raspberry Pi 4B (2GB+ recommended)
-- 7" 800×480 HDMI touchscreen display
-- USB connection to Arduino for telemetry data
+- **Raspberry Pi 4B** (2GB+ recommended)
+- **Location**: Hidden (center console or trunk)
+- **Output**: HDMI to Pioneer AVH-W4500NEX aftermarket head unit
+- **Serial connections**: ESP32-S3 (telemetry), Arduino (LED settings)
 
 ### Prerequisites
 

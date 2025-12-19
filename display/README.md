@@ -4,6 +4,16 @@
 
 This module provides a visual dashboard for the MX5 Telemetry system using the **Waveshare ESP32-S3-Touch-LCD-1.85** round touch screen display.
 
+### Installation Location
+
+**The ESP32-S3 round display is mounted in the stock oil gauge hole.** The 1.85" form factor fits perfectly in the original gauge opening, providing a clean OEM-like appearance.
+
+### Data Flow
+
+- **Receives from Pi (Serial)**: All CAN telemetry data, steering wheel button events, settings sync
+- **Sends to Pi (Serial)**: BLE TPMS data (4 tire sensors), G-force data (QMI8658 IMU)
+- **No CAN module** - All vehicle data comes through the Pi hub
+
 ### Hardware: Waveshare ESP32-S3-Touch-LCD-1.85
 
 | Component | Specification |
@@ -11,7 +21,8 @@ This module provides a visual dashboard for the MX5 Telemetry system using the *
 | **MCU** | ESP32-S3 (Dual-core Xtensa LX7, 240MHz) |
 | **Display** | 1.85" Round IPS LCD, 360×360 pixels, ST77916 controller (QSPI) |
 | **Touch** | CST816 Capacitive touch controller |
-| **IMU** | QMI8658 (Accelerometer + Gyroscope) |
+| **IMU** | QMI8658 (Accelerometer + Gyroscope) → G-force data sent to Pi |
+| **BLE** | Built-in Bluetooth 5.0 → TPMS sensor data sent to Pi |
 | **IO Expander** | TCA9554PWR |
 | **Flash** | 16MB |
 | **PSRAM** | 8MB (OPI) |

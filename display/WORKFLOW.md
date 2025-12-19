@@ -1,19 +1,58 @@
 # ESP32-S3 Display Module Workflow
 
-This guide is for users who have **two ESP32-S3 round display modules** and want to:
-1. **Clone** the firmware from an existing working device (Module A)
-2. **Redevelop** the source code to understand and customize the firmware
-3. **Flash** the rebuilt firmware to a new device (Module B)
+## 🏎️ Architecture Context
 
-> **Note**: If you're cloning a device, you likely don't have the original source code. This workflow helps you extract the firmware, reverse engineer it, and rebuild equivalent source code that you can then modify and maintain.
+The ESP32-S3 1.85" round display is part of the MX5-Telemetry system:
+
+| Device | Location | Role |
+|--------|----------|------|
+| **Raspberry Pi 4B** | Console/trunk | CAN hub, settings cache, HDMI to head unit |
+| **ESP32-S3 Round Display** | **Stock oil gauge hole** | Visual dashboard, BLE TPMS, G-force |
+| **Arduino Nano** | Behind gauge cluster | LED strip controller |
+
+The ESP32-S3 displays:
+- RPM gauge, speedometer
+- TPMS (tire pressure from BLE sensors)
+- G-force meter (from onboard QMI8658 IMU)
+- Settings menu (navigated via steering wheel controls sent from Pi)
 
 ---
 
-## 🎯 Workflow: Clone → Redevelop → Flash
+## 🔧 Development Workflow
 
-### Step 1: Backup Firmware from Module A (Source)
+This guide covers the firmware development and deployment workflow for the ESP32-S3 display module.
 
-Connect the **source module** (the one with working firmware) to your computer:
+### Quick Start (Normal Development)
+
+```powershell
+# Build firmware
+pio run -d display
+
+# Upload to ESP32-S3
+pio run -d display --target upload
+
+# Monitor serial output
+pio device monitor -b 115200
+```
+
+### Build + Upload + Monitor (Combined)
+
+```powershell
+pio run -d display --target upload; pio device monitor -b 115200
+```
+
+---
+
+## 📦 Firmware Backup & Recovery
+
+This section is for users who need to:
+1. **Backup** firmware from a working device
+2. **Clone** firmware to a new device
+3. **Recover** a bricked device
+
+### Step 1: Backup Firmware
+
+Connect the ESP32-S3 to your computer:
 
 ```powershell
 cd display

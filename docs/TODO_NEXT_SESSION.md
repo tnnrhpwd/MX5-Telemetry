@@ -1,20 +1,55 @@
 # MX5 Telemetry - Next Session To-Do List
 
 **Date Created:** December 1, 2025  
-**Last Updated:** December 16, 2025  
+**Last Updated:** December 19, 2025  
 **Status:** ✅ Pi + Arduino + ESP32-S3 architecture complete!
 
 ---
 
 ## 🎯 Current Architecture
 
-| Device | Purpose | Status |
-|--------|---------|--------|
-| **Raspberry Pi 4B** | CAN hub + HDMI display | ✅ Implemented |
-| **ESP32-S3 Round Display** | Gauge display + BLE TPMS | ✅ Implemented |
-| **Arduino Nano** | Direct CAN → LED strip | ✅ Implemented |
+| Device | Purpose | Location | Status |
+|--------|---------|----------|--------|
+| **Raspberry Pi 4B** | CAN hub + settings cache + HDMI display | Hidden (console/trunk) | ✅ Implemented |
+| **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force IMU | **Stock oil gauge hole** | ✅ Implemented |
+| **Arduino Nano** | Direct CAN → LED strip + receives LED pattern from Pi | Gauge cluster bezel | ✅ Implemented |
+
+### Data Flow Summary
+
+```
+OBD-II Port
+    │
+    ├─── HS-CAN (500k) ──┬──► Pi MCP2515 #1 ──► Pi processes all telemetry
+    │    (SHARED)        │
+    │                    └──► Arduino MCP2515 ──► RPM → LED strip (<1ms)
+    │
+    └─── MS-CAN (125k) ──────► Pi MCP2515 #2 ──► Steering wheel buttons
+    
+Pi (Central Hub + Settings Cache)
+    │
+    ├──► ESP32-S3 (Serial) ──► Telemetry + SWC buttons + settings sync
+    │    ◄─── ESP32-S3 ◄───── TPMS (BLE sensors) + G-force (IMU)
+    │
+    ├──► Arduino (Serial) ───► LED sequence selection + settings sync
+    │
+    └──► Pioneer (HDMI) ─────► Full dashboard display
+```
 
 See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for full architecture.
+
+---
+
+## 🎉 COMPLETED - December 19, 2025: Documentation Update
+
+### What Was Done
+
+1. **Updated all documentation** to accurately reflect:
+   - ESP32-S3 mounted in stock oil gauge hole
+   - Pi as central hub AND settings cache
+   - Pi sends LED sequence selection to Arduino via serial
+   - Arduino uses direct CAN for RPM (shared HS-CAN bus with Pi)
+   - ESP32 sends TPMS + G-force data to Pi
+   - Pi syncs all settings to devices on startup
 
 ---
 
@@ -164,23 +199,35 @@ See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for full architecture
 ## Quick Reference: Current Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  OBD-II Port    │     │  Raspberry Pi 4B │     │ Pioneer AVH     │
-│  HS-CAN (500k)  │────►│  (CAN Hub)       │────►│ W4500NEX        │
-│  MS-CAN (125k)  │     │  + Python UI     │     │ (HDMI Display)  │
-└─────────────────┘     └────────┬─────────┘     └─────────────────┘
-                                 │ Serial
-        ┌────────────────────────┼────────────────────────┐
-        │                        ▼                        │
-        │                ┌──────────────────┐             │
-        │                │ ESP32-S3 Round   │◄── BLE TPMS │
-        │                │ Display (1.85")  │    Sensors  │
-        │                └──────────────────┘             │
-        │                                                 │
-┌───────┴───────┐                                         │
-│ Arduino Nano  │◄── MCP2515 (Direct HS-CAN)             │
-│ + WS2812B LED │    <1ms latency for shift light        │
-└───────────────┘                                         │
+                           ┌──────────────────────────────────────────┐
+                           │            RASPBERRY PI 4B               │
+                           │      (Central Hub + Settings Cache)      │
+                           │          [Hidden in console]             │
+                           │                                          │
+┌────────────────┐         │  ┌──────────────┐    ┌──────────────┐   │
+│   OBD-II Port  │         │  │   MCP2515    │    │   MCP2515    │   │
+│                │         │  │   HS-CAN     │    │   MS-CAN     │   │
+│  HS-CAN ───────┼────┬───►│  │   (500k)     │    │   (125k)     │   │
+│  (SHARED)      │    │    │  └──────────────┘    └──────────────┘   │
+│                │    │    │                                          │
+│  MS-CAN ───────┼────┼───►│  • Reads all CAN data                   │
+│  (Pi only)     │    │    │  • Caches settings → syncs on startup   │
+└────────────────┘    │    │  • Sends telemetry to ESP32 (serial)    │
+                      │    │  • Sends LED pattern to Arduino (serial)│
+                      │    │                                          │
+                      │    │    HDMI ─────► Pioneer AVH-W4500NEX     │
+                      │    └──────────────────────────────────────────┘
+                      │
+                      │    ┌────────────────────┐  ┌──────────────────┐
+                      │    │   ESP32-S3 Round   │  │   Arduino Nano   │
+                      └───►│     Display        │  │   + LED Strip    │
+                           │  [Oil gauge hole]  │  │  [Gauge bezel]   │
+                           │                    │  │                  │
+BLE TPMS Sensors ─────────►│ • BLE TPMS → Pi    │  │ • Direct CAN RPM │
+(4x cap-mount)             │ • G-Force IMU → Pi │  │ • Receives LED   │
+                           │ • Displays gauges  │  │   pattern from Pi│
+                           │ • SWC navigation   │  │ • WS2812B strip  │
+                           └────────────────────┘  └──────────────────┘
 ```
 
 ### Build Commands

@@ -19,7 +19,17 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 
 ---
 
-## 🖥️ Raspberry Pi 4B (CAN Hub)
+## 🎯 System Architecture Summary
+
+| Device | Purpose | Location | CAN Connection |
+|--------|---------|----------|----------------|
+| **Raspberry Pi 4B** | CAN hub + settings cache + HDMI | Hidden (console/trunk) | MCP2515 x2 (HS + MS) |
+| **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force | **Stock oil gauge hole** | None (serial from Pi) |
+| **Arduino Nano** | RPM LED strip controller | Gauge cluster bezel | MCP2515 (shared HS-CAN) |
+
+---
+
+## 🖥️ Raspberry Pi 4B (Central Hub + Settings Cache)
 
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
@@ -28,27 +38,30 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | Pi Power Supply | 5V 3A USB-C | 1 | $10-15 | Official Pi PSU recommended |
 | MCP2515 CAN Module | 8MHz crystal | 2 | $6-14 | HS-CAN + MS-CAN |
 | Heatsink/Cooling | Passive or fan | 1 | $5-10 | Recommended for Pi 4 |
+| Micro HDMI Cable | 1-2m | 1 | $5-10 | To Pioneer head unit |
 
 ### Pi GPIO Connections
 - **SPI Bus** (shared): GPIO 10 (MOSI), GPIO 9 (MISO), GPIO 11 (SCLK)
-- **MCP2515 #1 CS**: GPIO 8 (CE0) - HS-CAN
-- **MCP2515 #2 CS**: GPIO 7 (CE1) - MS-CAN
+- **MCP2515 #1 CS**: GPIO 8 (CE0) - HS-CAN (shared bus with Arduino)
+- **MCP2515 #2 CS**: GPIO 7 (CE1) - MS-CAN (Pi only)
 - **Interrupts**: GPIO 25 (HS), GPIO 24 (MS)
+- **Serial to ESP32**: GPIO 14/15 (TX/RX)
+- **Serial to Arduino**: USB or additional UART
 
 ---
 
-## 📺 ESP32-S3 Round Display
+## 📺 ESP32-S3 Round Display (Replaces Stock Oil Gauge)
 
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
-| Waveshare ESP32-S3-Touch-LCD-1.85 | 360x360 IPS, Touch | 1 | $25-35 | Built-in IMU (QMI8658) |
+| Waveshare ESP32-S3-Touch-LCD-1.85 | 360x360 IPS, Touch | 1 | $25-35 | **Mounts in stock oil gauge hole** |
 | USB-C Cable | Data capable | 1 | $5-10 | For Pi connection |
 
-**Built-in Features**:
-- 1.85" Round IPS LCD (360×360)
-- Capacitive touch (CST816)
-- QMI8658 IMU (accelerometer/gyroscope)
-- ESP32-S3 (dual-core 240MHz, BLE 5.0)
+**Built-in Features (used in this project)**:
+- 1.85" Round IPS LCD (360×360) - fits oil gauge hole perfectly
+- Capacitive touch (CST816) - backup navigation
+- QMI8658 IMU (accelerometer/gyroscope) → **G-force data sent to Pi**
+- ESP32-S3 BLE 5.0 → **TPMS sensor data sent to Pi**
 
 ---
 
@@ -57,9 +70,13 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
 | Arduino Nano V3.0 | ATmega328P, 16MHz, 5V | 1 | $3-8 | Clone or official |
-| MCP2515 CAN Module | MCP2515 + TJA1050, 8MHz crystal | 1 | $3-7 | Arduino's dedicated CAN |
+| MCP2515 CAN Module | MCP2515 + TJA1050, 8MHz crystal | 1 | $3-7 | **Shared HS-CAN with Pi** |
 
-**Alternatives**: Arduino Nano Every (requires code modifications)
+**Location**: Gauge cluster bezel (LED strip surrounds instruments)
+
+**Connections**:
+- Direct HS-CAN via MCP2515 (reads RPM, <1ms latency)
+- Serial from Pi (receives LED sequence/pattern selection)
 
 ---
 
@@ -68,6 +85,8 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
 | WS2812B LED Strip | 20 LEDs, 5V, addressable RGB | 1 | $5-12 | IP65 waterproof recommended |
+
+**Location**: Mounted around gauge cluster bezel
 
 **Options**:
 - **20 LEDs**: Recommended for shift light bar
@@ -81,6 +100,8 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
 | BLE TPMS Cap Sensors | Bluetooth 4.0, cap-mount | 4 | $25-40 | One per tire |
+
+**Data Flow**: Sensors → ESP32-S3 BLE → Pi (serial) → Both displays
 
 **Features to look for**:
 - BLE broadcast (not proprietary app only)
