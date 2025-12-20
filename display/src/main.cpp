@@ -1117,11 +1117,11 @@ void drawTPMSScreen() {
     snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[0]);
     snprintf(tempStr, sizeof(tempStr), "%.1fF", telemetry.tireTemp[0]);
     uint16_t fl_time_color = (tpmsLastUpdateStr[0][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
-    LCD_DrawString(flX - 42, flY + 2, psiStr, flColor, COLOR_BG, 2);
-    LCD_DrawString(flX - 42, flY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(flX - 42, flY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
-    LCD_DrawString(flX - 58, flY - 14, "FL", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(flX - 42, flY - 14, tpmsLastUpdateStr[0], fl_time_color, COLOR_BG, 1);
+    LCD_DrawString(flX - 50, flY + 2, psiStr, flColor, COLOR_BG, 2);
+    LCD_DrawString(flX - 50, flY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(flX - 50, flY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
+    LCD_DrawString(flX - 66, flY - 14, "FL", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(flX - 50, flY - 14, tpmsLastUpdateStr[0], fl_time_color, COLOR_BG, 1);
     
     // Front Right - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[1]);
@@ -1137,11 +1137,11 @@ void drawTPMSScreen() {
     snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[2]);
     snprintf(tempStr, sizeof(tempStr), "%.1fF", telemetry.tireTemp[2]);
     uint16_t rl_time_color = (tpmsLastUpdateStr[2][0] != '-') ? MX5_GREEN : MX5_DARKGRAY;
-    LCD_DrawString(rlX - 42, rlY + 2, psiStr, rlColor, COLOR_BG, 2);
-    LCD_DrawString(rlX - 42, rlY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(rlX - 42, rlY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
-    LCD_DrawString(rlX - 58, rlY + tireH + 4, "RL", MX5_GRAY, COLOR_BG, 1);
-    LCD_DrawString(rlX - 42, rlY + tireH + 4, tpmsLastUpdateStr[2], rl_time_color, COLOR_BG, 1);
+    LCD_DrawString(rlX - 50, rlY + 2, psiStr, rlColor, COLOR_BG, 2);
+    LCD_DrawString(rlX - 50, rlY + 20, "PSI", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(rlX - 50, rlY + 32, tempStr, MX5_ACCENT, COLOR_BG, 1);
+    LCD_DrawString(rlX - 66, rlY + tireH + 4, "RL", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(rlX - 50, rlY + tireH + 4, tpmsLastUpdateStr[2], rl_time_color, COLOR_BG, 1);
     
     // Rear Right - use per-tire timestamp from Pi
     snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[3]);
