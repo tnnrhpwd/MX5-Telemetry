@@ -5,11 +5,11 @@ This guide covers the **Arduino Nano LED controller** wiring for the gauge clust
 ## 📋 Overview
 
 The Arduino Nano provides <1ms latency RPM-to-LED updates by:
-1. Reading directly from the HS-CAN bus via MCP2515 module
+1. Reading from the **shared** MCP2515 #1 (HS-CAN) via **spliced SPI wires**
 2. Receiving LED sequence/pattern selection from the Pi via serial
 3. Driving the WS2812B LED strip around the gauge cluster
 
-**Note**: This is part of the 3-device MX5-Telemetry system. See [WIRING_GUIDE_PI_SYSTEM.md](WIRING_GUIDE_PI_SYSTEM.md) for the complete system wiring.
+**⚠️ Important**: The Arduino does NOT have its own MCP2515 module. It shares MCP2515 #1 with the Pi via spliced SPI wires. See [WIRING_GUIDE_PI_SYSTEM.md](WIRING_GUIDE_PI_SYSTEM.md) for the splice diagram.
 
 ## ⚠️ Safety First
 
@@ -24,10 +24,10 @@ The Arduino Nano provides <1ms latency RPM-to-LED updates by:
 | Component | Quantity | Notes |
 |-----------|----------|-------|
 | Arduino Nano V3.0 | 1 | ATmega328P, 16MHz |
-| MCP2515 + TJA1050 Module | 1 | 8MHz crystal version |
 | WS2812B LED Strip | 1 | 20 LEDs recommended |
 | LM2596 Buck Converter | 1 | 12V → 5V, 3A capacity |
-| OBD-II Male Connector | 1 | Or Y-splitter cable |
+
+**Note**: No MCP2515 module needed for Arduino - it uses spliced wires from MCP2515 #1 (shared with Pi).
 
 ### Optional Components
 | Component | Purpose |
@@ -42,14 +42,15 @@ The Arduino Nano provides <1ms latency RPM-to-LED updates by:
                     ┌─────────────────────────────────────────────────────────┐
                     │                    ARDUINO NANO                          │
                     │                                                          │
-                    │   D2 ←──── INT (CAN Interrupt - CRITICAL!)              │
+                    │   D2 ←──── SPLICE from MCP2515 #1 INT (shared with Pi)  │
+                    │   D3 ←──── Pi GPIO 14 (TX) - serial commands            │
+                    │   D4 ────→ Pi GPIO 15 (RX) - optional responses         │
                     │   D5 ────→ WS2812B Data                                  │
-                    │   D10 ───→ MCP2515 CS                                    │
-                    │   D11 ───→ MCP2515 MOSI                                  │
-                    │   D12 ←─── MCP2515 MISO                                  │
-                    │   D13 ───→ MCP2515 SCK                                   │
+                    │   D10 ←─── SPLICE from MCP2515 #1 CS                    │
+                    │   D11 ←─── SPLICE from MCP2515 #1 MOSI                  │
+                    │   D12 ←─── SPLICE from MCP2515 #1 MISO                  │
+                    │   D13 ←─── SPLICE from MCP2515 #1 SCK                   │
                     │   A6 ←──── Brightness Pot (optional)                     │
-                    │   D3 ────→ Haptic Motor (optional)                       │
                     │   5V ────→ Power Rail                                    │
                     │   GND ───→ Ground Rail                                   │
                     └─────────────────────────────────────────────────────────┘
@@ -58,40 +59,33 @@ The Arduino Nano provides <1ms latency RPM-to-LED updates by:
           ┌─────────────────────────────┼─────────────────────────────┐
           │                             │                             │
           ▼                             ▼                             ▼
-    ┌───────────┐               ┌───────────────┐             ┌─────────────┐
-    │ MCP2515   │               │ WS2812B Strip │             │ LM2596      │
-    │ CAN Module│               │ (20 LEDs)     │             │ Buck Conv   │
-    ├───────────┤               ├───────────────┤             ├─────────────┤
-    │ VCC ─→ 5V │               │ 5V ─→ Buck 5V │             │ IN+ ← OBD16 │
-    │ GND ─→ GND│               │ GND ─→ GND    │             │ IN- ← OBD5  │
-    │ CS ─→ D10 │               │ DIN ← D5      │             │ OUT+ → 5V   │
-    │ SO ─→ D12 │               └───────────────┘             │ OUT- → GND  │
-    │ SI ─→ D11 │                                             └─────────────┘
-    │ SCK─→ D13 │                        
-    │ INT─→ D2  │  ◄── CRITICAL!                    ┌─────────────┐
-    │ CANH ← ─┬─│─────────────────────────────────► │ OBD-II Port │
-    │ CANL ← ─┴─│─────────────────────────────────► │ Pin 6: CANH │
-    └───────────┘                                   │ Pin 14: CANL│
-                                                    │ Pin 5: GND  │
-                                                    │ Pin 16: 12V │
-                                                    └─────────────┘
+    ┌───────────────┐           ┌───────────────┐             ┌─────────────┐
+    │ SPLICED from  │           │ WS2812B Strip │             │ LM2596      │
+    │ MCP2515 #1    │           │ (20 LEDs)     │             │ Buck Conv   │
+    │ (Pi's module) │           ├───────────────┤             ├─────────────┤
+    ├───────────────┤           │ 5V ─→ Buck 5V │             │ IN+ ← OBD16 │
+    │ CS  → D10     │           │ GND ─→ GND    │             │ IN- ← OBD5  │
+    │ MOSI→ D11     │           │ DIN ← D5      │             │ OUT+ → 5V   │
+    │ MISO→ D12     │           └───────────────┘             │ OUT- → GND  │
+    │ SCK → D13     │                                         └─────────────┘
+    │ INT → D2      │ ◄── CRITICAL!
+    └───────────────┘
+    (See WIRING_GUIDE_PI_SYSTEM.md for splice details)
 ```
 
 ## 📍 Pin Connections
 
-### MCP2515 CAN Module → Arduino
+### Spliced SPI from MCP2515 #1 → Arduino
 
-| MCP2515 Pin | Arduino Pin | Wire Color | Description |
-|-------------|-------------|------------|-------------|
-| VCC | 5V | Red | Power supply |
-| GND | GND | Black | Ground |
-| CS | D10 | Yellow | SPI Chip Select |
-| SO (MISO) | D12 | Blue | SPI Data Out |
-| SI (MOSI) | D11 | Green | SPI Data In |
-| SCK | D13 | White | SPI Clock |
-| **INT** | **D2** | **Yellow/White** | **Interrupt (REQUIRED!)** |
+The Arduino connects to MCP2515 #1 via **spliced wires** (same module that Pi uses):
 
-> 💡 **Tip**: Use striped tape or heat shrink to differentiate wires of the same color (e.g., mark the INT wire with tape to distinguish from CS).
+| MCP2515 #1 Pin | Arduino Pin | Wire Color | Description |
+|----------------|-------------|------------|-------------|
+| CS (spliced) | D10 | Yellow | SPI Chip Select |
+| SO/MISO (spliced) | D12 | Blue | SPI Data Out |
+| SI/MOSI (spliced) | D11 | Green | SPI Data In |
+| SCK (spliced) | D13 | White | SPI Clock |
+| **INT (spliced)** | **D2** | **Yellow/White** | **Interrupt (REQUIRED!)** |
 
 ⚠️ **CRITICAL**: The INT pin MUST be connected to D2 for hardware interrupt support!
 

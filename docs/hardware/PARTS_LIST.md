@@ -8,8 +8,8 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 |----------|---------------------|
 | Raspberry Pi 4B + Accessories | $60-80 |
 | ESP32-S3 Round Display | $25-35 |
-| Arduino Nano + CAN Module | $10-20 |
-| MCP2515 Modules (x3 total) | $10-20 |
+| Arduino Nano | $5-10 |
+| MCP2515 Modules (x2 total) | $6-14 |
 | LED Strip + Power | $15-25 |
 | BLE TPMS Sensors (x4) | $25-40 |
 | Wiring & Connectors | $15-25 |
@@ -23,9 +23,16 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 
 | Device | Purpose | Location | CAN Connection |
 |--------|---------|----------|----------------|
-| **Raspberry Pi 4B** | CAN hub + settings cache + HDMI | Hidden (console/trunk) | MCP2515 x2 (HS + MS) |
+| **Raspberry Pi 4B** | CAN hub + settings cache + HDMI | Hidden (console/trunk) | MCP2515 #1 (HS) + MCP2515 #2 (MS) |
 | **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force | **Stock oil gauge hole** | None (serial from Pi) |
-| **Arduino Nano** | RPM LED strip controller | Gauge cluster bezel | MCP2515 (shared HS-CAN) |
+| **Arduino Nano** | RPM LED strip controller | Gauge cluster bezel | Spliced from MCP2515 #1 (HS) |
+
+### MCP2515 Module Distribution (2 Total)
+
+| Module | CAN Bus | Speed | OBD Pins | Wiring |
+|--------|---------|-------|----------|--------|
+| MCP2515 #1 | HS-CAN | 500 kbps | 6/14 | SPI output **spliced** to Pi AND Arduino |
+| MCP2515 #2 | MS-CAN | 125 kbps | 3/11 | Pi only (steering wheel buttons) |
 
 ---
 
@@ -70,12 +77,13 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
 | Arduino Nano V3.0 | ATmega328P, 16MHz, 5V | 1 | $3-8 | Clone or official |
-| MCP2515 CAN Module | MCP2515 + TJA1050, 8MHz crystal | 1 | $3-7 | **Shared HS-CAN with Pi** |
 
 **Location**: Gauge cluster bezel (LED strip surrounds instruments)
 
+**CAN Wiring**: The Arduino connects to MCP2515 #1 (HS-CAN) via **spliced SPI wires** from the same module that connects to the Pi. Both devices share ONE MCP2515 for HS-CAN.
+
 **Connections**:
-- Direct HS-CAN via MCP2515 (reads RPM, <1ms latency)
+- Spliced SPI from MCP2515 #1 (reads RPM, <1ms latency)
 - Serial from Pi (receives LED sequence/pattern selection)
 
 ---
