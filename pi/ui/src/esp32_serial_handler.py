@@ -102,6 +102,7 @@ class ESP32SerialHandler:
         self.connected = False
         self.last_rx_time = 0
         self.last_tx_time = 0
+        self.last_imu_time = 0  # Track when last IMU data was received
         
         # Current ESP32 screen (synced from acknowledgements)
         self.esp32_screen = 0
@@ -482,6 +483,9 @@ class ESP32SerialHandler:
             # Update telemetry object
             self.telemetry.g_lateral = lateral
             self.telemetry.g_longitudinal = longitudinal
+            
+            # Track when IMU data was last received
+            self.last_imu_time = time.time()
     
     def send_telemetry(self):
         """Send current telemetry data to ESP32"""
