@@ -38,17 +38,45 @@ See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for full architecture
 
 ---
 
-## ⚠️ REQUIRED: Pi Boot Configuration
+## ✅ COMPLETED: Pi Boot Configuration (December 20, 2025)
 
-**These changes must be made on the Raspberry Pi before CAN and serial will work!**
+**Configuration has been applied via `pi/setup_can_bus.sh`**
 
-### 1. Enable SPI (for MCP2515 CAN modules)
+### What Was Configured:
+- ✅ `/boot/config.txt` updated with SPI, MCP2515 overlays, and UART
+- ✅ `mx5-can.service` systemd service created and enabled
+- ✅ `/usr/local/bin/mx5-can-setup.sh` startup script installed
+- ✅ `can-utils` package installed for debugging
+
+### Verification (run after MCP2515 modules are wired):
+```bash
+# Check if CAN interfaces exist (requires hardware connected)
+ip link show can0
+ip link show can1
+
+# Test CAN traffic (with car ignition on)
+candump can0  # HS-CAN at 500kbps
+candump can1  # MS-CAN at 125kbps
+
+# Check service status
+systemctl status mx5-can.service
+```
+
+### Current Status:
+- **Software**: ✅ Complete - drivers loaded, service enabled
+- **Hardware**: ⏳ Pending - MCP2515 modules not yet connected (expected "Device does not exist" until wired)
+
+### Manual Setup Reference (already done):
+<details>
+<summary>Click to expand manual setup steps (for reference only)</summary>
+
+#### 1. Enable SPI (for MCP2515 CAN modules)
 ```bash
 sudo raspi-config
 # Interface Options → SPI → Enable
 ```
 
-### 2. Configure /boot/config.txt
+#### 2. Configure /boot/config.txt
 Add these lines to `/boot/config.txt`:
 ```ini
 # Enable SPI for CAN bus
@@ -58,37 +86,35 @@ dtparam=spi=on
 dtoverlay=mcp2515-can0,oscillator=8000000,interrupt=25
 
 # MCP2515 CAN Module #2 (MS-CAN on CE1, INT on GPIO 24)  
-dtoverlay=mcp2515-can1,oscillator=8000000,interrupt=24,cs_pin=7
+dtoverlay=mcp2515-can1,oscillator=8000000,interrupt=24
 
 # Enable GPIO UART for Arduino serial (optional - if not using USB)
 enable_uart=1
 ```
 
-### 3. Bring Up CAN Interfaces (after reboot)
+#### 3. Bring Up CAN Interfaces (after reboot)
 ```bash
 # Create script at /etc/network/if-up.d/can-setup:
 sudo ip link set can0 up type can bitrate 500000
 sudo ip link set can1 up type can bitrate 125000
 ```
 
-### 4. Enable UART for Arduino (if using GPIO serial)
+#### 4. Enable UART for Arduino (if using GPIO serial)
 ```bash
 sudo raspi-config
 # Interface Options → Serial Port
 # Login shell over serial: NO
 # Serial hardware enabled: YES
 ```
+</details>
 
 ---
 
 ## 📋 Remaining Tasks
 
-### ⚠️ HIGH PRIORITY - Pi Setup (Before Testing)
-- [ ] **Configure /boot/config.txt** with dtoverlay lines above
-- [ ] **Enable SPI** via raspi-config  
-- [ ] **Test CAN interfaces** with `candump can0` and `candump can1`
-- [ ] **Enable UART** for Arduino serial (if using GPIO pins 14/15)
-- [ ] **Create CAN startup script** to bring up interfaces on boot
+### Hardware (Before Full Testing)
+- [ ] Wire MCP2515 modules to Pi GPIO (see wiring table below)
+- [ ] Test CAN interfaces with `candump can0` and `candump can1`
 
 ### Hardware
 - [ ] Test Pi with actual MCP2515 modules in car
