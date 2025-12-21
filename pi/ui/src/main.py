@@ -1923,19 +1923,26 @@ class PiDisplayApp:
             gx = ball_cx - int(self.telemetry.g_lateral * g_scale)
             gy = ball_cy - int(self.telemetry.g_longitudinal * g_scale)
             
+            # Ball size scales with longitudinal G (acceleration = bigger, braking = smaller)
+            # Base radius 15, scales from 8 (hard braking) to 24 (hard acceleration)
+            ball_size = 15 + int(self.telemetry.g_longitudinal * 9)
+            ball_size = max(8, min(24, ball_size))
+            
             dx, dy = gx - ball_cx, gy - ball_cy
             dist = math.sqrt(dx*dx + dy*dy)
-            if dist > ball_r - 16:
-                scale = (ball_r - 16) / dist
+            if dist > ball_r - ball_size - 2:
+                scale = (ball_r - ball_size - 2) / dist
                 gx = ball_cx + int(dx * scale)
                 gy = ball_cy + int(dy * scale)
             
-            glow = pygame.Surface((50, 50), pygame.SRCALPHA)
-            pygame.draw.circle(glow, (*COLOR_ACCENT[:3], 100), (25, 25), 20)
-            self.screen.blit(glow, (gx - 25, gy - 25))
+            # Glow size also scales
+            glow_size = ball_size + 10
+            glow = pygame.Surface((glow_size * 2, glow_size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (*COLOR_ACCENT[:3], 100), (glow_size, glow_size), glow_size - 5)
+            self.screen.blit(glow, (gx - glow_size, gy - glow_size))
             
-            pygame.draw.circle(self.screen, COLOR_ACCENT, (gx, gy), 15)
-            pygame.draw.circle(self.screen, COLOR_WHITE, (gx, gy), 15, 2)
+            pygame.draw.circle(self.screen, COLOR_ACCENT, (gx, gy), ball_size)
+            pygame.draw.circle(self.screen, COLOR_WHITE, (gx, gy), ball_size, 2)
         
         # Right panel cards
         right_x = 440

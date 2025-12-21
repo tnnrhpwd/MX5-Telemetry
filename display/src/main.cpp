@@ -1282,6 +1282,7 @@ void drawGForceScreen() {
     // Static variables to track previous state for partial redraw
     static int prevGX = CENTER_X;
     static int prevGY = CENTER_Y;
+    static int prevBallRadius = 14;
     static float prevGForceX = 0;
     static float prevGForceY = 0;
     static float prevTotalG = 0;
@@ -1293,6 +1294,11 @@ void drawGForceScreen() {
     // Negate X so ball moves in direction of turn (LEFT turn = ball moves LEFT)
     int gX = CENTER_X - (int)(telemetry.gForceX / maxG * maxRadius);
     int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted
+    
+    // Ball size scales with longitudinal G (acceleration = bigger, braking = smaller)
+    // Base radius 14, scales from 8 (hard braking) to 22 (hard acceleration)
+    int ballRadius = 14 + (int)(telemetry.gForceY * 8);  // ±1G = ±8 pixels
+    ballRadius = max(8, min(22, ballRadius));  // Clamp between 8 and 22
     
     // Clamp to circle
     float dist = sqrt(pow(gX - CENTER_X, 2) + pow(gY - CENTER_Y, 2));
@@ -1340,10 +1346,10 @@ void drawGForceScreen() {
         // Fixed center reference point
         LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
         
-        // Draw G-force indicator ball
-        LCD_FillCircle(gX, gY, 14, dotColor);
-        LCD_DrawCircle(gX, gY, 14, MX5_WHITE);
-        LCD_DrawCircle(gX, gY, 15, MX5_WHITE);
+        // Draw G-force indicator ball (size based on longitudinal G)
+        LCD_FillCircle(gX, gY, ballRadius, dotColor);
+        LCD_DrawCircle(gX, gY, ballRadius, MX5_WHITE);
+        LCD_DrawCircle(gX, gY, ballRadius + 1, MX5_WHITE);
         
         // === G VALUES DISPLAY (Bottom) - draw info box ===
         int infoY = SCREEN_HEIGHT - 60;
@@ -1373,25 +1379,29 @@ void drawGForceScreen() {
         prevGForceX = telemetry.gForceX;
         prevGForceY = telemetry.gForceY;
         prevTotalG = totalG;
+        prevBallRadius = ballRadius;
     } else {
-        // Partial redraw - only update if position changed significantly
+        // Partial redraw - only update if position or size changed significantly
         bool ballMoved = (abs(gX - prevGX) > 1 || abs(gY - prevGY) > 1);
+        bool ballSizeChanged = (abs(ballRadius - prevBallRadius) > 1);
         bool valuesChanged = (abs(telemetry.gForceX - prevGForceX) > 0.005 || 
                               abs(telemetry.gForceY - prevGForceY) > 0.005);
         
-        if (ballMoved) {
+        if (ballMoved || ballSizeChanged) {
             // Erase old ball position by filling with background color
-            LCD_FillCircle(prevGX, prevGY, 16, COLOR_BG);
+            // Use prevBallRadius + 2 to ensure complete erasure
+            LCD_FillCircle(prevGX, prevGY, prevBallRadius + 2, COLOR_BG);
             
             // Redraw any grid elements that might have been covered by the old ball
-            if (abs(prevGY - CENTER_Y) < 20) {
-                int lineStart = max(CENTER_X - 130, prevGX - 20);
-                int lineEnd = min(CENTER_X + 130, prevGX + 20);
+            int eraseRadius = prevBallRadius + 5;
+            if (abs(prevGY - CENTER_Y) < eraseRadius) {
+                int lineStart = max(CENTER_X - 130, prevGX - eraseRadius);
+                int lineEnd = min(CENTER_X + 130, prevGX + eraseRadius);
                 LCD_DrawLine(lineStart, CENTER_Y, lineEnd, CENTER_Y, MX5_DARKGRAY);
             }
-            if (abs(prevGX - CENTER_X) < 20) {
-                int lineStart = max(CENTER_Y - 130, prevGY - 20);
-                int lineEnd = min(CENTER_Y + 130, prevGY + 20);
+            if (abs(prevGX - CENTER_X) < eraseRadius) {
+                int lineStart = max(CENTER_Y - 130, prevGY - eraseRadius);
+                int lineEnd = min(CENTER_Y + 130, prevGY + eraseRadius);
                 LCD_DrawLine(CENTER_X, lineStart, CENTER_X, lineEnd, MX5_DARKGRAY);
             }
             
@@ -1399,23 +1409,24 @@ void drawGForceScreen() {
             for (int g = 1; g <= 3; g++) {
                 int radius = g * 40;
                 float prevDist = sqrt(pow(prevGX - CENTER_X, 2) + pow(prevGY - CENTER_Y, 2));
-                if (abs(prevDist - radius) < 20) {
+                if (abs(prevDist - radius) < eraseRadius) {
                     LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
                 }
             }
             
             // Redraw center reference if it was covered
-            if (abs(prevGX - CENTER_X) < 20 && abs(prevGY - CENTER_Y) < 20) {
+            if (abs(prevGX - CENTER_X) < eraseRadius && abs(prevGY - CENTER_Y) < eraseRadius) {
                 LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
             }
             
-            // Draw G-force indicator at new position
-            LCD_FillCircle(gX, gY, 14, dotColor);
-            LCD_DrawCircle(gX, gY, 14, MX5_WHITE);
-            LCD_DrawCircle(gX, gY, 15, MX5_WHITE);
+            // Draw G-force indicator at new position with dynamic size
+            LCD_FillCircle(gX, gY, ballRadius, dotColor);
+            LCD_DrawCircle(gX, gY, ballRadius, MX5_WHITE);
+            LCD_DrawCircle(gX, gY, ballRadius + 1, MX5_WHITE);
             
             prevGX = gX;
             prevGY = gY;
+            prevBallRadius = ballRadius;
         }
         
         if (valuesChanged) {
