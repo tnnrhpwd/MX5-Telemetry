@@ -1424,8 +1424,8 @@ void drawGForceScreen() {
         snprintf(gStr, sizeof(gStr), "Z:%+.2f", telemetry.gForceZ);
         LCD_DrawString(CENTER_X - 90, infoY + 34, gStr, MX5_PURPLE, COLOR_BG_CARD, 1);
         
-        // Total G on right side
-        snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
+        // Acceleration magnitude on right side
+        snprintf(gStr, sizeof(gStr), "%.2fG", accelMag);
         LCD_DrawString(CENTER_X + 30, infoY + 16, gStr, dotColor, COLOR_BG_CARD, 2);
         
         drawPageIndicator();
@@ -1506,7 +1506,7 @@ void drawGForceScreen() {
             snprintf(gStr, sizeof(gStr), "Z:%+.2f", telemetry.gForceZ);
             LCD_DrawString(CENTER_X - 90, infoY + 34, gStr, MX5_PURPLE, COLOR_BG_CARD, 1);
             
-            snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
+            snprintf(gStr, sizeof(gStr), "%.2fG", accelMag);
             LCD_DrawString(CENTER_X + 30, infoY + 16, gStr, dotColor, COLOR_BG_CARD, 2);
             
             prevPitch = orientationPitch;
