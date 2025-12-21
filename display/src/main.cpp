@@ -670,8 +670,13 @@ void updateIMU() {
 }
 
 void sendIMUData() {
-    // Send IMU data to Pi for display sync
-    Serial.printf("IMU:%.3f,%.3f\n", telemetry.gForceX, telemetry.gForceY);
+    // Send full IMU data to Pi for display sync
+    // Format: IMU:accelX,accelY,accelZ,gyroX,gyroY,gyroZ,linearX,linearY,pitch,roll
+    Serial.printf("IMU:%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.3f,%.3f,%.1f,%.1f\n",
+                  telemetry.gForceX, telemetry.gForceY, telemetry.gForceZ,
+                  imu.gx, imu.gy, imu.gz,
+                  telemetry.linearAccelX, telemetry.linearAccelY,
+                  orientationPitch, orientationRoll);
 }
 
 void handleTouch() {

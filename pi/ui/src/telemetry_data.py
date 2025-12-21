@@ -63,9 +63,23 @@ class TelemetryData:
     turn_signal_right: bool = False
     ac_running: bool = False
     
-    # Calculated values
-    g_lateral: float = 0.0
-    g_longitudinal: float = 0.0
+    # IMU - Raw accelerometer (includes gravity)
+    g_lateral: float = 0.0       # Accel X (left/right)
+    g_longitudinal: float = 0.0  # Accel Y (forward/back)
+    g_vertical: float = 0.0      # Accel Z (up/down)
+    
+    # IMU - Gyroscope (rotation rates in deg/sec)
+    gyro_x: float = 0.0
+    gyro_y: float = 0.0
+    gyro_z: float = 0.0
+    
+    # IMU - Pure linear acceleration (gravity subtracted)
+    linear_accel_x: float = 0.0
+    linear_accel_y: float = 0.0
+    
+    # IMU - Orientation (from gyro integration)
+    orientation_pitch: float = 0.0
+    orientation_roll: float = 0.0
     
     # TPMS (from ESP32-S3 via BLE)
     tire_pressure: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
