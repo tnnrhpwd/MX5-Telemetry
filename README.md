@@ -160,15 +160,19 @@ pio device monitor -b 115200
 
 ### ESP32-S3 Display (Remote Upload via Pi)
 
-The ESP32-S3 is permanently connected to the Pi's USB. Upload remotely:
+The ESP32-S3 is permanently connected to the Pi's USB (192.168.1.28). Upload remotely using VS Code task:
 
-```powershell
-# Push code to GitHub, then flash ESP32 via Pi
-git push
+**`Ctrl+Shift+P` → "Tasks: Run Task" → "Pi: Flash ESP32 (Remote)"**
+
+This pulls the latest code on the Pi and flashes the ESP32 in one step (~68 seconds).
+
+<details>
+<summary>Task runs this command:</summary>
+
+```bash
 ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 ```
-
-Or use VS Code task: **Pi: Flash ESP32 (Remote)**
+</details>
 
 ### Pi Display Application (Remote Update)
 
