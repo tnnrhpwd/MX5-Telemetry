@@ -62,9 +62,11 @@ struct TelemetryData {
     float voltage;
     float tirePressure[4];  // FL, FR, RL, RR
     float tireTemp[4];      // FL, FR, RL, RR
-    float gForceX;          // Lateral (left/right)
-    float gForceY;          // Longitudinal (accel/brake)
-    float gForceZ;          // Vertical
+    float gForceX;          // Lateral (left/right) - raw accelerometer
+    float gForceY;          // Longitudinal (accel/brake) - raw accelerometer
+    float gForceZ;          // Vertical - raw accelerometer
+    float linearAccelX;     // Lateral pure acceleration (gravity removed)
+    float linearAccelY;     // Longitudinal pure acceleration (gravity removed)
     bool engineRunning;
     bool connected;           // Serial connection to Pi is active
     bool hasDiagnosticData;   // Received actual diagnostic data from Pi
@@ -622,17 +624,44 @@ void loop() {
 // IMU Functions
 // ============================================================================
 
+// Orientation tracking via gyroscope integration
+static float orientationPitch = 0;  // Pitch angle in degrees (nose up/down)
+static float orientationRoll = 0;   // Roll angle in degrees (left/right tilt)
+static unsigned long lastIMUUpdate = 0;
+
 void updateIMU() {
     imu.update();
     
+    // Calculate dt for gyroscope integration
+    unsigned long now = millis();
+    float dt = (lastIMUUpdate > 0) ? (now - lastIMUUpdate) / 1000.0f : 0.02f;
+    lastIMUUpdate = now;
+    
+    // Integrate gyroscope to track orientation
+    // Map gyro axes for vertical mount (same mapping as accelerometer)
+    float gyroPitch = -imu.gz;  // Pitch rate (nose up/down) in °/sec
+    float gyroRoll = imu.gy;    // Roll rate (left/right tilt) in °/sec
+    
+    orientationPitch += gyroPitch * dt;
+    orientationRoll += gyroRoll * dt;
+    
+    // Clamp orientation to reasonable range (prevents drift runaway)
+    orientationPitch = constrain(orientationPitch, -45.0f, 45.0f);
+    orientationRoll = constrain(orientationRoll, -45.0f, 45.0f);
+    
     // Map accelerometer axes to car orientation for VERTICAL mounting
     // Display is mounted vertically in oil gauge hole (screen facing driver)
-    // X = lateral (positive = right turn, ball moves left)
-    // Y = longitudinal (positive = braking/nose down, ball moves up)
-    // When mounted vertically, the IMU Z-axis becomes the car's longitudinal axis
     telemetry.gForceX = imu.ay;   // Lateral (left/right)
-    telemetry.gForceY = -imu.az;  // Longitudinal (for vertical mount: nose down = ball up)
+    telemetry.gForceY = -imu.az;  // Longitudinal (includes gravity when tilted)
     telemetry.gForceZ = imu.ax;
+    
+    // Calculate gravity component based on tracked orientation
+    float gravityY = sin(orientationPitch * DEG_TO_RAD);  // Gravity in longitudinal axis
+    float gravityX = sin(orientationRoll * DEG_TO_RAD);   // Gravity in lateral axis
+    
+    // Store pure linear acceleration (accelerometer minus gravity)
+    telemetry.linearAccelX = telemetry.gForceX - gravityX;
+    telemetry.linearAccelY = telemetry.gForceY - gravityY;
     
     // Only trigger redraw on G-Force screen
     if (currentScreen == SCREEN_GFORCE) {
@@ -1288,29 +1317,18 @@ void drawGForceScreen() {
     static float prevTotalG = 0;
     static bool firstDraw = true;
     
-    // For detecting dynamic acceleration vs static tilt
-    static float smoothedGForceY = 0;  // Low-pass filtered (tracks gravity/tilt)
-    static float lastRawGForceY = 0;
-    
     // Calculate G-force dot position (1.5G = full radius)
+    // Use raw accelerometer for position (shows combined forces including gravity)
     float maxG = 1.5;
     int maxRadius = 120;
     // Negate X so ball moves in direction of turn (LEFT turn = ball moves LEFT)
     int gX = CENTER_X - (int)(telemetry.gForceX / maxG * maxRadius);
     int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted
     
-    // Ball size based on DYNAMIC acceleration (rate of change), not static tilt
-    // Low-pass filter to track the "baseline" (gravity component, changes slowly)
-    // High-pass = raw - lowpass = dynamic component (changes quickly)
-    float alpha = 0.02f;  // Low-pass smoothing factor (smaller = slower response)
-    smoothedGForceY = alpha * telemetry.gForceY + (1.0f - alpha) * smoothedGForceY;
-    
-    // Dynamic acceleration = raw minus the slowly-changing baseline
-    float dynamicAccelY = telemetry.gForceY - smoothedGForceY;
-    
-    // Scale ball: positive dynamic = accelerating = bigger, negative = braking = smaller
-    // Base radius 14, ±0.3G dynamic acceleration = ±8 pixels
-    int ballRadius = 14 + (int)(dynamicAccelY * 27);
+    // Ball size based on PURE LINEAR ACCELERATION (gravity removed via gyroscope)
+    // Positive linearAccelY = accelerating = bigger, negative = braking = smaller
+    // Base radius 14, ±0.5G = ±8 pixels
+    int ballRadius = 14 + (int)(telemetry.linearAccelY * 16);
     ballRadius = max(8, min(22, ballRadius));  // Clamp between 8 and 22
     
     // Clamp to circle
