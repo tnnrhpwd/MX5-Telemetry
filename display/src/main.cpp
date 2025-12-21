@@ -158,7 +158,7 @@ TPMSSensorData tpmsSensors[4] = {0};
 NimBLEScan* pBLEScan = nullptr;
 bool bleInitialized = false;
 unsigned long lastBLEScanTime = 0;
-const unsigned long BLE_SCAN_INTERVAL = 5000;  // Scan every 5 seconds
+const unsigned long BLE_SCAN_INTERVAL = 2000;  // Scan every 2 seconds (500ms scans)
 const unsigned long TPMS_DATA_TIMEOUT = 30000; // Data valid for 30 seconds
 
 // TPMS persistence storage
@@ -1439,48 +1439,53 @@ void drawGForceScreen() {
         prevBallRadius = ballRadius;
     } else {
         // Partial redraw - only update if position or size changed significantly
-        bool ballMoved = (abs(gX - prevGX) > 1 || abs(gY - prevGY) > 1);
-        bool ballSizeChanged = (abs(ballRadius - prevBallRadius) > 1);
-        bool valuesChanged = (abs(orientationPitch - prevPitch) > 0.1 || 
-                              abs(orientationRoll - prevRoll) > 0.1 ||
-                              abs(accelMag - prevAccelMag) > 0.02);
+        // Increase thresholds to reduce redraw frequency
+        bool ballMoved = (abs(gX - prevGX) > 2 || abs(gY - prevGY) > 2);
+        bool ballSizeChanged = (abs(ballRadius - prevBallRadius) > 2);
+        
+        // Only update text values every 100ms (10 Hz) to reduce flickering
+        static unsigned long lastValueUpdate = 0;
+        bool valuesChanged = (millis() - lastValueUpdate > 100) && 
+                             (abs(orientationPitch - prevPitch) > 0.3 || 
+                              abs(orientationRoll - prevRoll) > 0.3 ||
+                              abs(accelMag - prevAccelMag) > 0.05);
         
         if (ballMoved || ballSizeChanged) {
-            // Erase old ball position by filling with background color
-            // Use prevBallRadius + 2 to ensure complete erasure
-            LCD_FillCircle(prevGX, prevGY, prevBallRadius + 2, COLOR_BG);
+            // Erase old ball - use a simple rectangle instead of circle for speed
+            int eraseSize = prevBallRadius + 3;
+            LCD_FillRect(prevGX - eraseSize, prevGY - eraseSize, 
+                        eraseSize * 2, eraseSize * 2, COLOR_BG);
             
-            // Redraw any grid elements that might have been covered by the old ball
-            int eraseRadius = prevBallRadius + 5;
-            if (abs(prevGY - CENTER_Y) < eraseRadius) {
-                int lineStart = max(CENTER_X - 130, prevGX - eraseRadius);
-                int lineEnd = min(CENTER_X + 130, prevGX + eraseRadius);
-                LCD_DrawLine(lineStart, CENTER_Y, lineEnd, CENTER_Y, MX5_DARKGRAY);
+            // Only redraw grid elements if ball was near them
+            // Check crosshairs
+            if (abs(prevGY - CENTER_Y) < eraseSize + 2) {
+                // Horizontal line segment
+                LCD_DrawLine(prevGX - eraseSize - 5, CENTER_Y, 
+                            prevGX + eraseSize + 5, CENTER_Y, MX5_DARKGRAY);
             }
-            if (abs(prevGX - CENTER_X) < eraseRadius) {
-                int lineStart = max(CENTER_Y - 130, prevGY - eraseRadius);
-                int lineEnd = min(CENTER_Y + 130, prevGY + eraseRadius);
-                LCD_DrawLine(CENTER_X, lineStart, CENTER_X, lineEnd, MX5_DARKGRAY);
+            if (abs(prevGX - CENTER_X) < eraseSize + 2) {
+                // Vertical line segment
+                LCD_DrawLine(CENTER_X, prevGY - eraseSize - 5, 
+                            CENTER_X, prevGY + eraseSize + 5, MX5_DARKGRAY);
             }
             
-            // Redraw any grid circles that might have been affected
-            for (int g = 1; g <= 3; g++) {
-                int radius = g * 40;
-                float prevDist = sqrt(pow(prevGX - CENTER_X, 2) + pow(prevGY - CENTER_Y, 2));
-                if (abs(prevDist - radius) < eraseRadius) {
-                    LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
+            // Only redraw grid circles if ball was near them
+            float prevDist = sqrt(pow(prevGX - CENTER_X, 2) + pow(prevGY - CENTER_Y, 2));
+            int gridRadii[3] = {30, 60, 120};
+            for (int g = 0; g < 3; g++) {
+                if (abs(prevDist - gridRadii[g]) < eraseSize + 5) {
+                    LCD_DrawCircle(CENTER_X, CENTER_Y, gridRadii[g], MX5_DARKGRAY);
                 }
             }
             
             // Redraw center reference if it was covered
-            if (abs(prevGX - CENTER_X) < eraseRadius && abs(prevGY - CENTER_Y) < eraseRadius) {
+            if (prevDist < eraseSize + 5) {
                 LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
             }
             
-            // Draw G-force indicator at new position with dynamic size
+            // Draw new ball position
             LCD_FillCircle(gX, gY, ballRadius, dotColor);
             LCD_DrawCircle(gX, gY, ballRadius, MX5_WHITE);
-            LCD_DrawCircle(gX, gY, ballRadius + 1, MX5_WHITE);
             
             prevGX = gX;
             prevGY = gY;
@@ -1488,6 +1493,7 @@ void drawGForceScreen() {
         }
         
         if (valuesChanged) {
+            lastValueUpdate = millis();
             // Only update the value text, not the whole box
             int infoY = SCREEN_HEIGHT - 55;
             
@@ -2607,8 +2613,10 @@ void scanTPMSSensors() {
         return;
     }
     
-    // Start scan (non-blocking, 3 second duration)
-    pBLEScan->start(3, false);
+    // Start scan - 500ms duration, non-blocking (false)
+    // Short scan catches most TPMS broadcasts while keeping UI responsive
+    // TPMS sensors broadcast every ~1 second, so 500ms catches most
+    pBLEScan->start(0.5, false);  // 500ms scan, non-blocking
 }
 
 // Update telemetry with TPMS data and send to Pi

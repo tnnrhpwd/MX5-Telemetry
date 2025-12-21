@@ -381,6 +381,9 @@ class ESP32SerialHandler:
             elif line.startswith("Touch I2C"):
                 # Ignore touch debug messages
                 pass
+            elif line.startswith("PERF:"):
+                # Performance monitoring from ESP32 - always print for debugging
+                print(f"ESP32 {line}")
             else:
                 # Log unknown messages for debugging
                 print(f"ESP32: {line}")
