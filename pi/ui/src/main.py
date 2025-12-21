@@ -1907,10 +1907,9 @@ class PiDisplayApp:
         pygame.draw.line(self.screen, COLOR_DARK_GRAY,
                         (ball_cx, ball_cy - ball_r), (ball_cx, ball_cy + ball_r), 1)
         
-        # G labels
-        for g in [0.5, 1.0, 1.5]:
-            r = int(g * 85)
-            txt = self.font_tiny.render(f"{g}", True, COLOR_DARK_GRAY)
+        # Ring labels (just numbers, not G units since raw accel includes gravity)
+        for i, r in enumerate([42, 85, 127]):
+            txt = self.font_tiny.render(f"{i+1}", True, COLOR_DARK_GRAY)
             self.screen.blit(txt, (ball_cx + r + 5, ball_cy - 8))
         
         if imu_data_stale:

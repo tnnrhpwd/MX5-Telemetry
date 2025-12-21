@@ -1374,15 +1374,11 @@ void drawGForceScreen() {
         LCD_DrawLine(CENTER_X - 130, CENTER_Y, CENTER_X + 130, CENTER_Y, MX5_DARKGRAY);
         LCD_DrawLine(CENTER_X, CENTER_Y - 130, CENTER_X, CENTER_Y + 130, MX5_DARKGRAY);
         
-        // Axis labels
-        LCD_DrawString(CENTER_X - 12, CENTER_Y - 145, "ACC", MX5_GREEN, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X - 12, CENTER_Y + 135, "BRK", MX5_RED, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X - 145, CENTER_Y - 4, "L", MX5_CYAN, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X + 138, CENTER_Y - 4, "R", MX5_CYAN, COLOR_BG, 1);
-        
-        // G-force ring labels
-        LCD_DrawString(CENTER_X + 42, CENTER_Y - 6, "1G", MX5_GRAY, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X + 82, CENTER_Y - 6, "2G", MX5_GRAY, COLOR_BG, 1);
+        // Axis labels (directions only, no G units since raw accel includes gravity)
+        LCD_DrawString(CENTER_X - 8, CENTER_Y - 145, "+Y", MX5_GREEN, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X - 8, CENTER_Y + 135, "-Y", MX5_RED, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X - 145, CENTER_Y - 4, "-X", MX5_CYAN, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X + 132, CENTER_Y - 4, "+X", MX5_CYAN, COLOR_BG, 1);
         
         // Fixed center reference point
         LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
