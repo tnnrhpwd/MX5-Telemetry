@@ -1296,8 +1296,10 @@ void drawGForceScreen() {
     int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted
     
     // Ball size scales with longitudinal G (acceleration = bigger, braking = smaller)
-    // Base radius 14, scales from 8 (hard braking) to 22 (hard acceleration)
-    int ballRadius = 14 + (int)(telemetry.gForceY * 8);  // ±1G = ±8 pixels
+    // Positive gForceY = acceleration (ball toward ACC label) = ball gets BIGGER
+    // Negative gForceY = braking (ball toward BRK label) = ball gets SMALLER
+    // Base radius 14, scales from 8 (hard braking at -0.75G) to 22 (hard acceleration at +0.75G)
+    int ballRadius = 14 - (int)(telemetry.gForceY * 8);  // Note: inverted sign
     ballRadius = max(8, min(22, ballRadius));  // Clamp between 8 and 22
     
     // Clamp to circle
