@@ -1420,10 +1420,10 @@ void drawGForceScreen() {
         LCD_DrawLine(CENTER_X - 130, CENTER_Y, CENTER_X + 130, CENTER_Y, MX5_DARKGRAY);
         LCD_DrawLine(CENTER_X, CENTER_Y - 130, CENTER_X, CENTER_Y + 130, MX5_DARKGRAY);
         
-        // Degree labels on right side of rings
-        LCD_DrawString(CENTER_X + 33, CENTER_Y - 6, "2.5", MX5_GRAY, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X + 63, CENTER_Y - 6, "5", MX5_GRAY, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X + 123, CENTER_Y - 6, "10", MX5_GRAY, COLOR_BG, 1);
+        // Degree labels on right side of rings (degrees of tilt)
+        LCD_DrawString(CENTER_X + 33, CENTER_Y - 6, "2.5\xF8", MX5_GRAY, COLOR_BG, 1);  // \xF8 = degree symbol
+        LCD_DrawString(CENTER_X + 63, CENTER_Y - 6, "5\xF8", MX5_GRAY, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X + 123, CENTER_Y - 6, "10\xF8", MX5_GRAY, COLOR_BG, 1);
         
         // Fixed center reference point
         LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
@@ -1438,12 +1438,12 @@ void drawGForceScreen() {
         LCD_FillRoundRect(CENTER_X - 100, infoY, 200, 50, 10, COLOR_BG_CARD);
         LCD_DrawRoundRect(CENTER_X - 100, infoY, 200, 50, 10, MX5_ACCENT);
         
-        // Show pitch/roll orientation and forward acceleration
+        // Show pitch/roll orientation (degrees) and forward acceleration
         char gStr[20];
-        snprintf(gStr, sizeof(gStr), "Pitch:%+.1f", orientationPitch);
+        snprintf(gStr, sizeof(gStr), "Pitch:%+.1f\xF8", orientationPitch);  // \xF8 = degree symbol
         LCD_DrawString(CENTER_X - 90, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
         
-        snprintf(gStr, sizeof(gStr), "Roll:%+.1f", orientationRoll);
+        snprintf(gStr, sizeof(gStr), "Roll:%+.1f\xF8", orientationRoll);
         LCD_DrawString(CENTER_X - 90, infoY + 20, gStr, MX5_GREEN, COLOR_BG_CARD, 1);
         
         snprintf(gStr, sizeof(gStr), "Fwd:%+.2fG", forwardAccel);
@@ -1526,12 +1526,12 @@ void drawGForceScreen() {
             LCD_FillRect(CENTER_X - 92, infoY + 4, 80, 44, COLOR_BG_CARD);  // Pitch/Roll/Fwd area
             LCD_FillRect(CENTER_X + 28, infoY + 14, 65, 24, COLOR_BG_CARD); // Fwd G area
             
-            // Redraw values - pitch, roll, and forward acceleration
+            // Redraw values - pitch, roll (degrees), and forward acceleration
             char gStr[20];
-            snprintf(gStr, sizeof(gStr), "Pitch:%+.1f", orientationPitch);
+            snprintf(gStr, sizeof(gStr), "Pitch:%+.1f\xF8", orientationPitch);  // \xF8 = degree symbol
             LCD_DrawString(CENTER_X - 90, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
             
-            snprintf(gStr, sizeof(gStr), "Roll:%+.1f", orientationRoll);
+            snprintf(gStr, sizeof(gStr), "Roll:%+.1f\xF8", orientationRoll);
             LCD_DrawString(CENTER_X - 90, infoY + 20, gStr, MX5_GREEN, COLOR_BG_CARD, 1);
             
             snprintf(gStr, sizeof(gStr), "Fwd:%+.2fG", forwardAccel);
