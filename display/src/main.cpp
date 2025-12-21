@@ -526,29 +526,34 @@ void loop() {
     Touch_Loop();
     handleTouch();
     
-    // BLE TPMS scanning - scan every 5 seconds
-    if (bleInitialized && millis() - lastBLEScanTime > BLE_SCAN_INTERVAL) {
-        lastBLEScanTime = millis();
-        scanTPMSSensors();
+    // BLE TPMS scanning - only when on TPMS screen to avoid conflicts
+    if (currentScreen == SCREEN_TPMS) {
+        if (bleInitialized && millis() - lastBLEScanTime > BLE_SCAN_INTERVAL) {
+            lastBLEScanTime = millis();
+            scanTPMSSensors();
+        }
+        
+        // Send TPMS data to Pi every 5 seconds
+        static unsigned long lastTPMSSend = 0;
+        if (millis() - lastTPMSSend > 5000) {
+            lastTPMSSend = millis();
+            sendTPMSDataToPi();
+        }
     }
     
-    // Send TPMS data to Pi every 5 seconds (offset from scan)
-    static unsigned long lastTPMSSend = 0;
-    if (millis() - lastTPMSSend > 5000) {
-        lastTPMSSend = millis();
-        sendTPMSDataToPi();
-    }
-    
-    // Update IMU at 100Hz for smooth G-force tracking
-    if (imuAvailable && millis() - lastImuUpdate > 10) {
-        lastImuUpdate = millis();
-        updateIMU();
-    }
-    
-    // Send IMU data to Pi at 30Hz for responsive G-force display
-    if (imuAvailable && millis() - lastSerialSend > 33) {
-        lastSerialSend = millis();
-        sendIMUData();
+    // IMU updates - only when on G-Force screen to avoid conflicts with BLE
+    if (currentScreen == SCREEN_GFORCE) {
+        // Update IMU at 100Hz for smooth G-force tracking
+        if (imuAvailable && millis() - lastImuUpdate > 10) {
+            lastImuUpdate = millis();
+            updateIMU();
+        }
+        
+        // Send IMU data to Pi at 30Hz for responsive G-force display
+        if (imuAvailable && millis() - lastSerialSend > 33) {
+            lastSerialSend = millis();
+            sendIMUData();
+        }
     }
     
     // Update display at ~60Hz for smooth G-force ball movement
