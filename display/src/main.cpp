@@ -531,11 +531,11 @@ void loop() {
     Touch_Loop();
     handleTouch();
     
-    // BLE TPMS scanning - continuous background scan when on TPMS or Overview screen
+    // BLE TPMS scanning - short scans when on TPMS or Overview screen
     if (currentScreen == SCREEN_TPMS || currentScreen == SCREEN_OVERVIEW) {
-        // Start continuous scan if not already running
-        if (bleInitialized && !bleScanRunning) {
-            startContinuousBLEScan();
+        // Start scan if not already scanning (will auto-restart after each scan)
+        if (bleInitialized) {
+            startContinuousBLEScan();  // Only starts if not already scanning
         }
         
         // Send TPMS data to Pi every 5 seconds
@@ -2609,16 +2609,20 @@ void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex) {
 
 // Start continuous BLE scanning (runs in background until stopped)
 void startContinuousBLEScan() {
-    if (!bleInitialized || pBLEScan == nullptr || bleScanRunning) {
+    if (!bleInitialized || pBLEScan == nullptr) {
         return;
     }
     
-    // Start continuous scan (0 = scan forever until stopped)
-    // The callbacks handle data as it arrives - no blocking!
-    pBLEScan->setMaxResults(0);  // Don't store results, just callback
-    pBLEScan->start(0, false);   // 0 = continuous, false = non-blocking
+    // Don't start if already scanning
+    if (pBLEScan->isScanning()) {
+        return;
+    }
+    
+    // Start a short scan - 200ms is enough to catch TPMS broadcasts
+    // Non-blocking (false) so main loop continues
+    pBLEScan->setMaxResults(0);  // Don't store results, just use callback
+    pBLEScan->start(1, false);   // 1 second scan, non-blocking
     bleScanRunning = true;
-    Serial.println("BLE: Started continuous TPMS scanning");
 }
 
 // Stop BLE scanning (when leaving TPMS/Overview screens)
