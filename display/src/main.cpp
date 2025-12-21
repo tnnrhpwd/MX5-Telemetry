@@ -1295,11 +1295,12 @@ void drawGForceScreen() {
     int gX = CENTER_X - (int)(telemetry.gForceX / maxG * maxRadius);
     int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted
     
-    // Ball size scales with longitudinal G (acceleration = bigger, braking = smaller)
-    // Positive gForceY = acceleration (ball toward ACC label) = ball gets BIGGER
-    // Negative gForceY = braking (ball toward BRK label) = ball gets SMALLER
-    // Base radius 14, scales from 8 (hard braking at -0.75G) to 22 (hard acceleration at +0.75G)
-    int ballRadius = 14 - (int)(telemetry.gForceY * 8);  // Note: inverted sign
+    // Ball size scales with longitudinal G-force (felt force, not acceleration direction)
+    // For vertical mount: positive gForceY = ball toward ACC (top) = car accelerating = BIGGER
+    // Negative gForceY = ball toward BRK (bottom) = car braking = SMALLER
+    // Note: Nose-up tilt registers as negative gForceY (like braking), nose-down as positive (like accel)
+    // Base radius 14, scales ±8 pixels for ±1G
+    int ballRadius = 14 + (int)(telemetry.gForceY * 8);
     ballRadius = max(8, min(22, ballRadius));  // Clamp between 8 and 22
     
     // Clamp to circle
