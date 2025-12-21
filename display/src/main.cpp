@@ -158,6 +158,8 @@ TPMSSensorData tpmsSensors[4] = {0};
 NimBLEScan* pBLEScan = nullptr;
 bool bleInitialized = false;
 bool bleScanRunning = false;  // Track if continuous scan is active
+unsigned long lastBLEScanStart = 0;  // Track when last scan started
+const unsigned long BLE_SCAN_COOLDOWN = 3000;  // Wait 3 seconds between scans
 const unsigned long TPMS_DATA_TIMEOUT = 30000; // Data valid for 30 seconds
 
 // TPMS persistence storage
@@ -2607,7 +2609,7 @@ void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex) {
     }
 }
 
-// Start continuous BLE scanning (runs in background until stopped)
+// Start BLE scan with cooldown to prevent blocking
 void startContinuousBLEScan() {
     if (!bleInitialized || pBLEScan == nullptr) {
         return;
@@ -2618,8 +2620,14 @@ void startContinuousBLEScan() {
         return;
     }
     
-    // Start a short scan - 200ms is enough to catch TPMS broadcasts
+    // Cooldown between scans to reduce blocking frequency
+    if (millis() - lastBLEScanStart < BLE_SCAN_COOLDOWN) {
+        return;
+    }
+    
+    // Start a 1 second scan (minimum supported duration)
     // Non-blocking (false) so main loop continues
+    lastBLEScanStart = millis();
     pBLEScan->setMaxResults(0);  // Don't store results, just use callback
     pBLEScan->start(1, false);   // 1 second scan, non-blocking
     bleScanRunning = true;
