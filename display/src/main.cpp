@@ -537,20 +537,20 @@ void loop() {
         sendTPMSDataToPi();
     }
     
-    // Update IMU at 50Hz
-    if (imuAvailable && millis() - lastImuUpdate > 20) {
+    // Update IMU at 100Hz for smooth G-force tracking
+    if (imuAvailable && millis() - lastImuUpdate > 10) {
         lastImuUpdate = millis();
         updateIMU();
     }
     
-    // Send IMU data to Pi at 10Hz
-    if (imuAvailable && millis() - lastSerialSend > 100) {
+    // Send IMU data to Pi at 30Hz for responsive G-force display
+    if (imuAvailable && millis() - lastSerialSend > 33) {
         lastSerialSend = millis();
         sendIMUData();
     }
     
-    // Update display at ~30Hz
-    if (millis() - lastUpdate > 33) {
+    // Update display at ~60Hz for smooth G-force ball movement
+    if (millis() - lastUpdate > 16) {
         lastUpdate = millis();
         
         // Only G-Force screen needs frequent updates (smooth ball movement)

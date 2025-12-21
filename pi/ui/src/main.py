@@ -774,7 +774,7 @@ class PiDisplayApp:
                 self._render_exit_dialog()
             
             pygame.display.flip()
-            self.clock.tick(30)
+            self.clock.tick(60)  # 60 FPS for smooth G-force ball movement
         
         # Cleanup
         if self.can_handler:
