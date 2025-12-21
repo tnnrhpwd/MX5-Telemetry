@@ -1351,25 +1351,42 @@ void drawGForceScreen() {
     static int prevBallRadius = 14;
     static float prevPitch = 0;
     static float prevRoll = 0;
-    static float prevAccelMag = 0;
+    static float prevForwardAccel = 0;
     static bool firstDraw = true;
+    
+    // ==========================================================================
+    // G-FORCE DISPLAY LOGIC (ESP32-S3 mounted vertically in oil gauge hole)
+    // ==========================================================================
+    // 
+    // CIRCLE POSITION = Car orientation (tilt from gyroscope integration)
+    //   - Nose DOWN  → circle moves UP (top of screen)
+    //   - Nose UP    → circle moves DOWN (bottom of screen)
+    //   - Roll LEFT  → circle moves LEFT
+    //   - Roll RIGHT → circle moves RIGHT
+    //   - 10 degrees tilt = circle at outer ring edge
+    //
+    // CIRCLE SIZE = Forward acceleration (linear accel, gravity-subtracted)
+    //   - Zero acceleration → normal size (14px radius)
+    //   - Acceleration (speeding up) → circle GROWS (up to 24px)
+    //   - Deceleration (braking) → circle SHRINKS (down to 6px)
+    // ==========================================================================
     
     // Ball POSITION based on gyro-integrated orientation (pitch/roll in degrees)
     // 10 degrees = full radius (outer ring)
     float maxDegrees = 10.0;
     int maxRadius = 120;
     // Roll controls X (left/right tilt), Pitch controls Y (forward/back tilt)
+    // Nose down = positive pitch = circle moves UP (negative Y direction)
     int gX = CENTER_X + (int)(orientationRoll / maxDegrees * maxRadius);
     int gY = CENTER_Y - (int)(orientationPitch / maxDegrees * maxRadius);
     
-    // Ball SIZE based on acceleration magnitude (total G from accelerometer)
-    // Shows how much force the car is experiencing
-    float accelMag = sqrt(telemetry.gForceX * telemetry.gForceX + 
-                          telemetry.gForceY * telemetry.gForceY + 
-                          telemetry.gForceZ * telemetry.gForceZ);
-    // Base radius 10, scales up to 24 at 2G
-    int ballRadius = 10 + (int)((accelMag - 0.5) * 14);
-    ballRadius = max(8, min(24, ballRadius));
+    // Ball SIZE based on FORWARD acceleration only (not total magnitude)
+    // linearAccelY = forward acceleration with gravity subtracted
+    // Positive = accelerating forward, Negative = braking
+    float forwardAccel = telemetry.linearAccelY;  // In G units
+    // Base radius 14, grows with accel (+10 at 1G), shrinks with decel (-8 at -1G)
+    int ballRadius = 14 + (int)(forwardAccel * 10);
+    ballRadius = max(6, min(24, ballRadius));
     
     // Clamp to circle
     float dist = sqrt(pow(gX - CENTER_X, 2) + pow(gY - CENTER_Y, 2));
@@ -1379,11 +1396,12 @@ void drawGForceScreen() {
         gY = CENTER_Y + (int)((gY - CENTER_Y) * scale);
     }
     
-    // Color based on acceleration magnitude
+    // Color based on forward acceleration (green=neutral, red=hard accel, blue=hard brake)
     uint16_t dotColor = MX5_GREEN;
-    if (accelMag > 1.5) dotColor = MX5_RED;
-    else if (accelMag > 1.2) dotColor = MX5_ORANGE;
-    else if (accelMag > 0.9) dotColor = MX5_YELLOW;
+    if (forwardAccel > 0.5) dotColor = MX5_RED;        // Hard acceleration
+    else if (forwardAccel > 0.2) dotColor = MX5_ORANGE;
+    else if (forwardAccel < -0.5) dotColor = MX5_CYAN; // Hard braking
+    else if (forwardAccel < -0.2) dotColor = MX5_YELLOW;
     
     if (needsFullRedraw || firstDraw) {
         firstDraw = false;
@@ -1410,29 +1428,29 @@ void drawGForceScreen() {
         // Fixed center reference point
         LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
         
-        // Draw G-force indicator ball (size based on longitudinal G)
+        // Draw G-force indicator ball (size based on forward acceleration)
         LCD_FillCircle(gX, gY, ballRadius, dotColor);
         LCD_DrawCircle(gX, gY, ballRadius, MX5_WHITE);
         LCD_DrawCircle(gX, gY, ballRadius + 1, MX5_WHITE);
         
-        // === G VALUES DISPLAY (Bottom) - draw info box ===
+        // === INFO BOX (Bottom) - show forward accel and tilt ===
         int infoY = SCREEN_HEIGHT - 55;
         LCD_FillRoundRect(CENTER_X - 100, infoY, 200, 50, 10, COLOR_BG_CARD);
         LCD_DrawRoundRect(CENTER_X - 100, infoY, 200, 50, 10, MX5_ACCENT);
         
-        // Show X, Y, Z accelerometer values
-        char gStr[16];
-        snprintf(gStr, sizeof(gStr), "X:%+.2f", telemetry.gForceX);
+        // Show pitch/roll orientation and forward acceleration
+        char gStr[20];
+        snprintf(gStr, sizeof(gStr), "Pitch:%+.1f", orientationPitch);
         LCD_DrawString(CENTER_X - 90, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
         
-        snprintf(gStr, sizeof(gStr), "Y:%+.2f", telemetry.gForceY);
+        snprintf(gStr, sizeof(gStr), "Roll:%+.1f", orientationRoll);
         LCD_DrawString(CENTER_X - 90, infoY + 20, gStr, MX5_GREEN, COLOR_BG_CARD, 1);
         
-        snprintf(gStr, sizeof(gStr), "Z:%+.2f", telemetry.gForceZ);
-        LCD_DrawString(CENTER_X - 90, infoY + 34, gStr, MX5_PURPLE, COLOR_BG_CARD, 1);
+        snprintf(gStr, sizeof(gStr), "Fwd:%+.2fG", forwardAccel);
+        LCD_DrawString(CENTER_X - 90, infoY + 34, gStr, dotColor, COLOR_BG_CARD, 1);
         
-        // Acceleration magnitude on right side
-        snprintf(gStr, sizeof(gStr), "%.2fG", accelMag);
+        // Large forward accel display on right side
+        snprintf(gStr, sizeof(gStr), "%+.1fG", forwardAccel);
         LCD_DrawString(CENTER_X + 30, infoY + 16, gStr, dotColor, COLOR_BG_CARD, 2);
         
         drawPageIndicator();
@@ -1442,7 +1460,7 @@ void drawGForceScreen() {
         prevGY = gY;
         prevPitch = orientationPitch;
         prevRoll = orientationRoll;
-        prevAccelMag = accelMag;
+        prevForwardAccel = forwardAccel;
         prevBallRadius = ballRadius;
     } else {
         // Partial redraw - only update if position or size changed significantly
@@ -1455,7 +1473,7 @@ void drawGForceScreen() {
         bool valuesChanged = (millis() - lastValueUpdate > 100) && 
                              (abs(orientationPitch - prevPitch) > 0.3 || 
                               abs(orientationRoll - prevRoll) > 0.3 ||
-                              abs(accelMag - prevAccelMag) > 0.05);
+                              abs(forwardAccel - prevForwardAccel) > 0.05);
         
         if (ballMoved || ballSizeChanged) {
             // Erase old ball - use a simple rectangle instead of circle for speed
@@ -1505,26 +1523,26 @@ void drawGForceScreen() {
             int infoY = SCREEN_HEIGHT - 55;
             
             // Clear value areas
-            LCD_FillRect(CENTER_X - 92, infoY + 4, 80, 44, COLOR_BG_CARD);  // X/Y/Z area
-            LCD_FillRect(CENTER_X + 28, infoY + 14, 65, 24, COLOR_BG_CARD); // Total G area
+            LCD_FillRect(CENTER_X - 92, infoY + 4, 80, 44, COLOR_BG_CARD);  // Pitch/Roll/Fwd area
+            LCD_FillRect(CENTER_X + 28, infoY + 14, 65, 24, COLOR_BG_CARD); // Fwd G area
             
-            // Redraw values
-            char gStr[16];
-            snprintf(gStr, sizeof(gStr), "X:%+.2f", telemetry.gForceX);
+            // Redraw values - pitch, roll, and forward acceleration
+            char gStr[20];
+            snprintf(gStr, sizeof(gStr), "Pitch:%+.1f", orientationPitch);
             LCD_DrawString(CENTER_X - 90, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
             
-            snprintf(gStr, sizeof(gStr), "Y:%+.2f", telemetry.gForceY);
+            snprintf(gStr, sizeof(gStr), "Roll:%+.1f", orientationRoll);
             LCD_DrawString(CENTER_X - 90, infoY + 20, gStr, MX5_GREEN, COLOR_BG_CARD, 1);
             
-            snprintf(gStr, sizeof(gStr), "Z:%+.2f", telemetry.gForceZ);
-            LCD_DrawString(CENTER_X - 90, infoY + 34, gStr, MX5_PURPLE, COLOR_BG_CARD, 1);
+            snprintf(gStr, sizeof(gStr), "Fwd:%+.2fG", forwardAccel);
+            LCD_DrawString(CENTER_X - 90, infoY + 34, gStr, dotColor, COLOR_BG_CARD, 1);
             
-            snprintf(gStr, sizeof(gStr), "%.2fG", accelMag);
+            snprintf(gStr, sizeof(gStr), "%+.1fG", forwardAccel);
             LCD_DrawString(CENTER_X + 30, infoY + 16, gStr, dotColor, COLOR_BG_CARD, 2);
             
             prevPitch = orientationPitch;
             prevRoll = orientationRoll;
-            prevAccelMag = accelMag;
+            prevForwardAccel = forwardAccel;
         }
     }
 }

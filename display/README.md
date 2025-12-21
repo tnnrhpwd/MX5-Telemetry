@@ -8,6 +8,66 @@ This module provides a visual dashboard for the MX5 Telemetry system using the *
 
 **The ESP32-S3 round display is mounted in the stock oil gauge hole.** The 1.85" form factor fits perfectly in the original gauge opening, providing a clean OEM-like appearance.
 
+## G-Force Display Behavior
+
+The G-Force screen visualizes car dynamics using the QMI8658 IMU (gyroscope + accelerometer). The display is calibrated for the ESP32 mounted **vertically** in the oil gauge hole with the screen facing the driver.
+
+### Circle Position = Car Orientation (Tilt)
+
+The ball position shows the car's orientation using **gyroscope integration** to track pitch and roll angles:
+
+| Car Movement | Circle Movement |
+|--------------|-----------------|
+| Nose pitches **DOWN** (braking, downhill) | Circle moves **UP** (top of screen) |
+| Nose pitches **UP** (acceleration, uphill) | Circle moves **DOWN** (bottom of screen) |
+| Car rolls **LEFT** (left turn, left camber) | Circle moves **LEFT** |
+| Car rolls **RIGHT** (right turn, right camber) | Circle moves **RIGHT** |
+
+- The three reference rings represent 2.5°, 5°, and 10° of tilt
+- When level, the ball stays centered
+
+### Circle Size = Forward Acceleration
+
+The ball size represents **forward acceleration only** (not total G magnitude), with gravity subtracted to show pure dynamics:
+
+| Condition | Ball Size |
+|-----------|-----------|
+| **Zero acceleration** (coasting) | Normal size (14px radius) |
+| **Acceleration** (speeding up) | Ball **GROWS** (up to 24px) |
+| **Deceleration** (braking) | Ball **SHRINKS** (down to 6px) |
+
+### Color Coding
+
+| Color | Meaning |
+|-------|---------|
+| 🔴 **Red** | Hard acceleration (>0.3 G) |
+| 🟠 **Orange** | Light acceleration (>0.1 G) |
+| 🟢 **Green** | Neutral/coasting |
+| 🟡 **Yellow** | Light braking (<-0.1 G) |
+| 🔵 **Cyan** | Hard braking (<-0.3 G) |
+
+### Info Box Display
+
+The bottom info box shows:
+- **Pitch**: Current pitch angle in degrees (positive = nose up)
+- **Roll**: Current roll angle in degrees (positive = roll right)
+- **Fwd**: Forward acceleration in G (positive = accelerating)
+
+### Technical Implementation
+
+```
+Orientation Tracking:
+  - Gyroscope data (°/sec) is integrated over time to get pitch/roll in degrees
+  - Gyro drift correction applied gradually
+
+Linear Acceleration:
+  - Gravity vector is calculated from current orientation
+  - Gravity is subtracted from accelerometer to get pure linear acceleration
+  - Forward axis (Y) is used for ball sizing
+```
+
+---
+
 ### Data Flow
 
 - **Receives from Pi (Serial)**: All CAN telemetry data, steering wheel button events, settings sync

@@ -1885,7 +1885,21 @@ class PiDisplayApp:
         return True
     
     def _render_gforce(self):
-        """Tilt/G-Force screen - ball position from orientation, size from acceleration"""
+        """
+        Tilt/G-Force screen - ball position from orientation, size from forward acceleration
+        
+        CIRCLE POSITION = Car orientation (tilt from gyroscope integration)
+          - Nose DOWN  → circle moves UP (top of screen)
+          - Nose UP    → circle moves DOWN (bottom of screen)
+          - Roll LEFT  → circle moves LEFT
+          - Roll RIGHT → circle moves RIGHT
+          - 10 degrees tilt = circle at outer ring edge
+        
+        CIRCLE SIZE = Forward acceleration (linear accel, gravity-subtracted)
+          - Zero acceleration → normal size
+          - Acceleration (speeding up) → circle GROWS
+          - Deceleration (braking) → circle SHRINKS
+        """
         TOP = 55
         
         # Check if IMU data is being received (2 second timeout)
@@ -1928,18 +1942,18 @@ class PiDisplayApp:
             roll = getattr(self.telemetry, 'orientation_roll', 0.0)
             
             # Roll controls X, Pitch controls Y (10° = full radius)
+            # Nose down = positive pitch = circle moves UP (negative Y direction)
             gx = ball_cx + int(roll * deg_scale)
             gy = ball_cy - int(pitch * deg_scale)
             
-            # Ball SIZE from acceleration magnitude
-            g_lat = self.telemetry.g_lateral
-            g_lon = self.telemetry.g_longitudinal
-            g_vert = getattr(self.telemetry, 'g_vertical', 0.0)
-            accel_mag = math.sqrt(g_lat**2 + g_lon**2 + g_vert**2)
+            # Ball SIZE from FORWARD acceleration only (not total magnitude)
+            # linear_accel_y = forward acceleration with gravity subtracted
+            # Positive = accelerating forward, Negative = braking
+            forward_accel = getattr(self.telemetry, 'linear_accel_y', 0.0)
             
-            # Base radius 12, scales up to 26 at 2G
-            ball_size = 12 + int((accel_mag - 0.5) * 14)
-            ball_size = max(8, min(26, ball_size))
+            # Normal size 14, grows with accel (+10 pixels per G), shrinks with braking
+            ball_size = 14 + int(forward_accel * 10)
+            ball_size = max(6, min(24, ball_size))
             
             # Clamp to circle
             dx, dy = gx - ball_cx, gy - ball_cy
@@ -1949,15 +1963,18 @@ class PiDisplayApp:
                 gx = ball_cx + int(dx * scale)
                 gy = ball_cy + int(dy * scale)
             
-            # Color based on acceleration magnitude
-            if accel_mag > 1.5:
-                ball_color = COLOR_RED
-            elif accel_mag > 1.2:
-                ball_color = COLOR_ORANGE
-            elif accel_mag > 0.9:
-                ball_color = COLOR_YELLOW
+            # Color based on forward acceleration direction
+            # Red/Orange = acceleration, Green = neutral, Yellow/Cyan = braking
+            if forward_accel > 0.3:
+                ball_color = COLOR_RED       # Hard acceleration
+            elif forward_accel > 0.1:
+                ball_color = COLOR_ORANGE    # Light acceleration
+            elif forward_accel < -0.3:
+                ball_color = COLOR_CYAN      # Hard braking
+            elif forward_accel < -0.1:
+                ball_color = COLOR_YELLOW    # Light braking
             else:
-                ball_color = COLOR_GREEN
+                ball_color = COLOR_GREEN     # Neutral
             
             # Glow size also scales
             glow_size = ball_size + 10
@@ -2030,15 +2047,26 @@ class PiDisplayApp:
             txt = self.font_small.render("--", True, COLOR_DARK_GRAY)
         self.screen.blit(txt, (right_x + 15, y + 28))
         
-        # Card 5: Combined G
+        # Card 5: Forward Acceleration (what affects ball size)
         y += card_h + spacing
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
         pygame.draw.rect(self.screen, COLOR_ACCENT, (right_x, y, 4, card_h))
-        txt = self.font_tiny.render("COMBINED G", True, COLOR_GRAY)
+        txt = self.font_tiny.render("FORWARD ACCEL", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 15, y + 5))
         if not imu_data_stale:
-            combined = math.sqrt(self.telemetry.g_lateral**2 + self.telemetry.g_longitudinal**2)
-            txt = self.font_medium.render(f"{combined:.2f}G", True, COLOR_ACCENT)
+            forward = getattr(self.telemetry, 'linear_accel_y', 0.0)
+            # Color matches ball color logic
+            if forward > 0.3:
+                fwd_color = COLOR_RED
+            elif forward > 0.1:
+                fwd_color = COLOR_ORANGE
+            elif forward < -0.3:
+                fwd_color = COLOR_CYAN
+            elif forward < -0.1:
+                fwd_color = COLOR_YELLOW
+            else:
+                fwd_color = COLOR_GREEN
+            txt = self.font_medium.render(f"{forward:+.2f}G", True, fwd_color)
         else:
             txt = self.font_medium.render("--", True, COLOR_DARK_GRAY)
         self.screen.blit(txt, (right_x + 15, y + 25))
