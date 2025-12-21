@@ -1289,7 +1289,8 @@ void drawGForceScreen() {
     // Calculate G-force dot position (1.5G = full radius)
     float maxG = 1.5;
     int maxRadius = 120;
-    int gX = CENTER_X + (int)(telemetry.gForceX / maxG * maxRadius);
+    // Negate X so ball moves in direction of turn (LEFT turn = ball moves LEFT)
+    int gX = CENTER_X - (int)(telemetry.gForceX / maxG * maxRadius);
     int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted
     
     // Clamp to circle
