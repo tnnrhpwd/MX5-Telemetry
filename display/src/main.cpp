@@ -1295,13 +1295,26 @@ void drawGForceScreen() {
     int gX = CENTER_X - (int)(telemetry.gForceX / maxG * maxRadius);
     int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted
     
-    // Ball size scales with longitudinal G-force (felt force, not acceleration direction)
-    // For vertical mount: positive gForceY = ball toward ACC (top) = car accelerating = BIGGER
-    // Negative gForceY = ball toward BRK (bottom) = car braking = SMALLER
-    // Note: Nose-up tilt registers as negative gForceY (like braking), nose-down as positive (like accel)
-    // Base radius 14, scales ±8 pixels for ±1G
-    int ballRadius = 14 + (int)(telemetry.gForceY * 8);
-    ballRadius = max(8, min(22, ballRadius));  // Clamp between 8 and 22
+    // Ball size based on DYNAMIC acceleration only (not static tilt/gravity)
+    // Physics: Accelerometer always reads 1G when stationary (any orientation)
+    // When actually accelerating, total magnitude exceeds 1G
+    // totalG = sqrt(X² + Y² + Z²) ≈ 1G static, > 1G when accelerating/braking/cornering
+    float totalMagnitude = sqrt(telemetry.gForceX * telemetry.gForceX + 
+                                 telemetry.gForceY * telemetry.gForceY + 
+                                 telemetry.gForceZ * telemetry.gForceZ);
+    
+    // Dynamic G = excess over gravity (1G baseline)
+    float dynamicG = totalMagnitude - 1.0f;
+    
+    // Only scale ball if there's actual dynamic acceleration (threshold for noise)
+    int ballRadius = 14;  // Base radius
+    if (dynamicG > 0.05f) {
+        // Scale based on longitudinal direction: accel = bigger, brake = smaller
+        // gForceY positive = acceleration, negative = braking
+        float direction = (telemetry.gForceY > 0) ? 1.0f : -1.0f;
+        ballRadius = 14 + (int)(direction * dynamicG * 16);  // ±0.5G dynamic = ±8 pixels
+        ballRadius = max(8, min(22, ballRadius));  // Clamp between 8 and 22
+    }
     
     // Clamp to circle
     float dist = sqrt(pow(gX - CENTER_X, 2) + pow(gY - CENTER_Y, 2));
