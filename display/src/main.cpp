@@ -1388,24 +1388,24 @@ void drawGForceScreen() {
         LCD_DrawCircle(gX, gY, ballRadius + 1, MX5_WHITE);
         
         // === G VALUES DISPLAY (Bottom) - draw info box ===
-        int infoY = SCREEN_HEIGHT - 60;
-        LCD_FillRoundRect(CENTER_X - 90, infoY, 180, 40, 10, COLOR_BG_CARD);
-        LCD_DrawRoundRect(CENTER_X - 90, infoY, 180, 40, 10, MX5_ACCENT);
+        int infoY = SCREEN_HEIGHT - 55;
+        LCD_FillRoundRect(CENTER_X - 100, infoY, 200, 50, 10, COLOR_BG_CARD);
+        LCD_DrawRoundRect(CENTER_X - 100, infoY, 200, 50, 10, MX5_ACCENT);
         
-        // Labels (static)
-        LCD_DrawString(CENTER_X - 80, infoY + 6, "LAT:", MX5_GRAY, COLOR_BG_CARD, 1);
-        LCD_DrawString(CENTER_X - 80, infoY + 22, "LON:", MX5_GRAY, COLOR_BG_CARD, 1);
-        
-        // Values
+        // Show X, Y, Z accelerometer values
         char gStr[16];
-        snprintf(gStr, sizeof(gStr), "%.2fG", telemetry.gForceX);
-        LCD_DrawString(CENTER_X - 48, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
+        snprintf(gStr, sizeof(gStr), "X:%+.2f", telemetry.gForceX);
+        LCD_DrawString(CENTER_X - 90, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
         
-        snprintf(gStr, sizeof(gStr), "%.2fG", telemetry.gForceY);
-        LCD_DrawString(CENTER_X - 48, infoY + 22, gStr, (telemetry.gForceY > 0) ? MX5_GREEN : MX5_RED, COLOR_BG_CARD, 1);
+        snprintf(gStr, sizeof(gStr), "Y:%+.2f", telemetry.gForceY);
+        LCD_DrawString(CENTER_X - 90, infoY + 20, gStr, MX5_GREEN, COLOR_BG_CARD, 1);
         
+        snprintf(gStr, sizeof(gStr), "Z:%+.2f", telemetry.gForceZ);
+        LCD_DrawString(CENTER_X - 90, infoY + 34, gStr, MX5_PURPLE, COLOR_BG_CARD, 1);
+        
+        // Total G on right side
         snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
-        LCD_DrawString(CENTER_X + 20, infoY + 12, gStr, dotColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(CENTER_X + 30, infoY + 16, gStr, dotColor, COLOR_BG_CARD, 2);
         
         drawPageIndicator();
         
@@ -1467,23 +1467,25 @@ void drawGForceScreen() {
         
         if (valuesChanged) {
             // Only update the value text, not the whole box
-            int infoY = SCREEN_HEIGHT - 60;
+            int infoY = SCREEN_HEIGHT - 55;
             
-            // Clear only the value areas (not labels)
-            LCD_FillRect(CENTER_X - 48, infoY + 4, 58, 14, COLOR_BG_CARD);  // LAT value area
-            LCD_FillRect(CENTER_X - 48, infoY + 20, 58, 14, COLOR_BG_CARD); // LON value area
-            LCD_FillRect(CENTER_X + 18, infoY + 10, 60, 20, COLOR_BG_CARD); // Total G area
+            // Clear value areas
+            LCD_FillRect(CENTER_X - 92, infoY + 4, 80, 44, COLOR_BG_CARD);  // X/Y/Z area
+            LCD_FillRect(CENTER_X + 28, infoY + 14, 65, 24, COLOR_BG_CARD); // Total G area
             
             // Redraw values
             char gStr[16];
-            snprintf(gStr, sizeof(gStr), "%.2fG", telemetry.gForceX);
-            LCD_DrawString(CENTER_X - 48, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
+            snprintf(gStr, sizeof(gStr), "X:%+.2f", telemetry.gForceX);
+            LCD_DrawString(CENTER_X - 90, infoY + 6, gStr, MX5_CYAN, COLOR_BG_CARD, 1);
             
-            snprintf(gStr, sizeof(gStr), "%.2fG", telemetry.gForceY);
-            LCD_DrawString(CENTER_X - 48, infoY + 22, gStr, (telemetry.gForceY > 0) ? MX5_GREEN : MX5_RED, COLOR_BG_CARD, 1);
+            snprintf(gStr, sizeof(gStr), "Y:%+.2f", telemetry.gForceY);
+            LCD_DrawString(CENTER_X - 90, infoY + 20, gStr, MX5_GREEN, COLOR_BG_CARD, 1);
+            
+            snprintf(gStr, sizeof(gStr), "Z:%+.2f", telemetry.gForceZ);
+            LCD_DrawString(CENTER_X - 90, infoY + 34, gStr, MX5_PURPLE, COLOR_BG_CARD, 1);
             
             snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
-            LCD_DrawString(CENTER_X + 20, infoY + 12, gStr, dotColor, COLOR_BG_CARD, 2);
+            LCD_DrawString(CENTER_X + 30, infoY + 16, gStr, dotColor, COLOR_BG_CARD, 2);
             
             prevGForceX = telemetry.gForceX;
             prevGForceY = telemetry.gForceY;
