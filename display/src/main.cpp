@@ -2613,10 +2613,10 @@ void scanTPMSSensors() {
         return;
     }
     
-    // Start scan - 500ms duration, non-blocking (false)
+    // Start scan - 1 second duration, non-blocking (false)
     // Short scan catches most TPMS broadcasts while keeping UI responsive
-    // TPMS sensors broadcast every ~1 second, so 500ms catches most
-    pBLEScan->start(0.5, false);  // 500ms scan, non-blocking
+    // TPMS sensors broadcast every ~1 second, so 1s catches most
+    pBLEScan->start(1, false);  // 1 second scan, non-blocking
 }
 
 // Update telemetry with TPMS data and send to Pi
