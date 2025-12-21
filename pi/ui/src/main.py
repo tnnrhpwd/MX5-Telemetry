@@ -1872,13 +1872,15 @@ class PiDisplayApp:
         self.screen.blit(txt, txt.get_rect(center=(cx, cy + 25)))
     
     def _is_imu_data_stale(self, timeout_sec: float = 1.0) -> bool:
-        """Check if IMU data is stale (no data received within timeout)"""
+        """Check if IMU data is stale (no IMU data received within timeout)"""
         # In demo mode, data is never stale
         if self.settings.demo_mode:
             return False
-        # Check if ESP32 handler is connected and receiving data
+        # Check if ESP32 handler is connected and receiving IMU data specifically
         if self.esp32_handler and self.esp32_handler.connected:
-            return (time.time() - self.esp32_handler.last_rx_time) > timeout_sec
+            # Use last_imu_time (specific to IMU messages) instead of last_rx_time (any message)
+            # This prevents false 'no data' when ESP32 sends other messages but IMU rate varies
+            return (time.time() - self.esp32_handler.last_imu_time) > timeout_sec
         # No handler = no data
         return True
     
@@ -1886,8 +1888,9 @@ class PiDisplayApp:
         """G-Force screen"""
         TOP = 55
         
-        # Check if IMU data is being received (1 second debounce)
-        imu_data_stale = self._is_imu_data_stale(timeout_sec=1.0)
+        # Check if IMU data is being received (2 second timeout)
+        # ESP32 sends IMU at 10Hz, 2s allows for occasional missed packets
+        imu_data_stale = self._is_imu_data_stale(timeout_sec=2.0)
         
         ball_cx, ball_cy = 230, TOP + 180
         ball_r = 155
