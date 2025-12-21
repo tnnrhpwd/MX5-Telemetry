@@ -1,18 +1,16 @@
 # MX5 Telemetry - Next Session To-Do List
 
 **Date Created:** December 1, 2025  
-**Last Updated:** December 19, 2025  
-**Status:** ✅ Pi + Arduino + ESP32-S3 architecture complete!
+**Last Updated:** December 20, 2025  
 
----
 
 ## 🎯 Current Architecture
 
-| Device | Purpose | Location | Status |
-|--------|---------|----------|--------|
-| **Raspberry Pi 4B** | CAN hub + settings cache + HDMI display | Hidden (console/trunk) | ✅ Implemented |
-| **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force IMU | **Stock oil gauge hole** | ✅ Implemented |
-| **Arduino Nano** | Direct CAN → LED strip + receives LED pattern from Pi | Gauge cluster bezel | ✅ Implemented |
+| Device | Purpose | Location 
+|--------|---------|----------
+| **Raspberry Pi 4B** | CAN hub + settings cache + HDMI display | Hidden (dashboard)
+| **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force IMU | Stock oil gauge hole
+| **Arduino Nano** | Direct CAN → LED strip + receives LED pattern from Pi | Hidden (dashboard)
 
 ### Data Flow Summary
 
@@ -37,135 +35,102 @@ Pi (Central Hub + Settings Cache)
 
 See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for full architecture.
 
----
-
-## 🎉 COMPLETED - December 19, 2025: Documentation Update
-
-### What Was Done
-
-1. **Updated all documentation** to accurately reflect:
-   - ESP32-S3 mounted in stock oil gauge hole
-   - Pi as central hub AND settings cache
-   - Pi sends LED sequence selection to Arduino via serial
-   - Arduino uses direct CAN for RPM (shared HS-CAN bus with Pi)
-   - ESP32 sends TPMS + G-force data to Pi
-   - Pi syncs all settings to devices on startup
 
 ---
 
-## 🎉 COMPLETED - December 16, 2025: Documentation Cleanup
+## ⚠️ REQUIRED: Pi Boot Configuration
 
-### What Was Done
+**These changes must be made on the Raspberry Pi before CAN and serial will work!**
 
-1. **Archived Dual-Arduino Documentation**
-   - Moved to `archive/dual-arduino/docs/`:
-     - `MASTER_SLAVE_ARCHITECTURE.md`
-     - `WIRING_GUIDE_DUAL_ARDUINO.md`
-     - `DUAL_ARDUINO_SETUP.md`
-     - `GPS_TROUBLESHOOTING.md`
-     - `COMPREHENSIVE_DATA_LOGGING.md`
-     - `LOG_ROTATION_FEATURE.md`
-     - `AUTO_START_FEATURE.md`
+### 1. Enable SPI (for MCP2515 CAN modules)
+```bash
+sudo raspi-config
+# Interface Options → SPI → Enable
+```
 
-2. **Updated Documentation**
-   - `docs/README.md` - Reflects Pi + ESP32 + Arduino architecture
-   - `README.md` - Updated project overview
-   - `docs/BUILD_AND_UPLOAD.md` - Updated for current build targets
-   - `docs/hardware/PARTS_LIST.md` - Added Pi, ESP32, TPMS components
-   - `archive/dual-arduino/README.md` - Updated archive description
+### 2. Configure /boot/config.txt
+Add these lines to `/boot/config.txt`:
+```ini
+# Enable SPI for CAN bus
+dtparam=spi=on
 
----
+# MCP2515 CAN Module #1 (HS-CAN on CE0, INT on GPIO 25)
+dtoverlay=mcp2515-can0,oscillator=8000000,interrupt=25
 
-## 🎉 COMPLETED - December 3, 2025: Single Arduino Setup
+# MCP2515 CAN Module #2 (MS-CAN on CE1, INT on GPIO 24)  
+dtoverlay=mcp2515-can1,oscillator=8000000,interrupt=24,cs_pin=7
 
-### What Was Done
+# Enable GPIO UART for Arduino serial (optional - if not using USB)
+enable_uart=1
+```
 
-1. **Created Single Arduino Optimized Build** (`arduino/`)
-   - Direct CAN→LED path with <1ms latency
-   - 100Hz LED update rate
-   - Hardware interrupt on D2 for CAN messages
-   - No serial communication = no data corruption
+### 3. Bring Up CAN Interfaces (after reboot)
+```bash
+# Create script at /etc/network/if-up.d/can-setup:
+sudo ip link set can0 up type can bitrate 500000
+sudo ip link set can1 up type can bitrate 125000
+```
 
-2. **Created ESP32-S3 Display** (`display/`)
-   - 360x360 round LCD with modern UI
-   - 8 screens: Overview, RPM, TPMS, Engine, G-Force, Diagnostics, System, Settings
-   - BLE TPMS scanner for tire pressure sensors
-   - QMI8658 IMU for G-force display
-
-3. **Created Raspberry Pi UI** (`pi/ui/src/`)
-   - Python/Pygame application
-   - Dual CAN bus reading (HS + MS)
-   - Serial communication with ESP32-S3
-   - HDMI output to Pioneer head unit
+### 4. Enable UART for Arduino (if using GPIO serial)
+```bash
+sudo raspi-config
+# Interface Options → Serial Port
+# Login shell over serial: NO
+# Serial hardware enabled: YES
+```
 
 ---
 
 ## 📋 Remaining Tasks
 
+### ⚠️ HIGH PRIORITY - Pi Setup (Before Testing)
+- [ ] **Configure /boot/config.txt** with dtoverlay lines above
+- [ ] **Enable SPI** via raspi-config  
+- [ ] **Test CAN interfaces** with `candump can0` and `candump can1`
+- [ ] **Enable UART** for Arduino serial (if using GPIO pins 14/15)
+- [ ] **Create CAN startup script** to bring up interfaces on boot
+
 ### Hardware
 - [ ] Test Pi with actual MCP2515 modules in car
-- [ ] Verify BLE TPMS sensor pairing
+- [ ] Verify BLE TPMS sensor data accuracy
 - [ ] Mount ESP32-S3 round display in dash
-- [ ] Run shielded cable from Pi to ESP32
+- [ ] Run wires from Pi to NANO
 
 ### Software
 - [ ] Fine-tune Pi CAN bus timing
-- [ ] Add data logging to Pi (SD card or USB)
 - [ ] Implement lap timer on RPM/Speed screen
-- [ ] Add TPMS low-pressure alerts with audio
+- [ ] Add TPMS low-pressure alerts with audio (May not add)
 
 ### Testing
 - [ ] Full car test with all components
-- [ ] Verify steering wheel button mapping
+- [ ] Verify steering wheel button mapping (CAN IDs 0x240, 0x250 - may need adjustment)
 - [ ] Test G-force calibration during driving
 
-### ✅ COMPLETED - Single Arduino code
+---
 
-- [x] Combined CAN reading and LED control in one loop
-- [x] Removed serial communication code
-- [x] Inline functions for speed
-- [x] Integer-only math (no floats)
-- [x] Direct port manipulation macros
 
-### Code Cleanup
+## 🔧 Code Cleanup (Lower Priority)
 - [ ] Remove unused features and dead code
-- [ ] Simplify LED state machine (too many states currently)
 - [ ] Remove or disable features not needed for core RPM display:
-  - [ ] Stall warning animation
-  - [ ] Idle breathing animation  
-  - [ ] Complex efficiency gradient (simplify to basic RPM bar?)
-  - [ ] Pepper animation
   - [ ] Haptic feedback code
-
-### Streamlined Mode
-- [ ] Create a "SIMPLE_MODE" compile flag
-- [ ] Simple mode: RPM in → LED bar out (minimal processing)
-- [ ] Keep advanced features available but optional
-
-### Serial Protocol Simplification
-- [ ] Reduce Master→Slave message to just: `R<rpm>\n`
-- [ ] Remove acknowledgments and status messages during operation
-- [ ] Consider binary protocol for speed (2 bytes for RPM vs 6+ chars)
 
 ---
 
 ## 🗑️ Priority 4: Feature Removal Candidates
 
 ### Consider Removing/Disabling
-- [ ] **SD Card Logging** - Major source of delays
+- [ ] **SD Card Logging** - Major source of delays (move to archive)
   - Blocking writes can take 10-100ms+
   - Not needed for real-time RPM display
   - Can add back later as optional feature
   
-- [ ] **GPS Logging** - Adds complexity, not needed for RPM LEDs
+- [ ] **GPS Logging** - Adds complexity, not needed for RPM LEDs (move to archive)
   - GPS parsing takes time each loop
   - SoftwareSerial can interfere with timing
   
-- [ ] **Comprehensive Data Logging** - Overkill for RPM display
+- [ ] **Comprehensive Data Logging** - Overkill for RPM display (move to archive)
   
-- [ ] **Log Rotation** - Only needed if keeping SD logging
-
-- [ ] **Status LED states** - Simplify to just: Running / Error
+- [ ] **Log Rotation** - Only needed if keeping SD logging (move to archive)
 
 ### Keep These Features
 - [ ] CAN Bus reading (core functionality)
@@ -230,6 +195,21 @@ BLE TPMS Sensors ─────────►│ • BLE TPMS → Pi    │  �
                            └────────────────────┘  └──────────────────┘
 ```
 
+### Pi Wiring Summary
+
+| Pi GPIO | Function | Connected To |
+|---------|----------|--------------|
+| GPIO 8 (CE0) | SPI CS | MCP2515 #1 (HS-CAN) |
+| GPIO 7 (CE1) | SPI CS | MCP2515 #2 (MS-CAN) |
+| GPIO 10 | SPI MOSI | Both MCP2515 SI |
+| GPIO 9 | SPI MISO | Both MCP2515 SO |
+| GPIO 11 | SPI SCLK | Both MCP2515 SCK |
+| GPIO 25 | Interrupt | MCP2515 #1 INT |
+| GPIO 24 | Interrupt | MCP2515 #2 INT |
+| GPIO 14 (TXD) | UART TX | Arduino RX (D3) |
+| GPIO 15 (RXD) | UART RX | Arduino TX (D4) |
+| USB-A | USB Serial | ESP32-S3 USB-C (/dev/ttyACM0) |
+
 ### Build Commands
 
 ```powershell
@@ -243,6 +223,32 @@ pio run -d display --target upload
 python3 pi/ui/src/main.py --fullscreen
 ```
 
+### Pi Setup Commands (run once)
+
+```bash
+# 1. Enable SPI
+sudo raspi-config  # Interface Options → SPI → Enable
+
+# 2. Edit boot config
+sudo nano /boot/config.txt
+# Add:
+#   dtparam=spi=on
+#   dtoverlay=mcp2515-can0,oscillator=8000000,interrupt=25
+#   dtoverlay=mcp2515-can1,oscillator=8000000,interrupt=24,cs_pin=7
+#   enable_uart=1
+
+# 3. Reboot
+sudo reboot
+
+# 4. Bring up CAN interfaces
+sudo ip link set can0 up type can bitrate 500000
+sudo ip link set can1 up type can bitrate 125000
+
+# 5. Test CAN
+candump can0  # Should see HS-CAN traffic when car is on
+candump can1  # Should see MS-CAN traffic
+```
+
 ---
 
 ## Session Notes
@@ -251,6 +257,4 @@ _Add notes here during next session:_
 
 - 
 - 
-- 
-
-
+-
