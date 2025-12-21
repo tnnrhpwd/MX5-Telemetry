@@ -474,15 +474,23 @@ class ESP32SerialHandler:
             print(f"TPMS BLE Temp: {self.telemetry.tire_temp}")
     
     def _parse_imu(self, data: str):
-        """Parse IMU data: lateral_g,longitudinal_g"""
+        """Parse IMU data: accelX,accelY,accelZ,gyroX,gyroY,gyroZ,linearX,linearY,pitch,roll"""
         parts = data.split(',')
         if len(parts) >= 2:
-            lateral = float(parts[0])
-            longitudinal = float(parts[1])
+            # Always parse the first 2 for backward compatibility
+            self.telemetry.g_lateral = float(parts[0])
+            self.telemetry.g_longitudinal = float(parts[1])
             
-            # Update telemetry object
-            self.telemetry.g_lateral = lateral
-            self.telemetry.g_longitudinal = longitudinal
+            # Parse extended data if available
+            if len(parts) >= 10:
+                self.telemetry.g_vertical = float(parts[2])
+                self.telemetry.gyro_x = float(parts[3])
+                self.telemetry.gyro_y = float(parts[4])
+                self.telemetry.gyro_z = float(parts[5])
+                self.telemetry.linear_accel_x = float(parts[6])
+                self.telemetry.linear_accel_y = float(parts[7])
+                self.telemetry.orientation_pitch = float(parts[8])
+                self.telemetry.orientation_roll = float(parts[9])
             
             # Track when IMU data was last received
             self.last_imu_time = time.time()

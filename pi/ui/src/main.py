@@ -1926,9 +1926,10 @@ class PiDisplayApp:
             gx = ball_cx - int(self.telemetry.g_lateral * g_scale)
             gy = ball_cy - int(self.telemetry.g_longitudinal * g_scale)
             
-            # Ball size scales with longitudinal G (acceleration = bigger, braking = smaller)
+            # Ball size scales with PURE LINEAR ACCELERATION (gravity removed)
             # Base radius 15, scales from 8 (hard braking) to 24 (hard acceleration)
-            ball_size = 15 + int(self.telemetry.g_longitudinal * 9)
+            linear_y = getattr(self.telemetry, 'linear_accel_y', 0.0)
+            ball_size = 15 + int(linear_y * 18)
             ball_size = max(8, min(24, ball_size))
             
             dx, dy = gx - ball_cx, gy - ball_cy
@@ -1947,50 +1948,86 @@ class PiDisplayApp:
             pygame.draw.circle(self.screen, COLOR_ACCENT, (gx, gy), ball_size)
             pygame.draw.circle(self.screen, COLOR_WHITE, (gx, gy), ball_size, 2)
         
-        # Right panel cards
+        # Right panel cards - RAW DATA DISPLAY
         right_x = 440
         card_w = 340
-        card_h = 95
+        card_h = 60
+        spacing = 8
         
-        # Lateral
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP, card_w, card_h))
-        pygame.draw.rect(self.screen, COLOR_CYAN if not imu_data_stale else COLOR_DARK_GRAY, (right_x, TOP, 5, card_h))
-        txt = self.font_small.render("LATERAL", True, COLOR_GRAY)
-        self.screen.blit(txt, (right_x + 20, TOP + 12))
-        if imu_data_stale:
-            txt = self.font_large.render("--", True, COLOR_DARK_GRAY)
+        # Card 1: Accelerometer (raw)
+        y = TOP
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_CYAN, (right_x, y, 4, card_h))
+        txt = self.font_tiny.render("ACCELEROMETER (G)", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 5))
+        if not imu_data_stale:
+            g_vert = getattr(self.telemetry, 'g_vertical', 0.0)
+            txt = self.font_small.render(f"X:{self.telemetry.g_lateral:+.2f}  Y:{self.telemetry.g_longitudinal:+.2f}  Z:{g_vert:+.2f}", True, COLOR_CYAN)
         else:
-            txt = self.font_large.render(f"{self.telemetry.g_lateral:+.2f}G", True, COLOR_CYAN)
-        self.screen.blit(txt, (right_x + 20, TOP + 40))
+            txt = self.font_small.render("--", True, COLOR_DARK_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 28))
         
-        # Longitudinal
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + card_h + 15, card_w, card_h))
-        pygame.draw.rect(self.screen, COLOR_PURPLE if not imu_data_stale else COLOR_DARK_GRAY, (right_x, TOP + card_h + 15, 5, card_h))
-        txt = self.font_small.render("LONGITUDINAL", True, COLOR_GRAY)
-        self.screen.blit(txt, (right_x + 20, TOP + card_h + 27))
-        if imu_data_stale:
-            txt = self.font_large.render("--", True, COLOR_DARK_GRAY)
+        # Card 2: Gyroscope
+        y += card_h + spacing
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_ORANGE, (right_x, y, 4, card_h))
+        txt = self.font_tiny.render("GYROSCOPE (°/s)", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 5))
+        if not imu_data_stale:
+            gx = getattr(self.telemetry, 'gyro_x', 0.0)
+            gy = getattr(self.telemetry, 'gyro_y', 0.0)
+            gz = getattr(self.telemetry, 'gyro_z', 0.0)
+            txt = self.font_small.render(f"X:{gx:+.1f}  Y:{gy:+.1f}  Z:{gz:+.1f}", True, COLOR_ORANGE)
         else:
-            txt = self.font_large.render(f"{self.telemetry.g_longitudinal:+.2f}G", True, COLOR_PURPLE)
-        self.screen.blit(txt, (right_x + 20, TOP + card_h + 55))
+            txt = self.font_small.render("--", True, COLOR_DARK_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 28))
         
-        # Combined
-        combined = math.sqrt(self.telemetry.g_lateral**2 + self.telemetry.g_longitudinal**2)
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP + 2*(card_h + 15), card_w, card_h))
-        pygame.draw.rect(self.screen, COLOR_ACCENT if not imu_data_stale else COLOR_DARK_GRAY, (right_x, TOP + 2*(card_h + 15), 5, card_h))
-        txt = self.font_small.render("COMBINED", True, COLOR_GRAY)
-        self.screen.blit(txt, (right_x + 20, TOP + 2*(card_h + 15) + 12))
-        if imu_data_stale:
-            txt = self.font_large.render("--", True, COLOR_DARK_GRAY)
+        # Card 3: Linear Acceleration (gravity removed)
+        y += card_h + spacing
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_GREEN, (right_x, y, 4, card_h))
+        txt = self.font_tiny.render("LINEAR ACCEL (G)", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 5))
+        if not imu_data_stale:
+            lin_x = getattr(self.telemetry, 'linear_accel_x', 0.0)
+            lin_y = getattr(self.telemetry, 'linear_accel_y', 0.0)
+            txt = self.font_small.render(f"X:{lin_x:+.3f}  Y:{lin_y:+.3f}", True, COLOR_GREEN)
         else:
-            txt = self.font_large.render(f"{combined:.2f}G", True, COLOR_ACCENT)
-        self.screen.blit(txt, (right_x + 20, TOP + 2*(card_h + 15) + 40))
+            txt = self.font_small.render("--", True, COLOR_DARK_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 28))
+        
+        # Card 4: Orientation (from gyro integration)
+        y += card_h + spacing
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_PURPLE, (right_x, y, 4, card_h))
+        txt = self.font_tiny.render("ORIENTATION (°)", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 5))
+        if not imu_data_stale:
+            pitch = getattr(self.telemetry, 'orientation_pitch', 0.0)
+            roll = getattr(self.telemetry, 'orientation_roll', 0.0)
+            txt = self.font_small.render(f"Pitch:{pitch:+.1f}  Roll:{roll:+.1f}", True, COLOR_PURPLE)
+        else:
+            txt = self.font_small.render("--", True, COLOR_DARK_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 28))
+        
+        # Card 5: Combined G
+        y += card_h + spacing
+        pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
+        pygame.draw.rect(self.screen, COLOR_ACCENT, (right_x, y, 4, card_h))
+        txt = self.font_tiny.render("COMBINED G", True, COLOR_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 5))
+        if not imu_data_stale:
+            combined = math.sqrt(self.telemetry.g_lateral**2 + self.telemetry.g_longitudinal**2)
+            txt = self.font_medium.render(f"{combined:.2f}G", True, COLOR_ACCENT)
+        else:
+            txt = self.font_medium.render("--", True, COLOR_DARK_GRAY)
+        self.screen.blit(txt, (right_x + 15, y + 25))
         
         # IMU source / status
         if imu_data_stale:
             txt = self.font_tiny.render("⚠ ESP32 IMU: No Data", True, COLOR_YELLOW)
         else:
-            txt = self.font_tiny.render("Source: QMI8658 IMU", True, COLOR_DARK_GRAY)
+            txt = self.font_tiny.render("Source: QMI8658 IMU (6-axis)", True, COLOR_DARK_GRAY)
         self.screen.blit(txt, txt.get_rect(center=(ball_cx, PI_HEIGHT - 15)))
     
     def _render_diagnostics(self):
