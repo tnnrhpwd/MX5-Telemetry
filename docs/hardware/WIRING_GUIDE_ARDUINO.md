@@ -1,16 +1,15 @@
-# 🔌 Single Arduino Wiring Guide
+# 🔌 Arduino LED Controller Wiring Guide
 
-This guide covers the **single Arduino setup** - the simplest and most responsive configuration for CAN bus RPM reading and LED display.
+This guide covers the **Arduino Nano LED controller** wiring for the gauge cluster bezel shift light.
 
-## ✅ Advantages of Single Arduino
+## 📋 Overview
 
-| Benefit | Description |
-|---------|-------------|
-| **Zero Latency** | Direct CAN → LED update path (<1ms) |
-| **No Data Corruption** | No serial link to corrupt RPM values |
-| **Simple Wiring** | 50% fewer connections than dual setup |
-| **Lower Power** | One Arduino instead of two |
-| **Easier Debugging** | Single point of failure |
+The Arduino Nano provides <1ms latency RPM-to-LED updates by:
+1. Reading directly from the HS-CAN bus via MCP2515 module
+2. Receiving LED sequence/pattern selection from the Pi via serial
+3. Driving the WS2812B LED strip around the gauge cluster
+
+**Note**: This is part of the 3-device MX5-Telemetry system. See [WIRING_GUIDE_PI_SYSTEM.md](WIRING_GUIDE_PI_SYSTEM.md) for the complete system wiring.
 
 ## ⚠️ Safety First
 
@@ -122,6 +121,18 @@ This guide covers the **single Arduino setup** - the simplest and most responsiv
                                Pin 16: 12V (Red)      → Buck Converter IN+
 ```
 
+### Pi Serial Connection (LED Sequence Commands)
+
+The Arduino receives LED pattern/sequence selection from the Pi via software serial:
+
+| Pi GPIO | Pi Pin # | Arduino Pin | Wire Color | Description |
+|---------|----------|-------------|------------|-------------|
+| GPIO 14 (TXD) | 8 | D3 (RX) | Green | Pi TX → Arduino RX |
+| GPIO 15 (RXD) | 10 | D4 (TX) | Yellow | Arduino TX → Pi RX (optional) |
+| GND | 6 | GND | Black | Common ground (REQUIRED) |
+
+**Protocol**: Pi sends `SEQ:n` commands (n = 1-4) to select LED display mode.
+
 ### Optional: Brightness Potentiometer
 
 | Pot Pin | Connection | Wire Color |
@@ -225,6 +236,7 @@ If you have two Arduino setups:
 
 ## 📁 Related Files
 
-- **Firmware**: `single/src/main.cpp`
-- **Build config**: `single/platformio.ini`
-- **Dual Arduino alternative**: `docs/hardware/WIRING_GUIDE_DUAL_ARDUINO.md`
+- **Firmware**: `arduino/src/main.cpp`
+- **Build config**: `arduino/platformio.ini`
+- **Pi System Wiring**: [WIRING_GUIDE_PI_SYSTEM.md](WIRING_GUIDE_PI_SYSTEM.md)
+- **Parts List**: [PARTS_LIST.md](PARTS_LIST.md)
