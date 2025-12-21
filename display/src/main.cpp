@@ -632,11 +632,11 @@ void loop() {
     unsigned long loopTime = millis() - loopStart;
     if (loopTime > maxLoopTime) maxLoopTime = loopTime;
     
-    // Report performance every 5 seconds
-    if (millis() - lastPerfReport > 5000) {
+    // Report performance every 2 seconds
+    if (millis() - lastPerfReport > 2000) {
         float avgHz = loopCount * 1000.0 / (millis() - lastPerfReport);
-        Serial.printf("PERF: Screen=%d LoopHz=%.0f MaxMs=%lu\n", 
-                      currentScreen, avgHz, maxLoopTime);
+        Serial.printf("PERF: Screen=%d (%s) LoopHz=%.0f MaxMs=%lu\n", 
+                      currentScreen, SCREEN_NAMES[currentScreen], avgHz, maxLoopTime);
         lastPerfReport = millis();
         loopCount = 0;
         maxLoopTime = 0;
