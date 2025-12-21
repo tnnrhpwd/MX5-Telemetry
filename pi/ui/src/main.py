@@ -1938,13 +1938,17 @@ class PiDisplayApp:
             self.screen.blit(txt, txt.get_rect(center=(ball_cx, ball_cy + 20)))
         else:
             # Ball POSITION from orientation (pitch/roll in degrees)
+            # Received from ESP32 via serial: pitch positive = nose UP, roll positive = roll RIGHT
             pitch = getattr(self.telemetry, 'orientation_pitch', 0.0)
             roll = getattr(self.telemetry, 'orientation_roll', 0.0)
             
-            # Roll controls X, Pitch controls Y (10° = full radius)
-            # Nose down = positive pitch = circle moves UP (negative Y direction)
+            # Position mapping (same as ESP32):
+            # - Nose DOWN (negative pitch) → ball UP (negative Y offset)
+            # - Nose UP (positive pitch) → ball DOWN (positive Y offset)
+            # - Roll LEFT (negative roll) → ball LEFT
+            # - Roll RIGHT (positive roll) → ball RIGHT
             gx = ball_cx + int(roll * deg_scale)
-            gy = ball_cy - int(pitch * deg_scale)
+            gy = ball_cy + int(pitch * deg_scale)  # Nose up = ball down
             
             # Ball SIZE from FORWARD acceleration only (not total magnitude)
             # linear_accel_y = forward acceleration with gravity subtracted
