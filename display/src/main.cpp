@@ -526,8 +526,8 @@ void loop() {
     Touch_Loop();
     handleTouch();
     
-    // BLE TPMS scanning - only when on TPMS screen to avoid conflicts
-    if (currentScreen == SCREEN_TPMS) {
+    // BLE TPMS scanning - only when on TPMS or Overview screen to avoid conflicts
+    if (currentScreen == SCREEN_TPMS || currentScreen == SCREEN_OVERVIEW) {
         if (bleInitialized && millis() - lastBLEScanTime > BLE_SCAN_INTERVAL) {
             lastBLEScanTime = millis();
             scanTPMSSensors();
