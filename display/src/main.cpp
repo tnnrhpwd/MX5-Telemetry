@@ -519,6 +519,11 @@ void setup() {
 }
 
 void loop() {
+    static unsigned long loopCount = 0;
+    static unsigned long lastPerfReport = 0;
+    static unsigned long maxLoopTime = 0;
+    unsigned long loopStart = millis();
+    
     // Handle serial commands FIRST - highest priority for Pi sync
     handleSerialCommands();
     
@@ -620,6 +625,21 @@ void loop() {
         
         // Process serial again after drawing in case commands arrived
         handleSerialCommands();
+    }
+    
+    // Performance monitoring
+    loopCount++;
+    unsigned long loopTime = millis() - loopStart;
+    if (loopTime > maxLoopTime) maxLoopTime = loopTime;
+    
+    // Report performance every 5 seconds
+    if (millis() - lastPerfReport > 5000) {
+        float avgHz = loopCount * 1000.0 / (millis() - lastPerfReport);
+        Serial.printf("PERF: Screen=%d LoopHz=%.0f MaxMs=%lu\n", 
+                      currentScreen, avgHz, maxLoopTime);
+        lastPerfReport = millis();
+        loopCount = 0;
+        maxLoopTime = 0;
     }
     
     delay(5);  // ~200Hz loop rate for responsive touch
