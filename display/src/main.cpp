@@ -656,7 +656,7 @@ void loop() {
 // IMU Functions
 // ============================================================================
 
-// Orientation tracking via gyroscope integration
+// Orientation tracking via gyroscope integration with accelerometer correction
 static float orientationPitch = 0;  // Pitch angle in degrees (nose up/down)
 static float orientationRoll = 0;   // Roll angle in degrees (left/right tilt)
 static unsigned long lastIMUUpdate = 0;
@@ -669,31 +669,76 @@ void updateIMU() {
     float dt = (lastIMUUpdate > 0) ? (now - lastIMUUpdate) / 1000.0f : 0.02f;
     lastIMUUpdate = now;
     
-    // Integrate gyroscope to track orientation
-    // Map gyro axes for vertical mount (same mapping as accelerometer)
-    float gyroPitch = -imu.gz;  // Pitch rate (nose up/down) in °/sec
-    float gyroRoll = imu.gy;    // Roll rate (left/right tilt) in °/sec
+    // ==========================================================================
+    // AXIS MAPPING for ESP32-S3 mounted VERTICALLY in oil gauge hole
+    // Screen faces driver, USB port points down
+    // ==========================================================================
+    // IMU chip coordinate system (looking at screen):
+    //   - IMU X-axis: points RIGHT
+    //   - IMU Y-axis: points UP (towards top of display)
+    //   - IMU Z-axis: points OUT of screen (towards driver)
+    //
+    // Car coordinate system:
+    //   - Car X-axis: LEFT (driver's left)
+    //   - Car Y-axis: FORWARD (direction car drives)
+    //   - Car Z-axis: UP (towards sky)
+    //
+    // When ESP32 is vertical in oil gauge:
+    //   - IMU Y-axis → Car Z-axis (up)
+    //   - IMU Z-axis → Car Y-axis (forward) 
+    //   - IMU X-axis → Car X-axis (but inverted: right→left)
+    // ==========================================================================
     
-    orientationPitch += gyroPitch * dt;
-    orientationRoll += gyroRoll * dt;
+    // Map accelerometer to car coordinates (in G units)
+    // These include gravity component when car is tilted
+    float carAccelLateral = -imu.ax;   // Lateral: positive = left
+    float carAccelForward = imu.az;    // Forward: positive = forward (includes gravity from pitch)
+    float carAccelVertical = imu.ay;   // Vertical: positive = up (should be ~1G when level)
     
-    // Clamp orientation to reasonable range (prevents drift runaway)
-    orientationPitch = constrain(orientationPitch, -45.0f, 45.0f);
-    orientationRoll = constrain(orientationRoll, -45.0f, 45.0f);
+    // Map gyroscope to car coordinates (in degrees/sec)
+    float gyroPitchRate = imu.gx;      // Pitch rate: positive = nose going UP
+    float gyroRollRate = -imu.gz;      // Roll rate: positive = rolling RIGHT
     
-    // Map accelerometer axes to car orientation for VERTICAL mounting
-    // Display is mounted vertically in oil gauge hole (screen facing driver)
-    telemetry.gForceX = imu.ay;   // Lateral (left/right)
-    telemetry.gForceY = -imu.az;  // Longitudinal (includes gravity when tilted)
-    telemetry.gForceZ = imu.ax;
+    // Integrate gyroscope for smooth orientation tracking
+    orientationPitch += gyroPitchRate * dt;
+    orientationRoll += gyroRollRate * dt;
     
-    // Calculate gravity component based on tracked orientation
-    float gravityY = sin(orientationPitch * DEG_TO_RAD);  // Gravity in longitudinal axis
-    float gravityX = sin(orientationRoll * DEG_TO_RAD);   // Gravity in lateral axis
+    // Use accelerometer for drift correction when acceleration is low
+    // Calculate pitch/roll from gravity vector (only valid when not accelerating much)
+    float totalAccel = sqrt(carAccelLateral*carAccelLateral + 
+                           carAccelForward*carAccelForward + 
+                           carAccelVertical*carAccelVertical);
     
-    // Store pure linear acceleration (accelerometer minus gravity)
-    telemetry.linearAccelX = telemetry.gForceX - gravityX;
-    telemetry.linearAccelY = telemetry.gForceY - gravityY;
+    // If total acceleration is close to 1G, we can trust accelerometer for tilt
+    if (totalAccel > 0.8 && totalAccel < 1.2) {
+        // Calculate tilt angles from accelerometer
+        float accelPitch = atan2(carAccelForward, carAccelVertical) * RAD_TO_DEG;
+        float accelRoll = atan2(carAccelLateral, carAccelVertical) * RAD_TO_DEG;
+        
+        // Complementary filter: blend gyro (fast) with accel (stable)
+        // 98% gyro, 2% accelerometer for drift correction
+        float alpha = 0.02;
+        orientationPitch = (1.0 - alpha) * orientationPitch + alpha * accelPitch;
+        orientationRoll = (1.0 - alpha) * orientationRoll + alpha * accelRoll;
+    }
+    
+    // Clamp orientation to reasonable range
+    orientationPitch = constrain(orientationPitch, -30.0f, 30.0f);
+    orientationRoll = constrain(orientationRoll, -30.0f, 30.0f);
+    
+    // Store mapped G-force values for display
+    telemetry.gForceX = carAccelLateral;
+    telemetry.gForceY = carAccelForward;
+    telemetry.gForceZ = carAccelVertical;
+    
+    // Calculate LINEAR acceleration (gravity removed) for ball sizing
+    // Gravity component based on current orientation
+    float gravityForward = sin(orientationPitch * DEG_TO_RAD);
+    float gravityLateral = sin(orientationRoll * DEG_TO_RAD);
+    
+    // Pure linear acceleration = measured - gravity component
+    telemetry.linearAccelX = carAccelLateral - gravityLateral;
+    telemetry.linearAccelY = carAccelForward - gravityForward;
     
     // Only trigger redraw on G-Force screen
     if (currentScreen == SCREEN_GFORCE) {
@@ -1358,12 +1403,12 @@ void drawGForceScreen() {
     // G-FORCE DISPLAY LOGIC (ESP32-S3 mounted vertically in oil gauge hole)
     // ==========================================================================
     // 
-    // CIRCLE POSITION = Car orientation (tilt from gyroscope integration)
+    // CIRCLE POSITION = Car orientation (tilt from gyroscope + accelerometer)
     //   - Nose DOWN  → circle moves UP (top of screen)
     //   - Nose UP    → circle moves DOWN (bottom of screen)
     //   - Roll LEFT  → circle moves LEFT
     //   - Roll RIGHT → circle moves RIGHT
-    //   - 10 degrees tilt = circle at outer ring edge
+    //   - 10 degrees tilt = circle at outer ring edge (2.5°, 5°, 10° grid)
     //
     // CIRCLE SIZE = Forward acceleration (linear accel, gravity-subtracted)
     //   - Zero acceleration → normal size (14px radius)
@@ -1371,14 +1416,22 @@ void drawGForceScreen() {
     //   - Deceleration (braking) → circle SHRINKS (down to 6px)
     // ==========================================================================
     
-    // Ball POSITION based on gyro-integrated orientation (pitch/roll in degrees)
-    // 10 degrees = full radius (outer ring)
+    // Ball POSITION based on orientation (pitch/roll in degrees)
+    // Grid: 2.5° = 30px, 5° = 60px, 10° = 120px (outer ring)
     float maxDegrees = 10.0;
     int maxRadius = 120;
-    // Roll controls X (left/right tilt), Pitch controls Y (forward/back tilt)
-    // Nose down = positive pitch = circle moves UP (negative Y direction)
-    int gX = CENTER_X + (int)(orientationRoll / maxDegrees * maxRadius);
-    int gY = CENTER_Y - (int)(orientationPitch / maxDegrees * maxRadius);
+    float pixelsPerDegree = maxRadius / maxDegrees;  // 12 px per degree
+    
+    // Position mapping:
+    // - orientationPitch: positive = nose UP, negative = nose DOWN
+    // - orientationRoll: positive = roll RIGHT, negative = roll LEFT
+    // - Screen Y: positive = down, negative = up
+    // So: nose DOWN (negative pitch) → ball UP (negative Y offset) → use +pitch
+    //     nose UP (positive pitch) → ball DOWN (positive Y offset) → use +pitch
+    //     roll LEFT (negative roll) → ball LEFT → use roll directly
+    //     roll RIGHT (positive roll) → ball RIGHT → use roll directly
+    int gX = CENTER_X + (int)(orientationRoll * pixelsPerDegree);
+    int gY = CENTER_Y + (int)(orientationPitch * pixelsPerDegree);  // Nose up = ball down
     
     // Ball SIZE based on FORWARD acceleration only (not total magnitude)
     // linearAccelY = forward acceleration with gravity subtracted
