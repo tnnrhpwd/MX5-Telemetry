@@ -1322,24 +1322,27 @@ void drawGForceScreen() {
     static int prevGX = CENTER_X;
     static int prevGY = CENTER_Y;
     static int prevBallRadius = 14;
-    static float prevGForceX = 0;
-    static float prevGForceY = 0;
-    static float prevTotalG = 0;
+    static float prevPitch = 0;
+    static float prevRoll = 0;
+    static float prevAccelMag = 0;
     static bool firstDraw = true;
     
-    // Calculate G-force dot position (1.5G = full radius)
-    // Use raw accelerometer for position (shows combined forces including gravity)
-    float maxG = 1.5;
+    // Ball POSITION based on gyro-integrated orientation (pitch/roll in degrees)
+    // 10 degrees = full radius (outer ring)
+    float maxDegrees = 10.0;
     int maxRadius = 120;
-    // Negate X so ball moves in direction of turn (LEFT turn = ball moves LEFT)
-    int gX = CENTER_X - (int)(telemetry.gForceX / maxG * maxRadius);
-    int gY = CENTER_Y - (int)(telemetry.gForceY / maxG * maxRadius);  // Y inverted
+    // Roll controls X (left/right tilt), Pitch controls Y (forward/back tilt)
+    int gX = CENTER_X + (int)(orientationRoll / maxDegrees * maxRadius);
+    int gY = CENTER_Y - (int)(orientationPitch / maxDegrees * maxRadius);
     
-    // Ball size based on PURE LINEAR ACCELERATION (gravity removed via gyroscope)
-    // Positive linearAccelY = accelerating = bigger, negative = braking = smaller
-    // Base radius 14, ±0.5G = ±8 pixels
-    int ballRadius = 14 + (int)(telemetry.linearAccelY * 16);
-    ballRadius = max(8, min(22, ballRadius));  // Clamp between 8 and 22
+    // Ball SIZE based on acceleration magnitude (total G from accelerometer)
+    // Shows how much force the car is experiencing
+    float accelMag = sqrt(telemetry.gForceX * telemetry.gForceX + 
+                          telemetry.gForceY * telemetry.gForceY + 
+                          telemetry.gForceZ * telemetry.gForceZ);
+    // Base radius 10, scales up to 24 at 2G
+    int ballRadius = 10 + (int)((accelMag - 0.5) * 14);
+    ballRadius = max(8, min(24, ballRadius));
     
     // Clamp to circle
     float dist = sqrt(pow(gX - CENTER_X, 2) + pow(gY - CENTER_Y, 2));
@@ -1349,12 +1352,11 @@ void drawGForceScreen() {
         gY = CENTER_Y + (int)((gY - CENTER_Y) * scale);
     }
     
-    // Color based on total G
-    float totalG = sqrt(telemetry.gForceX * telemetry.gForceX + telemetry.gForceY * telemetry.gForceY);
+    // Color based on acceleration magnitude
     uint16_t dotColor = MX5_GREEN;
-    if (totalG > 1.0) dotColor = MX5_RED;
-    else if (totalG > 0.7) dotColor = MX5_ORANGE;
-    else if (totalG > 0.4) dotColor = MX5_YELLOW;
+    if (accelMag > 1.5) dotColor = MX5_RED;
+    else if (accelMag > 1.2) dotColor = MX5_ORANGE;
+    else if (accelMag > 0.9) dotColor = MX5_YELLOW;
     
     if (needsFullRedraw || firstDraw) {
         firstDraw = false;
@@ -1362,23 +1364,21 @@ void drawGForceScreen() {
         drawBackground();
         
         // === TITLE ===
-        LCD_DrawString(CENTER_X - 42, 20, "G-FORCE", MX5_WHITE, COLOR_BG, 2);
+        LCD_DrawString(CENTER_X - 24, 20, "TILT", MX5_WHITE, COLOR_BG, 2);
         
-        // Draw grid circles for G reference with labels
-        for (int g = 1; g <= 3; g++) {
-            int radius = g * 40;
-            LCD_DrawCircle(CENTER_X, CENTER_Y, radius, MX5_DARKGRAY);
-        }
+        // Draw grid circles for tilt degrees (2.5°, 5°, 10°)
+        LCD_DrawCircle(CENTER_X, CENTER_Y, 30, MX5_DARKGRAY);   // 2.5°
+        LCD_DrawCircle(CENTER_X, CENTER_Y, 60, MX5_DARKGRAY);   // 5°
+        LCD_DrawCircle(CENTER_X, CENTER_Y, 120, MX5_DARKGRAY);  // 10°
         
         // Draw crosshairs
         LCD_DrawLine(CENTER_X - 130, CENTER_Y, CENTER_X + 130, CENTER_Y, MX5_DARKGRAY);
         LCD_DrawLine(CENTER_X, CENTER_Y - 130, CENTER_X, CENTER_Y + 130, MX5_DARKGRAY);
         
-        // Axis labels (directions only, no G units since raw accel includes gravity)
-        LCD_DrawString(CENTER_X - 8, CENTER_Y - 145, "+Y", MX5_GREEN, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X - 8, CENTER_Y + 135, "-Y", MX5_RED, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X - 145, CENTER_Y - 4, "-X", MX5_CYAN, COLOR_BG, 1);
-        LCD_DrawString(CENTER_X + 132, CENTER_Y - 4, "+X", MX5_CYAN, COLOR_BG, 1);
+        // Degree labels on right side of rings
+        LCD_DrawString(CENTER_X + 33, CENTER_Y - 6, "2.5", MX5_GRAY, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X + 63, CENTER_Y - 6, "5", MX5_GRAY, COLOR_BG, 1);
+        LCD_DrawString(CENTER_X + 123, CENTER_Y - 6, "10", MX5_GRAY, COLOR_BG, 1);
         
         // Fixed center reference point
         LCD_FillCircle(CENTER_X, CENTER_Y, 3, MX5_WHITE);
@@ -1413,16 +1413,17 @@ void drawGForceScreen() {
         // Save current state
         prevGX = gX;
         prevGY = gY;
-        prevGForceX = telemetry.gForceX;
-        prevGForceY = telemetry.gForceY;
-        prevTotalG = totalG;
+        prevPitch = orientationPitch;
+        prevRoll = orientationRoll;
+        prevAccelMag = accelMag;
         prevBallRadius = ballRadius;
     } else {
         // Partial redraw - only update if position or size changed significantly
         bool ballMoved = (abs(gX - prevGX) > 1 || abs(gY - prevGY) > 1);
         bool ballSizeChanged = (abs(ballRadius - prevBallRadius) > 1);
-        bool valuesChanged = (abs(telemetry.gForceX - prevGForceX) > 0.005 || 
-                              abs(telemetry.gForceY - prevGForceY) > 0.005);
+        bool valuesChanged = (abs(orientationPitch - prevPitch) > 0.1 || 
+                              abs(orientationRoll - prevRoll) > 0.1 ||
+                              abs(accelMag - prevAccelMag) > 0.02);
         
         if (ballMoved || ballSizeChanged) {
             // Erase old ball position by filling with background color
@@ -1488,9 +1489,9 @@ void drawGForceScreen() {
             snprintf(gStr, sizeof(gStr), "%.2fG", totalG);
             LCD_DrawString(CENTER_X + 30, infoY + 16, gStr, dotColor, COLOR_BG_CARD, 2);
             
-            prevGForceX = telemetry.gForceX;
-            prevGForceY = telemetry.gForceY;
-            prevTotalG = totalG;
+            prevPitch = orientationPitch;
+            prevRoll = orientationRoll;
+            prevAccelMag = accelMag;
         }
     }
 }

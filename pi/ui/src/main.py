@@ -1885,7 +1885,7 @@ class PiDisplayApp:
         return True
     
     def _render_gforce(self):
-        """G-Force screen"""
+        """Tilt/G-Force screen - ball position from orientation, size from acceleration"""
         TOP = 55
         
         # Check if IMU data is being received (2 second timeout)
@@ -1898,8 +1898,11 @@ class PiDisplayApp:
         pygame.draw.circle(self.screen, COLOR_BG_CARD, (ball_cx, ball_cy), ball_r + 8)
         pygame.draw.circle(self.screen, COLOR_BG, (ball_cx, ball_cy), ball_r)
         
-        for g in [0.5, 1.0, 1.5]:
-            r = int(g * 85)
+        # Draw rings for tilt degrees (2.5°, 5°, 10°)
+        # 10° = full radius
+        deg_scale = ball_r / 10.0  # pixels per degree
+        for deg in [2.5, 5.0, 10.0]:
+            r = int(deg * deg_scale)
             pygame.draw.circle(self.screen, COLOR_DARK_GRAY, (ball_cx, ball_cy), r, 1)
         
         pygame.draw.line(self.screen, COLOR_DARK_GRAY,
@@ -1907,10 +1910,11 @@ class PiDisplayApp:
         pygame.draw.line(self.screen, COLOR_DARK_GRAY,
                         (ball_cx, ball_cy - ball_r), (ball_cx, ball_cy + ball_r), 1)
         
-        # Ring labels (just numbers, not G units since raw accel includes gravity)
-        for i, r in enumerate([42, 85, 127]):
-            txt = self.font_tiny.render(f"{i+1}", True, COLOR_DARK_GRAY)
-            self.screen.blit(txt, (ball_cx + r + 5, ball_cy - 8))
+        # Ring labels (degrees)
+        for deg, r in [(2.5, int(2.5 * deg_scale)), (5, int(5 * deg_scale)), (10, int(10 * deg_scale))]:
+            label = f"{deg}°" if deg == 10 else f"{deg}"
+            txt = self.font_tiny.render(label, True, COLOR_DARK_GRAY)
+            self.screen.blit(txt, (ball_cx + r + 3, ball_cy - 8))
         
         if imu_data_stale:
             # Show "No Data" message in the G-ball area
@@ -1919,18 +1923,25 @@ class PiDisplayApp:
             txt = self.font_tiny.render("Waiting for ESP32 IMU...", True, COLOR_GRAY)
             self.screen.blit(txt, txt.get_rect(center=(ball_cx, ball_cy + 20)))
         else:
-            # G-ball - negate lateral so ball moves in direction of turn
-            # (LEFT turn = positive g_lateral from IMU, but ball should move LEFT)
-            g_scale = 85
-            gx = ball_cx - int(self.telemetry.g_lateral * g_scale)
-            gy = ball_cy - int(self.telemetry.g_longitudinal * g_scale)
+            # Ball POSITION from orientation (pitch/roll in degrees)
+            pitch = getattr(self.telemetry, 'orientation_pitch', 0.0)
+            roll = getattr(self.telemetry, 'orientation_roll', 0.0)
             
-            # Ball size scales with PURE LINEAR ACCELERATION (gravity removed)
-            # Base radius 15, scales from 8 (hard braking) to 24 (hard acceleration)
-            linear_y = getattr(self.telemetry, 'linear_accel_y', 0.0)
-            ball_size = 15 + int(linear_y * 18)
-            ball_size = max(8, min(24, ball_size))
+            # Roll controls X, Pitch controls Y (10° = full radius)
+            gx = ball_cx + int(roll * deg_scale)
+            gy = ball_cy - int(pitch * deg_scale)
             
+            # Ball SIZE from acceleration magnitude
+            g_lat = self.telemetry.g_lateral
+            g_lon = self.telemetry.g_longitudinal
+            g_vert = getattr(self.telemetry, 'g_vertical', 0.0)
+            accel_mag = math.sqrt(g_lat**2 + g_lon**2 + g_vert**2)
+            
+            # Base radius 12, scales up to 26 at 2G
+            ball_size = 12 + int((accel_mag - 0.5) * 14)
+            ball_size = max(8, min(26, ball_size))
+            
+            # Clamp to circle
             dx, dy = gx - ball_cx, gy - ball_cy
             dist = math.sqrt(dx*dx + dy*dy)
             if dist > ball_r - ball_size - 2:
@@ -1938,13 +1949,23 @@ class PiDisplayApp:
                 gx = ball_cx + int(dx * scale)
                 gy = ball_cy + int(dy * scale)
             
+            # Color based on acceleration magnitude
+            if accel_mag > 1.5:
+                ball_color = COLOR_RED
+            elif accel_mag > 1.2:
+                ball_color = COLOR_ORANGE
+            elif accel_mag > 0.9:
+                ball_color = COLOR_YELLOW
+            else:
+                ball_color = COLOR_GREEN
+            
             # Glow size also scales
             glow_size = ball_size + 10
             glow = pygame.Surface((glow_size * 2, glow_size * 2), pygame.SRCALPHA)
-            pygame.draw.circle(glow, (*COLOR_ACCENT[:3], 100), (glow_size, glow_size), glow_size - 5)
+            pygame.draw.circle(glow, (*ball_color[:3], 100), (glow_size, glow_size), glow_size - 5)
             self.screen.blit(glow, (gx - glow_size, gy - glow_size))
             
-            pygame.draw.circle(self.screen, COLOR_ACCENT, (gx, gy), ball_size)
+            pygame.draw.circle(self.screen, ball_color, (gx, gy), ball_size)
             pygame.draw.circle(self.screen, COLOR_WHITE, (gx, gy), ball_size, 2)
         
         # Right panel cards - RAW DATA DISPLAY
