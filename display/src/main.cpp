@@ -625,13 +625,14 @@ void loop() {
 void updateIMU() {
     imu.update();
     
-    // Map accelerometer axes to car orientation
-    // X = lateral (positive = right turn)
-    // Y = longitudinal (positive = acceleration)
-    // Adjust based on how display is mounted
-    telemetry.gForceX = imu.ay;  // Lateral
-    telemetry.gForceY = -imu.ax; // Longitudinal (inverted)
-    telemetry.gForceZ = imu.az;
+    // Map accelerometer axes to car orientation for VERTICAL mounting
+    // Display is mounted vertically in oil gauge hole (screen facing driver)
+    // X = lateral (positive = right turn, ball moves left)
+    // Y = longitudinal (positive = braking/nose down, ball moves up)
+    // When mounted vertically, the IMU Z-axis becomes the car's longitudinal axis
+    telemetry.gForceX = imu.ay;   // Lateral (left/right)
+    telemetry.gForceY = -imu.az;  // Longitudinal (for vertical mount: nose down = ball up)
+    telemetry.gForceZ = imu.ax;
     
     // Only trigger redraw on G-Force screen
     if (currentScreen == SCREEN_GFORCE) {
