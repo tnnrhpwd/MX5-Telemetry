@@ -757,9 +757,9 @@ class CombinedSimulator:
                         (ball_center[0], ball_center[1] - ball_radius),
                         (ball_center[0], ball_center[1] + ball_radius), 1)
         
-        # G-ball position
+        # G-ball position - negate lateral so ball moves in direction of turn
         g_scale = 60  # pixels per G
-        gx = ball_center[0] + int(self.telemetry.g_lateral * g_scale)
+        gx = ball_center[0] - int(self.telemetry.g_lateral * g_scale)
         gy = ball_center[1] - int(self.telemetry.g_longitudinal * g_scale)
         
         # Clamp to circle
@@ -1252,9 +1252,9 @@ class CombinedSimulator:
             txt = self.font_tiny.render(f"{g}", True, COLOR_DARK_GRAY)
             self.pi_surface.blit(txt, (ball_cx + r + 5, ball_cy - 8))
         
-        # G-ball
+        # G-ball - negate lateral so ball moves in direction of turn
         g_scale = 85
-        gx = ball_cx + int(self.telemetry.g_lateral * g_scale)
+        gx = ball_cx - int(self.telemetry.g_lateral * g_scale)
         gy = ball_cy - int(self.telemetry.g_longitudinal * g_scale)
         
         # Clamp

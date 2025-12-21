@@ -1917,9 +1917,10 @@ class PiDisplayApp:
             txt = self.font_tiny.render("Waiting for ESP32 IMU...", True, COLOR_GRAY)
             self.screen.blit(txt, txt.get_rect(center=(ball_cx, ball_cy + 20)))
         else:
-            # G-ball
+            # G-ball - negate lateral so ball moves in direction of turn
+            # (LEFT turn = positive g_lateral from IMU, but ball should move LEFT)
             g_scale = 85
-            gx = ball_cx + int(self.telemetry.g_lateral * g_scale)
+            gx = ball_cx - int(self.telemetry.g_lateral * g_scale)
             gy = ball_cy - int(self.telemetry.g_longitudinal * g_scale)
             
             dx, dy = gx - ball_cx, gy - ball_cy
