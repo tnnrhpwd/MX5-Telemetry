@@ -237,6 +237,36 @@ class ESP32SerialHandler:
             pass
         
         return None
+    
+    def _try_connect(self) -> bool:
+        """Try to establish serial connection to ESP32"""
+        # Close existing connection if any
+        if self.serial_conn:
+            try:
+                self.serial_conn.close()
+            except:
+                pass
+            self.serial_conn = None
+        
+        # Auto-detect port
+        port = self._find_serial_port()
+        if not port:
+            return False
+        
+        try:
+            self.serial_conn = serial.Serial(
+                port=port,
+                baudrate=self.BAUD_RATE,
+                timeout=0.1,
+                write_timeout=0.1
+            )
+            self.port = port
+            self.connected = True
+            print(f"ESP32 serial connected on {port}")
+            return True
+        except Exception as e:
+            print(f"ESP32 serial connect failed: {e}")
+            return False
         
     def start(self) -> bool:
         """Initialize and start serial communication"""
@@ -244,33 +274,16 @@ class ESP32SerialHandler:
             print("Serial library not available")
             return False
         
-        # Auto-detect port if not specified
-        if not self.port:
-            self.port = self._find_serial_port()
+        # Try initial connection
+        if not self._try_connect():
+            print("ESP32 not found - will keep trying in background")
         
-        if not self.port:
-            print("No ESP32 serial port found")
-            return False
+        # Start background thread regardless (it will handle reconnection)
+        self._running = True
+        self._read_thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._read_thread.start()
         
-        try:
-            self.serial_conn = serial.Serial(
-                port=self.port,
-                baudrate=self.BAUD_RATE,
-                timeout=0.1,
-                write_timeout=0.1
-            )
-            print(f"ESP32 serial opened on {self.port} at {self.BAUD_RATE} baud")
-            
-            self._running = True
-            self._read_thread = threading.Thread(target=self._read_loop, daemon=True)
-            self._read_thread.start()
-            
-            self.connected = True
-            return True
-            
-        except Exception as e:
-            print(f"Failed to open ESP32 serial: {e}")
-            return False
+        return True  # Always return True - connection will be established when ESP32 is ready
     
     def stop(self):
         """Stop serial communication"""
@@ -285,11 +298,31 @@ class ESP32SerialHandler:
         self.connected = False
     
     def _read_loop(self):
-        """Read incoming data from ESP32 and process write queue in background thread"""
+        """Read incoming data from ESP32 and process write queue in background thread.
+        Handles automatic reconnection when ESP32 restarts."""
         buffer = ""
         last_screen_send = 0  # Rate limiting for screen commands
+        last_reconnect_attempt = 0
+        reconnect_interval = 2.0  # Try reconnecting every 2 seconds
+        consecutive_errors = 0
         
-        while self._running and self.serial_conn:
+        while self._running:
+            # Handle reconnection if not connected
+            if not self.serial_conn or not self.connected:
+                now = time.time()
+                if now - last_reconnect_attempt >= reconnect_interval:
+                    last_reconnect_attempt = now
+                    if self._try_connect():
+                        buffer = ""  # Clear buffer on reconnect
+                        consecutive_errors = 0
+                        print("ESP32: Reconnected successfully")
+                    else:
+                        time.sleep(0.5)
+                        continue
+                else:
+                    time.sleep(0.1)
+                    continue
+            
             try:
                 # Process any pending screen changes from queue (non-blocking)
                 # Only send latest screen command (skip intermediate ones)
@@ -309,11 +342,13 @@ class ESP32SerialHandler:
                                 print(f"ESP32: Sent SCREEN:{screen_idx} (async)")
                         except Exception as e:
                             print(f"ESP32 screen write error: {e}")
+                            consecutive_errors += 1
                 
                 # Read incoming data
                 if self.serial_conn.in_waiting > 0:
                     data = self.serial_conn.read(self.serial_conn.in_waiting)
                     buffer += data.decode('utf-8', errors='ignore')
+                    consecutive_errors = 0  # Reset on successful read
                     
                     # Process complete lines
                     while '\n' in buffer:
@@ -324,10 +359,44 @@ class ESP32SerialHandler:
                             self.last_rx_time = time.time()
                 else:
                     time.sleep(0.01)  # Small sleep to prevent busy-waiting
+                
+                # Check for stale connection (no data for 10+ seconds when we expect data)
+                if time.time() - self.last_rx_time > 10.0 and self.last_rx_time > 0:
+                    consecutive_errors += 1
                     
+            except serial.SerialException as e:
+                print(f"ESP32 serial error (will reconnect): {e}")
+                self.connected = False
+                consecutive_errors += 1
+                time.sleep(0.5)
+            except OSError as e:
+                # Device disconnected (common when ESP32 restarts)
+                print(f"ESP32 disconnected (will reconnect): {e}")
+                self.connected = False
+                if self.serial_conn:
+                    try:
+                        self.serial_conn.close()
+                    except:
+                        pass
+                    self.serial_conn = None
+                consecutive_errors = 0  # Expected during restart
+                time.sleep(0.5)
             except Exception as e:
                 print(f"ESP32 serial read error: {e}")
+                consecutive_errors += 1
                 time.sleep(0.1)
+            
+            # If too many consecutive errors, force reconnect
+            if consecutive_errors > 10:
+                print("ESP32: Too many errors, forcing reconnect...")
+                self.connected = False
+                if self.serial_conn:
+                    try:
+                        self.serial_conn.close()
+                    except:
+                        pass
+                    self.serial_conn = None
+                consecutive_errors = 0
     
     def _process_line(self, line: str):
         """Process a complete line from ESP32"""
@@ -500,7 +569,7 @@ class ESP32SerialHandler:
     
     def send_telemetry(self):
         """Send current telemetry data to ESP32"""
-        if not self.serial_conn or not self._running:
+        if not self.serial_conn or not self._running or not self.connected:
             return
         
         # Priority: If there's a pending screen change, send it first and skip telemetry
@@ -568,9 +637,12 @@ class ESP32SerialHandler:
         Args:
             screen_index: Screen number (0-7)
         """
-        if not self.serial_conn or not self._running:
-            print(f"ESP32: Cannot send screen {screen_index} - not connected")
+        if not self._running:
+            print(f"ESP32: Cannot send screen {screen_index} - handler not running")
             return
+        
+        if not self.connected:
+            print(f"ESP32: Cannot send screen {screen_index} - not connected (will retry on reconnect)")
         
         # Clamp to valid range (ESP32 has 8 screens)
         screen_index = max(0, min(7, screen_index))
@@ -583,7 +655,7 @@ class ESP32SerialHandler:
     
     def send_next_screen(self):
         """Send next screen command to ESP32"""
-        if not self.serial_conn or not self._running:
+        if not self.serial_conn or not self._running or not self.connected:
             return
         
         try:
@@ -594,7 +666,7 @@ class ESP32SerialHandler:
     
     def send_prev_screen(self):
         """Send previous screen command to ESP32"""
-        if not self.serial_conn or not self._running:
+        if not self.serial_conn or not self._running or not self.connected:
             return
         
         try:
@@ -612,7 +684,7 @@ class ESP32SerialHandler:
                   use_mph, tire_low_psi, coolant_warn, demo_mode, timeout)
             value: Setting value (int, float, or bool)
         """
-        if not self.serial_conn or not self._running:
+        if not self.serial_conn or not self._running or not self.connected:
             return
         
         try:
@@ -632,7 +704,7 @@ class ESP32SerialHandler:
     
     def send_selection(self, index: int):
         """Send settings selection index to ESP32 for hover sync"""
-        if not self.serial_conn or not self._running:
+        if not self.serial_conn or not self._running or not self.connected:
             return
         
         try:
@@ -651,7 +723,7 @@ class ESP32SerialHandler:
                 brightness, volume, shift_rpm, redline_rpm, use_mph, 
                 tire_low_psi, coolant_warn_f, demo_mode, led_sequence
         """
-        if not self.serial_conn or not self._running:
+        if not self._running or not self.connected:
             return
         
         self.send_setting("brightness", settings.brightness)
@@ -668,7 +740,7 @@ class ESP32SerialHandler:
     
     def request_settings(self):
         """Request all current settings from ESP32"""
-        if not self.serial_conn or not self._running:
+        if not self.serial_conn or not self._running or not self.connected:
             return
         
         try:

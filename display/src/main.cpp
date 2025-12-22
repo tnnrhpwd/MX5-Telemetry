@@ -671,33 +671,41 @@ void updateIMU() {
     
     // ==========================================================================
     // AXIS MAPPING for ESP32-S3 mounted VERTICALLY in oil gauge hole
-    // Screen faces driver, USB port points down
+    // Screen faces driver (back of car), USB port points down, top of display points UP
     // ==========================================================================
-    // IMU chip coordinate system (looking at screen):
-    //   - IMU X-axis: points RIGHT
-    //   - IMU Y-axis: points UP (towards top of display)
-    //   - IMU Z-axis: points OUT of screen (towards driver)
+    // IMU chip coordinate system (looking at screen from driver's seat):
+    //   - IMU X-axis: points RIGHT (towards passenger)
+    //   - IMU Y-axis: points UP (towards roof/sky)
+    //   - IMU Z-axis: points OUT of screen (towards driver = BACK of car)
     //
-    // Car coordinate system:
-    //   - Car X-axis: LEFT (driver's left)
-    //   - Car Y-axis: FORWARD (direction car drives)
-    //   - Car Z-axis: UP (towards sky)
+    // Car coordinate system (SAE standard):
+    //   - Car X-axis: positive = RIGHT (towards passenger)
+    //   - Car Y-axis: positive = FORWARD (direction car drives)
+    //   - Car Z-axis: positive = UP (towards sky)
     //
-    // When ESP32 is vertical in oil gauge:
-    //   - IMU Y-axis → Car Z-axis (up)
-    //   - IMU Z-axis → Car Y-axis (forward) 
-    //   - IMU X-axis → Car X-axis (but inverted: right→left)
+    // Axis mapping (ESP32 vertical, screen facing driver):
+    //   - IMU Y-axis → Car Z-axis (both point up) → carAccelVertical = +imu.ay
+    //   - IMU Z-axis → Car -Y-axis (Z points back, Y points forward) → carAccelForward = -imu.az
+    //   - IMU X-axis → Car X-axis (both point right) → carAccelLateral = +imu.ax
+    //
+    // When car is level and stationary:
+    //   - carAccelVertical ≈ +1G (gravity)
+    //   - carAccelForward ≈ 0G
+    //   - carAccelLateral ≈ 0G
+    //   - orientationPitch ≈ 0°
+    //   - orientationRoll ≈ 0°
     // ==========================================================================
     
     // Map accelerometer to car coordinates (in G units)
     // These include gravity component when car is tilted
-    float carAccelLateral = -imu.ax;   // Lateral: positive = left
-    float carAccelForward = imu.az;    // Forward: positive = forward (includes gravity from pitch)
+    float carAccelLateral = imu.ax;    // Lateral: positive = right (towards passenger)
+    float carAccelForward = -imu.az;   // Forward: positive = forward (IMU Z points backward)
     float carAccelVertical = imu.ay;   // Vertical: positive = up (should be ~1G when level)
     
     // Map gyroscope to car coordinates (in degrees/sec)
-    float gyroPitchRate = imu.gx;      // Pitch rate: positive = nose going UP
-    float gyroRollRate = -imu.gz;      // Roll rate: positive = rolling RIGHT
+    // Gyro measures rotation rate around each axis
+    float gyroPitchRate = -imu.gx;     // Pitch rate: positive = nose going UP (rotation around X)
+    float gyroRollRate = imu.gz;       // Roll rate: positive = rolling RIGHT (rotation around Z pointing back)
     
     // Integrate gyroscope for smooth orientation tracking
     orientationPitch += gyroPitchRate * dt;
@@ -711,9 +719,14 @@ void updateIMU() {
     
     // If total acceleration is close to 1G, we can trust accelerometer for tilt
     if (totalAccel > 0.8 && totalAccel < 1.2) {
-        // Calculate tilt angles from accelerometer
-        float accelPitch = atan2(carAccelForward, carAccelVertical) * RAD_TO_DEG;
-        float accelRoll = atan2(carAccelLateral, carAccelVertical) * RAD_TO_DEG;
+        // Calculate tilt angles from accelerometer using gravity vector
+        // When car tilts, gravity appears to shift in the opposite direction
+        // Pitch: nose UP means gravity component appears to push BACKWARD (negative forward)
+        //        so accelPitch = atan2(-forward, vertical) to get positive angle for nose up
+        // Roll:  car rolls RIGHT means gravity component appears to push LEFT (negative lateral)
+        //        so accelRoll = atan2(-lateral, vertical) to get positive angle for roll right
+        float accelPitch = atan2(-carAccelForward, carAccelVertical) * RAD_TO_DEG;
+        float accelRoll = atan2(-carAccelLateral, carAccelVertical) * RAD_TO_DEG;
         
         // Complementary filter: blend gyro (fast) with accel (stable)
         // 98% gyro, 2% accelerometer for drift correction
@@ -732,11 +745,15 @@ void updateIMU() {
     telemetry.gForceZ = carAccelVertical;
     
     // Calculate LINEAR acceleration (gravity removed) for ball sizing
-    // Gravity component based on current orientation
-    float gravityForward = sin(orientationPitch * DEG_TO_RAD);
-    float gravityLateral = sin(orientationRoll * DEG_TO_RAD);
+    // When car tilts, gravity appears as an acceleration component on the tilted axes
+    // Nose UP (positive pitch) → gravity component pulls BACKWARD (negative forward)
+    // Roll RIGHT (positive roll) → gravity component pulls LEFT (negative lateral)
+    // Gravity component magnitude = sin(tilt_angle) in G units
+    float gravityForward = -sin(orientationPitch * DEG_TO_RAD);  // Negative: nose up → gravity backward
+    float gravityLateral = -sin(orientationRoll * DEG_TO_RAD);   // Negative: roll right → gravity left
     
-    // Pure linear acceleration = measured - gravity component
+    // Pure linear acceleration = measured acceleration minus gravity component
+    // When stationary and tilted, this should be ~0
     telemetry.linearAccelX = carAccelLateral - gravityLateral;
     telemetry.linearAccelY = carAccelForward - gravityForward;
     

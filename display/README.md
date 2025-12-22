@@ -10,7 +10,29 @@ This module provides a visual dashboard for the MX5 Telemetry system using the *
 
 ## G-Force Display Behavior
 
-The G-Force screen visualizes car dynamics using the QMI8658 IMU (gyroscope + accelerometer). The display is calibrated for the ESP32 mounted **vertically** in the oil gauge hole with the screen facing the driver.
+The G-Force screen visualizes car dynamics using the QMI8658 IMU (gyroscope + accelerometer). The display is calibrated for the ESP32 mounted **vertically** in the oil gauge hole with the screen facing the driver and USB port pointing down.
+
+### Mounting Orientation
+
+```
+     ┌─────────────────┐
+     │    (roof/up)    │
+     │                 │
+     │   ┌─────────┐   │
+     │   │  ESP32  │   │  ← Screen faces DRIVER
+     │   │ Display │   │  ← Top points UP (towards roof)  
+     │   │         │   │  ← USB port points DOWN
+     │   └─────────┘   │
+     │                 │
+     │   (floor/down)  │
+     └─────────────────┘
+         (Oil Gauge)
+```
+
+**When stationary and level**, the ball should be:
+- **Centered** on screen (pitch = 0°, roll = 0°)
+- **Normal size** (14px radius, since forward acceleration = 0)
+- **Green color** (neutral acceleration)
 
 ### Circle Position = Car Orientation (Tilt)
 
@@ -56,14 +78,23 @@ The bottom info box shows:
 ### Technical Implementation
 
 ```
-Orientation Tracking:
-  - Gyroscope data (°/sec) is integrated over time to get pitch/roll in degrees
-  - Gyro drift correction applied gradually
+Mounting & Axis Mapping:
+  - ESP32 is VERTICAL: screen faces driver, USB port down, top points up
+  - IMU Y-axis → Car Z-axis (both point up)
+  - IMU Z-axis → Car -Y-axis (Z points back towards driver, Y forward)
+  - IMU X-axis → Car X-axis (both point right towards passenger)
 
-Linear Acceleration:
-  - Gravity vector is calculated from current orientation
-  - Gravity is subtracted from accelerometer to get pure linear acceleration
-  - Forward axis (Y) is used for ball sizing
+Orientation Tracking (Position):
+  - Gyroscope data (°/sec) is integrated over time to get pitch/roll in degrees
+  - Accelerometer provides drift correction when total G ≈ 1 (not accelerating)
+  - Complementary filter: 98% gyro + 2% accelerometer
+  - Position mapping: pitch controls Y, roll controls X
+
+Linear Acceleration (Ball Size):
+  - Gravity vector calculated from current pitch/roll orientation
+  - Gravity subtracted from accelerometer to get pure linear acceleration
+  - Forward axis (linearAccelY) controls ball size
+  - When stationary at any tilt angle, linearAccelY ≈ 0 → normal ball size
 ```
 
 ---
