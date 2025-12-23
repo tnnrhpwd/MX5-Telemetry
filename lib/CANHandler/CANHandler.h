@@ -47,8 +47,7 @@ public:
     void setQuietMode(bool quiet) { quietMode = quiet; }  // Suppress diagnostic printing
     
     // Diagnostic
-    bool runLoopbackTest();      // Self-test: sends message to itself
-    bool runTwoArduinoTest();    // Two-Arduino test: sends to Slave, waits for response
+    bool runLoopbackTest();      // Self-test: sends message to itself (internal, safe)
     
 private:
     MCP_CAN can;
