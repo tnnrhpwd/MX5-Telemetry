@@ -247,12 +247,8 @@ void CANHandler::parseOBDResponse(unsigned long rxId, unsigned char len, unsigne
 }
 
 void CANHandler::requestOBDData(uint8_t pid) {
-    // DISABLED: Do NOT transmit on CAN bus - passive listening only!
-    // Transmitting OBD-II requests can flood the bus and trigger CEL
-    // if (!initialized) return;
-    // unsigned char requestBuf[8] = {0x02, OBD2_MODE_01, pid, 0, 0, 0, 0, 0};
-    // can.sendMsgBuf(OBD2_REQUEST_ID, 0, 8, requestBuf);
-    (void)pid;  // Suppress unused parameter warning
+    // READ ONLY: This function is intentionally empty - no CAN transmit
+    (void)pid;
 }
 
 void CANHandler::cycleOBDRequests() {
