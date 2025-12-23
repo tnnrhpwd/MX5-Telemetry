@@ -88,6 +88,7 @@ class SWCHandler:
         self.last_press_time = 0
         self.button_processed = True
         self.debounce_time = 0
+        self._pending_buttons = []  # Thread-safe queue for button events
         self._callbacks = []
     
     def process_can_message(self, can_id: int, data: bytes):
@@ -135,6 +136,14 @@ class SWCHandler:
                 if new_button != ButtonEvent.NONE:
                     self.last_press_time = now
                     self.button_processed = False
+                    # Queue button for main thread processing (CAN runs in background thread)
+                    self._pending_buttons.append(new_button)
+    
+    def poll_buttons(self):
+        """Poll for pending button events (call from main loop). Returns list of buttons."""
+        buttons = self._pending_buttons.copy()
+        self._pending_buttons.clear()
+        return buttons
     
     def get_button_press(self) -> ButtonEvent:
         """Get button press event (call in loop)"""
