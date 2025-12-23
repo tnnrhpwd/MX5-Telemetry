@@ -438,8 +438,6 @@ class PiDisplayApp:
         
         # SWC handler (steering wheel controls)
         self.swc_handler = SWCHandler() if SWC_AVAILABLE and SWCHandler else None
-        if self.swc_handler:
-            self.swc_handler.add_callback(self._on_swc_button)
         
         # ESP32 serial handler (for TPMS + IMU data)
         self.esp32_handler = None
@@ -757,6 +755,11 @@ class PiDisplayApp:
                             self.sleeping = not self.sleeping
                     else:
                         self._handle_button(button)
+            
+            # Poll for steering wheel control buttons from CAN bus (MS-CAN)
+            if self.swc_handler:
+                for swc_button in self.swc_handler.poll_buttons():
+                    self._on_swc_button(swc_button)
             
             # Update data source
             if self.settings.demo_mode and not self.sleeping:
