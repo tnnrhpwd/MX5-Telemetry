@@ -56,7 +56,6 @@ See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete architec
 | Document | Description |
 |----------|-------------|
 | [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Complete wiring for all devices |
-| [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) | Arduino-only quick reference |
 | [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) | Bill of materials |
 | [hardware/TPMS_BLUETOOTH.md](hardware/TPMS_BLUETOOTH.md) | BLE TPMS sensor setup (ESP32) |
 
