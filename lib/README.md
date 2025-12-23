@@ -208,7 +208,7 @@ To add a new custom module:
 
 ## 🔗 Related Documentation
 
-- [Single Arduino Wiring Guide](../docs/hardware/WIRING_GUIDE_SINGLE_ARDUINO.md)
+- [Wiring Guide](../docs/hardware/WIRING_GUIDE.md)
 - [LED State System](../docs/features/LED_STATE_SYSTEM.md)
 - [LED Timing & Performance](../docs/features/LED_TIMING_AND_PERFORMANCE.md)
 - [PI Display Integration](../docs/PI_DISPLAY_INTEGRATION.md)

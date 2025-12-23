@@ -216,7 +216,7 @@ Or use VS Code task: **Pi: Git Pull & Restart UI**
 | Document | Description |
 |----------|-------------|
 | [docs/PI_DISPLAY_INTEGRATION.md](docs/PI_DISPLAY_INTEGRATION.md) | **⭐ Main architecture guide** |
-| [docs/hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](docs/hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) | Arduino wiring guide |
+| [docs/hardware/WIRING_GUIDE.md](docs/hardware/WIRING_GUIDE.md) | Complete wiring guide |
 | [display/README.md](display/README.md) | ESP32-S3 display setup |
 | [display/WORKFLOW.md](display/WORKFLOW.md) | Firmware cloning workflow |
 | [docs/development/PLATFORMIO_GUIDE.md](docs/development/PLATFORMIO_GUIDE.md) | PlatformIO setup |
