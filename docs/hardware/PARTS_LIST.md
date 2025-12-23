@@ -9,11 +9,11 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | Raspberry Pi 4B + Accessories | $60-80 |
 | ESP32-S3 Round Display | $25-35 |
 | Arduino Nano | $5-10 |
-| MCP2515 Modules (x2 total) | $6-14 |
+| MCP2515 Modules (x3 total) | $9-21 |
 | LED Strip + Power | $15-25 |
 | BLE TPMS Sensors (x4) | $25-40 |
 | Wiring & Connectors | $15-25 |
-| **Total** | **$160-245** |
+| **Total** | **$165-255** |
 
 *Note: Prices are approximate and vary by supplier/location.*
 
@@ -25,14 +25,17 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 |--------|---------|----------|----------------|
 | **Raspberry Pi 4B** | CAN hub + settings cache + HDMI | Hidden (console/trunk) | MCP2515 #1 (HS) + MCP2515 #2 (MS) |
 | **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force | **Stock oil gauge hole** | None (serial from Pi) |
-| **Arduino Nano** | RPM LED strip controller | Gauge cluster bezel | Spliced from MCP2515 #1 (HS) |
+| **Arduino Nano** | RPM LED strip controller | Gauge cluster bezel | MCP2515 #3 (HS, dedicated module) |
 
-### MCP2515 Module Distribution (2 Total)
+### MCP2515 Module Distribution (3 Total)
 
-| Module | CAN Bus | Speed | OBD Pins | Wiring |
-|--------|---------|-------|----------|--------|
-| MCP2515 #1 | HS-CAN | 500 kbps | 6/14 | SPI output **spliced** to Pi AND Arduino |
-| MCP2515 #2 | MS-CAN | 125 kbps | 3/11 | Pi only (steering wheel buttons) |
+| Module | CAN Bus | Speed | OBD Pins | Controller | Notes |
+|--------|---------|-------|----------|------------|-------|
+| MCP2515 #1 | HS-CAN | 500 kbps | 6/14 | Raspberry Pi | Pi's SPI bus (GPIO 8, 25) |
+| MCP2515 #2 | MS-CAN | 125 kbps | 3/11 | Raspberry Pi | Pi's SPI bus (GPIO 7, 24) |
+| MCP2515 #3 | HS-CAN | 500 kbps | 6/14 | Arduino Nano | Arduino's SPI bus (D10, D2) |
+
+> **Why separate modules?** Using dedicated MCP2515 modules for Pi and Arduino (instead of splicing SPI wires) eliminates bus contention, improves signal integrity, and simplifies debugging. The CAN bus side (CANH/CANL) is connected in parallel, which is safe because CAN is designed for multiple nodes.
 
 ---
 
@@ -43,17 +46,17 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | Raspberry Pi 4B | 2GB+ RAM | 1 | $35-55 | 4GB recommended |
 | MicroSD Card | 32GB Class 10 | 1 | $8-15 | SanDisk recommended |
 | Pi Power Supply | 5V 3A USB-C | 1 | $10-15 | Official Pi PSU recommended |
-| MCP2515 CAN Module | 8MHz crystal | 2 | $6-14 | HS-CAN + MS-CAN |
+| MCP2515 CAN Module | 8MHz crystal | 2 | $6-14 | For Pi: HS-CAN + MS-CAN |
 | Heatsink/Cooling | Passive or fan | 1 | $5-10 | Recommended for Pi 4 |
 | Micro HDMI Cable | 1-2m | 1 | $5-10 | To Pioneer head unit |
 
 ### Pi GPIO Connections
-- **SPI Bus** (shared): GPIO 10 (MOSI), GPIO 9 (MISO), GPIO 11 (SCLK)
-- **MCP2515 #1 CS**: GPIO 8 (CE0) - HS-CAN (shared bus with Arduino)
+- **SPI Bus** (shared by Pi's 2 modules): GPIO 10 (MOSI), GPIO 9 (MISO), GPIO 11 (SCLK)
+- **MCP2515 #1 CS**: GPIO 8 (CE0) - HS-CAN (Pi only)
 - **MCP2515 #2 CS**: GPIO 7 (CE1) - MS-CAN (Pi only)
 - **Interrupts**: GPIO 25 (HS), GPIO 24 (MS)
-- **Serial to ESP32**: GPIO 14/15 (TX/RX)
-- **Serial to Arduino**: USB or additional UART
+- **Serial to Arduino**: GPIO 14/15 (TX/RX) - LED sequence commands
+- **USB**: ESP32-S3 display connection
 
 ---
 
@@ -77,14 +80,15 @@ Complete bill of materials (BOM) for building the MX5-Telemetry system.
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
 | Arduino Nano V3.0 | ATmega328P, 16MHz, 5V | 1 | $3-8 | Clone or official |
+| MCP2515 CAN Module | 8MHz crystal | 1 | $3-7 | Arduino's dedicated HS-CAN module |
 
 **Location**: Gauge cluster bezel (LED strip surrounds instruments)
 
-**CAN Wiring**: The Arduino connects to MCP2515 #1 (HS-CAN) via **spliced SPI wires** from the same module that connects to the Pi. Both devices share ONE MCP2515 for HS-CAN.
+**CAN Wiring**: The Arduino has its **own dedicated MCP2515 module** (#3) that connects to the same HS-CAN bus wires (CANH/CANL pins 6/14) as the Pi's MCP2515 #1. This parallel CAN connection is safe and preferred over SPI splicing.
 
 **Connections**:
-- Spliced SPI from MCP2515 #1 (reads RPM, <1ms latency)
-- Serial from Pi (receives LED sequence/pattern selection)
+- Dedicated MCP2515 #3 SPI (reads RPM, <1ms latency)
+- Serial from Pi GPIO 14/15 (receives LED sequence/pattern selection)
 
 ---
 
