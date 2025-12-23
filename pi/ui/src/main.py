@@ -62,6 +62,14 @@ except ImportError:
     CAN_AVAILABLE = False
     CANHandler = None
 
+# Try to import SWC handler for steering wheel controls
+try:
+    from swc_handler import SWCHandler, ButtonEvent, BUTTON_NAMES
+    SWC_AVAILABLE = True
+except ImportError:
+    SWC_AVAILABLE = False
+    SWCHandler = None
+
 # Try to import ESP32 serial handler (optional on non-Pi systems)
 try:
     from esp32_serial_handler import ESP32SerialHandler, SERIAL_AVAILABLE
@@ -428,6 +436,11 @@ class PiDisplayApp:
         # CAN bus handler (for real data from vehicle)
         self.can_handler = None
         
+        # SWC handler (steering wheel controls)
+        self.swc_handler = SWCHandler() if SWC_AVAILABLE and SWCHandler else None
+        if self.swc_handler:
+            self.swc_handler.add_callback(self._on_swc_button)
+        
         # ESP32 serial handler (for TPMS + IMU data)
         self.esp32_handler = None
         
@@ -465,9 +478,11 @@ class PiDisplayApp:
         # CAN bus handler
         if CAN_AVAILABLE and CANHandler:
             print("  Initializing CAN bus...")
-            self.can_handler = CANHandler(self.telemetry)
+            self.can_handler = CANHandler(self.telemetry, swc_handler=self.swc_handler)
             if self.can_handler.start():
                 print("  ✓ CAN bus connected - reading RPM, speed, gear, temps")
+                if self.swc_handler:
+                    print("  ✓ Steering wheel controls enabled (MS-CAN)")
             else:
                 print("  ✗ CAN bus failed - check MCP2515 wiring")
                 self.can_handler = None
@@ -782,6 +797,17 @@ class PiDisplayApp:
         if self.esp32_handler:
             self.esp32_handler.stop()
         pygame.quit()
+    
+    def _on_swc_button(self, button: ButtonEvent):
+        """Callback for steering wheel control button events from CAN bus"""
+        if button == ButtonEvent.NONE:
+            return
+        # Handle special buttons
+        if button == ButtonEvent.MUTE:
+            self.sleeping = not self.sleeping
+            return
+        # Route to normal button handler
+        self._handle_button(button)
     
     def _key_to_button(self, key) -> ButtonEvent:
         """Map keyboard to SWC buttons"""
