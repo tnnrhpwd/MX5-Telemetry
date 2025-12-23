@@ -348,7 +348,7 @@ void CommandHandler::handleLED(const char* command) {
 }
 
 void CommandHandler::handleLoopback() {
-    // Run CAN loopback self-test
+    // Run CAN loopback self-test (internal only, does NOT transmit on real bus)
     if (canHandler) {
         canHandler->runLoopbackTest();
     } else {
@@ -357,10 +357,7 @@ void CommandHandler::handleLoopback() {
 }
 
 void CommandHandler::handleCANTest() {
-    // Run CAN two-Arduino test (Master sends to Slave)
-    if (canHandler) {
-        canHandler->runTwoArduinoTest();
-    } else {
-        Serial.println(F("E: CAN not available"));
-    }
+    // REMOVED: Two-Arduino test transmitted on real CAN bus - unsafe for vehicle use
+    Serial.println(F("E: CAN transmit tests disabled for safety"));
+    Serial.println(F("   Use LOOPBACK command for self-test instead"));
 }
