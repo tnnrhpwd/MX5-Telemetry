@@ -1,22 +1,22 @@
 # 🔌 Raspberry Pi CAN Bus Wiring Guide
 
-Complete wiring guide for the Raspberry Pi 4B CAN hub with 2 MCP2515 modules (HS-CAN spliced to Arduino), ESP32-S3 display, and Arduino LED controller.
+Complete wiring guide for the Raspberry Pi 4B CAN hub with 2 MCP2515 modules, ESP32-S3 display, and Arduino LED controller (which has its own dedicated MCP2515).
 
 ## 🏎️ System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    MX5-Telemetry System (2 MCP2515 Modules)                  │
+│                    MX5-Telemetry System (3 MCP2515 Modules)                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌────────────────────────────────────────────────────────────────────┐    │
 │  │                     RASPBERRY PI 4B                                 │    │
 │  │                  (Central Hub + Settings Cache)                     │    │
 │  │                                                                     │    │
-│  │  GPIO 8 (CE0)     → MCP2515 #1 CS (HS-CAN, spliced to Arduino)     │    │
+│  │  GPIO 8 (CE0)     → MCP2515 #1 CS (HS-CAN, Pi only)                │    │
 │  │  GPIO 7 (CE1)     → MCP2515 #2 CS (MS-CAN, Pi only)                │    │
-│  │  GPIO 10/9/11     → MCP2515 #1 SPI (spliced to Arduino)            │    │
-│  │  GPIO 25          → MCP2515 #1 INT (spliced to Arduino D2)         │    │
+│  │  GPIO 10/9/11     → MCP2515 SPI bus (shared by #1 and #2)          │    │
+│  │  GPIO 25          → MCP2515 #1 INT                                 │    │
 │  │  GPIO 24          → MCP2515 #2 INT                                 │    │
 │  │  GPIO 14/15       → Arduino Nano RX/TX (serial)                    │    │
 │  │  USB-A            → ESP32-S3 USB-C                                 │    │
@@ -28,48 +28,57 @@ Complete wiring guide for the Raspberry Pi 4B CAN hub with 2 MCP2515 modules (HS
 │  │   (HS-CAN)      │    │   (MS-CAN)     │    │   (Oil Gauge Hole)     │   │
 │  │   500 kbps      │    │   125 kbps     │    │                        │   │
 │  │   Pin 6/14      │    │   Pin 3/11     │    │   • Receives telemetry │   │
-│  │                 │    │                │    │   • BLE TPMS → Pi      │   │
-│  │  SPI wires are  │    │   Pi only      │    │   • G-Force IMU → Pi   │   │
-│  │  SPLICED to:    │    │                │    └────────────────────────┘   │
-│  │  • Pi GPIO      │    └───────┬────────┘                                 │
-│  │  • Arduino SPI  │            │                                          │
-│  └────────┬────────┘            │                                          │
+│  │   Pi only       │    │   Pi only      │    │   • BLE TPMS → Pi      │   │
+│  │                 │    │                │    │   • G-Force IMU → Pi   │   │
+│  └────────┬────────┘    └───────┬────────┘    └────────────────────────┘   │
 │           │                     │                                          │
-│   ════════╪═════════════════════╪══════════════════════════════════════    │
-│           │    SPI SPLICE       │                                          │
-│           │    ───────────      │                                          │
+│           │ (CAN bus parallel)  │                                          │
+│           │                     │                                          │
+│  ┌────────▼────────┐            │                                          │
+│  │   MCP2515 #3    │            │                                          │
+│  │   (HS-CAN)      │            │                                          │
+│  │   500 kbps      │            │                                          │
+│  │   Pin 6/14      │            │                                          │
+│  │   Arduino only  │            │                                          │
+│  └────────┬────────┘            │                                          │
 │           │                     │                                          │
 │  ┌────────▼────────────────────────────────────────────────────────────┐   │
 │  │                      ARDUINO NANO                                    │   │
 │  │                  (Gauge Cluster Bezel)                               │   │
 │  │                                                                      │   │
-│  │  D2 (INT)        ← SPLICED from MCP2515 #1 INT                      │   │
+│  │  D2 (INT)        ← MCP2515 #3 INT (dedicated module)                │   │
 │  │  D3 (RX)         ← Pi GPIO 14 (TX) - LED sequence commands          │   │
 │  │  D4 (TX)         → Pi GPIO 15 (RX) - optional responses             │   │
 │  │  D5              → WS2812B LED Strip Data                           │   │
-│  │  D10 (CS)        ← SPLICED from MCP2515 #1 CS                       │   │
-│  │  D11 (MOSI)      ← SPLICED from MCP2515 #1 SI                       │   │
-│  │  D12 (MISO)      ← SPLICED from MCP2515 #1 SO                       │   │
-│  │  D13 (SCK)       ← SPLICED from MCP2515 #1 SCK                      │   │
+│  │  D10 (CS)        ← MCP2515 #3 CS                                    │   │
+│  │  D11 (MOSI)      ← MCP2515 #3 SI                                    │   │
+│  │  D12 (MISO)      ← MCP2515 #3 SO                                    │   │
+│  │  D13 (SCK)       ← MCP2515 #3 SCK                                   │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │                           OBD-II Port                                 │   │
-│  │   Pin 6/14: HS-CAN (500k) → MCP2515 #1 (spliced to Pi + Arduino)     │   │
+│  │   Pin 6/14: HS-CAN (500k) → MCP2515 #1 (Pi) + MCP2515 #3 (Arduino)   │   │
 │  │   Pin 3/11: MS-CAN (125k) → MCP2515 #2 (Pi only)                     │   │
 │  │   Pin 5: Ground                                                       │   │
 │  │   Pin 16: 12V Battery                                                 │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
+│  NOTE: MCP2515 #1 and #3 both tap the same HS-CAN bus (CANH/CANL wires     │
+│  connected in parallel). CAN bus natively supports multiple listeners.      │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 📊 MCP2515 Module Summary (2 Total)
+### 📊 MCP2515 Module Summary (3 Total)
 
-| Module | CAN Bus | Speed | OBD Pins | SPI Wiring |
-|--------|---------|-------|----------|------------|
-| MCP2515 #1 | HS-CAN | 500 kbps | 6/14 | **Spliced** to Pi GPIO AND Arduino SPI |
-| MCP2515 #2 | MS-CAN | 125 kbps | 3/11 | Pi only (GPIO 7, 24) |
+| Module | CAN Bus | Speed | OBD Pins | Controller | SPI Wiring |
+|--------|---------|-------|----------|------------|------------|
+| MCP2515 #1 | HS-CAN | 500 kbps | 6/14 | Raspberry Pi | GPIO 8 (CS), 25 (INT) |
+| MCP2515 #2 | MS-CAN | 125 kbps | 3/11 | Raspberry Pi | GPIO 7 (CS), 24 (INT) |
+| MCP2515 #3 | HS-CAN | 500 kbps | 6/14 | Arduino Nano | D10 (CS), D2 (INT) |
+
+> **Why 3 modules instead of splicing?** SPI is designed for single-master operation. Splicing SPI wires between Pi and Arduino creates bus contention risks, signal integrity issues, and debugging nightmares. Using separate modules with parallel CAN bus connections is more reliable—CAN bus natively supports multiple listeners on the same CANH/CANL lines.
 
 ---
 
@@ -182,48 +191,53 @@ The ESP32-S3 connects via USB-C cable to one of the Pi's USB-A ports. This provi
    
    Pin 3:  MS-CAN High (125k) → MCP2515 #2 CANH (Pi only)
    Pin 5:  Ground             → Common ground for all devices
-   Pin 6:  HS-CAN High (500k) → MCP2515 #1 CANH (SPI spliced to Pi + Arduino)
+   Pin 6:  HS-CAN High (500k) → MCP2515 #1 CANH (Pi) + MCP2515 #3 CANH (Arduino)
    Pin 11: MS-CAN Low (125k)  → MCP2515 #2 CANL (Pi only)
-   Pin 14: HS-CAN Low (500k)  → MCP2515 #1 CANL (SPI spliced to Pi + Arduino)
+   Pin 14: HS-CAN Low (500k)  → MCP2515 #1 CANL (Pi) + MCP2515 #3 CANL (Arduino)
    Pin 16: 12V Battery        → Buck converters (Arduino, Pi power)
 ```
 
-### MCP2515 #1 SPI Splice (Pi + Arduino Share ONE Module)
+> **HS-CAN Parallel Connection:** Both MCP2515 #1 (Pi) and MCP2515 #3 (Arduino) connect to the same CANH/CANL wires from OBD pins 6/14. This is safe because CAN bus is designed for multiple nodes—simply splice/tap the CANH and CANL wires to both modules.
 
-The **single** HS-CAN MCP2515 module connects to OBD-II pins 6/14. Its SPI output wires are **spliced** so both the Pi and Arduino can read CAN data simultaneously.
+### HS-CAN Parallel Connection (Pi + Arduino Each Have Own Module)
 
-**Splice Diagram - MCP2515 #1 SPI Outputs:**
+Both the Pi's MCP2515 #1 and the Arduino's MCP2515 #3 connect to the same HS-CAN bus wires from OBD-II. This is safe because **CAN bus natively supports multiple listeners**.
+
+**Parallel CAN Connection Diagram:**
 ```
-                    MCP2515 #1 (HS-CAN)
-                    ┌─────────────────┐
-  OBD Pin 6  ──────►│ CANH            │
-  OBD Pin 14 ──────►│ CANL            │
-                    │                 │
-                    │ VCC ────────────┼──► Pi 3.3V (Pin 17)
-                    │ GND ────────────┼──► Common Ground
-                    │                 │
-                    │ CS  ────────────┼──┬──► Pi GPIO 8 (CE0)
-                    │                 │  └──► Arduino D10 (SPLICE)
-                    │                 │
-                    │ MOSI ───────────┼──┬──► Pi GPIO 10
-                    │                 │  └──► Arduino D11 (SPLICE)
-                    │                 │
-                    │ MISO ───────────┼──┬──► Pi GPIO 9
-                    │                 │  └──► Arduino D12 (SPLICE)
-                    │                 │
-                    │ SCK  ───────────┼──┬──► Pi GPIO 11
-                    │                 │  └──► Arduino D13 (SPLICE)
-                    │                 │
-                    │ INT  ───────────┼──┬──► Pi GPIO 25
-                    │                 │  └──► Arduino D2 (SPLICE)
-                    └─────────────────┘
+                           OBD-II Port
+                    ┌─────────────────────┐
+                    │  Pin 6:  CANH (500k)│───┬───────────────────────────┐
+                    │  Pin 14: CANL (500k)│───┼───┬───────────────────────┼───┐
+                    └─────────────────────┘   │   │                       │   │
+                                              │   │                       │   │
+                    MCP2515 #1 (Pi HS-CAN)    │   │   MCP2515 #3 (Arduino)│   │
+                    ┌─────────────────┐       │   │   ┌─────────────────┐ │   │
+                    │ CANH ◄──────────┼───────┘   │   │ CANH ◄──────────┼─┘   │
+                    │ CANL ◄──────────┼───────────┘   │ CANL ◄──────────┼─────┘
+                    │                 │               │                 │
+                    │ VCC ───► Pi 3.3V│               │ VCC ───► 5V Rail│
+                    │ GND ───► Ground │               │ GND ───► Ground │
+                    │                 │               │                 │
+                    │ CS  ───► GPIO 8 │               │ CS  ───► D10    │
+                    │ MOSI◄─── GPIO 10│               │ MOSI◄─── D11    │
+                    │ MISO───► GPIO 9 │               │ MISO───► D12    │
+                    │ SCK ◄─── GPIO 11│               │ SCK ◄─── D13    │
+                    │ INT ───► GPIO 25│               │ INT ───► D2     │
+                    └─────────────────┘               └─────────────────┘
 ```
 
-**How to Splice SPI Wires:**
-1. Each SPI wire (CS, MOSI, MISO, SCK, INT) has **two destinations**
-2. At each splice point, solder the MCP2515 wire to TWO wires (one to Pi, one to Arduino)
-3. Cover each splice with heat shrink tubing
-4. Total splices needed: **5** (CS, MOSI, MISO, SCK, INT)
+**How to Connect CAN Bus in Parallel:**
+1. At the OBD-II connector, splice CANH (pin 6) to **two wires** (one to each MCP2515)
+2. Splice CANL (pin 14) to **two wires** (one to each MCP2515)
+3. Each MCP2515 has its own independent SPI connection to its controller
+4. Total splices needed: **2** (CANH and CANL only)
+
+**Benefits over SPI splicing:**
+- ✅ No bus contention (each controller has dedicated SPI)
+- ✅ Better signal integrity
+- ✅ Simpler debugging
+- ✅ CAN bus designed for multiple nodes
 
 ---
 
@@ -237,8 +251,9 @@ The **single** HS-CAN MCP2515 module connects to OBD-II pins 6/14. Its SPI outpu
 | ESP32-S3 | 5V | 0.5A | Powered via Pi USB |
 | Arduino Nano | 5V | 0.5A | Via LM2596 buck converter |
 | LED Strip (20 LEDs) | 5V | 1.2A max | Via LM2596 buck converter |
-| MCP2515 #1 (HS-CAN) | 3.3V | 0.05A | From Pi 3.3V rail (shared with Arduino) |
-| MCP2515 #2 (MS-CAN) | 3.3V | 0.05A | From Pi 3.3V rail |
+| MCP2515 #1 (Pi HS-CAN) | 3.3V | 0.05A | From Pi 3.3V rail |
+| MCP2515 #2 (Pi MS-CAN) | 3.3V | 0.05A | From Pi 3.3V rail |
+| MCP2515 #3 (Arduino HS-CAN) | 5V | 0.05A | From Arduino 5V rail (via buck converter) |
 
 ### Power Diagram
 
