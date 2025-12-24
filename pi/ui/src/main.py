@@ -379,17 +379,26 @@ class PiDisplayApp:
         global PI_WIDTH, PI_HEIGHT
         pygame.init()
         
+        # UI is designed for 800x480, we render to this surface then scale
+        PI_WIDTH = 800
+        PI_HEIGHT = 480
+        
         # Set display mode
         if fullscreen:
             # Use (0, 0) to let pygame use the native display resolution
-            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-            # Now get the actual resolution from the created surface
-            PI_WIDTH, PI_HEIGHT = self.screen.get_size()
+            self.display_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            self.display_width, self.display_height = self.display_surface.get_size()
+            # Render surface is always 800x480, then scaled to display
+            self.screen = pygame.Surface((PI_WIDTH, PI_HEIGHT))
+            self.scale_output = True
         else:
-            # Use default 800x480 for windowed mode (testing)
+            # Windowed mode: render directly at 800x480
             PI_WIDTH = 800
             PI_HEIGHT = 480
             self.screen = pygame.display.set_mode((PI_WIDTH, PI_HEIGHT), 0)
+            self.display_surface = self.screen
+            self.display_width, self.display_height = PI_WIDTH, PI_HEIGHT
+            self.scale_output = False
         pygame.display.set_caption("MX5 Telemetry Display")
         
         # State
@@ -724,7 +733,9 @@ class PiDisplayApp:
         print("=" * 60)
         print("MX5 Telemetry - Raspberry Pi Display")
         print("=" * 60)
-        print(f"Resolution: {PI_WIDTH}x{PI_HEIGHT}")
+        print(f"Render Resolution: {PI_WIDTH}x{PI_HEIGHT}")
+        print(f"Display Resolution: {self.display_width}x{self.display_height}")
+        print(f"Scale Output: {self.scale_output}")
         print(f"Demo Mode: {self.settings.demo_mode}")
         print()
         print("Controls:")
@@ -800,6 +811,11 @@ class PiDisplayApp:
             # Draw exit dialog on top if active
             if self.show_exit_dialog:
                 self._render_exit_dialog()
+            
+            # Scale render surface to display if needed
+            if self.scale_output:
+                scaled = pygame.transform.scale(self.screen, (self.display_width, self.display_height))
+                self.display_surface.blit(scaled, (0, 0))
             
             pygame.display.flip()
             self.clock.tick(60)  # 60 FPS for smooth G-force ball movement
