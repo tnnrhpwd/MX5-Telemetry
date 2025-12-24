@@ -2462,19 +2462,19 @@ void parseCommand(String cmd) {
         telemetry.oilPressure = cmd.substring(7).toFloat();
         telemetry.connected = true;
     }
-    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage)
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage,fuel,oilpsi,engine)
     else if (cmd.startsWith("TEL:")) {
         String data = cmd.substring(4);
         int idx = 0;
-        float values[7] = {0};
+        float values[10] = {0};  // Extended to 10 fields
         int start = 0;
-        for (int i = 0; i <= data.length() && idx < 7; i++) {
+        for (int i = 0; i <= data.length() && idx < 10; i++) {
             if (i == data.length() || data[i] == ',') {
                 values[idx++] = data.substring(start, i).toFloat();
                 start = i + 1;
             }
         }
-        if (idx >= 7) {
+        if (idx >= 7) {  // At least 7 fields required (original protocol)
             telemetry.rpm = values[0];
             telemetry.speed = values[1];
             telemetry.gear = (int)values[2];
@@ -2482,6 +2482,10 @@ void parseCommand(String cmd) {
             telemetry.coolantTemp = values[4];
             telemetry.oilTemp = values[5];
             telemetry.voltage = values[6];
+            // Extended fields (if present)
+            if (idx >= 8) telemetry.fuelLevel = values[7];
+            if (idx >= 9) telemetry.oilPressure = values[8];
+            if (idx >= 10) telemetry.engineRunning = (values[9] > 0);
             telemetry.connected = true;
             needsRedraw = true;  // Update display with new data
         }
