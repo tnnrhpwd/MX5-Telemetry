@@ -317,8 +317,9 @@ bool initCAN() {
     canBus.init_Mask(0, 0, 0x00000000);
     canBus.init_Mask(1, 0, 0x00000000);
     
-    // Set to normal mode
-    canBus.setMode(MCP_NORMAL);
+    // LISTEN-ONLY mode: Does NOT send ACKs or any data on the CAN bus
+    // The car's ECU and other modules already ACK each other - we just eavesdrop
+    canBus.setMode(MCP_LISTENONLY);
     
     // Attach hardware interrupt for message reception
     pinMode(CAN_INT_PIN, INPUT);
