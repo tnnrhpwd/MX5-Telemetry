@@ -379,19 +379,17 @@ class PiDisplayApp:
         global PI_WIDTH, PI_HEIGHT
         pygame.init()
         
-        # Get actual display resolution for fullscreen, or use default for windowed
+        # Set display mode
         if fullscreen:
-            display_info = pygame.display.Info()
-            PI_WIDTH = display_info.current_w
-            PI_HEIGHT = display_info.current_h
-            flags = pygame.FULLSCREEN
+            # Use (0, 0) to let pygame use the native display resolution
+            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            # Now get the actual resolution from the created surface
+            PI_WIDTH, PI_HEIGHT = self.screen.get_size()
         else:
             # Use default 800x480 for windowed mode (testing)
             PI_WIDTH = 800
             PI_HEIGHT = 480
-            flags = 0
-        
-        self.screen = pygame.display.set_mode((PI_WIDTH, PI_HEIGHT), flags)
+            self.screen = pygame.display.set_mode((PI_WIDTH, PI_HEIGHT), 0)
         pygame.display.set_caption("MX5 Telemetry Display")
         
         # State
