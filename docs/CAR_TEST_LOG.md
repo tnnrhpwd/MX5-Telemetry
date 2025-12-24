@@ -1,16 +1,16 @@
 # MX5 Telemetry - Car Test Log
 
-## Test Session: December 23, 2024
+## Test Session: December 24, 2024 (Latest)
 
 ### Hardware Configuration
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Raspberry Pi 4B | Connected | HDMI to head unit |
+| Raspberry Pi 4B | ✅ Connected | HDMI working with Pioneer AVH-W4500NEX |
 | ESP32-S3 Display | ✅ Working | Waveshare 1.85" LCD |
-| Arduino Nano | ✅ Working | CAN via MCP2515 |
+| Arduino Nano | ✅ Working | CAN via MCP2515 - receiving HS-CAN data |
 | LED Strip | ✅ Working | RPM display |
-| MCP2515 #1 (HS-CAN) | Connected | GPIO8/25, 500kbps |
-| MCP2515 #2 (MS-CAN) | Connected | GPIO7/24, 125kbps |
+| Pi MCP2515 #1 (can0) | ⚠️ Issue | GPIO8/25, 500kbps - NOT receiving data |
+| Pi MCP2515 #2 (can1) | ✅ Working | GPIO7/24, 125kbps - receiving MS-CAN data |
 
 ### Vehicle Information
 - **Car:** Mazda MX-5 (NC)
@@ -26,16 +26,19 @@
 | Component | Observation |
 |-----------|-------------|
 | ESP32-S3 Display | Working as expected |
-| Arduino Nano | Working as expected |
+| Arduino Nano | ✅ Working - receiving HS-CAN data (RPM, speed, etc.) |
 | LED Strip | Working as expected |
-| CAN Read (HS-CAN) | Data received from vehicle |
+| CAN Read (HS-CAN) | ✅ Arduino receiving data from vehicle pins 6+14 |
+| **Pi HDMI → Pioneer** | **✅ Working! (Dec 24)** Dynamic HDMI resolution fix successful |
+| **Pi MS-CAN (can1)** | **✅ Receiving data at 125kbps** - IDs 124, 339, 439, 501 observed |
 
-### ❌ FAILED
+### ❌ FAILED / IN PROGRESS
 
 | Issue | Severity | Description |
 |-------|----------|-------------|
+| **Pi HS-CAN (can0)** | **HIGH** | Pi MCP2515 #1 not receiving HS-CAN data despite wiring attempt - needs debugging |
 | SWC Controls | **CRITICAL** | Volume controls stopped working for normal infotainment |
-| HDMI Video | **HIGH** | No video displayed on Pioneer head unit |
+| ~~HDMI Video~~ | ~~HIGH~~ | ~~No video displayed on Pioneer head unit~~ **RESOLVED Dec 24** |
 | Tire Slip Warning | **HIGH** | Dashboard warning triggered when car started with circuit connected |
 | SWC After Disconnect | **MEDIUM** | SWC still not working after unplugging circuit (may need PAC reprogramming) |
 
@@ -157,12 +160,42 @@ ExecStartPre=/bin/sleep 3  # Wait for HDMI resolution negotiation
 - Pi correctly detects monitor at 1024x768, 1360x768, etc.
 - App scales UI correctly to fill screen
 - Display updates when HDMI cable connected
+- **✅ Dec 24: CONFIRMED WORKING with Pioneer AVH-W4500NEX!**
 
 **To Test with Pioneer:**
 1. On Pioneer: Home → AV → select **HDMI** as input source
 2. Enable Video Bypass: Home → AV → OFF → hold bottom-left corner 10-15 sec → "SET ON"
 3. Boot Pi with Pioneer already on HDMI input
 4. Check `/var/log/syslog` for "HDMI hotplug" messages
+
+### 3. CAN Bus Data Reception (December 24, 2024)
+
+**Discovery:** CAN data is being received on **can1 (MS-CAN)** at 125kbps!
+
+**Working CAN Messages Observed:**
+```
+can1       501   [2]  43 DF    - Status message
+can1       339   [2]  4D F0    - Status message  
+can1       439   [2]  43 DF    - Similar to 501
+can1  1448934F   [8]  remote request
+can1  0049934F   [8]  remote request
+```
+
+**CAN Interface Status:**
+- **can0 (HS-CAN 500kbps):** UP but receiving NO data
+- **can1 (MS-CAN 125kbps):** UP and receiving data ✅
+
+**Root Cause for can0 No Data:**
+The MX5 NC has multiple CAN buses:
+- **HS-CAN (500kbps):** OBD-II pins 6+14 - powertrain data (RPM, speed, etc.)
+- **MS-CAN (125kbps):** OBD-II pins 3+11 - body/accessory data (switches, lights)
+
+Current wiring may only be connected to MS-CAN pins. To get RPM/speed data, need to verify wiring connects to HS-CAN pins 6+14.
+
+**Verification Command:**
+```bash
+candump any   # Shows data on can1, none on can0
+```
 
 ---
 
@@ -175,28 +208,34 @@ ExecStartPre=/bin/sleep 3  # Wait for HDMI resolution negotiation
    - Follow PAC programming procedure
    - May need to disconnect battery briefly to reset
 
-3. [ ] **Fix Pi↔Pioneer HDMI compatibility**
+3. [x] **~~Fix Pi↔Pioneer HDMI compatibility~~** - ✅ RESOLVED (Dec 24)
    - ✅ Dynamic resolution detection implemented (Dec 24)
    - ✅ hdmi_force_hotplug=1 enabled
    - ✅ App auto-scales to any resolution
-   - ⏳ **NEEDS CAR TEST** - Re-test Pi HDMI with Pioneer
-   - If still fails, try `hdmi_safe=1` in /boot/config.txt
+   - ✅ **TESTED WORKING** - Pi HDMI works with Pioneer AVH-W4500NEX!
+
+4. [ ] **Get HS-CAN (can0) working** - Currently no data on 500kbps bus
+   - MS-CAN (can1) at 125kbps IS receiving data ✅
+   - HS-CAN (can0) at 500kbps has NO data - need to verify OBD-II wiring
+   - MX5 NC HS-CAN uses OBD-II pins 6 (CAN-H) and 14 (CAN-L)
+   - MS-CAN uses pins 3 and 11
 
 ### Before Next Car Test
 1. [x] Verify listen-only mode is active: ✅ CONFIRMED
    ```
-   can0: can <LISTEN-ONLY> state ERROR-ACTIVE
+   can0: can <LISTEN-ONLY> state ERROR-ACTIVE  (NOT listen-only - check setup)
    can1: can <LISTEN-ONLY> state ERROR-ACTIVE
    ```
    ip -details link show can0 | grep "listen-only"
    ```
 
-2. [ ] Test CAN reception still works in listen-only mode:
+2. [x] Test CAN reception still works in listen-only mode: ✅ CONFIRMED
    ```bash
-   candump can0  # Should still see frames (may show error flags)
+   candump any   # Shows data on can1 ✅
+   # Observed IDs: 339, 439, 501, plus remote requests
    ```
 
-3. [ ] Document Pioneer HDMI requirements
+3. [x] Document Pioneer HDMI requirements: Works with dynamic HDMI detection
 
 ---
 
@@ -240,10 +279,40 @@ candump can0 can1
 | 2024-12-23 | Apply listen-only fix | ✅ Done | CAN bus now passive |
 | 2024-12-24 | Pi HDMI to regular monitor | ✅ Pass | Pi HDMI output works, dynamic resolution |
 | 2024-12-24 | Laptop HDMI to Pioneer | ✅ Pass | Head unit HDMI input works |
-| 2024-12-24 | Pi HDMI to Pioneer | ❌ Fail | Pi↔Pioneer compatibility issue |
+| ~~2024-12-24~~ | ~~Pi HDMI to Pioneer~~ | ~~❌ Fail~~ | ~~Pi↔Pioneer compatibility issue~~ |
 | 2024-12-24 | Pi power voltage check | ✅ Pass | Voltage is good |
 | 2024-12-24 | Implement dynamic HDMI | ✅ Done | Auto-resolution, hotplug, scaling |
-| TBD | Pi HDMI to Pioneer (re-test) | ⏳ Pending | Test after Dec 24 fixes |
+| **2024-12-24** | **Pi HDMI to Pioneer (re-test)** | **✅ PASS** | **HDMI working after dynamic resolution fix!** |
+| **2024-12-24** | **Pi MS-CAN (can1) 125kbps** | **✅ PASS** | **Receiving body CAN data - IDs 124, 339, 439, 501** |
+| **2024-12-24** | **Arduino HS-CAN 500kbps** | **✅ PASS** | **Arduino receiving RPM/speed data from pins 6+14** |
+| **2024-12-24** | **Pi HS-CAN (can0) 500kbps** | **❌ FAIL** | **Pi MCP2515 #1 not receiving - wiring/hardware issue** |
+
+---
+
+## Current Issue: Pi can0 Not Receiving HS-CAN Data
+
+### Symptoms
+- Arduino MCP2515 connected to OBD-II pins 6+14 ✅ receiving HS-CAN data
+- Pi can1 (MCP2515 #2) ✅ receiving MS-CAN data at 125kbps
+- Pi can0 (MCP2515 #1) ❌ NOT receiving any data despite wiring to HS-CAN
+
+### Diagnostic Results (Dec 24)
+```
+can0: RX packets=0, errors=0, state=ERROR-ACTIVE
+can0: listen-only mode enabled, bitrate=500000
+```
+
+### Possible Causes
+1. ❌ Pi MCP2515 #1 CAN-H/CAN-L not actually connected to bus
+2. ❌ CAN-H and CAN-L wires swapped on Pi MCP2515 #1
+3. ❌ Bad solder joint or loose connection
+4. ❌ Faulty MCP2515 module or TJA1050 transceiver
+
+### Next Steps
+- [ ] Verify continuity from Pi MCP2515 #1 CAN-H/L to OBD-II pins 6/14
+- [ ] Check if Arduino and Pi MCP2515 #1 share the same CAN bus connection
+- [ ] Try swapping CAN-H and CAN-L on Pi MCP2515 #1
+- [ ] Test with multimeter for proper voltage levels on CAN bus
 
 ---
 
