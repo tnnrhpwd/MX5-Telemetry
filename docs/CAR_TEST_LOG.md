@@ -80,47 +80,52 @@ ip link set can0 up type can bitrate 500000 listen-only on
 
 ### 1. CAN Bus Listen-Only Mode (December 23, 2024)
 
-**File:** `pi/setup_can_bus.sh`
+**File:** `pi/setup_can_bus.sh` and `/usr/local/bin/mx5-can-setup.sh`
 
 **Change:** Added `listen-only on` to both CAN interface configurations:
 
 ```bash
-# HS-CAN (500kbps)
+#!/bin/bash
+sleep 2
+ip link set can0 down 2>/dev/null
 ip link set can0 up type can bitrate 500000 listen-only on
-
-# MS-CAN (125kbps)  
+ip link set can1 down 2>/dev/null
 ip link set can1 up type can bitrate 125000 listen-only on
+```
+
+**Verified Working:**
+```
+can0: can <LISTEN-ONLY> state ERROR-ACTIVE
+can1: can <LISTEN-ONLY> state ERROR-ACTIVE
 ```
 
 **Effect:** 
 - MCP2515 will NOT send ACK signals
 - Completely passive - only receives CAN frames
-- Should not interfere with existing vehicle CAN devices
-- May see error frames in candump (expected - no ACK sent)
+- Should not interfere with existing vehicle CAN devices (PAC SWC, ABS, etc.)
+- May see error frames in candump (expected - no ACK sent by us)
 
 ---
 
 ## Next Steps
 
 ### Immediate Actions
-1. [ ] **Re-run setup script on Pi** - Apply listen-only mode fix
-   ```bash
-   ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo bash pi/setup_can_bus.sh'
-   sudo reboot
-   ```
-
+1. [x] **~~Re-run setup script on Pi~~** - ✅ DONE - Listen-only mode applied and verified
+   
 2. [ ] **Reprogram PAC SWC Controller** - May have entered fault state
    - Follow PAC programming procedure
    - May need to disconnect battery briefly to reset
 
 3. [ ] **Test HDMI separately** - Connect Pi to regular monitor first
-   ```bash
-   ssh pi@192.168.1.28 'tvservice -s'  # Check current HDMI status
-   ```
+   - Current config: 800x480 @ 59Hz (custom CVT mode)
+   - Try with regular HDMI monitor to verify Pi output works
 
 ### Before Next Car Test
-1. [ ] Verify listen-only mode is active:
-   ```bash
+1. [x] Verify listen-only mode is active: ✅ CONFIRMED
+   ```
+   can0: can <LISTEN-ONLY> state ERROR-ACTIVE
+   can1: can <LISTEN-ONLY> state ERROR-ACTIVE
+   ```
    ip -details link show can0 | grep "listen-only"
    ```
 
