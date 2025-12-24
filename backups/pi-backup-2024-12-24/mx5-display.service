@@ -1,0 +1,18 @@
+[Unit]
+Description=MX5 Telemetry Display
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=pi
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+WorkingDirectory=/home/pi/MX5-Telemetry/pi/ui/src
+ExecStartPre=/usr/bin/xrandr --output HDMI-1 --mode 1280x720
+ExecStart=/usr/bin/python3 /home/pi/MX5-Telemetry/pi/ui/src/main.py --fullscreen
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

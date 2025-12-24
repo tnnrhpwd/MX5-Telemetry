@@ -379,39 +379,25 @@ class PiDisplayApp:
         global PI_WIDTH, PI_HEIGHT
         pygame.init()
         
-        # UI is designed for 800x480, we render to this surface then scale
+        # UI is designed for 800x480, we render to this then scale to display
         PI_WIDTH = 800
         PI_HEIGHT = 480
         
-        # Set display mode
         if fullscreen:
-            # Force display to specific monitor (display 0 = HDMI-1)
-            import os
-            os.environ['SDL_VIDEO_WINDOW_POS'] = '0,0'
+            # Fullscreen: auto-detect display resolution and scale UI to fit
+            self.display_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            self.display_width, self.display_height = self.display_surface.get_size()
             
-            # Get primary display resolution from pygame
-            display_info = pygame.display.Info()
-            # Use 1280x720 as target - our standard resolution for car display
-            self.display_width = 1280
-            self.display_height = 720
-            
-            # Create fullscreen window at specific size
-            self.display_surface = pygame.display.set_mode(
-                (self.display_width, self.display_height), 
-                pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF
-            )
-            
-            # Render surface is always 800x480, then scaled to display
+            # Render to 800x480 surface, then scale to display
             self.screen = pygame.Surface((PI_WIDTH, PI_HEIGHT))
             self.scale_output = True
         else:
             # Windowed mode: render directly at 800x480
-            PI_WIDTH = 800
-            PI_HEIGHT = 480
             self.screen = pygame.display.set_mode((PI_WIDTH, PI_HEIGHT), 0)
             self.display_surface = self.screen
             self.display_width, self.display_height = PI_WIDTH, PI_HEIGHT
             self.scale_output = False
+        
         pygame.display.set_caption("MX5 Telemetry Display")
         
         # State
