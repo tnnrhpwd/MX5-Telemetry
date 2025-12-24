@@ -384,19 +384,26 @@ class PiDisplayApp:
         PI_HEIGHT = 480
         
         if fullscreen:
+            # Get display info before setting mode
+            info = pygame.display.Info()
+            print(f"DISPLAY: pygame.display.Info() = {info.current_w}x{info.current_h}")
+            
             # Fullscreen: auto-detect display resolution and scale UI to fit
             self.display_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
             self.display_width, self.display_height = self.display_surface.get_size()
+            print(f"DISPLAY: Fullscreen set to {self.display_width}x{self.display_height}")
             
             # Render to 800x480 surface, then scale to display
             self.screen = pygame.Surface((PI_WIDTH, PI_HEIGHT))
             self.scale_output = True
+            print(f"DISPLAY: Rendering UI at {PI_WIDTH}x{PI_HEIGHT}, scaling to {self.display_width}x{self.display_height}")
         else:
             # Windowed mode: render directly at 800x480
             self.screen = pygame.display.set_mode((PI_WIDTH, PI_HEIGHT), 0)
             self.display_surface = self.screen
             self.display_width, self.display_height = PI_WIDTH, PI_HEIGHT
             self.scale_output = False
+            print(f"DISPLAY: Windowed mode at {PI_WIDTH}x{PI_HEIGHT}")
         
         pygame.display.set_caption("MX5 Telemetry Display")
         
