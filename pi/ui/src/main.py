@@ -81,7 +81,8 @@ except ImportError:
 # CONSTANTS
 # =============================================================================
 
-# Display size (800x480 for Pi display)
+# Display size - will be updated at runtime based on actual display
+# These are defaults, actual values set in PiDisplayApp.__init__
 PI_WIDTH = 800
 PI_HEIGHT = 480
 
@@ -375,10 +376,21 @@ class TransitionType(Enum):
 
 class PiDisplayApp:
     def __init__(self, fullscreen: bool = False):
+        global PI_WIDTH, PI_HEIGHT
         pygame.init()
         
-        # Display setup
-        flags = pygame.FULLSCREEN if fullscreen else 0
+        # Get actual display resolution for fullscreen, or use default for windowed
+        if fullscreen:
+            display_info = pygame.display.Info()
+            PI_WIDTH = display_info.current_w
+            PI_HEIGHT = display_info.current_h
+            flags = pygame.FULLSCREEN
+        else:
+            # Use default 800x480 for windowed mode (testing)
+            PI_WIDTH = 800
+            PI_HEIGHT = 480
+            flags = 0
+        
         self.screen = pygame.display.set_mode((PI_WIDTH, PI_HEIGHT), flags)
         pygame.display.set_caption("MX5 Telemetry Display")
         

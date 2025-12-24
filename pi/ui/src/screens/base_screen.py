@@ -16,7 +16,8 @@ from typing import Optional, Tuple
 class BaseScreen(ABC):
     """Abstract base class for all screens"""
     
-    # Display dimensions (Pioneer AVH-W4500NEX)
+    # Display dimensions - will be set from actual screen size
+    # These are defaults, updated in __init__ from screen.get_size()
     WIDTH = 800
     HEIGHT = 480
     
@@ -36,6 +37,8 @@ class BaseScreen(ABC):
     
     def __init__(self, screen: pygame.Surface):
         self.screen = screen
+        # Get actual screen dimensions
+        self.WIDTH, self.HEIGHT = screen.get_size()
         self.font_large = pygame.font.Font(None, 72)
         self.font_medium = pygame.font.Font(None, 48)
         self.font_small = pygame.font.Font(None, 32)
