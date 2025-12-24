@@ -385,9 +385,22 @@ class PiDisplayApp:
         
         # Set display mode
         if fullscreen:
-            # Use (0, 0) to let pygame use the native display resolution
-            self.display_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-            self.display_width, self.display_height = self.display_surface.get_size()
+            # Force display to specific monitor (display 0 = HDMI-1)
+            import os
+            os.environ['SDL_VIDEO_WINDOW_POS'] = '0,0'
+            
+            # Get primary display resolution from pygame
+            display_info = pygame.display.Info()
+            # Use 1280x720 as target - our standard resolution for car display
+            self.display_width = 1280
+            self.display_height = 720
+            
+            # Create fullscreen window at specific size
+            self.display_surface = pygame.display.set_mode(
+                (self.display_width, self.display_height), 
+                pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF
+            )
+            
             # Render surface is always 800x480, then scaled to display
             self.screen = pygame.Surface((PI_WIDTH, PI_HEIGHT))
             self.scale_output = True
