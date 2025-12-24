@@ -1,0 +1,2 @@
+# HDMI hotplug udev rule - triggers resolution auto-detect when HDMI connected
+ACTION=="change", SUBSYSTEM=="drm", RUN+="/usr/local/bin/hdmi-hotplug.sh"

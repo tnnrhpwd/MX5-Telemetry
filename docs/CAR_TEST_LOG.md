@@ -65,9 +65,9 @@ ip link set can0 up type can bitrate 500000 listen-only on
 
 **Findings:**
 - ✅ Laptop HDMI works with Pioneer AVH-W4500NEX (Dec 24) - head unit HDMI input is functional
-- ✅ Pi HDMI works with regular monitor (tested a few days ago) - Pi HDMI output is functional
+- ✅ Pi HDMI works with regular monitor (tested Dec 24) - Pi HDMI output is functional
 - ✅ Pi power voltage is good (Dec 24) - not a power issue
-- ❌ Pi HDMI does NOT work with Pioneer head unit
+- ❌ Pi HDMI does NOT work with Pioneer head unit (not re-tested after Dec 24 fixes)
 
 **Conclusion:** The issue is **compatibility between Pi and Pioneer**, not a hardware failure or power issue.
 
@@ -79,11 +79,11 @@ ip link set can0 up type can bitrate 500000 listen-only on
 
 **Diagnostic Steps:**
 1. [x] ~~Test Pioneer HDMI input with laptop~~ - ✅ WORKS
-2. [x] ~~Test Pi HDMI output with regular monitor~~ - ✅ WORKS (few days ago)
-3. [ ] Force Pi HDMI output with `hdmi_force_hotplug=1` (ignore EDID detection)
-4. [ ] Try forcing common resolution: `hdmi_mode=4` (720p) or `hdmi_mode=16` (1080p)
-5. [ ] Try `hdmi_safe=1` for maximum compatibility
-6. [ ] Check if Pioneer has HDMI input resolution requirements
+2. [x] ~~Test Pi HDMI output with regular monitor~~ - ✅ WORKS (Dec 24)
+3. [x] Force Pi HDMI output with `hdmi_force_hotplug=1` - ✅ ENABLED (Dec 24)
+4. [x] Dynamic resolution detection - ✅ IMPLEMENTED (Dec 24)
+5. [ ] **RE-TEST Pi HDMI with Pioneer head unit** - Pending next car test
+6. [ ] Try `hdmi_safe=1` if dynamic resolution still fails
 
 ---
 
@@ -116,6 +116,54 @@ can1: can <LISTEN-ONLY> state ERROR-ACTIVE
 - Should not interfere with existing vehicle CAN devices (PAC SWC, ABS, etc.)
 - May see error frames in candump (expected - no ACK sent by us)
 
+### 2. Dynamic HDMI Resolution & Hotplug (December 24, 2024)
+
+**Problem:** Pi was not detecting Pioneer's EDID or outputting at wrong resolution.
+
+**Solution - Windows-like HDMI behavior:**
+
+**Files Created:**
+- `pi/scripts/hdmi-hotplug.sh` - Auto-detects and sets display resolution
+- `pi/scripts/99-hdmi-hotplug.rules` - udev rule to trigger on HDMI connect/change
+
+**Installed on Pi:**
+- `/usr/local/bin/hdmi-hotplug.sh` - Resolution detection script
+- `/etc/udev/rules.d/99-hdmi-hotplug.rules` - Triggers script on HDMI events
+
+**Boot Config (`/boot/config.txt`):**
+```
+hdmi_force_hotplug=1  # Always output HDMI even if no display at boot
+hdmi_drive=2          # Force HDMI mode (vs DVI)
+```
+
+**Service (`/etc/systemd/system/mx5-display.service`):**
+```
+ExecStartPre=/bin/sleep 3  # Wait for HDMI resolution negotiation
+```
+
+**App Changes (`pi/ui/src/main.py`):**
+- Fullscreen mode auto-detects ANY resolution via `pygame.display.set_mode((0, 0), pygame.FULLSCREEN)`
+- UI renders at 800x480, then scales to fill detected display size
+- Added debug logging: prints detected resolution on startup
+
+**Behavior:**
+1. Pi always outputs HDMI (even if no display connected at boot)
+2. When HDMI display is connected/changed, udev triggers hdmi-hotplug.sh
+3. Script uses xrandr to detect and set the display's preferred resolution
+4. App waits 3 seconds for resolution to settle before starting pygame
+5. App auto-scales 800x480 UI to whatever resolution was detected
+
+**Verified Working:**
+- Pi correctly detects monitor at 1024x768, 1360x768, etc.
+- App scales UI correctly to fill screen
+- Display updates when HDMI cable connected
+
+**To Test with Pioneer:**
+1. On Pioneer: Home → AV → select **HDMI** as input source
+2. Enable Video Bypass: Home → AV → OFF → hold bottom-left corner 10-15 sec → "SET ON"
+3. Boot Pi with Pioneer already on HDMI input
+4. Check `/var/log/syslog` for "HDMI hotplug" messages
+
 ---
 
 ## Next Steps
@@ -128,17 +176,11 @@ can1: can <LISTEN-ONLY> state ERROR-ACTIVE
    - May need to disconnect battery briefly to reset
 
 3. [ ] **Fix Pi↔Pioneer HDMI compatibility**
-   - Current config: 800x480 @ 59Hz (custom CVT mode)
-   - ✅ Pi works with regular monitor
-   - ✅ Laptop works with Pioneer
-   - ❌ Pi does NOT work with Pioneer
-   - Likely cause: Pi not detecting Pioneer's EDID, or custom resolution incompatible
-   - Try adding to `/boot/config.txt`:
-     ```
-     hdmi_force_hotplug=1
-     hdmi_group=1
-     hdmi_mode=4  # 720p 60Hz - safe starting point
-     ```
+   - ✅ Dynamic resolution detection implemented (Dec 24)
+   - ✅ hdmi_force_hotplug=1 enabled
+   - ✅ App auto-scales to any resolution
+   - ⏳ **NEEDS CAR TEST** - Re-test Pi HDMI with Pioneer
+   - If still fails, try `hdmi_safe=1` in /boot/config.txt
 
 ### Before Next Car Test
 1. [x] Verify listen-only mode is active: ✅ CONFIRMED
@@ -195,11 +237,13 @@ candump can0 can1
 | Date | Test | Result | Notes |
 |------|------|--------|-------|
 | 2024-12-23 | Initial car test | Partial | ESP32/Arduino/LEDs work, SWC/HDMI fail |
-| 2024-12-23 | Apply listen-only fix | Pending | Need to re-test in car |
-| ~2024-12-20 | Pi HDMI to regular monitor | ✅ Pass | Pi HDMI output works |
+| 2024-12-23 | Apply listen-only fix | ✅ Done | CAN bus now passive |
+| 2024-12-24 | Pi HDMI to regular monitor | ✅ Pass | Pi HDMI output works, dynamic resolution |
 | 2024-12-24 | Laptop HDMI to Pioneer | ✅ Pass | Head unit HDMI input works |
 | 2024-12-24 | Pi HDMI to Pioneer | ❌ Fail | Pi↔Pioneer compatibility issue |
 | 2024-12-24 | Pi power voltage check | ✅ Pass | Voltage is good |
+| 2024-12-24 | Implement dynamic HDMI | ✅ Done | Auto-resolution, hotplug, scaling |
+| TBD | Pi HDMI to Pioneer (re-test) | ⏳ Pending | Test after Dec 24 fixes |
 
 ---
 
