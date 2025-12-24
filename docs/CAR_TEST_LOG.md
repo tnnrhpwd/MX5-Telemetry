@@ -63,16 +63,27 @@ ip link set can0 up type can bitrate 500000 listen-only on
 
 ### HDMI Not Displaying
 
+**Findings:**
+- ✅ Laptop HDMI works with Pioneer AVH-W4500NEX (Dec 24) - head unit HDMI input is functional
+- ✅ Pi HDMI works with regular monitor (tested a few days ago) - Pi HDMI output is functional
+- ✅ Pi power voltage is good (Dec 24) - not a power issue
+- ❌ Pi HDMI does NOT work with Pioneer head unit
+
+**Conclusion:** The issue is **compatibility between Pi and Pioneer**, not a hardware failure or power issue.
+
 **Possible Causes:**
-1. Pi HDMI resolution not compatible with Pioneer head unit
-2. Pioneer requires specific HDMI-CEC or EDID settings
-3. Boot timing issue - Pi may boot faster than head unit
+1. Pi not detecting Pioneer's EDID (no hotplug signal from head unit)
+2. Pi auto-detecting wrong resolution/timing for Pioneer
+3. Boot timing - Pi may output HDMI before Pioneer is ready to receive
+4. Pioneer may require specific HDMI-CEC settings
 
 **Diagnostic Steps:**
-1. [ ] Test Pi HDMI output with regular monitor/TV
-2. [ ] Check Pi `/boot/config.txt` for HDMI settings
-3. [ ] Try forcing HDMI resolution: `hdmi_mode=16` (1080p) or `hdmi_mode=4` (720p)
-4. [ ] Check if Pioneer has HDMI input settings
+1. [x] ~~Test Pioneer HDMI input with laptop~~ - ✅ WORKS
+2. [x] ~~Test Pi HDMI output with regular monitor~~ - ✅ WORKS (few days ago)
+3. [ ] Force Pi HDMI output with `hdmi_force_hotplug=1` (ignore EDID detection)
+4. [ ] Try forcing common resolution: `hdmi_mode=4` (720p) or `hdmi_mode=16` (1080p)
+5. [ ] Try `hdmi_safe=1` for maximum compatibility
+6. [ ] Check if Pioneer has HDMI input resolution requirements
 
 ---
 
@@ -116,9 +127,18 @@ can1: can <LISTEN-ONLY> state ERROR-ACTIVE
    - Follow PAC programming procedure
    - May need to disconnect battery briefly to reset
 
-3. [ ] **Test HDMI separately** - Connect Pi to regular monitor first
+3. [ ] **Fix Pi↔Pioneer HDMI compatibility**
    - Current config: 800x480 @ 59Hz (custom CVT mode)
-   - Try with regular HDMI monitor to verify Pi output works
+   - ✅ Pi works with regular monitor
+   - ✅ Laptop works with Pioneer
+   - ❌ Pi does NOT work with Pioneer
+   - Likely cause: Pi not detecting Pioneer's EDID, or custom resolution incompatible
+   - Try adding to `/boot/config.txt`:
+     ```
+     hdmi_force_hotplug=1
+     hdmi_group=1
+     hdmi_mode=4  # 720p 60Hz - safe starting point
+     ```
 
 ### Before Next Car Test
 1. [x] Verify listen-only mode is active: ✅ CONFIRMED
@@ -176,6 +196,10 @@ candump can0 can1
 |------|------|--------|-------|
 | 2024-12-23 | Initial car test | Partial | ESP32/Arduino/LEDs work, SWC/HDMI fail |
 | 2024-12-23 | Apply listen-only fix | Pending | Need to re-test in car |
+| ~2024-12-20 | Pi HDMI to regular monitor | ✅ Pass | Pi HDMI output works |
+| 2024-12-24 | Laptop HDMI to Pioneer | ✅ Pass | Head unit HDMI input works |
+| 2024-12-24 | Pi HDMI to Pioneer | ❌ Fail | Pi↔Pioneer compatibility issue |
+| 2024-12-24 | Pi power voltage check | ✅ Pass | Voltage is good |
 
 ---
 
