@@ -30,7 +30,9 @@ static uint16_t* static_fill_buffer = NULL;
 static bool static_buffer_initialized = false;
 
 // Vendor-specific initialization for newer hardware revision
+// MADCTL value 0xC0 = Mirror X (bit 6) + Mirror Y (bit 7) = 180 degree rotation
 static const st77916_lcd_init_cmd_t vendor_specific_init_new[] = {
+  {0x36, (uint8_t []){0xC0}, 1, 0},  // MADCTL: 180 degree rotation (MX+MY)
   {0xF0, (uint8_t []){0x28}, 1, 0},
   {0xF2, (uint8_t []){0x28}, 1, 0},
   {0x73, (uint8_t []){0xF0}, 1, 0},
@@ -373,6 +375,14 @@ bool QSPI_Init(void) {
         return false;
     }
     Serial.println("QSPI_Init: Panel initialized");
+    
+    // Rotate display 180 degrees (for upside-down mounting)
+    // Mirror both X and Y axes to achieve 180-degree rotation
+    ret = esp_lcd_panel_mirror(panel_handle, true, true);
+    if (ret != ESP_OK) {
+        Serial.printf("QSPI_Init: Panel mirror failed: %d\n", ret);
+    }
+    Serial.println("QSPI_Init: Display rotated 180 degrees");
     
     // NOTE: Color inversion is already set in init sequence via command 0x21
     // The reference code does NOT call esp_lcd_panel_invert_color after init
