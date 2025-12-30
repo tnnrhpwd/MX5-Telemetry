@@ -1,0 +1,64 @@
+MX5-Telemetry System - Required Arduino Libraries
+================================================
+
+Install these libraries before uploading the firmware to your Arduino Nano.
+
+Method 1: Arduino IDE Library Manager
+--------------------------------------
+1. Open Arduino IDE
+2. Go to: Sketch → Include Library → Manage Libraries
+3. Search and install each library listed below:
+
+Required Libraries:
+-------------------
+
+1. MCP_CAN
+   Author: Cory J. Fowler
+   Version: 1.5.0 or later
+   Description: CAN Bus controller library for MCP2515
+   
+2. Adafruit NeoPixel
+   Author: Adafruit
+   Version: 1.10.0 or later
+   Description: WS2812B LED strip control
+   
+3. TinyGPSPlus
+   Author: Mikal Hart
+   Version: 1.0.3 or later
+   Description: GPS NMEA sentence parser
+
+Built-in Libraries (no installation needed):
+---------------------------------------------
+- SPI.h
+- SD.h
+- SoftwareSerial.h
+
+Method 2: Manual Installation
+------------------------------
+Download ZIP files from GitHub and install via:
+Sketch → Include Library → Add .ZIP Library
+
+MCP_CAN:
+https://github.com/coryjfowler/MCP_CAN_lib
+
+Adafruit NeoPixel:
+https://github.com/adafruit/Adafruit_NeoPixel
+
+TinyGPSPlus:
+https://github.com/mikalhart/TinyGPSPlus
+
+Method 3: Arduino CLI
+---------------------
+arduino-cli lib install "MCP_CAN"
+arduino-cli lib install "Adafruit NeoPixel"
+arduino-cli lib install "TinyGPSPlus"
+
+Verification
+------------
+After installation, verify by opening:
+File → Examples
+
+You should see:
+- Examples from MCP_CAN
+- Examples from Adafruit NeoPixel
+- Examples from TinyGPSPlus
