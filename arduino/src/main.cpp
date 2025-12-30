@@ -368,18 +368,62 @@ inline void readCANMessages() {
 #define SET_LED(idx, r, g, b) strip.setPixelColor(idx, strip.Color(r, g, b))
 #define CLEAR_LED(idx) strip.setPixelColor(idx, 0)
 
-// Get LED color based on RPM zone
+// ============================================================================
+// SMOOTH LED TRANSITIONS - Fractional brightness & color gradients
+// ============================================================================
+// Provides buttery-smooth LED progression with:
+// 1. Fractional LED brightness (sub-LED resolution) - 2x effective steps
+// 2. Smooth color gradients between RPM zones - no jarring color jumps
+// ============================================================================
+
+// Helper: Linear interpolation between two colors
+inline void interpolateColor(uint8_t r1, uint8_t g1, uint8_t b1,
+                             uint8_t r2, uint8_t g2, uint8_t b2,
+                             float position,
+                             uint8_t* outR, uint8_t* outG, uint8_t* outB) {
+    *outR = r1 + (uint8_t)((int)(r2 - r1) * position);
+    *outG = g1 + (uint8_t)((int)(g2 - g1) * position);
+    *outB = b1 + (uint8_t)((int)(b2 - b1) * position);
+}
+
+// Get smooth RPM color with gradient transitions between zones
+// Colors flow: Blue → Green → Yellow → Orange → Red
 inline void getRPMColor(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
     if (rpm < RPM_ZONE_BLUE) {
-        *r = 0; *g = 0; *b = 255;      // Blue
-    } else if (rpm < RPM_ZONE_GREEN) {
-        *r = 0; *g = 255; *b = 0;      // Green
-    } else if (rpm < RPM_ZONE_YELLOW) {
-        *r = 255; *g = 255; *b = 0;    // Yellow
-    } else if (rpm < RPM_ZONE_ORANGE) {
-        *r = 255; *g = 128; *b = 0;    // Orange
-    } else {
-        *r = 255; *g = 0; *b = 0;      // Red
+        // 0-1999 RPM: Pure Blue
+        *r = 0; *g = 0; *b = 255;
+    }
+    else if (rpm < RPM_ZONE_GREEN) {
+        // 2000-2999 RPM: Blue → Green gradient
+        float position = (float)(rpm - RPM_ZONE_BLUE) / (float)(RPM_ZONE_GREEN - RPM_ZONE_BLUE);
+        interpolateColor(0, 0, 255,      // Blue
+                        0, 255, 0,       // Green
+                        position, r, g, b);
+    }
+    else if (rpm < RPM_ZONE_YELLOW) {
+        // 3000-4499 RPM: Green → Yellow gradient
+        float position = (float)(rpm - RPM_ZONE_GREEN) / (float)(RPM_ZONE_YELLOW - RPM_ZONE_GREEN);
+        interpolateColor(0, 255, 0,      // Green
+                        255, 255, 0,     // Yellow
+                        position, r, g, b);
+    }
+    else if (rpm < RPM_ZONE_ORANGE) {
+        // 4500-5499 RPM: Yellow → Orange gradient
+        float position = (float)(rpm - RPM_ZONE_YELLOW) / (float)(RPM_ZONE_ORANGE - RPM_ZONE_YELLOW);
+        interpolateColor(255, 255, 0,    // Yellow
+                        255, 128, 0,     // Orange
+                        position, r, g, b);
+    }
+    else if (rpm < RPM_MAX) {
+        // 5500-6199 RPM: Orange → Red gradient
+        float position = (float)(rpm - RPM_ZONE_ORANGE) / (float)(RPM_MAX - RPM_ZONE_ORANGE);
+        interpolateColor(255, 128, 0,    // Orange
+                        255, 0, 0,       // Red
+                        position, r, g, b);
+    }
+    else {
+        // 6200+ RPM: Pure Red (redline)
+        *r = 255; *g = 0; *b = 0;
     }
 }
 
@@ -444,23 +488,43 @@ inline void updateLEDs() {
     #endif
 }
 
-// Sequence 1: Center-Out (Original default - LEDs fill from edges toward center)
+// Sequence 1: Center-Out with smooth fractional LED brightness
+// LEDs fill from edges toward center with sub-LED resolution
 void updateLEDsCenterOut() {
     uint16_t clampedRPM = currentRPM;
     if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
     
     uint8_t maxPerSide = LED_COUNT / 2;
-    uint8_t ledsPerSide = 1 + (((uint32_t)(clampedRPM - 1) * (maxPerSide - 1)) / (RPM_MAX - 1));
-    if (ledsPerSide > maxPerSide) ledsPerSide = maxPerSide;
     
+    // Calculate FRACTIONAL LED position for smooth transitions
+    float ledPositionFloat = 1.0f + ((float)(clampedRPM - 1) * (maxPerSide - 1)) / (float)(RPM_MAX - 1);
+    if (ledPositionFloat > maxPerSide) ledPositionFloat = maxPerSide;
+    
+    // Split into full LEDs and fractional brightness
+    uint8_t fullLEDsPerSide = (uint8_t)ledPositionFloat;
+    float fractionalPart = ledPositionFloat - fullLEDsPerSide;
+    
+    // Get smooth gradient color for current RPM
     uint8_t r, g, b;
     getRPMColor(currentRPM, &r, &g, &b);
     
-    // Draw mirrored bar from edges toward center
+    // Draw mirrored bar from edges toward center with fractional brightness
     for (uint8_t i = 0; i < LED_COUNT; i++) {
-        if (i < ledsPerSide || i >= (LED_COUNT - ledsPerSide)) {
+        bool isLeftSide = (i < maxPerSide);
+        uint8_t sidePosition = isLeftSide ? i : (LED_COUNT - 1 - i);
+        
+        if (sidePosition < fullLEDsPerSide) {
+            // Fully lit LEDs (100% brightness)
             SET_LED(i, r, g, b);
-        } else {
+        }
+        else if (sidePosition == fullLEDsPerSide && fractionalPart > 0.05f) {
+            // Partially lit LED (fractional brightness) - threshold avoids flicker
+            uint8_t dimR = (uint8_t)(r * fractionalPart);
+            uint8_t dimG = (uint8_t)(g * fractionalPart);
+            uint8_t dimB = (uint8_t)(b * fractionalPart);
+            SET_LED(i, dimR, dimG, dimB);
+        }
+        else {
             CLEAR_LED(i);
         }
     }
@@ -468,23 +532,38 @@ void updateLEDsCenterOut() {
     strip.show();
 }
 
-// Sequence 2: Left-to-Right (Double resolution - all LEDs fill from left)
+// Sequence 2: Left-to-Right with smooth fractional LED brightness
+// LEDs fill from left to right with sub-LED resolution (2x effective steps)
 void updateLEDsLeftToRight() {
     uint16_t clampedRPM = currentRPM;
     if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
     
-    // Full strip resolution: RPM 1-6200 → 1 to LED_COUNT LEDs
-    uint8_t litLEDs = 1 + (((uint32_t)(clampedRPM - 1) * (LED_COUNT - 1)) / (RPM_MAX - 1));
-    if (litLEDs > LED_COUNT) litLEDs = LED_COUNT;
+    // Calculate FRACTIONAL LED position for smooth transitions
+    float ledPositionFloat = 1.0f + ((float)(clampedRPM - 1) * (LED_COUNT - 1)) / (float)(RPM_MAX - 1);
+    if (ledPositionFloat > LED_COUNT) ledPositionFloat = LED_COUNT;
     
+    // Split into full LEDs and fractional brightness
+    uint8_t fullLEDs = (uint8_t)ledPositionFloat;
+    float fractionalPart = ledPositionFloat - fullLEDs;
+    
+    // Get smooth gradient color for current RPM
     uint8_t r, g, b;
     getRPMColor(currentRPM, &r, &g, &b);
     
-    // Fill from left (LED 0) to right
+    // Fill from left (LED 0) to right with fractional brightness
     for (uint8_t i = 0; i < LED_COUNT; i++) {
-        if (i < litLEDs) {
+        if (i < fullLEDs) {
+            // Fully lit LEDs (100% brightness)
             SET_LED(i, r, g, b);
-        } else {
+        }
+        else if (i == fullLEDs && fractionalPart > 0.05f) {
+            // Partially lit LED (fractional brightness) - threshold avoids flicker
+            uint8_t dimR = (uint8_t)(r * fractionalPart);
+            uint8_t dimG = (uint8_t)(g * fractionalPart);
+            uint8_t dimB = (uint8_t)(b * fractionalPart);
+            SET_LED(i, dimR, dimG, dimB);
+        }
+        else {
             CLEAR_LED(i);
         }
     }
@@ -492,23 +571,40 @@ void updateLEDsLeftToRight() {
     strip.show();
 }
 
-// Sequence 3: Right-to-Left (Double resolution - all LEDs fill from right)
+// Sequence 3: Right-to-Left with smooth fractional LED brightness
+// LEDs fill from right to left with sub-LED resolution (2x effective steps)
 void updateLEDsRightToLeft() {
     uint16_t clampedRPM = currentRPM;
     if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
     
-    // Full strip resolution: RPM 1-6200 → 1 to LED_COUNT LEDs
-    uint8_t litLEDs = 1 + (((uint32_t)(clampedRPM - 1) * (LED_COUNT - 1)) / (RPM_MAX - 1));
-    if (litLEDs > LED_COUNT) litLEDs = LED_COUNT;
+    // Calculate FRACTIONAL LED position for smooth transitions
+    float ledPositionFloat = 1.0f + ((float)(clampedRPM - 1) * (LED_COUNT - 1)) / (float)(RPM_MAX - 1);
+    if (ledPositionFloat > LED_COUNT) ledPositionFloat = LED_COUNT;
     
+    // Split into full LEDs and fractional brightness
+    uint8_t fullLEDs = (uint8_t)ledPositionFloat;
+    float fractionalPart = ledPositionFloat - fullLEDs;
+    
+    // Get smooth gradient color for current RPM
     uint8_t r, g, b;
     getRPMColor(currentRPM, &r, &g, &b);
     
-    // Fill from right (LED_COUNT-1) to left
+    // Fill from right (LED_COUNT-1) to left with fractional brightness
     for (uint8_t i = 0; i < LED_COUNT; i++) {
-        if (i >= (LED_COUNT - litLEDs)) {
+        uint8_t positionFromRight = LED_COUNT - 1 - i;
+        
+        if (positionFromRight < fullLEDs) {
+            // Fully lit LEDs (100% brightness)
             SET_LED(i, r, g, b);
-        } else {
+        }
+        else if (positionFromRight == fullLEDs && fractionalPart > 0.05f) {
+            // Partially lit LED (fractional brightness) - threshold avoids flicker
+            uint8_t dimR = (uint8_t)(r * fractionalPart);
+            uint8_t dimG = (uint8_t)(g * fractionalPart);
+            uint8_t dimB = (uint8_t)(b * fractionalPart);
+            SET_LED(i, dimR, dimG, dimB);
+        }
+        else {
             CLEAR_LED(i);
         }
     }
@@ -516,26 +612,44 @@ void updateLEDsRightToLeft() {
     strip.show();
 }
 
-// Sequence 4: Center-In (LEDs fill from center outward to edges)
+// Sequence 4: Center-In with smooth fractional LED brightness
+// LEDs fill from center outward to edges with sub-LED resolution
 void updateLEDsCenterIn() {
     uint16_t clampedRPM = currentRPM;
     if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
     
     uint8_t maxPerSide = LED_COUNT / 2;
-    uint8_t ledsPerSide = 1 + (((uint32_t)(clampedRPM - 1) * (maxPerSide - 1)) / (RPM_MAX - 1));
-    if (ledsPerSide > maxPerSide) ledsPerSide = maxPerSide;
     
+    // Calculate FRACTIONAL LED position for smooth transitions
+    float ledPositionFloat = 1.0f + ((float)(clampedRPM - 1) * (maxPerSide - 1)) / (float)(RPM_MAX - 1);
+    if (ledPositionFloat > maxPerSide) ledPositionFloat = maxPerSide;
+    
+    // Split into full LEDs and fractional brightness
+    uint8_t fullLEDsPerSide = (uint8_t)ledPositionFloat;
+    float fractionalPart = ledPositionFloat - fullLEDsPerSide;
+    
+    // Get smooth gradient color for current RPM
     uint8_t r, g, b;
     getRPMColor(currentRPM, &r, &g, &b);
     
     uint8_t center = LED_COUNT / 2;
     
-    // Fill from center outward
+    // Fill from center outward with fractional brightness
     for (uint8_t i = 0; i < LED_COUNT; i++) {
         int distFromCenter = abs((int)i - (int)center);
-        if (distFromCenter < ledsPerSide) {
+        
+        if (distFromCenter < fullLEDsPerSide) {
+            // Fully lit LEDs (100% brightness)
             SET_LED(i, r, g, b);
-        } else {
+        }
+        else if (distFromCenter == fullLEDsPerSide && fractionalPart > 0.05f) {
+            // Partially lit LED (fractional brightness) - threshold avoids flicker
+            uint8_t dimR = (uint8_t)(r * fractionalPart);
+            uint8_t dimG = (uint8_t)(g * fractionalPart);
+            uint8_t dimB = (uint8_t)(b * fractionalPart);
+            SET_LED(i, dimR, dimG, dimB);
+        }
+        else {
             CLEAR_LED(i);
         }
     }
