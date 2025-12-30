@@ -92,13 +92,13 @@ plt.show()
 **Raspberry Pi Display Service:**
 ```bash
 # View real-time logs
-ssh pi@192.168.1.28 'journalctl -u mx5-display -f'
+ssh pi@192.168.1.23 'journalctl -u mx5-display -f'
 
 # Last 100 lines
-ssh pi@192.168.1.28 'journalctl -u mx5-display -n 100'
+ssh pi@192.168.1.23 'journalctl -u mx5-display -n 100'
 
 # Logs since last boot
-ssh pi@192.168.1.28 'journalctl -u mx5-display -b'
+ssh pi@192.168.1.23 'journalctl -u mx5-display -b'
 ```
 
 **Arduino Serial Debug:**
@@ -113,7 +113,7 @@ pio run -d arduino --target monitor
 **ESP32-S3 Serial Debug:**
 ```bash
 # Via Pi (ESP32 connected to Pi)
-ssh pi@192.168.1.28 'cat /dev/ttyACM0'
+ssh pi@192.168.1.23 'cat /dev/ttyACM0'
 
 # Or monitor directly
 pio device monitor -b 115200 -p /dev/ttyACM0
@@ -248,7 +248,7 @@ ESP32: Sent initial settings to ESP32
 **Quick System Check:**
 ```bash
 # Full system status
-ssh pi@192.168.1.28 '
+ssh pi@192.168.1.23 '
   echo "=== CAN Status ===";
   ip -s link show can0 can1;
   echo -e "\n=== Display Service ===";
@@ -263,13 +263,13 @@ ssh pi@192.168.1.28 '
 **Performance Monitoring:**
 ```bash
 # CPU & Memory usage
-ssh pi@192.168.1.28 'top -b -n 1 | head -20'
+ssh pi@192.168.1.23 'top -b -n 1 | head -20'
 
 # Temperature
-ssh pi@192.168.1.28 'vcgencmd measure_temp'
+ssh pi@192.168.1.23 'vcgencmd measure_temp'
 
 # CAN message rates
-ssh pi@192.168.1.28 'canbusload can0@500000 -r'
+ssh pi@192.168.1.23 'canbusload can0@500000 -r'
 ```
 
 ### Test Commands

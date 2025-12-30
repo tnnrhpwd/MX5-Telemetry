@@ -35,7 +35,7 @@ The Pi → Pioneer HDMI connection is notoriously difficult due to:
 #### Step 1: Verify Basic HDMI Functionality
 ```bash
 # SSH into Pi
-ssh pi@192.168.1.28
+ssh pi@192.168.1.23
 
 # Check if HDMI is detected
 tvservice -s
@@ -117,7 +117,7 @@ sudo reboot
 
 #### Step 5: Verify After Reboot
 ```bash
-ssh pi@192.168.1.28
+ssh pi@192.168.1.23
 tvservice -s
 ```
 
@@ -205,7 +205,7 @@ Likely causes:
 
 #### Step 1: Check Interface Detection
 ```bash
-ssh pi@192.168.1.28
+ssh pi@192.168.1.23
 
 # List network interfaces
 ip link show
@@ -381,7 +381,7 @@ Common USB-C serial issues:
 
 #### Step 1: Verify USB Detection
 ```bash
-ssh pi@192.168.1.28
+ssh pi@192.168.1.23
 
 # List USB devices
 lsusb
@@ -517,7 +517,7 @@ grep -r "115200" ~/MX5-Telemetry/pi/
 ### Remote Access
 ```bash
 # SSH into Pi
-ssh pi@192.168.1.28
+ssh pi@192.168.1.23
 
 # View system logs
 journalctl -u mx5-display -f
@@ -546,7 +546,7 @@ Use `Ctrl+Shift+P` → "Tasks: Run Task":
 ### Emergency Recovery
 ```bash
 # Reboot Pi
-ssh pi@192.168.1.28 'sudo reboot'
+ssh pi@192.168.1.23 'sudo reboot'
 
 # Or use tool
 cd ~/MX5-Telemetry/tools
