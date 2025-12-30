@@ -89,6 +89,7 @@ A real-time telemetry and visual feedback system for the 2008 Mazda Miata NC (MX
 ### Arduino Nano (LED Controller)
 - **⚡ Sub-millisecond latency** - Direct CAN bus to LED update
 - **🎯 100Hz LED refresh** - Smooth, responsive RPM visualization
+- **✨ Smooth LED Transitions** - Fractional brightness + color gradients for buttery-smooth display
 - **🔌 Independent operation** - Works even if Pi is offline
 - **📊 Direct HS-CAN** - Own MCP2515 module (shared bus with Pi)
 - **🎨 Configurable Patterns** - Receives LED sequence selection from Pi via serial
