@@ -4,7 +4,7 @@ Complete documentation for the MX5-Telemetry system - a real-time automotive tel
 
 ---
 
-## 🎯 System Architecture
+## 🎯 System Overview
 
 The system uses a **three-device architecture** with the Pi as central hub:
 
@@ -14,40 +14,23 @@ The system uses a **three-device architecture** with the Pi as central hub:
 | **ESP32-S3 Round Display** | Gauge display + BLE TPMS + G-force IMU | **Stock oil gauge hole** | Serial from Pi |
 | **Arduino Nano** | RPM LED strip controller | Gauge cluster bezel | Direct HS-CAN + Serial from Pi |
 
-### Data Flow Summary
+### Data Flow
 
 ```
-OBD-II Port
-    │
-    ├─── HS-CAN (500k) ──┬──► Pi MCP2515 #1 ──► Pi processes all data
-    │                    │
-    │                    └──► Arduino MCP2515 ──► RPM → LED strip (direct, <1ms)
-    │
-    └─── MS-CAN (125k) ──────► Pi MCP2515 #2 ──► Steering wheel buttons
-    
-Pi (Central Hub)
-    │
-    ├──► ESP32-S3 (Serial) ──► Telemetry + SWC buttons + settings sync
-    │    ◄─── ESP32-S3 ◄───── TPMS + G-force data
-    │
-    ├──► Arduino (Serial) ───► LED sequence selection + settings sync
-    │
-    └──► Pioneer (HDMI) ─────► Full dashboard display
+OBD-II → HS-CAN & MS-CAN → Pi (Hub) → ESP32 Display + Arduino LEDs + Pioneer HDMI
+         └─ Arduino (Direct RPM for <1ms LED response)
 ```
-
-See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete architecture details.
 
 ---
 
-## 🚀 Getting Started (New Users)
+## 🚀 Quick Start Guide
 
 | Step | Document | Description |
 |------|----------|-------------|
-| 1️⃣ | [**PI_DISPLAY_INTEGRATION.md**](PI_DISPLAY_INTEGRATION.md) | ⭐ Understand the system architecture |
-| 2️⃣ | [**hardware/PARTS_LIST.md**](hardware/PARTS_LIST.md) | Get the required hardware |
-| 3️⃣ | [**hardware/WIRING_GUIDE.md**](hardware/WIRING_GUIDE.md) | Wire up all components |
-| 4️⃣ | [**BUILD_AND_UPLOAD.md**](BUILD_AND_UPLOAD.md) | Build and flash firmware |
-| 5️⃣ | [**DEPLOYMENT.md**](DEPLOYMENT.md) | Deploy to the car |
+| 1️⃣ | [**ARCHITECTURE.md**](ARCHITECTURE.md) | ⭐ System architecture & design decisions |
+| 2️⃣ | [**hardware/HARDWARE.md**](hardware/HARDWARE.md) | Complete hardware guide (parts, wiring, TPMS, SWC) |
+| 3️⃣ | [**DEPLOYMENT_GUIDE.md**](DEPLOYMENT_GUIDE.md) | ⭐ Build, flash firmware & deploy in vehicle |
+| 4️⃣ | [**LED_SYSTEM.md**](LED_SYSTEM.md) | Complete LED system documentation |
 
 ---
 
@@ -55,9 +38,7 @@ See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete architec
 
 | Document | Description |
 |----------|-------------|
-| [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) | Complete wiring for all devices |
-| [hardware/PARTS_LIST.md](hardware/PARTS_LIST.md) | Bill of materials |
-| [hardware/TPMS_BLUETOOTH.md](hardware/TPMS_BLUETOOTH.md) | BLE TPMS sensor setup (ESP32) |
+| [**hardware/HARDWARE.md**](hardware/HARDWARE.md) | ⭐ Complete hardware guide (parts, wiring, TPMS, SWC) |
 
 ---
 
@@ -66,37 +47,32 @@ See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete architec
 ### LED System (Arduino)
 | Document | Description |
 |----------|-------------|
-| [features/LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md) | 7-state LED visual system |
-| [features/LED_TIMING_AND_PERFORMANCE.md](features/LED_TIMING_AND_PERFORMANCE.md) | <1ms latency analysis |
-| [features/LED_SIMULATOR_ARDUINO_CONNECTION.md](features/LED_SIMULATOR_ARDUINO_CONNECTION.md) | Python simulator → Arduino |
-| [features/LED_SIMULATOR_TROUBLESHOOTING.md](features/LED_SIMULATOR_TROUBLESHOOTING.md) | Simulator debugging |
-
-### Display System (ESP32 + Pi)
-| Document | Description |
-|----------|-------------|
-| [DISPLAY_DEPLOYMENT.md](DISPLAY_DEPLOYMENT.md) | ESP32-S3 display deployment |
-| [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) | Raspberry Pi + ESP32 integration |
+| [**LED_SYSTEM.md**](LED_SYSTEM.md) | ⭐ Complete LED system guide (states, modes, performance) |
 
 ---
 
-## 💻 Development Documentation
+## 💻 Development
 
 | Document | Description |
 |----------|-------------|
-| [development/PLATFORMIO_GUIDE.md](development/PLATFORMIO_GUIDE.md) | PlatformIO setup and usage |
-| [development/BUILD_ARCHITECTURE.md](development/BUILD_ARCHITECTURE.md) | Project structure |
-| [development/DATA_ANALYSIS.md](development/DATA_ANALYSIS.md) | Telemetry data visualization |
-| [development/REQUIREMENTS_COMPLIANCE.md](development/REQUIREMENTS_COMPLIANCE.md) | System requirements checklist |
+| [**development/DEVELOPMENT_GUIDE.md**](development/DEVELOPMENT_GUIDE.md) | ⭐ Complete development guide (analysis, debugging, testing) |
 
 ---
 
-## 📋 Project Management
+## 📁 Archive
 
-| Document | Description |
-|----------|-------------|
-| [TODO_NEXT_SESSION.md](TODO_NEXT_SESSION.md) | Current tasks and progress |
+Older documentation and completed features can be found in [archive/](archive/).
 
 ---
+
+## 📞 Support & Contributing
+
+For issues or questions:
+- Check [ARCHITECTURE.md](ARCHITECTURE.md) for system architecture
+- Review [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for troubleshooting
+- Check [hardware/HARDWARE.md](hardware/HARDWARE.md) for wiring and parts
+
+**Last Updated:** December 29, 2025
 
 ## 📦 Archived Documentation
 

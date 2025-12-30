@@ -217,7 +217,8 @@ Some clone Nanos use the old bootloader:
 
 ## See Also
 
-- [hardware/WIRING_GUIDE_SINGLE_ARDUINO.md](hardware/WIRING_GUIDE_SINGLE_ARDUINO.md) - Detailed Arduino wiring
-- [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) - Full system architecture
-- [features/LED_STATE_SYSTEM.md](features/LED_STATE_SYSTEM.md) - LED behavior documentation
-- [DISPLAY_DEPLOYMENT.md](DISPLAY_DEPLOYMENT.md) - ESP32-S3 display deployment
+- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture & design
+- [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) - Deployment & testing guide
+- [LED_SYSTEM.md](LED_SYSTEM.md) - Complete LED system guide
+- [hardware/WIRING_GUIDE.md](hardware/WIRING_GUIDE.md) - Complete wiring diagrams
+- [development/DEVELOPMENT_GUIDE.md](development/DEVELOPMENT_GUIDE.md) - Analysis & debugging
