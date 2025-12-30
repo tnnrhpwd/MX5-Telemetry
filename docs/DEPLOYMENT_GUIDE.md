@@ -52,7 +52,7 @@ Pi (Central Hub)
 - **VS Code** with PlatformIO extension installed
 - **Arduino Nano** (CH340 or FTDI) with USB cable
 - **ESP32-S3** (Waveshare 1.85" Round Display) with USB-C cable
-- **Raspberry Pi 4B** (already configured at 192.168.1.28)
+- **Raspberry Pi 4B** (already configured at 192.168.1.23)
 - **MCP2515 CAN modules** (3x - two for Pi, one for Arduino)
 - **OBD-II breakout or splitter** for CAN bus access
 
@@ -70,7 +70,7 @@ See [hardware/HARDWARE.md](hardware/HARDWARE.md) for complete wiring diagrams, p
 |--------|---------------|------------|-------------------|
 | **Arduino Nano** | **Local** (plug into PC) | USB-C to PC | Disconnected from vehicle for upload |
 | **ESP32-S3** | **Remote** (via Pi SSH) | USB-C to Pi (`/dev/ttyACM0`) | Permanently connected to Pi |
-| **Pi App** | **Remote** (SSH) | Network | Always on network at 192.168.1.28 |
+| **Pi App** | **Remote** (SSH) | Network | Always on network at 192.168.1.23 |
 
 ### Method 1: VS Code Tasks (Recommended) ⭐
 
@@ -119,7 +119,7 @@ The ESP32 is permanently connected to the Pi. Upload remotely:
 git add -A && git commit -m "Your message" && git push
 
 # Then SSH to Pi and flash
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 ```
 
 **Troubleshooting ESP32 Upload:**
@@ -131,14 +131,14 @@ ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d d
 ```powershell
 # Push changes, then update and restart
 git push
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
 ```
 
 #### Full Deploy (All in One)
 
 ```powershell
 # Build locally, push, flash ESP32, restart Pi
-pio run -d display; git add -A; git commit -m 'Deploy update' --allow-empty; git push; ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload && sudo systemctl restart mx5-display'
+pio run -d display; git add -A; git commit -m 'Deploy update' --allow-empty; git push; ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload && sudo systemctl restart mx5-display'
 ```
 
 ### Expected Memory Usage
@@ -168,22 +168,22 @@ The workspace includes preconfigured tasks for rapid deployment:
 
 #### SSH to Pi
 ```bash
-ssh pi@192.168.1.28
+ssh pi@192.168.1.23
 ```
 
 #### Update Pi & Restart Display
 ```bash
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
 ```
 
 #### Flash ESP32 via Pi
 ```bash
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 ```
 
 #### View Pi Display Logs
 ```bash
-ssh pi@192.168.1.28 'journalctl -u mx5-display -f'
+ssh pi@192.168.1.23 'journalctl -u mx5-display -f'
 ```
 
 ---
@@ -194,9 +194,9 @@ ssh pi@192.168.1.28 'journalctl -u mx5-display -f'
 
 | Setting | Value |
 |---------|-------|
-| **IP Address** | `192.168.1.28` |
+| **IP Address** | `192.168.1.23` |
 | **User** | `pi` |
-| **SSH** | `ssh pi@192.168.1.28` |
+| **SSH** | `ssh pi@192.168.1.23` |
 | **Project Path** | `~/MX5-Telemetry` |
 | **Display Service** | `mx5-display.service` (systemd) |
 
@@ -273,8 +273,8 @@ Settings are stored in: `~/MX5-Telemetry/pi/config/settings.json`
 
 **Check CAN Status:**
 ```bash
-ssh pi@192.168.1.28 'candump can0'  # HS-CAN (500k)
-ssh pi@192.168.1.28 'candump can1'  # MS-CAN (125k)
+ssh pi@192.168.1.23 'candump can0'  # HS-CAN (500k)
+ssh pi@192.168.1.23 'candump can1'  # MS-CAN (125k)
 ```
 
 ### System Integration Test
@@ -337,14 +337,14 @@ pio run -d arduino --target upload
 
 # On ESP32
 # 2. Reflash ESP32 via Pi
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && ~/.local/bin/pio run -d display --target upload'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && ~/.local/bin/pio run -d display --target upload'
 
 # On Pi
 # 3. Restart Pi display service
-ssh pi@192.168.1.28 'sudo systemctl restart mx5-display'
+ssh pi@192.168.1.23 'sudo systemctl restart mx5-display'
 
 # 4. Check logs
-ssh pi@192.168.1.28 'journalctl -u mx5-display -f'
+ssh pi@192.168.1.23 'journalctl -u mx5-display -f'
 ```
 
 ---

@@ -144,7 +144,7 @@ MX5-Telemetry/
 | Device | Upload Method | Connection |
 |--------|---------------|------------|
 | **Arduino Nano** | **Local** (plug into PC) | USB to PC |
-| **ESP32-S3** | **Remote** via Pi SSH | USB to Pi (192.168.1.28) |
+| **ESP32-S3** | **Remote** via Pi SSH | USB to Pi (192.168.1.23) |
 | **Pi Application** | **Remote** via SSH | Git pull + systemctl |
 
 ### Arduino Nano (Requires Local Connection)
@@ -161,7 +161,7 @@ pio device monitor -b 115200
 
 ### ESP32-S3 Display (Remote Upload via Pi)
 
-The ESP32-S3 is permanently connected to the Pi's USB (192.168.1.28). Upload remotely using VS Code task:
+The ESP32-S3 is permanently connected to the Pi's USB (192.168.1.23). Upload remotely using VS Code task:
 
 **`Ctrl+Shift+P` → "Tasks: Run Task" → "Pi: Flash ESP32 (Remote)"**
 
@@ -171,7 +171,7 @@ This pulls the latest code on the Pi and flashes the ESP32 in one step (~68 seco
 <summary>Task runs this command:</summary>
 
 ```bash
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 ```
 </details>
 
@@ -180,7 +180,7 @@ ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d d
 ```powershell
 # Push code to GitHub, then update Pi
 git push
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
 ```
 
 Or use VS Code task: **Pi: Git Pull & Restart UI**
