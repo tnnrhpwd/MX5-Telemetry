@@ -416,9 +416,9 @@ class PiDisplayApp:
         self.demo_rpm_dir = 1
         self.show_exit_dialog = False  # Exit confirmation dialog state
         
-        # Keyboard hold detection for navigation lock (ENTER key)
-        self.enter_key_pressed_time = 0  # Track when ENTER was pressed
-        self.enter_key_hold_triggered = False  # Prevent multiple triggers
+        # Keyboard hold detection for navigation lock (SPACE key)
+        self.space_key_pressed_time = 0  # Track when SPACE was pressed
+        self.space_key_hold_triggered = False  # Prevent multiple triggers
         
         # Page transition animation state
         self.transition_type = TransitionType.NONE
@@ -780,10 +780,10 @@ class PiDisplayApp:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    # Track ENTER key press time for 3-second hold detection
-                    if event.key == pygame.K_RETURN:
-                        self.enter_key_pressed_time = time.time()
-                        self.enter_key_hold_triggered = False
+                    # Track SPACE key press time for 3-second hold detection
+                    if event.key == pygame.K_SPACE:
+                        self.space_key_pressed_time = time.time()
+                        self.space_key_hold_triggered = False
                     
                     # Handle exit confirmation dialog
                     if self.show_exit_dialog:
@@ -808,30 +808,30 @@ class PiDisplayApp:
                             self._handle_button(button)
                 
                 elif event.type == pygame.KEYUP:
-                    # Handle ENTER key release
-                    if event.key == pygame.K_RETURN:
-                        hold_duration = time.time() - self.enter_key_pressed_time if self.enter_key_pressed_time > 0 else 0
-                        self.enter_key_pressed_time = 0
+                    # Handle SPACE key release
+                    if event.key == pygame.K_SPACE:
+                        hold_duration = time.time() - self.space_key_pressed_time if self.space_key_pressed_time > 0 else 0
+                        self.space_key_pressed_time = 0
                         
                         # If released before 3 seconds and not used for lock toggle, treat as normal button press
-                        if not self.enter_key_hold_triggered and hold_duration < 3.0:
+                        if not self.space_key_hold_triggered and hold_duration < 3.0:
                             self._handle_button(ButtonEvent.ON_OFF)
                         
-                        self.enter_key_hold_triggered = False
+                        self.space_key_hold_triggered = False
             
             # Poll for steering wheel control buttons from CAN bus (MS-CAN)
             if self.swc_handler:
                 for swc_button in self.swc_handler.poll_buttons():
                     self._on_swc_button(swc_button)
             
-            # Check for ENTER key hold (3 seconds to toggle navigation lock)
-            if self.enter_key_pressed_time > 0 and not self.enter_key_hold_triggered:
-                hold_duration = time.time() - self.enter_key_pressed_time
+            # Check for SPACE key hold (3 seconds to toggle navigation lock)
+            if self.space_key_pressed_time > 0 and not self.space_key_hold_triggered:
+                hold_duration = time.time() - self.space_key_pressed_time
                 if hold_duration >= 3.0:
                     # Toggle navigation lock
                     if self.swc_handler:
                         self.swc_handler.toggle_nav_lock()
-                        self.enter_key_hold_triggered = True
+                        self.space_key_hold_triggered = True
             
             # Update data source
             if self.settings.demo_mode and not self.sleeping:
@@ -904,7 +904,7 @@ class PiDisplayApp:
         Navigation scheme:
         - UP: RES_PLUS (previous page)
         - DOWN: SET_MINUS (next page)
-        - ENTER: ON_OFF (select / hold 3s to lock)
+        - SPACE: ON_OFF (select / hold 3s to lock)
         """
         mapping = {
             # UP - RES_PLUS: Previous page
@@ -912,7 +912,7 @@ class PiDisplayApp:
             # DOWN - SET_MINUS: Next page
             pygame.K_DOWN: ButtonEvent.SET_MINUS,
             # SELECT - ON_OFF: Select / Hold 3s to toggle lock
-            pygame.K_RETURN: ButtonEvent.ON_OFF,
+            pygame.K_SPACE: ButtonEvent.ON_OFF,
         }
         return mapping.get(key, ButtonEvent.NONE)
     
