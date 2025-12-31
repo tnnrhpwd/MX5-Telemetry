@@ -793,12 +793,6 @@ class PiDisplayApp:
                     if button == ButtonEvent.NONE:
                         if event.key == pygame.K_q:
                             self.show_exit_dialog = True  # Q also shows confirmation
-                        elif event.key == pygame.K_SPACE:
-                            self.sleeping = not self.sleeping
-                        elif event.key == pygame.K_l:
-                            # L key toggles navigation lock (for testing)
-                            if self.swc_handler:
-                                self.swc_handler.toggle_nav_lock()
                     else:
                         self._handle_button(button)
             
@@ -876,24 +870,17 @@ class PiDisplayApp:
         """Map keyboard to SWC buttons (cruise control only)
         
         Navigation scheme:
-        - UP/W: RES_PLUS (previous page / navigate up / increase value)
-        - DOWN/S: SET_MINUS (next page / navigate down / decrease value)
-        - ENTER/SPACE: ON_OFF (select / confirm)
-        - B/BACKSPACE: CANCEL (back / exit edit mode)
+        - UP: RES_PLUS (previous page)
+        - DOWN: SET_MINUS (next page)
+        - ENTER: ON_OFF (select / hold 3s to lock)
         """
         mapping = {
-            # UP - RES_PLUS: Previous page / Navigate up / Increase value
+            # UP - RES_PLUS: Previous page
             pygame.K_UP: ButtonEvent.RES_PLUS,
-            pygame.K_w: ButtonEvent.RES_PLUS,
-            # DOWN - SET_MINUS: Next page / Navigate down / Decrease value
+            # DOWN - SET_MINUS: Next page
             pygame.K_DOWN: ButtonEvent.SET_MINUS,
-            pygame.K_s: ButtonEvent.SET_MINUS,
-            # SELECT - ON_OFF: Select / Confirm edit
+            # SELECT - ON_OFF: Select / Hold 3s to toggle lock
             pygame.K_RETURN: ButtonEvent.ON_OFF,
-            pygame.K_SPACE: ButtonEvent.ON_OFF,
-            # BACK - CANCEL: Back / Exit edit mode
-            pygame.K_b: ButtonEvent.CANCEL,
-            pygame.K_BACKSPACE: ButtonEvent.CANCEL,
         }
         return mapping.get(key, ButtonEvent.NONE)
     
