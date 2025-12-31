@@ -204,14 +204,14 @@ Pi (Central Hub)
    └─────────────────────┘
 ```
 
-| Pin | Signal | Connects To |
-|-----|--------|-------------|
-| 3 | MS-CAN High (125k) | MCP2515 (MS-CAN Pi) CANH |
-| 5 | Ground | Breadboard GND rail → All devices |
-| 6 | HS-CAN High (500k) | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANH |
-| 11 | MS-CAN Low (125k) | MCP2515 (MS-CAN Pi) CANL |
-| 14 | HS-CAN Low (500k) | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANL |
-| 16 | 12V DC | LM2596 → Breadboard 5V rail |
+| Pin | Signal | Connects To | Pi4B Wire Color
+|-----|--------|-------------|----------|
+| 3 | MS-CAN High (125k) | MCP2515 (MS-CAN Pi) CANH | Grey |
+| 5 | Ground | Breadboard GND rail → All devices | Black |
+| 6 | HS-CAN High (500k) | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANH | Green |
+| 11 | MS-CAN Low (125k) | MCP2515 (MS-CAN Pi) CANL | White |
+| 14 | HS-CAN Low (500k) | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANL | Yellow |
+| 16 | 12V DC | LM2596 → Breadboard 5V rail | Red |
 
 ---
 
