@@ -420,10 +420,12 @@ To use CAN on Raspberry Pi with MCP2515:
    pip install python-can
 
 4. Bring up CAN interfaces (if using socketcan):
-   sudo ip link set can0 up type can bitrate 500000
-   sudo ip link set can1 up type can bitrate 125000
+   sudo ip link set can0 up type can bitrate 500000 listen-only on
+   sudo ip link set can1 up type can bitrate 125000 listen-only on
 
 5. Test CAN:
    candump can0
    candump can1
+
+NOTE: listen-only mode prevents transmission to car CAN bus (read-only)
 """
