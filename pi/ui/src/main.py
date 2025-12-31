@@ -1636,6 +1636,32 @@ class PiDisplayApp:
             txt = self.font_tiny.render("LOCKED", True, COLOR_RED)
             self.screen.blit(txt, (lock_x + 18, lock_y - 6))
         
+        # System info (below lock area)
+        info_x = indicator_x - 10
+        info_y = indicator_y + 80
+        
+        # Network IP
+        try:
+            import subprocess
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True)
+            ip_addr = result.stdout.strip().split()[0] if result.stdout.strip() else "N/A"
+        except:
+            ip_addr = "N/A"
+        txt = self.font_tiny.render(f"IP: {ip_addr}", True, COLOR_GRAY)
+        self.screen.blit(txt, (info_x, info_y))
+        
+        # CPU Temperature
+        try:
+            with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
+                cpu_temp_c = int(f.read()) / 1000.0
+                cpu_temp_f = cpu_temp_c * 9/5 + 32
+        except:
+            cpu_temp_c = 0
+            cpu_temp_f = 0
+        temp_color = COLOR_RED if cpu_temp_f > 175 else COLOR_YELLOW if cpu_temp_f > 150 else COLOR_GRAY
+        txt = self.font_tiny.render(f"CPU: {cpu_temp_f:.0f}°F", True, temp_color)
+        self.screen.blit(txt, (info_x, info_y + 15))
+        
         left_panel_x = 20
         left_panel_w = 180
         
@@ -1672,11 +1698,16 @@ class PiDisplayApp:
         self.screen.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 195)))
         
         # Key values grid
+        # Oil pressure: 2008 MX5 NC GT only has pressure present sensor (not PSI)
+        oil_pressure_ok = not self.telemetry.oil_pressure_warning
+        oil_status = "TRUE" if oil_pressure_ok else "FALSE"
+        oil_color = COLOR_GREEN if oil_pressure_ok else COLOR_RED
+        
         values = [
             ("COOL", f"{self.telemetry.coolant_temp_f:.0f}", 
              COLOR_RED if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f else COLOR_TEAL),
-            ("OIL", f"{self.telemetry.oil_temp_f:.0f}",
-             COLOR_RED if self.telemetry.oil_temp_f >= self.settings.oil_warn_f else COLOR_GREEN),
+            ("OIL", oil_status,
+             oil_color),
             ("FUEL", f"{self.telemetry.fuel_level_percent:.0f}%",
              COLOR_RED if self.telemetry.fuel_level_percent < 10 else 
              COLOR_YELLOW if self.telemetry.fuel_level_percent < 20 else COLOR_GREEN),
