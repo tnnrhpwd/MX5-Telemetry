@@ -5,6 +5,7 @@
  */
 
 #include "Display_ST77916.h"
+#include "fonts_hires.h"
 #include <Arduino.h>
 #include <stdlib.h>
 #include <string.h>
@@ -805,6 +806,7 @@ static const uint8_t font_5x7[96][5] = {
 void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     if (c < 32 || c > 127) c = '?';
+    
     if (size == 2) {
         // Use high-res 10x14 font for size 2
         const uint16_t* fontData = font_10x14[c - 32];
@@ -820,9 +822,9 @@ void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, u
         }
     } else if (size >= 3) {
         // Use high-res 15x21 font for size 3 and 4
-        const uint32_t* fontData = font_15x21[c - 32];
+        const uint16_t* fontData = font_15x21[c - 32];
         for (uint8_t row = 0; row < 21; row++) {
-            uint32_t rowData = fontData[row];
+            uint16_t rowData = fontData[row];
             for (uint8_t col = 0; col < 15; col++) {
                 if (rowData & (1 << (14 - col))) {
                     LCD_DrawPixel(x + col, y + row, color);
@@ -850,12 +852,26 @@ void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, u
 void LCD_DrawString(uint16_t x, uint16_t y, const char* str, uint16_t color, uint16_t bg, uint8_t size) {
     while (*str) {
         LCD_DrawChar(x, y, *str++, color, bg, size);
-        x += 6 * size;  // 5 pixel width + 1 space
-        if (x + 6 * size > LCD_WIDTH) {
-            x = 0;
-            y += 8 * size;
+        // Adjust spacing based on actual font size
+        if (size == 2) {
+            x += 11;  // 10px wide + 1px gap
+        } else if (size >= 3) {
+            x += 16;  // 15px wide + 1px gap
+        } else {
+            x += 6;   // 5px wide + 1px gap
         }
-        if (y + 8 * size > LCD_HEIGHT) break;
+        
+        if (x + (size == 2 ? 11 : size >= 3 ? 16 : 6) > LCD_WIDTH) {
+            x = 0;
+            if (size == 2) {
+                y += 14;
+            } else if (size >= 3) {
+                y += 21;
+            } else {
+                y += 8;
+            }
+        }
+        if (y + (size == 2 ? 14 : size >= 3 ? 21 : 8) > LCD_HEIGHT) break;
     }
 }
 
