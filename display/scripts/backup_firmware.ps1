@@ -103,31 +103,42 @@ $FlashSizeBytes = switch ($FlashSize) {
 
 # Check if esptool is available
 $esptoolPath = $null
+$esptoolCmd = $null
 
-# Try PlatformIO's esptool first
-$pioEsptool = Join-Path $env:USERPROFILE ".platformio\packages\tool-esptoolpy\esptool.py"
-$pioEsptoolExe = Join-Path $env:USERPROFILE ".platformio\packages\tool-esptoolpy\esptool.exe"
-
-if (Test-Path $pioEsptoolExe) {
-    $esptoolPath = $pioEsptoolExe
-    Write-Host "[OK] Using PlatformIO esptool: $esptoolPath" -ForegroundColor Green
-}
-elseif (Test-Path $pioEsptool) {
-    $esptoolPath = "python `"$pioEsptool`""
-    Write-Host "[OK] Using PlatformIO esptool.py: $pioEsptool" -ForegroundColor Green
+# Try project venv's esptool first
+$projectRoot = Join-Path $PSScriptRoot "..\.."
+$venvPython = Join-Path $projectRoot "venv\Scripts\python.exe"
+if (Test-Path $venvPython) {
+    $esptoolPath = $venvPython
+    $esptoolCmd = "& `"$venvPython`" -m esptool"
+    Write-Host "[OK] Using project venv esptool: $venvPython" -ForegroundColor Green
 }
 else {
-    # Try system esptool
-    $systemEsptool = Get-Command esptool.py -ErrorAction SilentlyContinue
-    if ($systemEsptool) {
-        $esptoolPath = "esptool.py"
-        Write-Host "[OK] Using system esptool.py" -ForegroundColor Green
+    # Try PlatformIO's esptool
+    $pioEsptool = Join-Path $env:USERPROFILE ".platformio\packages\tool-esptoolpy\esptool.py"
+    $pioEsptoolExe = Join-Path $env:USERPROFILE ".platformio\packages\tool-esptoolpy\esptool.exe"
+
+    if (Test-Path $pioEsptoolExe) {
+        $esptoolCmd = "& `"$pioEsptoolExe`""
+        Write-Host "[OK] Using PlatformIO esptool: $pioEsptoolExe" -ForegroundColor Green
+    }
+    elseif (Test-Path $pioEsptool) {
+        $esptoolCmd = "& python `"$pioEsptool`""
+        Write-Host "[OK] Using PlatformIO esptool.py: $pioEsptool" -ForegroundColor Green
     }
     else {
-        Write-Host "[ERROR] esptool not found!" -ForegroundColor Red
-        Write-Host "        Install with: pip install esptool" -ForegroundColor Yellow
-        Write-Host "        Or run: pio pkg install -g tool-esptoolpy" -ForegroundColor Yellow
-        exit 1
+        # Try system esptool
+        $systemEsptool = Get-Command esptool.py -ErrorAction SilentlyContinue
+        if ($systemEsptool) {
+            $esptoolCmd = "esptool.py"
+            Write-Host "[OK] Using system esptool.py" -ForegroundColor Green
+        }
+        else {
+            Write-Host "[ERROR] esptool not found!" -ForegroundColor Red
+            Write-Host "        Install with: pip install esptool" -ForegroundColor Yellow
+            Write-Host "        Or run: pio pkg install -g tool-esptoolpy" -ForegroundColor Yellow
+            exit 1
+        }
     }
 }
 
@@ -139,7 +150,7 @@ Write-Host ""
 # Read flash info first
 Write-Host "Step 1/4: Reading flash information..." -ForegroundColor Cyan
 $flashInfoFile = Join-Path $BackupPath "flash_info.txt"
-$cmd = "$esptoolPath --port $ComPort --chip esp32s3 flash_id"
+$cmd = "$esptoolCmd --port $ComPort --chip esp32s3 flash_id"
 Write-Host "  Command: $cmd" -ForegroundColor DarkGray
 Invoke-Expression $cmd | Tee-Object -FilePath $flashInfoFile
 
@@ -148,7 +159,7 @@ Write-Host ""
 # Read MAC address
 Write-Host "Step 2/4: Reading device information..." -ForegroundColor Cyan
 $deviceInfoFile = Join-Path $BackupPath "device_info.txt"
-$cmd = "$esptoolPath --port $ComPort --chip esp32s3 chip_id"
+$cmd = "$esptoolCmd --port $ComPort --chip esp32s3 chip_id"
 Invoke-Expression $cmd | Tee-Object -FilePath $deviceInfoFile
 
 Write-Host ""
@@ -156,7 +167,7 @@ Write-Host ""
 # Backup complete flash
 Write-Host "Step 3/4: Backing up complete flash ($FlashSize)..." -ForegroundColor Cyan
 $flashBackupFile = Join-Path $BackupPath "flash_backup_full.bin"
-$cmd = "$esptoolPath --port $ComPort --chip esp32s3 --baud 921600 read_flash 0x0 $FlashSizeBytes `"$flashBackupFile`""
+$cmd = "$esptoolCmd --port $ComPort --chip esp32s3 --baud 921600 read_flash 0x0 $FlashSizeBytes `"$flashBackupFile`""
 Write-Host "  Command: $cmd" -ForegroundColor DarkGray
 Write-Host "  This will take a few minutes..." -ForegroundColor Yellow
 Invoke-Expression $cmd
@@ -168,19 +179,19 @@ Write-Host "Step 4/4: Backing up individual partitions..." -ForegroundColor Cyan
 
 # Bootloader (usually at 0x0 or 0x1000 for ESP32-S3)
 $bootloaderFile = Join-Path $BackupPath "bootloader.bin"
-$cmd = "$esptoolPath --port $ComPort --chip esp32s3 --baud 921600 read_flash 0x0 0x8000 `"$bootloaderFile`""
+$cmd = "$esptoolCmd --port $ComPort --chip esp32s3 --baud 921600 read_flash 0x0 0x8000 `"$bootloaderFile`""
 Write-Host "  Bootloader..." -ForegroundColor White
 Invoke-Expression $cmd
 
 # Partition table (at 0x8000)
 $partitionFile = Join-Path $BackupPath "partition_table.bin"
-$cmd = "$esptoolPath --port $ComPort --chip esp32s3 --baud 921600 read_flash 0x8000 0x1000 `"$partitionFile`""
+$cmd = "$esptoolCmd --port $ComPort --chip esp32s3 --baud 921600 read_flash 0x8000 0x1000 `"$partitionFile`""
 Write-Host "  Partition table..." -ForegroundColor White
 Invoke-Expression $cmd
 
 # Application (at 0x10000, 3MB)
 $appFile = Join-Path $BackupPath "application.bin"
-$cmd = "$esptoolPath --port $ComPort --chip esp32s3 --baud 921600 read_flash 0x10000 0x300000 `"$appFile`""
+$cmd = "$esptoolCmd --port $ComPort --chip esp32s3 --baud 921600 read_flash 0x10000 0x300000 `"$appFile`""
 Write-Host "  Application (may take a minute)..." -ForegroundColor White
 Invoke-Expression $cmd
 
