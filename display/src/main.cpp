@@ -2532,6 +2532,19 @@ void parseCommand(String cmd) {
         }
         telemetry.connected = true;
     }
+    // Per-tire temperatures from Pi (format: TIRE_TEMP:FL,FR,RL,RR in Fahrenheit)
+    else if (cmd.startsWith("TIRE_TEMP:")) {
+        String tempData = cmd.substring(10);
+        int idx = 0;
+        int start = 0;
+        for (int i = 0; i <= tempData.length() && idx < 4; i++) {
+            if (i == tempData.length() || tempData[i] == ',') {
+                telemetry.tireTemp[idx++] = tempData.substring(start, i).toFloat();
+                start = i + 1;
+            }
+        }
+        telemetry.connected = true;
+    }
     // Per-tire timestamps from Pi (format: TIRE_TIME:HH:MM:SS,HH:MM:SS,HH:MM:SS,HH:MM:SS)
     else if (cmd.startsWith("TIRE_TIME:")) {
         String timeData = cmd.substring(10);

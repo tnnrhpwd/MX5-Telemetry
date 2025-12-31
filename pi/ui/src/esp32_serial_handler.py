@@ -603,6 +603,21 @@ class ESP32SerialHandler:
                 diag_msg += f"{int(self.telemetry.headlights_on)},{int(self.telemetry.high_beams_on)}\n"
                 self.serial_conn.write(diag_msg.encode('utf-8'))
                 
+                # Send tire pressure data from cache (FL, FR, RL, RR)
+                tire_msg = f"TIRE:{self.telemetry.tire_pressure[0]:.1f},{self.telemetry.tire_pressure[1]:.1f},"
+                tire_msg += f"{self.telemetry.tire_pressure[2]:.1f},{self.telemetry.tire_pressure[3]:.1f}\n"
+                self.serial_conn.write(tire_msg.encode('utf-8'))
+                
+                # Send tire temperature data from cache (FL, FR, RL, RR in Fahrenheit)
+                tire_temp_msg = f"TIRE_TEMP:{self.telemetry.tire_temp[0]:.1f},{self.telemetry.tire_temp[1]:.1f},"
+                tire_temp_msg += f"{self.telemetry.tire_temp[2]:.1f},{self.telemetry.tire_temp[3]:.1f}\n"
+                self.serial_conn.write(tire_temp_msg.encode('utf-8'))
+                
+                # Send tire timestamps (HH:MM:SS per tire)
+                tire_time_msg = f"TIRE_TIME:{self.tpms_last_update_str[0]},{self.tpms_last_update_str[1]},"
+                tire_time_msg += f"{self.tpms_last_update_str[2]},{self.tpms_last_update_str[3]}\n"
+                self.serial_conn.write(tire_time_msg.encode('utf-8'))
+                
                 # Flush all at once
                 self.serial_conn.flush()
                 self.last_tx_time = time.time()
