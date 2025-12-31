@@ -83,17 +83,19 @@ cat > "$CAN_SCRIPT" << 'EOF'
 sleep 2
 
 # Bring up HS-CAN (500kbps) - Engine data, RPM, Speed
+# LISTEN-ONLY mode for production (no transmission to car CAN bus)
 if ip link show can0 > /dev/null 2>&1; then
-    ip link set can0 up type can bitrate 500000
-    echo "can0 (HS-CAN) up at 500kbps"
+    ip link set can0 up type can bitrate 500000 listen-only on
+    echo "can0 (HS-CAN) up at 500kbps (listen-only)"
 else
     echo "can0 not found - check MCP2515 wiring"
 fi
 
 # Bring up MS-CAN (125kbps) - Steering wheel buttons, body data
+# LISTEN-ONLY mode for production (no transmission to car CAN bus)
 if ip link show can1 > /dev/null 2>&1; then
-    ip link set can1 up type can bitrate 125000
-    echo "can1 (MS-CAN) up at 125kbps"
+    ip link set can1 up type can bitrate 125000 listen-only on
+    echo "can1 (MS-CAN) up at 125kbps (listen-only)"
 else
     echo "can1 not found - check MCP2515 wiring"
 fi
@@ -162,6 +164,8 @@ echo "     ip link show can1"
 echo "  3. Test with car (ignition on):"
 echo "     candump can0  # Should see HS-CAN traffic"
 echo "     candump can1  # Should see MS-CAN traffic"
+echo ""
+echo "NOTE: Interfaces configured in LISTEN-ONLY mode (no TX to car)"
 echo ""
 echo "To manually bring up CAN interfaces:"
 echo "  sudo /usr/local/bin/mx5-can-setup.sh"
