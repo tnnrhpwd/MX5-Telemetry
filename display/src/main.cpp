@@ -1039,7 +1039,8 @@ void drawOverviewScreen() {
     
     // Box 1: COOLANT (top-left)
     uint16_t coolColor = MX5_CYAN;
-    if (telemetry.coolantTemp > 220) coolColor = MX5_RED;
+    if (telemetry.coolantTemp == 0) coolColor = MX5_RED;  // No data received
+    else if (telemetry.coolantTemp > 220) coolColor = MX5_RED;
     else if (telemetry.coolantTemp > 200) coolColor = MX5_ORANGE;
     LCD_FillRoundRect(gridStartX, gridStartY, boxW, boxH, 4, COLOR_BG_CARD);
     LCD_FillRect(gridStartX, gridStartY, 3, boxH, coolColor);
