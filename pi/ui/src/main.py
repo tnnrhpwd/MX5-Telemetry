@@ -810,14 +810,22 @@ class PiDisplayApp:
                 elif event.type == pygame.KEYUP:
                     # Handle SPACE key release
                     if event.key == pygame.K_SPACE:
-                        hold_duration = time.time() - self.space_key_pressed_time if self.space_key_pressed_time > 0 else 0
-                        self.space_key_pressed_time = 0
-                        
-                        # If released before 3 seconds and not used for lock toggle, treat as normal button press
-                        if not self.space_key_hold_triggered and hold_duration < 3.0:
-                            self._handle_button(ButtonEvent.ON_OFF)
-                        
-                        self.space_key_hold_triggered = False
+                        try:
+                            hold_duration = time.time() - self.space_key_pressed_time if self.space_key_pressed_time > 0 else 0
+                            self.space_key_pressed_time = 0
+                            
+                            print(f"DEBUG: SPACE released, hold_duration={hold_duration:.2f}s, hold_triggered={self.space_key_hold_triggered}")
+                            
+                            # If released before 3 seconds and not used for lock toggle, treat as normal button press
+                            if not self.space_key_hold_triggered and hold_duration < 3.0:
+                                print(f"DEBUG: Calling _handle_button(ButtonEvent.ON_OFF)")
+                                self._handle_button(ButtonEvent.ON_OFF)
+                            
+                            self.space_key_hold_triggered = False
+                        except Exception as e:
+                            print(f"ERROR in SPACE KEYUP handler: {e}")
+                            import traceback
+                            traceback.print_exc()
             
             # Poll for steering wheel control buttons from CAN bus (MS-CAN)
             if self.swc_handler:
@@ -931,9 +939,15 @@ class PiDisplayApp:
         Cruise control navigation scheme:
         - RES_PLUS (UP): Previous screen
         - SET_MINUS (DOWN): Next screen
+        - ON_OFF: No action (used only for lap timer and settings)
         - CANCEL: Go to Overview screen
         """
         screens = list(Screen)
+        
+        # ON_OFF button does nothing on navigation screens (only used in settings/lap timer)
+        if button == ButtonEvent.ON_OFF:
+            print(f"DEBUG: ON_OFF pressed on {self.current_screen.name} - ignoring")
+            return
         
         # Determine target screen based on button
         if button == ButtonEvent.RES_PLUS:
