@@ -72,6 +72,7 @@ class MSCanID:
     # Only cruise control buttons are available via CAN
     SWC_CRUISE = 0x250          # Steering wheel cruise buttons (only readable SWC)
     LIGHTING = 0x290            # Headlights, turn signals
+    LIGHTING_STATUS = 0x4A0     # Additional lighting status (headlights, high beams)
     CLIMATE = 0x350             # AC status
     DOORS = 0x430               # Door ajar status
     ODOMETER = 0x450            # Odometer reading
@@ -200,6 +201,20 @@ class CANParser:
         if len(data) >= 1:
             return bool(data[0] & 0x08)  # Brake bit
         return False
+    
+    @staticmethod
+    def parse_headlights(data: bytes) -> tuple:
+        """Parse headlight status from lighting message
+        Returns: (headlights_on, high_beams_on)
+        """
+        if len(data) >= 2:
+            # Byte 0 typically has headlight status
+            # Byte 1 typically has high beam status
+            # Exact bit positions may need adjustment based on actual CAN data
+            headlights_on = bool(data[0] & 0x01)  # Bit 0 for headlights
+            high_beams_on = bool(data[1] & 0x01)  # Bit 0 of byte 1 for high beams
+            return (headlights_on, high_beams_on)
+        return (False, False)
 
 
 # =============================================================================
@@ -383,7 +398,12 @@ class CANHandler:
                 self.swc_handler.process_can_message(can_id, data)
         
         # Lighting status
-        elif can_id == MSCanID.LIGHTING:
+        elif can_id == MSCanID.LIGHTING or can_id == MSCanID.LIGHTING_STATUS:
+            # Parse headlight status
+            headlights, high_beams = CANParser.parse_headlights(data)
+            self.telemetry.headlights_on = headlights
+            self.telemetry.high_beams_on = high_beams
+            # Legacy fields (kept for compatibility)
             if len(data) >= 1:
                 self.telemetry.high_beam_on = bool(data[0] & 0x02)
                 self.telemetry.fog_light_on = bool(data[0] & 0x04)

@@ -599,7 +599,8 @@ class ESP32SerialHandler:
                 
                 # Send diagnostics (less frequently important)
                 diag_msg = f"DIAG:{int(self.telemetry.check_engine_light)},{int(self.telemetry.abs_warning)},"
-                diag_msg += f"{int(self.telemetry.oil_pressure_warning)},{int(self.telemetry.battery_warning)}\n"
+                diag_msg += f"{int(self.telemetry.oil_pressure_warning)},{int(self.telemetry.battery_warning)},"
+                diag_msg += f"{int(self.telemetry.headlights_on)},{int(self.telemetry.high_beams_on)}\n"
                 self.serial_conn.write(diag_msg.encode('utf-8'))
                 
                 # Flush all at once

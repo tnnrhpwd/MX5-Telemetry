@@ -179,6 +179,10 @@ class TelemetryData:
     high_beam_on: bool = False
     fog_light_on: bool = False
     
+    # Headlight indicators
+    headlights_on: bool = False      # Low beams active
+    high_beams_on: bool = False      # High beams active
+    
     # DTC codes
     dtc_codes: List[str] = field(default_factory=list)
     dtc_count: int = 0
@@ -1573,6 +1577,22 @@ class PiDisplayApp:
         """Overview screen - matches simulator exactly"""
         alerts = self._get_alerts()
         TOP = 55
+        
+        # Headlight indicators (top right)
+        indicator_x = PI_WIDTH - 140
+        indicator_y = TOP - 40
+        
+        # Low beam indicator
+        headlight_color = COLOR_GREEN if self.telemetry.headlights_on else COLOR_DARK_GRAY
+        pygame.draw.circle(self.screen, headlight_color, (indicator_x, indicator_y), 12)
+        txt = self.font_tiny.render("💡", True, COLOR_WHITE if self.telemetry.headlights_on else COLOR_GRAY)
+        self.screen.blit(txt, txt.get_rect(center=(indicator_x, indicator_y)))
+        
+        # High beam indicator
+        highbeam_color = COLOR_BLUE if self.telemetry.high_beams_on else COLOR_DARK_GRAY
+        pygame.draw.circle(self.screen, highbeam_color, (indicator_x + 40, indicator_y), 12)
+        txt = self.font_tiny.render("☀", True, COLOR_WHITE if self.telemetry.high_beams_on else COLOR_GRAY)
+        self.screen.blit(txt, txt.get_rect(center=(indicator_x + 40, indicator_y)))
         
         left_panel_x = 20
         left_panel_w = 180
