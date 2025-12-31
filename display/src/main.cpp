@@ -99,6 +99,9 @@ struct TelemetryData {
     bool absWarning;
     bool oilWarning;
     bool batteryWarning;
+    // Headlight indicators
+    bool headlightsOn;       // Low beams active
+    bool highBeamsOn;        // High beams active
 };
 
 TelemetryData telemetry = {0};
@@ -1093,6 +1096,22 @@ void drawOverviewScreen() {
     LCD_FillCircle(comX, statusCenterY, 8, connColor);
     LCD_DrawCircle(comX, statusCenterY, 8, MX5_WHITE);
     LCD_DrawString(comX - 9, statusCenterY + 12, "COM", MX5_GRAY, COLOR_BG, 1);
+    
+    // === HEADLIGHT INDICATORS (Top right, next to gear) ===
+    int headlightY = 50;
+    int headlightX = CENTER_X + 90;
+    
+    // Headlights (low beam)
+    uint16_t headlightColor = telemetry.headlightsOn ? MX5_GREEN : MX5_DARKGRAY;
+    LCD_FillCircle(headlightX, headlightY, 10, headlightColor);
+    LCD_DrawCircle(headlightX, headlightY, 10, MX5_WHITE);
+    LCD_DrawString(headlightX - 6, headlightY - 4, "H", MX5_WHITE, headlightColor, 1);
+    
+    // High beams
+    uint16_t highBeamColor = telemetry.highBeamsOn ? MX5_CYAN : MX5_DARKGRAY;
+    LCD_FillCircle(headlightX, headlightY + 28, 10, highBeamColor);
+    LCD_DrawCircle(headlightX, headlightY + 28, 10, MX5_WHITE);
+    LCD_DrawString(headlightX - 6, headlightY + 24, "B", MX5_WHITE, highBeamColor, 1);
     
     // Navigation Lock indicator (below connection status when locked)
     if (navLocked) {
@@ -2543,23 +2562,28 @@ void parseCommand(String cmd) {
         telemetry.engineRunning = (cmd.substring(7).toInt() == 1);
         telemetry.connected = true;
     }
-    // Diagnostics update from Pi (format: DIAG:checkEngine,abs,oilWarn,battery)
+    // Diagnostics update from Pi (format: DIAG:checkEngine,abs,oilWarn,battery,headlights,highBeams)
     else if (cmd.startsWith("DIAG:")) {
         String data = cmd.substring(5);
         int idx = 0;
-        int values[4] = {0};
+        int values[6] = {0};  // Extended to 6 values for headlight indicators
         int start = 0;
-        for (int i = 0; i <= data.length() && idx < 4; i++) {
+        for (int i = 0; i <= data.length() && idx < 6; i++) {
             if (i == data.length() || data[i] == ',') {
                 values[idx++] = data.substring(start, i).toInt();
                 start = i + 1;
             }
         }
-        if (idx >= 4) {
+        if (idx >= 4) {  // At least 4 fields required (original protocol)
             telemetry.checkEngine = values[0] != 0;
             telemetry.absWarning = values[1] != 0;
             telemetry.oilWarning = values[2] != 0;
             telemetry.batteryWarning = values[3] != 0;
+            // New headlight indicators (backwards compatible)
+            if (idx >= 6) {
+                telemetry.headlightsOn = values[4] != 0;
+                telemetry.highBeamsOn = values[5] != 0;
+            }
             telemetry.connected = true;
             telemetry.hasDiagnosticData = true;  // Mark that we have real diagnostic data
             needsRedraw = true;
