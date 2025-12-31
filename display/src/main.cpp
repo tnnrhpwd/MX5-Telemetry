@@ -2398,6 +2398,10 @@ void parseCommand(String cmd) {
     // LEFT/RIGHT also supported as alternatives
     if (cmd == "UP" || cmd == "up") {
         // UP - Previous screen (matches RES_PLUS button)
+        if (navLocked) {
+            Serial.println("NAV_LOCKED:Ignored UP");
+            return;
+        }
         if (isTransitioning()) {
             currentScreen = transitionToScreen;
             currentTransition = TRANSITION_NONE;
@@ -2411,6 +2415,10 @@ void parseCommand(String cmd) {
     }
     else if (cmd == "DOWN" || cmd == "down") {
         // DOWN - Next screen (matches SET_MINUS button)
+        if (navLocked) {
+            Serial.println("NAV_LOCKED:Ignored DOWN");
+            return;
+        }
         if (isTransitioning()) {
             currentScreen = transitionToScreen;
             currentTransition = TRANSITION_NONE;
@@ -2424,6 +2432,10 @@ void parseCommand(String cmd) {
     }
     else if (cmd == "LEFT" || cmd == "left" || cmd == "l") {
         // LEFT - Also next screen (alternative)
+        if (navLocked) {
+            Serial.println("NAV_LOCKED:Ignored LEFT");
+            return;
+        }
         if (isTransitioning()) {
             currentScreen = transitionToScreen;
             currentTransition = TRANSITION_NONE;
@@ -2437,6 +2449,10 @@ void parseCommand(String cmd) {
     }
     else if (cmd == "RIGHT" || cmd == "right" || cmd == "r") {
         // RIGHT - Also previous screen (alternative)
+        if (navLocked) {
+            Serial.println("NAV_LOCKED:Ignored RIGHT");
+            return;
+        }
         if (isTransitioning()) {
             currentScreen = transitionToScreen;
             currentTransition = TRANSITION_NONE;
@@ -2455,6 +2471,10 @@ void parseCommand(String cmd) {
     }
     else if (cmd == "BACK" || cmd == "back") {
         // BACK - Go to Overview (matches CANCEL button)
+        if (navLocked) {
+            Serial.println("NAV_LOCKED:Ignored BACK");
+            return;
+        }
         if (isTransitioning()) {
             currentScreen = transitionToScreen;
             currentTransition = TRANSITION_NONE;
