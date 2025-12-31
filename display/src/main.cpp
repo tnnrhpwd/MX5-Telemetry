@@ -1048,14 +1048,14 @@ void drawOverviewScreen() {
     LCD_DrawString(gridStartX + 6, gridStartY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
     
     // Box 2: OIL PRESSURE (top-right)
-    uint16_t oilColor = MX5_GREEN;
-    if (telemetry.oilPressure < 20) oilColor = MX5_RED;
-    else if (telemetry.oilPressure < 30) oilColor = MX5_ORANGE;
+    // 2008 MX5 NC GT only has pressure present sensor (not PSI)
+    // oilWarning = true means NO oil pressure (FALSE), false means pressure present (TRUE)
+    bool oilPressurePresent = !telemetry.oilWarning;
+    uint16_t oilColor = oilPressurePresent ? MX5_GREEN : MX5_RED;
     LCD_FillRoundRect(gridStartX + boxW + boxGap, gridStartY, boxW, boxH, 4, COLOR_BG_CARD);
     LCD_FillRect(gridStartX + boxW + boxGap, gridStartY, 3, boxH, oilColor);
     LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
-    char oilStr[8];
-    snprintf(oilStr, sizeof(oilStr), "%dp", (int)telemetry.oilPressure);
+    const char* oilStr = oilPressurePresent ? "TRUE" : "FALSE";
     LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + 16, oilStr, oilColor, COLOR_BG_CARD, 2);
     
     // Box 3: FUEL (bottom-left)

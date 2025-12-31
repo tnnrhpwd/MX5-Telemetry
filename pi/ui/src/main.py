@@ -1699,9 +1699,11 @@ class PiDisplayApp:
         
         # Key values grid
         # Oil pressure: 2008 MX5 NC GT only has pressure present sensor (not PSI)
-        oil_pressure_ok = not self.telemetry.oil_pressure_warning
-        oil_status = "TRUE" if oil_pressure_ok else "FALSE"
-        oil_color = COLOR_GREEN if oil_pressure_ok else COLOR_RED
+        # oil_pressure_warning = True means NO oil pressure (FALSE)
+        # oil_pressure_warning = False means oil pressure present (TRUE)
+        oil_pressure_present = not self.telemetry.oil_pressure_warning
+        oil_status = "TRUE" if oil_pressure_present else "FALSE"
+        oil_color = COLOR_GREEN if oil_pressure_present else COLOR_RED
         
         values = [
             ("COOL", f"{self.telemetry.coolant_temp_f:.0f}", 
