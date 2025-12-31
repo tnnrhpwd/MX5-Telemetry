@@ -1585,13 +1585,13 @@ class PiDisplayApp:
         # Low beam indicator
         headlight_color = COLOR_GREEN if self.telemetry.headlights_on else COLOR_DARK_GRAY
         pygame.draw.circle(self.screen, headlight_color, (indicator_x, indicator_y), 12)
-        txt = self.font_tiny.render("💡", True, COLOR_WHITE if self.telemetry.headlights_on else COLOR_GRAY)
+        txt = self.font_tiny.render("LO", True, COLOR_WHITE if self.telemetry.headlights_on else COLOR_GRAY)
         self.screen.blit(txt, txt.get_rect(center=(indicator_x, indicator_y)))
         
         # High beam indicator
         highbeam_color = COLOR_BLUE if self.telemetry.high_beams_on else COLOR_DARK_GRAY
         pygame.draw.circle(self.screen, highbeam_color, (indicator_x + 40, indicator_y), 12)
-        txt = self.font_tiny.render("☀", True, COLOR_WHITE if self.telemetry.high_beams_on else COLOR_GRAY)
+        txt = self.font_tiny.render("HI", True, COLOR_WHITE if self.telemetry.high_beams_on else COLOR_GRAY)
         self.screen.blit(txt, txt.get_rect(center=(indicator_x + 40, indicator_y)))
         
         left_panel_x = 20
