@@ -802,6 +802,26 @@ static const uint8_t font_5x7[96][5] = {
     {0x00,0x00,0x00,0x00,0x00}  // DEL
 };
 
+// Helper function to blend two RGB565 colors
+uint16_t blendColor(uint16_t fg, uint16_t bg, uint8_t alpha) {
+    // Extract RGB components from RGB565
+    uint8_t r1 = (fg >> 11) & 0x1F;
+    uint8_t g1 = (fg >> 5) & 0x3F;
+    uint8_t b1 = fg & 0x1F;
+    
+    uint8_t r2 = (bg >> 11) & 0x1F;
+    uint8_t g2 = (bg >> 5) & 0x3F;
+    uint8_t b2 = bg & 0x1F;
+    
+    // Blend using alpha (0-255)
+    uint8_t r = ((r1 * alpha) + (r2 * (255 - alpha))) / 255;
+    uint8_t g = ((g1 * alpha) + (g2 * (255 - alpha))) / 255;
+    uint8_t b = ((b1 * alpha) + (b2 * (255 - alpha))) / 255;
+    
+    // Combine back to RGB565
+    return (r << 11) | (g << 5) | b;
+}
+
 void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     if (c < 32 || c > 127) c = '?';
@@ -813,7 +833,33 @@ void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, u
                 if (size == 1) {
                     LCD_DrawPixel(x + i, y + j, color);
                 } else {
+                    // Anti-aliased rendering for scaled fonts
                     LCD_FillRect(x + i * size, y + j * size, size, size, color);
+                    
+                    // Add edge anti-aliasing for sizes > 1
+                    if (size >= 2) {
+                        // Check if edges should be anti-aliased
+                        bool leftEdge = !(line & 0x02);  // Previous bit not set
+                        bool rightEdge = (i == 4) || !(font_5x7[c - 32][i + 1] & (1 << j));
+                        bool topEdge = !(line & (1 << (j - 1)));
+                        bool bottomEdge = !(line & (1 << (j + 1)));
+                        
+                        // Apply anti-aliasing to edges
+                        uint16_t edgeColor = blendColor(color, bg, 128);
+                        
+                        if (leftEdge && i > 0) {
+                            LCD_DrawPixel(x + i * size - 1, y + j * size + size / 2, edgeColor);
+                        }
+                        if (rightEdge) {
+                            LCD_DrawPixel(x + i * size + size, y + j * size + size / 2, edgeColor);
+                        }
+                        if (topEdge && j > 0) {
+                            LCD_DrawPixel(x + i * size + size / 2, y + j * size - 1, edgeColor);
+                        }
+                        if (bottomEdge) {
+                            LCD_DrawPixel(x + i * size + size / 2, y + j * size + size, edgeColor);
+                        }
+                    }
                 }
             } else if (bg != color) {
                 if (size == 1) {
