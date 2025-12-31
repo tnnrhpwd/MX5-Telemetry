@@ -706,7 +706,7 @@ class ESP32SerialHandler:
         """Send settings selection index to ESP32 for hover sync"""
         if not self.serial_conn or not self._running or not self.connected:
             return
-        
+
         try:
             msg = f"SELECTION:{index}\n"
             self.serial_conn.write(msg.encode('utf-8'))
@@ -714,6 +714,19 @@ class ESP32SerialHandler:
         except Exception as e:
             print(f"ESP32 serial write error: {e}")
     
+    def send_nav_lock(self, locked: bool):
+        """Send navigation lock state to ESP32 for visual indicator"""
+        if not self.serial_conn or not self._running or not self.connected:
+            return
+        
+        try:
+            msg = f"NAVLOCK:{1 if locked else 0}\n"
+            self.serial_conn.write(msg.encode('utf-8'))
+            self.last_tx_time = time.time()
+            print(f"ESP32: Sent NAVLOCK:{1 if locked else 0}")
+        except Exception as e:
+            print(f"ESP32 serial write error: {e}")
+
     def send_all_settings(self, settings):
         """
         Send all settings to ESP32 for full synchronization.
