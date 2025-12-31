@@ -2431,59 +2431,28 @@ void parseCommand(String cmd) {
         Serial.println("OK:SCREEN_NEXT");
     }
     else if (cmd == "LEFT" || cmd == "left" || cmd == "l") {
-        // LEFT - Also next screen (alternative)
-        if (navLocked) {
-            Serial.println("NAV_LOCKED:Ignored LEFT");
-            return;
-        }
-        if (isTransitioning()) {
-            currentScreen = transitionToScreen;
-            currentTransition = TRANSITION_NONE;
-        }
-        ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
-        currentScreen = nextScreen;
-        needsRedraw = true;
-        needsFullRedraw = true;
-        telemetry.connected = true;
-        Serial.println("OK:SCREEN_NEXT");
+        // LEFT - DISABLED (not a cruise control button)
+        Serial.println("IGNORED:LEFT command disabled (not cruise control)");
+        return;
     }
     else if (cmd == "RIGHT" || cmd == "right" || cmd == "r") {
-        // RIGHT - Also previous screen (alternative)
-        if (navLocked) {
-            Serial.println("NAV_LOCKED:Ignored RIGHT");
-            return;
-        }
-        if (isTransitioning()) {
-            currentScreen = transitionToScreen;
-            currentTransition = TRANSITION_NONE;
-        }
-        ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
-        currentScreen = prevScreen;
-        needsRedraw = true;
-        needsFullRedraw = true;
-        telemetry.connected = true;
-        Serial.println("OK:SCREEN_PREV");
+        // RIGHT - DISABLED (not a cruise control button)
+        Serial.println("IGNORED:RIGHT command disabled (not cruise control)");
+        return;
     }
     else if (cmd == "SELECT" || cmd == "select" || cmd == "CLICK" || cmd == "click" || cmd == "c") {
         // SELECT/CLICK - Confirm action (matches ON_OFF button)
+        if (navLocked) {
+            Serial.println("NAV_LOCKED:Ignored SELECT");
+            return;
+        }
         telemetry.connected = true;
         Serial.println("OK:SELECT");
     }
     else if (cmd == "BACK" || cmd == "back") {
-        // BACK - Go to Overview (matches CANCEL button)
-        if (navLocked) {
-            Serial.println("NAV_LOCKED:Ignored BACK");
-            return;
-        }
-        if (isTransitioning()) {
-            currentScreen = transitionToScreen;
-            currentTransition = TRANSITION_NONE;
-        }
-        currentScreen = SCREEN_OVERVIEW;
-        needsRedraw = true;
-        needsFullRedraw = true;
-        telemetry.connected = true;
-        Serial.println("OK:BACK");
+        // BACK - DISABLED (not a cruise control button)
+        Serial.println("IGNORED:BACK command disabled (not cruise control)");
+        return;
     }
     // Direct screen selection - immediate change (no transition for serial commands)
     else if (cmd.startsWith("SCREEN:") || cmd.startsWith("screen:")) {
