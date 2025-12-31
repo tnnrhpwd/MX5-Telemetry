@@ -1097,21 +1097,23 @@ void drawOverviewScreen() {
     LCD_DrawCircle(comX, statusCenterY, 8, MX5_WHITE);
     LCD_DrawString(comX - 9, statusCenterY + 12, "COM", MX5_GRAY, COLOR_BG, 1);
     
-    // === HEADLIGHT INDICATORS (Top right, next to gear) ===
+    // === HEADLIGHT INDICATORS (Top right, next to gear) - only show when active ===
     int headlightY = 50;
     int headlightX = CENTER_X + 90;
     
-    // Headlights (low beam)
-    uint16_t headlightColor = telemetry.headlightsOn ? MX5_GREEN : MX5_DARKGRAY;
-    LCD_FillCircle(headlightX, headlightY, 10, headlightColor);
-    LCD_DrawCircle(headlightX, headlightY, 10, MX5_WHITE);
-    LCD_DrawString(headlightX - 6, headlightY - 4, "H", MX5_WHITE, headlightColor, 1);
+    // Headlights (low beam) - only show when on
+    if (telemetry.headlightsOn) {
+        LCD_FillCircle(headlightX, headlightY, 10, MX5_GREEN);
+        LCD_DrawCircle(headlightX, headlightY, 10, MX5_WHITE);
+        LCD_DrawString(headlightX - 6, headlightY - 4, "H", MX5_WHITE, MX5_GREEN, 1);
+    }
     
-    // High beams
-    uint16_t highBeamColor = telemetry.highBeamsOn ? MX5_CYAN : MX5_DARKGRAY;
-    LCD_FillCircle(headlightX, headlightY + 28, 10, highBeamColor);
-    LCD_DrawCircle(headlightX, headlightY + 28, 10, MX5_WHITE);
-    LCD_DrawString(headlightX - 6, headlightY + 24, "B", MX5_WHITE, highBeamColor, 1);
+    // High beams - only show when on
+    if (telemetry.highBeamsOn) {
+        LCD_FillCircle(headlightX, headlightY + 28, 10, MX5_CYAN);
+        LCD_DrawCircle(headlightX, headlightY + 28, 10, MX5_WHITE);
+        LCD_DrawString(headlightX - 6, headlightY + 24, "B", MX5_WHITE, MX5_CYAN, 1);
+    }
     
     // Navigation Lock indicator (below connection status when locked)
     if (navLocked) {
