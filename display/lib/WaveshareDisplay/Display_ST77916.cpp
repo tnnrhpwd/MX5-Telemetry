@@ -5,6 +5,7 @@
  */
 
 #include "Display_ST77916.h"
+#include "fonts_hires.h"
 #include <Arduino.h>
 #include <stdlib.h>
 #include <string.h>
@@ -805,39 +806,62 @@ static const uint8_t font_5x7[96][5] = {
 void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     if (c < 32 || c > 127) c = '?';
-    
-    for (uint8_t i = 0; i < 5; i++) {
-        uint8_t line = font_5x7[c - 32][i];
-        for (uint8_t j = 0; j < 7; j++) {
-            if (line & 0x01) {
-                if (size == 1) {
-                    LCD_DrawPixel(x + i, y + j, color);
-                } else {
-                    // Draw main pixel block
-                    LCD_FillRect(x + i * size, y + j * size, size, size, color);
-                    
-                    // Add slight boldness for sizes 2-4 to improve readability
-                    if (size >= 2 && size <= 4) {
-                        // Add 1 extra pixel to right and bottom for thickness
-                        LCD_FillRect(x + i * size, y + j * size, size + 1, size + 1, color);
-                    }
-                }
-            } else if (bg != color) {
-                if (size == 1) {
-                    LCD_DrawPixel(x + i, y + j, bg);
-                } else {
-                    LCD_FillRect(x + i * size, y + j * size, size, size, bg);
+    if (size == 2) {
+        // Use high-res 10x14 font for size 2
+        const uint16_t* fontData = font_10x14[c - 32];
+        for (uint8_t row = 0; row < 14; row++) {
+            uint16_t rowData = fontData[row];
+            for (uint8_t col = 0; col < 10; col++) {
+                if (rowData & (1 << (9 - col))) {
+                    LCD_DrawPixel(x + col, y + row, color);
+                } else if (bg != color) {
+                    LCD_DrawPixel(x + col, y + row, bg);
                 }
             }
-            line >>= 1;
+        }
+    } else if (size >= 3) {
+        // Use high-res 15x21 font for size 3 and 4
+        const uint32_t* fontData = font_15x21[c - 32];
+        for (uint8_t row = 0; row < 21; row++) {
+            uint32_t rowData = fontData[row];
+            for (uint8_t col = 0; col < 15; col++) {
+                if (rowData & (1 << (14 - col))) {
+                    LCD_DrawPixel(x + col, y + row, color);
+                } else if (bg != color) {
+                    LCD_DrawPixel(x + col, y + row, bg);
+                }
+            }
+        }
+    } else {
+        // Size 1: Use original 5x7 font
+        for (uint8_t i = 0; i < 5; i++) {
+            uint8_t line = font_5x7[c - 32][i];
+            for (uint8_t j = 0; j < 7; j++) {
+                if (line & 0x01) {
+                    LCD_DrawPixel(x + i, y + j, color);
+                } else if (bg != color) {
+                    LCD_DrawPixel(x + i, y + j, bg);
+                }
+                line >>= 1;
+            }
         }
     }
 }
 
 void LCD_DrawString(uint16_t x, uint16_t y, const char* str, uint16_t color, uint16_t bg, uint8_t size) {
+    uint16_t charWidth = (size == 2) ? 11 : (size >= 3) ? 16 : 6;
+    
     while (*str) {
         LCD_DrawChar(x, y, *str++, color, bg, size);
-        x += 6 * size;  // 5 pixel width + 1 space
+        x += charWidth;
+        if (x + charWidth > LCD_WIDTH) {
+            x = 0;
+            uint16_t charHeight = (size == 2) ? 14 : (size >= 3) ? 21 : 8;
+            y += charHeight;
+        }
+        if (y + ((size == 2) ? 14 : (size >= 3) ? 21 : 8) > LCD_HEIGHT) break;
+    }
+}h + 1 space
         if (x + 6 * size > LCD_WIDTH) {
             x = 0;
             y += 8 * size;
