@@ -5,7 +5,6 @@
  */
 
 #include "Display_ST77916.h"
-#include "fonts_hires.h"
 #include <Arduino.h>
 #include <stdlib.h>
 #include <string.h>
@@ -849,19 +848,9 @@ void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, u
 }
 
 void LCD_DrawString(uint16_t x, uint16_t y, const char* str, uint16_t color, uint16_t bg, uint8_t size) {
-    uint16_t charWidth = (size == 2) ? 11 : (size >= 3) ? 16 : 6;
-    
     while (*str) {
         LCD_DrawChar(x, y, *str++, color, bg, size);
-        x += charWidth;
-        if (x + charWidth > LCD_WIDTH) {
-            x = 0;
-            uint16_t charHeight = (size == 2) ? 14 : (size >= 3) ? 21 : 8;
-            y += charHeight;
-        }
-        if (y + ((size == 2) ? 14 : (size >= 3) ? 21 : 8) > LCD_HEIGHT) break;
-    }
-}h + 1 space
+        x += 6 * size;  // 5 pixel width + 1 space
         if (x + 6 * size > LCD_WIDTH) {
             x = 0;
             y += 8 * size;
