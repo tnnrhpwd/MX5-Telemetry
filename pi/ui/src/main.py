@@ -850,7 +850,6 @@ class PiDisplayApp:
             
             # Update lap timer if running (independent of demo mode)
             if self.lap_timer_running:
-                import time
                 self.telemetry.lap_time_ms = int(time.time() * 1000 - self.lap_timer_start_time)
             
             # Forward telemetry to ESP32 (if connected)
