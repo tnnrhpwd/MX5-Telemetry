@@ -1607,7 +1607,6 @@ class PiDisplayApp:
     
     def _render_overview(self):
         """Overview screen - matches simulator exactly"""
-        alerts = self._get_alerts()
         TOP = 55
         
         # Headlight indicators (top right) - only show when active
@@ -1750,48 +1749,6 @@ class PiDisplayApp:
             self.screen.blit(txt, txt.get_rect(center=(x, y + 2)))
             txt = self.font_tiny.render(f"{temp:.1f}F", True, COLOR_GRAY)
             self.screen.blit(txt, txt.get_rect(center=(x, y + 20)))
-        
-        # Right panel: Alerts
-        alerts_x = 490
-        alerts_y = TOP
-        alerts_w = 290
-        alerts_h = PI_HEIGHT - TOP - 10
-        
-        pygame.draw.rect(self.screen, COLOR_BG_CARD, (alerts_x, alerts_y, alerts_w, alerts_h))
-        
-        header_color = COLOR_RED if alerts else COLOR_GREEN
-        pygame.draw.rect(self.screen, header_color, (alerts_x, alerts_y, alerts_w, 45))
-        header_text = "! ALERTS" if alerts else "ALL GOOD"
-        txt = self.font_small.render(header_text, True, COLOR_WHITE)
-        self.screen.blit(txt, txt.get_rect(center=(alerts_x + alerts_w//2, alerts_y + 22)))
-        
-        if alerts:
-            alert_y = alerts_y + 55
-            for i, (alert_text, alert_color) in enumerate(alerts[:8]):
-                pygame.draw.rect(self.screen, COLOR_BG_ELEVATED,
-                               (alerts_x + 10, alert_y, alerts_w - 20, 38))
-                pygame.draw.rect(self.screen, alert_color,
-                               (alerts_x + 10, alert_y, 3, 38))
-                txt = self.font_small.render(alert_text, True, alert_color)
-                self.screen.blit(txt, (alerts_x + 20, alert_y + 10))
-                alert_y += 45
-        else:
-            check_y = alerts_y + 60
-            checks = [
-                ("Tire Pressures", True),
-                ("Coolant Temp", True),
-                ("Oil Temp", True),
-                ("Fuel Level", self.telemetry.fuel_level_percent >= 15),
-                ("Voltage", self.telemetry.voltage >= 12.0),
-            ]
-            for label, ok in checks:
-                color = COLOR_GREEN if ok else COLOR_YELLOW
-                pygame.draw.rect(self.screen, COLOR_BG_ELEVATED,
-                               (alerts_x + 10, check_y, alerts_w - 20, 38))
-                symbol = "+" if ok else "!"
-                txt = self.font_small.render(f"{symbol}  {label}", True, color)
-                self.screen.blit(txt, (alerts_x + 20, check_y + 10))
-                check_y += 45
     
     def _render_rpm_speed(self):
         """RPM/Speed screen"""
