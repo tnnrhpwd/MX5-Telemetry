@@ -166,10 +166,12 @@ The Pi maintains all user settings and syncs to devices on startup:
 
 #### MS-CAN Messages (125kbps)
 
-| ID | Data | Bytes | Purpose |
-|----|------|-------|---------|
-| `0x240` | Audio buttons | 0 | VOL+/-, MUTE, SEEK, MODE |
-| `0x250` | Cruise buttons | 0 | ON/OFF, CANCEL, RES+, SET- |
+| ID | Data | Bytes | Purpose | Availability |
+|----|------|-------|---------|--------------|
+| `0x240` | Audio buttons | 0 | VOL+/-, MUTE, SEEK, MODE | **NOT READABLE** on MS-CAN |
+| `0x250` | Cruise buttons | 0 | ON/OFF, CANCEL, RES+, SET- | ✅ Available |
+
+**Note:** Audio/volume steering wheel buttons (CAN ID 0x240) are NOT transmitted on the accessible MS-CAN bus. Only cruise control buttons (CAN ID 0x250) can be read. Navigation uses cruise buttons exclusively.
 
 See [PI_DISPLAY_INTEGRATION.md](PI_DISPLAY_INTEGRATION.md) for complete CAN message decoding.
 
@@ -194,17 +196,42 @@ Both ESP32 and Pi displays share the same screen hierarchy:
 
 ### Navigation System
 
-**Steering Wheel Controls:**
-- **RES+ / SET-** - Previous/Next screen
-- **VOL+ / VOL-** - Previous/Next screen (alternate)
-- **ON/OFF** - Select/Enter (Settings mode)
-- **CANCEL** - Back/Exit
-- **MUTE** - Toggle sleep mode
+**IMPORTANT:** Only cruise control buttons are readable on the MS-CAN bus. Audio/volume buttons (VOL+, VOL-, MODE, SEEK, MUTE) are NOT available on the CAN bus.
 
-**Touch (ESP32 only):**
-- Top/Bottom tap - Previous/Next screen
-- Center tap - Select
-- Swipe up/down - Navigate screens
+**Steering Wheel Controls (Cruise Control Only):**
+
+| Button | Normal Screens | Settings Screen (Normal) | Settings Screen (Edit Mode) |
+|--------|----------------|--------------------------|----------------------------|
+| **RES+ (UP)** | Previous screen | Move selection up (wrap to prev page at top) | Increase value |
+| **SET- (DOWN)** | Next screen | Move selection down (wrap to next page at bottom) | Decrease value |
+| **ON/OFF** | No action | Enter edit mode | Confirm & exit edit mode |
+| **CANCEL** | Go to Overview | Go to Overview | Cancel & exit edit mode |
+
+**Touch Gestures (ESP32 only):**
+
+| Gesture | Action |
+|---------|--------|
+| Swipe Up | Previous screen (matches UP button) |
+| Swipe Down | Next screen (matches DOWN button) |
+| Swipe Left | Next screen (alternative) |
+| Swipe Right | Previous screen (alternative) |
+| Single Click | Select (settings screen only) |
+
+**Navigation Lock:**
+
+To prevent accidental changes while driving, the navigation system can be locked:
+
+| Feature | Description |
+|---------|-------------|
+| **Activation** | Hold ON/OFF button for 3 seconds |
+| **Deactivation** | Hold ON/OFF button for 3 seconds again |
+| **Visual Indicator** | Orange "LCK" padlock icon on ESP32 Overview screen |
+| **Keyboard Shortcut** | L key (for testing) |
+
+When locked:
+- All SWC button presses are ignored (except the lock toggle itself)
+- ESP32 touch input is disabled
+- Lock state syncs between Pi and ESP32 via serial (`NAVLOCK:0/1`)
 
 ---
 
@@ -285,14 +312,12 @@ See [hardware/HARDWARE.md](hardware/HARDWARE.md) for complete wiring diagrams, p
 │    ├─► LED RPM visualization                  │
 │    └─► TPMS monitoring                         │
 │                                                │
-│  SLEEP MODE (MUTE pressed)                    │
-│    ├─► Dim displays                           │
-│    ├─► Show minimal info                      │
-│    └─► Reduce update rate                     │
-│                                                │
 │  SETTINGS MODE (Screen 7)                     │
-│    ├─► Navigate with RES+/SET-                │
-│    ├─► Edit with VOL+/VOL-                    │
+│    Navigation uses cruise control only:       │
+│    ├─► RES+ (UP): Move up / increase value    │
+│    ├─► SET- (DOWN): Move down / decrease val  │
+│    ├─► ON/OFF: Enter/exit edit mode           │
+│    ├─► CANCEL: Exit to Overview               │
 │    ├─► Save to Pi cache                       │
 │    └─► Sync to ESP32/Arduino                  │
 │                                                │

@@ -4,6 +4,30 @@
  * 
  * This display shows real-time telemetry data from the Raspberry Pi
  * connected via serial communication.
+ * 
+ * NAVIGATION SCHEME (Cruise Control Buttons Only):
+ * ================================================
+ * Only cruise control buttons are readable on the MS-CAN bus.
+ * Audio/volume buttons (VOL+, VOL-, MODE, SEEK, MUTE) are NOT available.
+ * 
+ * Buttons:
+ * - RES_PLUS (UP):    Previous page / Navigate up in settings / Increase value
+ * - SET_MINUS (DOWN): Next page / Navigate down in settings / Decrease value
+ * - ON_OFF (SELECT):  Select setting to edit / Confirm edit
+ * - CANCEL (BACK):    Exit edit mode / Go back to Overview
+ * 
+ * Touch Gestures (ESP32 only):
+ * - SWIPE_UP:    Previous page (matches UP button)
+ * - SWIPE_DOWN:  Next page (matches DOWN button)
+ * - SWIPE_LEFT:  Next page (alternative)
+ * - SWIPE_RIGHT: Previous page (alternative)
+ * - SINGLE_CLICK: Select (on settings screen)
+ * 
+ * Settings Screen Special Behavior:
+ * - When NOT editing: UP/DOWN moves through settings, wraps to prev/next page at boundaries
+ * - Press SELECT (ON_OFF) to enter edit mode
+ * - When editing: UP increases value, DOWN decreases value
+ * - Press SELECT or CANCEL to exit edit mode
  */
 
 #include <Arduino.h>
@@ -192,6 +216,7 @@ unsigned long lastImuUpdate = 0;
 unsigned long lastSerialSend = 0;
 bool needsRedraw = true;
 bool needsFullRedraw = true;  // Set to true on screen change to redraw background
+bool navLocked = false;       // Navigation lock state (from Pi SWC handler)
 
 // Page transition animation state
 enum TransitionType {
@@ -813,6 +838,18 @@ void sendIMUData() {
 }
 
 void handleTouch() {
+    // Touch Navigation Scheme (matches cruise control buttons):
+    // - SWIPE_UP: Previous page (matches RES_PLUS / UP button)
+    // - SWIPE_DOWN: Next page (matches SET_MINUS / DOWN button)
+    // - SINGLE_CLICK: Select (matches ON_OFF button)
+    // - SWIPE_LEFT/RIGHT: Also navigate pages (alternative)
+    
+    // When navigation is locked, ignore all touch input
+    if (navLocked) {
+        touch_data.gesture = NONE;  // Clear any pending gestures
+        return;
+    }
+    
     // Debug: Print any touch activity
     static unsigned long lastTouchDebug = 0;
     if (touch_data.points > 0 || touch_data.gesture != NONE) {
@@ -831,8 +868,26 @@ void handleTouch() {
         Serial.printf("Gesture detected: %d\n", handled_gesture);
         
         switch (handled_gesture) {
+            case SWIPE_UP: {
+                // Swipe up = go to PREVIOUS screen (matches RES_PLUS / UP button)
+                ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+                startTransition(prevScreen, TRANSITION_SLIDE_RIGHT);
+                Serial.printf("Screen: %d (swipe up -> prev)\n", prevScreen);
+                // Notify Pi of screen change for sync
+                Serial.printf("SCREEN_CHANGED:%d\n", prevScreen);
+                break;
+            }
+            case SWIPE_DOWN: {
+                // Swipe down = go to NEXT screen (matches SET_MINUS / DOWN button)
+                ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
+                startTransition(nextScreen, TRANSITION_SLIDE_LEFT);
+                Serial.printf("Screen: %d (swipe down -> next)\n", nextScreen);
+                // Notify Pi of screen change for sync
+                Serial.printf("SCREEN_CHANGED:%d\n", nextScreen);
+                break;
+            }
             case SWIPE_LEFT: {
-                // Swipe left = finger moves left = go to NEXT screen
+                // Swipe left = also go to NEXT screen (alternative gesture)
                 ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
                 startTransition(nextScreen, TRANSITION_SLIDE_LEFT);
                 Serial.printf("Screen: %d (swipe left -> next)\n", nextScreen);
@@ -841,7 +896,7 @@ void handleTouch() {
                 break;
             }
             case SWIPE_RIGHT: {
-                // Swipe right = finger moves right = go to PREVIOUS screen
+                // Swipe right = also go to PREVIOUS screen (alternative gesture)
                 ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
                 startTransition(prevScreen, TRANSITION_SLIDE_RIGHT);
                 Serial.printf("Screen: %d (swipe right -> prev)\n", prevScreen);
@@ -858,15 +913,11 @@ void handleTouch() {
                 break;
             case DOUBLE_CLICK:
                 Serial.println("Double click detected");
+                // Could be used for quick action in future
                 break;
             case LONG_PRESS:
                 Serial.println("Long press detected");
-                break;
-            case SWIPE_UP:
-                Serial.println("Swipe up detected");
-                break;
-            case SWIPE_DOWN:
-                Serial.println("Swipe down detected");
+                // Could go to Overview/home screen
                 break;
             default:
                 Serial.printf("Unknown gesture: %d\n", touch_data.gesture);
@@ -1042,6 +1093,22 @@ void drawOverviewScreen() {
     LCD_FillCircle(comX, statusCenterY, 8, connColor);
     LCD_DrawCircle(comX, statusCenterY, 8, MX5_WHITE);
     LCD_DrawString(comX - 9, statusCenterY + 12, "COM", MX5_GRAY, COLOR_BG, 1);
+    
+    // Navigation Lock indicator (below connection status when locked)
+    if (navLocked) {
+        int lockX = comX;
+        int lockY = statusCenterY + 32;
+        // Draw lock icon (small padlock shape)
+        uint16_t lockColor = MX5_ORANGE;
+        // Lock body (rounded rectangle)
+        LCD_FillRoundRect(lockX - 6, lockY, 12, 10, 2, lockColor);
+        // Lock shackle (arc above body)
+        LCD_DrawCircle(lockX, lockY - 2, 5, lockColor);
+        LCD_DrawCircle(lockX, lockY - 2, 4, lockColor);
+        // Clear inside of shackle
+        LCD_FillRect(lockX - 3, lockY - 2, 6, 4, COLOR_BG);
+        LCD_DrawString(lockX - 9, lockY + 13, "LCK", MX5_ORANGE, COLOR_BG, 1);
+    }
     
     // === TPMS (2x2 grid below key values) ===
     int tireW = 55;
@@ -2300,13 +2367,42 @@ void parseCommand(String cmd) {
     cmd.trim();
     
     // Only log screen-related commands for debugging
-    if (cmd.startsWith("SCREEN") || cmd == "LEFT" || cmd == "RIGHT") {
+    if (cmd.startsWith("SCREEN") || cmd == "LEFT" || cmd == "RIGHT" || cmd == "UP" || cmd == "DOWN") {
         Serial.printf("CMD: '%s'\n", cmd.c_str());
     }
     
-    // Navigation commands (swipe simulation) - immediate change
-    if (cmd == "LEFT" || cmd == "left" || cmd == "l") {
-        // Cancel any in-progress transition
+    // Navigation commands - cruise control scheme:
+    // UP = Previous screen (matches RES_PLUS)
+    // DOWN = Next screen (matches SET_MINUS)
+    // LEFT/RIGHT also supported as alternatives
+    if (cmd == "UP" || cmd == "up") {
+        // UP - Previous screen (matches RES_PLUS button)
+        if (isTransitioning()) {
+            currentScreen = transitionToScreen;
+            currentTransition = TRANSITION_NONE;
+        }
+        ScreenMode prevScreen = (ScreenMode)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+        currentScreen = prevScreen;
+        needsRedraw = true;
+        needsFullRedraw = true;
+        telemetry.connected = true;
+        Serial.println("OK:SCREEN_PREV");
+    }
+    else if (cmd == "DOWN" || cmd == "down") {
+        // DOWN - Next screen (matches SET_MINUS button)
+        if (isTransitioning()) {
+            currentScreen = transitionToScreen;
+            currentTransition = TRANSITION_NONE;
+        }
+        ScreenMode nextScreen = (ScreenMode)((currentScreen + 1) % SCREEN_COUNT);
+        currentScreen = nextScreen;
+        needsRedraw = true;
+        needsFullRedraw = true;
+        telemetry.connected = true;
+        Serial.println("OK:SCREEN_NEXT");
+    }
+    else if (cmd == "LEFT" || cmd == "left" || cmd == "l") {
+        // LEFT - Also next screen (alternative)
         if (isTransitioning()) {
             currentScreen = transitionToScreen;
             currentTransition = TRANSITION_NONE;
@@ -2319,7 +2415,7 @@ void parseCommand(String cmd) {
         Serial.println("OK:SCREEN_NEXT");
     }
     else if (cmd == "RIGHT" || cmd == "right" || cmd == "r") {
-        // Cancel any in-progress transition
+        // RIGHT - Also previous screen (alternative)
         if (isTransitioning()) {
             currentScreen = transitionToScreen;
             currentTransition = TRANSITION_NONE;
@@ -2331,10 +2427,22 @@ void parseCommand(String cmd) {
         telemetry.connected = true;
         Serial.println("OK:SCREEN_PREV");
     }
-    else if (cmd == "CLICK" || cmd == "click" || cmd == "c") {
-        // Single click action - toggle something or confirm
+    else if (cmd == "SELECT" || cmd == "select" || cmd == "CLICK" || cmd == "click" || cmd == "c") {
+        // SELECT/CLICK - Confirm action (matches ON_OFF button)
         telemetry.connected = true;
-        Serial.println("OK:CLICK");
+        Serial.println("OK:SELECT");
+    }
+    else if (cmd == "BACK" || cmd == "back") {
+        // BACK - Go to Overview (matches CANCEL button)
+        if (isTransitioning()) {
+            currentScreen = transitionToScreen;
+            currentTransition = TRANSITION_NONE;
+        }
+        currentScreen = SCREEN_OVERVIEW;
+        needsRedraw = true;
+        needsFullRedraw = true;
+        telemetry.connected = true;
+        Serial.println("OK:BACK");
     }
     // Direct screen selection - immediate change (no transition for serial commands)
     else if (cmd.startsWith("SCREEN:") || cmd.startsWith("screen:")) {
@@ -2555,6 +2663,16 @@ void parseCommand(String cmd) {
                 needsFullRedraw = true;
             }
             Serial.printf("OK:SELECTION:%d\n", newSelection);
+        }
+    }
+    // Navigation lock state from Pi (prevents accidental button presses while driving)
+    else if (cmd.startsWith("NAVLOCK:")) {
+        bool newLockState = (cmd.substring(8).toInt() == 1);
+        if (newLockState != navLocked) {
+            navLocked = newLockState;
+            needsRedraw = true;
+            needsFullRedraw = true;
+            Serial.printf("OK:NAVLOCK:%d\n", navLocked ? 1 : 0);
         }
     }
 }

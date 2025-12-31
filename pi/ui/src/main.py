@@ -111,13 +111,12 @@ COLOR_TEAL = (45, 200, 190)
 # =============================================================================
 
 class ButtonEvent(Enum):
+    """Button events - cruise control buttons only (volume buttons not on CAN bus)"""
     NONE = auto()
-    VOL_UP = auto()
-    VOL_DOWN = auto()
-    ON_OFF = auto()
-    CANCEL = auto()
-    RES_PLUS = auto()
-    SET_MINUS = auto()
+    ON_OFF = auto()      # Select / Enter / Confirm edit
+    CANCEL = auto()      # Back / Exit edit mode
+    RES_PLUS = auto()    # UP - Previous page / Navigate up / Increase value
+    SET_MINUS = auto()   # DOWN - Next page / Navigate down / Decrease value
 
 
 class Screen(Enum):
@@ -572,11 +571,22 @@ class PiDisplayApp:
                 self._sync_esp32_screen()
                 # Send initial settings to ESP32
                 self._sync_settings_to_esp32()
+                # Register SWC lock callback to sync lock state to ESP32
+                if self.swc_handler:
+                    self.swc_handler.add_lock_callback(self._on_nav_lock_changed)
+                    print("  ✓ Navigation lock callback registered")
             else:
                 print("  ✗ ESP32 serial failed - check USB connection")
                 self.esp32_handler = None
         else:
             print("  ✗ Serial library not available - install pyserial")
+    
+    def _on_nav_lock_changed(self, locked: bool):
+        """Callback when navigation lock state changes - sync to ESP32"""
+        lock_status = "LOCKED" if locked else "UNLOCKED"
+        print(f"Navigation {lock_status}")
+        if self.esp32_handler:
+            self.esp32_handler.send_nav_lock(locked)
     
     def _on_esp32_screen_change(self, screen_index: int):
         """Callback when ESP32 display changes screen via touch (bidirectional sync)"""
@@ -752,6 +762,7 @@ class PiDisplayApp:
         print("  Enter      = Select / Edit (ON/OFF)")
         print("  Esc / B    = Back / Exit (CANCEL)")
         print("  Space      = Toggle sleep mode")
+        print("  L          = Toggle navigation lock")
         print("  Q          = Quit")
         print("=" * 60)
         
@@ -780,6 +791,10 @@ class PiDisplayApp:
                             self.show_exit_dialog = True  # Q also shows confirmation
                         elif event.key == pygame.K_SPACE:
                             self.sleeping = not self.sleeping
+                        elif event.key == pygame.K_l:
+                            # L key toggles navigation lock (for testing)
+                            if self.swc_handler:
+                                self.swc_handler.toggle_nav_lock()
                     else:
                         self._handle_button(button)
             
@@ -834,29 +849,47 @@ class PiDisplayApp:
         pygame.quit()
     
     def _on_swc_button(self, button: ButtonEvent):
-        """Callback for steering wheel control button events from CAN bus"""
+        """Callback for steering wheel control button events from CAN bus
+        
+        NOTE: Only cruise control buttons are available (ON_OFF, CANCEL, RES_PLUS, SET_MINUS).
+        Volume/audio buttons are NOT readable on the MS-CAN bus.
+        
+        Navigation lock: When locked, all button presses are ignored to prevent
+        accidental changes while driving. Lock/unlock via 3-second ON_OFF hold.
+        """
         if button == ButtonEvent.NONE:
             return
-        # Handle special buttons
-        if button == ButtonEvent.MUTE:
-            self.sleeping = not self.sleeping
+        
+        # Check if navigation is locked (ignore all buttons when locked)
+        if self.swc_handler and self.swc_handler.is_nav_locked():
+            # Silently ignore - lock toggle is handled by swc_handler hold detection
             return
+        
         # Route to normal button handler
         self._handle_button(button)
     
     def _key_to_button(self, key) -> ButtonEvent:
-        """Map keyboard to SWC buttons"""
+        """Map keyboard to SWC buttons (cruise control only)
+        
+        Navigation scheme:
+        - UP/W: RES_PLUS (previous page / navigate up / increase value)
+        - DOWN/S: SET_MINUS (next page / navigate down / decrease value)
+        - ENTER/SPACE: ON_OFF (select / confirm)
+        - B/BACKSPACE: CANCEL (back / exit edit mode)
+        """
         mapping = {
+            # UP - RES_PLUS: Previous page / Navigate up / Increase value
             pygame.K_UP: ButtonEvent.RES_PLUS,
             pygame.K_w: ButtonEvent.RES_PLUS,
+            # DOWN - SET_MINUS: Next page / Navigate down / Decrease value
             pygame.K_DOWN: ButtonEvent.SET_MINUS,
             pygame.K_s: ButtonEvent.SET_MINUS,
-            pygame.K_RIGHT: ButtonEvent.VOL_UP,
-            pygame.K_d: ButtonEvent.VOL_UP,
-            pygame.K_LEFT: ButtonEvent.VOL_DOWN,
-            pygame.K_a: ButtonEvent.VOL_DOWN,
+            # SELECT - ON_OFF: Select / Confirm edit
             pygame.K_RETURN: ButtonEvent.ON_OFF,
-            pygame.K_b: ButtonEvent.CANCEL,  # B key for back/cancel (ESC reserved for exit)
+            pygame.K_SPACE: ButtonEvent.ON_OFF,
+            # BACK - CANCEL: Back / Exit edit mode
+            pygame.K_b: ButtonEvent.CANCEL,
+            pygame.K_BACKSPACE: ButtonEvent.CANCEL,
         }
         return mapping.get(key, ButtonEvent.NONE)
     
@@ -870,12 +903,18 @@ class PiDisplayApp:
             self._handle_navigation_button(button)
     
     def _handle_navigation_button(self, button: ButtonEvent):
-        """Handle normal screen navigation with transitions"""
+        """Handle normal screen navigation with transitions
+        
+        Cruise control navigation scheme:
+        - RES_PLUS (UP): Previous screen
+        - SET_MINUS (DOWN): Next screen
+        - CANCEL: Go to Overview screen
+        """
         screens = list(Screen)
         
         # Determine target screen based on button
-        if button in (ButtonEvent.RES_PLUS, ButtonEvent.VOL_DOWN):
-            # UP or LEFT - previous screen
+        if button == ButtonEvent.RES_PLUS:
+            # UP - previous screen
             if self._is_transitioning():
                 # Update transition target to previous from current target
                 current_idx = screens.index(self.transition_to_screen)
@@ -885,8 +924,8 @@ class PiDisplayApp:
                 idx = screens.index(self.current_screen)
                 idx = (idx - 1) % len(screens)
                 self._navigate_to_screen(screens[idx], 'prev')
-        elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
-            # DOWN or RIGHT - next screen
+        elif button == ButtonEvent.SET_MINUS:
+            # DOWN - next screen
             if self._is_transitioning():
                 # Update transition target to next from current target
                 current_idx = screens.index(self.transition_to_screen)
@@ -896,6 +935,10 @@ class PiDisplayApp:
                 idx = screens.index(self.current_screen)
                 idx = (idx + 1) % len(screens)
                 self._navigate_to_screen(screens[idx], 'next')
+        elif button == ButtonEvent.CANCEL:
+            # CANCEL - Go back to Overview
+            if not self._is_transitioning():
+                self._navigate_to_screen(Screen.OVERVIEW, 'prev')
     
     def _update_transition_target(self, new_target: Screen, direction: str):
         """Update the transition target during an active transition"""
@@ -1110,7 +1153,14 @@ class PiDisplayApp:
     # === END TRANSITION METHODS ===
     
     def _handle_lap_timer_button(self, button: ButtonEvent):
-        """Handle lap timer controls on RPM/Speed screen"""
+        """Handle lap timer controls on RPM/Speed screen
+        
+        Cruise control navigation:
+        - RES_PLUS (UP): Previous screen
+        - SET_MINUS (DOWN): Next screen  
+        - ON_OFF: Start/Stop lap timer
+        - CANCEL: Reset lap timer
+        """
         import time
         
         # Ignore input during transitions
@@ -1118,14 +1168,14 @@ class PiDisplayApp:
             return
         
         # Navigation still works
-        if button in (ButtonEvent.RES_PLUS, ButtonEvent.VOL_DOWN):
-            # UP or LEFT - previous screen
+        if button == ButtonEvent.RES_PLUS:
+            # UP - previous screen
             screens = list(Screen)
             idx = screens.index(self.current_screen)
             idx = (idx - 1) % len(screens)
             self._navigate_to_screen(screens[idx], 'prev')
-        elif button in (ButtonEvent.SET_MINUS, ButtonEvent.VOL_UP):
-            # DOWN or RIGHT - next screen
+        elif button == ButtonEvent.SET_MINUS:
+            # DOWN - next screen
             screens = list(Screen)
             idx = screens.index(self.current_screen)
             idx = (idx + 1) % len(screens)
@@ -1152,57 +1202,82 @@ class PiDisplayApp:
             self.sound.play('back')
     
     def _handle_settings_button(self, button: ButtonEvent):
-        """Handle settings screen navigation"""
+        """Handle settings screen navigation
+        
+        Cruise control navigation (settings screen):
+        
+        Normal mode (not editing):
+        - RES_PLUS (UP): If at top setting, go to previous page. Otherwise, move selection up.
+        - SET_MINUS (DOWN): If at bottom setting, go to next page. Otherwise, move selection down.
+        - ON_OFF: Enter edit mode for selected setting
+        - CANCEL: Exit to Overview screen
+        
+        Edit mode:
+        - RES_PLUS (UP): Increase setting value
+        - SET_MINUS (DOWN): Decrease setting value
+        - ON_OFF: Confirm and exit edit mode
+        - CANCEL: Cancel and exit edit mode
+        """
         # Ignore input during transitions
         if self._is_transitioning():
             return
             
         items = self._get_settings_items()
         
-        # Allow page navigation with VOL_UP/VOL_DOWN (< & >)
-        if button == ButtonEvent.VOL_DOWN and not self.settings_edit_mode:
-            # Previous screen
-            screens = list(Screen)
-            idx = screens.index(self.current_screen)
-            idx = (idx - 1) % len(screens)
-            self.settings_selection = 0
-            self._navigate_to_screen(screens[idx], 'prev')
-            return
-        elif button == ButtonEvent.VOL_UP and not self.settings_edit_mode:
-            # Next screen
-            screens = list(Screen)
-            idx = screens.index(self.current_screen)
-            idx = (idx + 1) % len(screens)
-            self.settings_selection = 0
-            self._navigate_to_screen(screens[idx], 'next')
-            return
-        
-        if button == ButtonEvent.RES_PLUS and not self.settings_edit_mode:
-            if self.settings_selection > 0:
-                self.settings_selection -= 1
-                self.sound.play('navigate')
-                self._sync_selection_to_esp32()
-        elif button == ButtonEvent.SET_MINUS and not self.settings_edit_mode:
-            if self.settings_selection < len(items) - 1:
-                self.settings_selection += 1
-                self.sound.play('navigate')
-                self._sync_selection_to_esp32()
-        elif button == ButtonEvent.ON_OFF:
-            # Toggle edit mode for current setting
-            self.settings_edit_mode = not self.settings_edit_mode
-            self.sound.play('select')
-        elif button == ButtonEvent.CANCEL:
-            if self.settings_edit_mode:
+        if self.settings_edit_mode:
+            # In edit mode: UP/DOWN adjust value, ON_OFF/CANCEL exit
+            if button == ButtonEvent.RES_PLUS:
+                # UP - Increase value
+                self._adjust_setting(1)
+                self.sound.play('adjust')
+            elif button == ButtonEvent.SET_MINUS:
+                # DOWN - Decrease value
+                self._adjust_setting(-1)
+                self.sound.play('adjust')
+            elif button == ButtonEvent.ON_OFF:
+                # Confirm and exit edit mode
+                self.settings_edit_mode = False
+                self.sound.play('select')
+            elif button == ButtonEvent.CANCEL:
+                # Cancel and exit edit mode (could restore value, but just exit for now)
                 self.settings_edit_mode = False
                 self.sound.play('back')
-            else:
+        else:
+            # Normal mode: navigate settings list, boundary transitions to pages
+            if button == ButtonEvent.RES_PLUS:
+                # UP - Move selection up, or go to previous page if at top
+                if self.settings_selection > 0:
+                    self.settings_selection -= 1
+                    self.sound.play('navigate')
+                    self._sync_selection_to_esp32()
+                else:
+                    # At top of settings - go to previous screen
+                    screens = list(Screen)
+                    idx = screens.index(self.current_screen)
+                    idx = (idx - 1) % len(screens)
+                    self.settings_selection = 0
+                    self._navigate_to_screen(screens[idx], 'prev')
+            elif button == ButtonEvent.SET_MINUS:
+                # DOWN - Move selection down, or go to next page if at bottom
+                if self.settings_selection < len(items) - 1:
+                    self.settings_selection += 1
+                    self.sound.play('navigate')
+                    self._sync_selection_to_esp32()
+                else:
+                    # At bottom of settings - go to next screen
+                    screens = list(Screen)
+                    idx = screens.index(self.current_screen)
+                    idx = (idx + 1) % len(screens)
+                    self.settings_selection = 0
+                    self._navigate_to_screen(screens[idx], 'next')
+            elif button == ButtonEvent.ON_OFF:
+                # Enter edit mode for current setting
+                self.settings_edit_mode = True
+                self.sound.play('select')
+            elif button == ButtonEvent.CANCEL:
                 # Exit settings to overview
                 self.settings_selection = 0
                 self._navigate_to_screen(Screen.OVERVIEW, 'prev')
-        elif self.settings_edit_mode:
-            delta = 1 if button == ButtonEvent.VOL_UP else (-1 if button == ButtonEvent.VOL_DOWN else 0)
-            if delta != 0:
-                self._adjust_setting(delta)
                 self.sound.play('adjust')
     
     def _adjust_setting(self, delta: int):

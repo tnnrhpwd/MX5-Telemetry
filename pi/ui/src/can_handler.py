@@ -68,8 +68,9 @@ class HSCanID:
 # MS-CAN (125kbps) - Body/Accessories  
 class MSCanID:
     """Medium-Speed CAN Message IDs"""
-    SWC_AUDIO = 0x240           # Steering wheel audio buttons
-    SWC_CRUISE = 0x250          # Steering wheel cruise buttons
+    # NOTE: SWC_AUDIO (0x240) is NOT readable on the MS-CAN bus
+    # Only cruise control buttons are available via CAN
+    SWC_CRUISE = 0x250          # Steering wheel cruise buttons (only readable SWC)
     LIGHTING = 0x290            # Headlights, turn signals
     CLIMATE = 0x350             # AC status
     DOORS = 0x430               # Door ajar status
@@ -375,8 +376,9 @@ class CANHandler:
         can_id = msg.arbitration_id
         data = msg.data
         
-        # Steering wheel controls
-        if can_id == MSCanID.SWC_AUDIO or can_id == MSCanID.SWC_CRUISE:
+        # Steering wheel cruise controls (only cruise buttons readable on MS-CAN)
+        # NOTE: Audio buttons (0x240) are NOT available on this bus
+        if can_id == MSCanID.SWC_CRUISE:
             if self.swc_handler:
                 self.swc_handler.process_can_message(can_id, data)
         
