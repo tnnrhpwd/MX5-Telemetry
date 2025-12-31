@@ -416,6 +416,10 @@ class PiDisplayApp:
         self.demo_rpm_dir = 1
         self.show_exit_dialog = False  # Exit confirmation dialog state
         
+        # Keyboard hold detection for navigation lock (ENTER key)
+        self.enter_key_pressed_time = 0  # Track when ENTER was pressed
+        self.enter_key_hold_triggered = False  # Prevent multiple triggers
+        
         # Page transition animation state
         self.transition_type = TransitionType.NONE
         self.transition_from_screen = Screen.OVERVIEW
@@ -776,6 +780,11 @@ class PiDisplayApp:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
+                    # Track ENTER key press time for 3-second hold detection
+                    if event.key == pygame.K_RETURN:
+                        self.enter_key_pressed_time = time.time()
+                        self.enter_key_hold_triggered = False
+                    
                     # Handle exit confirmation dialog
                     if self.show_exit_dialog:
                         if event.key == pygame.K_y or event.key == pygame.K_RETURN:
@@ -794,12 +803,35 @@ class PiDisplayApp:
                         if event.key == pygame.K_q:
                             self.show_exit_dialog = True  # Q also shows confirmation
                     else:
-                        self._handle_button(button)
+                        # Don't handle ENTER immediately - wait to see if it's held for 3s
+                        if button != ButtonEvent.ON_OFF:
+                            self._handle_button(button)
+                
+                elif event.type == pygame.KEYUP:
+                    # Handle ENTER key release
+                    if event.key == pygame.K_RETURN:
+                        hold_duration = time.time() - self.enter_key_pressed_time if self.enter_key_pressed_time > 0 else 0
+                        self.enter_key_pressed_time = 0
+                        
+                        # If released before 3 seconds and not used for lock toggle, treat as normal button press
+                        if not self.enter_key_hold_triggered and hold_duration < 3.0:
+                            self._handle_button(ButtonEvent.ON_OFF)
+                        
+                        self.enter_key_hold_triggered = False
             
             # Poll for steering wheel control buttons from CAN bus (MS-CAN)
             if self.swc_handler:
                 for swc_button in self.swc_handler.poll_buttons():
                     self._on_swc_button(swc_button)
+            
+            # Check for ENTER key hold (3 seconds to toggle navigation lock)
+            if self.enter_key_pressed_time > 0 and not self.enter_key_hold_triggered:
+                hold_duration = time.time() - self.enter_key_pressed_time
+                if hold_duration >= 3.0:
+                    # Toggle navigation lock
+                    if self.swc_handler:
+                        self.swc_handler.toggle_nav_lock()
+                        self.enter_key_hold_triggered = True
             
             # Update data source
             if self.settings.demo_mode and not self.sleeping:
@@ -1580,6 +1612,17 @@ class PiDisplayApp:
             pygame.draw.circle(self.screen, COLOR_BLUE, (indicator_x + 40, indicator_y), 12)
             txt = self.font_tiny.render("HI", True, COLOR_WHITE)
             self.screen.blit(txt, txt.get_rect(center=(indicator_x + 40, indicator_y)))
+        
+        # Navigation lock indicator (below headlights when locked)
+        if self.swc_handler and self.swc_handler.is_nav_locked():
+            lock_x = indicator_x + 20
+            lock_y = indicator_y + 40
+            pygame.draw.circle(self.screen, COLOR_RED, (lock_x, lock_y), 14)
+            # Draw lock icon (simplified)
+            pygame.draw.rect(self.screen, COLOR_WHITE, (lock_x - 6, lock_y - 2, 12, 8), 2)
+            pygame.draw.circle(self.screen, COLOR_WHITE, (lock_x, lock_y - 6), 4, 2)
+            txt = self.font_tiny.render("LOCKED", True, COLOR_RED)
+            self.screen.blit(txt, (lock_x + 18, lock_y - 6))
         
         left_panel_x = 20
         left_panel_w = 180
