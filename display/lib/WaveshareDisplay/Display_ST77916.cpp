@@ -802,86 +802,34 @@ static const uint8_t font_5x7[96][5] = {
     {0x00,0x00,0x00,0x00,0x00}  // DEL
 };
 
-// Helper function to blend two RGB565 colors
-uint16_t blendColor(uint16_t fg, uint16_t bg, uint8_t alpha) {
-    if (alpha == 255) return fg;
-    if (alpha == 0) return bg;
-    
-    // Extract RGB components from RGB565
-    uint8_t r1 = (fg >> 11) & 0x1F;
-    uint8_t g1 = (fg >> 5) & 0x3F;
-    uint8_t b1 = fg & 0x1F;
-    
-    uint8_t r2 = (bg >> 11) & 0x1F;
-    uint8_t g2 = (bg >> 5) & 0x3F;
-    uint8_t b2 = bg & 0x1F;
-    
-    // Blend using alpha (0-255)
-    uint8_t r = ((r1 * alpha) + (r2 * (255 - alpha))) / 255;
-    uint8_t g = ((g1 * alpha) + (g2 * (255 - alpha))) / 255;
-    uint8_t b = ((b1 * alpha) + (b2 * (255 - alpha))) / 255;
-    
-    // Combine back to RGB565
-    return (r << 11) | (g << 5) | b;
-}
-
-// Check if a pixel in the font bitmap is set
-bool isFontPixelSet(char c, int8_t col, int8_t row) {
-    if (col < 0 || col >= 5 || row < 0 || row >= 7) return false;
-    return (font_5x7[c - 32][col] & (1 << row)) != 0;
-}
-
 void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     if (c < 32 || c > 127) c = '?';
     
-    if (size == 1) {
-        // Size 1: No anti-aliasing needed, draw directly
-        for (uint8_t i = 0; i < 5; i++) {
-            uint8_t line = font_5x7[c - 32][i];
-            for (uint8_t j = 0; j < 7; j++) {
-                if (line & 0x01) {
+    for (uint8_t i = 0; i < 5; i++) {
+        uint8_t line = font_5x7[c - 32][i];
+        for (uint8_t j = 0; j < 7; j++) {
+            if (line & 0x01) {
+                if (size == 1) {
                     LCD_DrawPixel(x + i, y + j, color);
-                } else if (bg != color) {
-                    LCD_DrawPixel(x + i, y + j, bg);
+                } else {
+                    // Draw main pixel block
+                    LCD_FillRect(x + i * size, y + j * size, size, size, color);
+                    
+                    // Add slight boldness for sizes 2-4 to improve readability
+                    if (size >= 2 && size <= 4) {
+                        // Add 1 extra pixel to right and bottom for thickness
+                        LCD_FillRect(x + i * size, y + j * size, size + 1, size + 1, color);
+                    }
                 }
-                line >>= 1;
+            } else if (bg != color) {
+                if (size == 1) {
+                    LCD_DrawPixel(x + i, y + j, bg);
+                } else {
+                    LCD_FillRect(x + i * size, y + j * size, size, size, bg);
+                }
             }
-        }
-    } else {
-        // Size > 1: Use bilinear interpolation for smooth scaling
-        for (uint16_t py = 0; py < 7 * size; py++) {
-            for (uint16_t px = 0; px < 5 * size; px++) {
-                // Map screen pixel back to font bitmap coordinates
-                float srcX = px / (float)size;
-                float srcY = py / (float)size;
-                
-                int x0 = (int)srcX;
-                int y0 = (int)srcY;
-                
-                // Sample surrounding pixels for bilinear interpolation
-                bool p00 = isFontPixelSet(c, x0, y0);
-                bool p10 = isFontPixelSet(c, x0 + 1, y0);
-                bool p01 = isFontPixelSet(c, x0, y0 + 1);
-                bool p11 = isFontPixelSet(c, x0 + 1, y0 + 1);
-                
-                // Calculate interpolation weights
-                float wx = srcX - x0;
-                float wy = srcY - y0;
-                
-                // Bilinear interpolation
-                float coverage = (p00 * (1 - wx) * (1 - wy)) +
-                                (p10 * wx * (1 - wy)) +
-                                (p01 * (1 - wx) * wy) +
-                                (p11 * wx * wy);
-                
-                // Convert coverage to alpha (0-255)
-                uint8_t alpha = (uint8_t)(coverage * 255);
-                
-                // Blend color based on coverage
-                uint16_t pixelColor = blendColor(color, bg, alpha);
-                LCD_DrawPixel(x + px, y + py, pixelColor);
-            }
+            line >>= 1;
         }
     }
 }
