@@ -170,7 +170,7 @@ class TelemetryData:
     abs_warning: bool = False
     traction_control_off: bool = False
     traction_control_active: bool = False
-    oil_pressure_warning: bool = False
+    oil_pressure_warning: bool = True  # True = no oil pressure (default when not connected)
     battery_warning: bool = False
     door_ajar: bool = False
     seatbelt_warning: bool = False

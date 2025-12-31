@@ -526,6 +526,7 @@ void setup() {
     telemetry.coolantTemp = 0;
     telemetry.oilTemp = 0;
     telemetry.oilPressure = 0;
+    telemetry.oilWarning = true;  // Default: no oil pressure
     telemetry.fuelLevel = 0;
     telemetry.voltage = 0;
     telemetry.tirePressure[0] = 0; telemetry.tirePressure[1] = 0;
