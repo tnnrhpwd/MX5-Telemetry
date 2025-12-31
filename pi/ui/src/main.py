@@ -1707,7 +1707,7 @@ class PiDisplayApp:
         
         values = [
             ("COOL", f"{self.telemetry.coolant_temp_f:.0f}", 
-             COLOR_RED if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f else COLOR_TEAL),
+             COLOR_RED if self.telemetry.coolant_temp_f == 0 or self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f else COLOR_TEAL),
             ("OIL", oil_status,
              oil_color),
             ("FUEL", f"{self.telemetry.fuel_level_percent:.0f}%",
