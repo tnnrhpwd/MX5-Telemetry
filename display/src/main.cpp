@@ -2622,6 +2622,9 @@ void parseCommand(String cmd) {
                 start = i + 1;
             }
         }
+        // DEBUG: Print parsed values
+        Serial.printf("TEL parsed: %d fields - RPM=%.0f Speed=%.0f Gear=%d\n", idx, values[0], values[1], values[2]);
+        
         if (idx >= 7) {  // At least 7 fields required (original protocol)
             telemetry.rpm = values[0];
             telemetry.speed = values[1];
@@ -2637,6 +2640,9 @@ void parseCommand(String cmd) {
             telemetry.connected = true;
             telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
+            Serial.println("TEL: Data updated successfully!");
+        } else {
+            Serial.printf("TEL: ERROR - Not enough fields (got %d, need 7)\n", idx);
         }
     }
     else if (cmd == "PING") {
