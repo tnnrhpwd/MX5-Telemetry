@@ -94,6 +94,7 @@ struct TelemetryData {
     bool engineRunning;
     bool connected;           // Serial connection to Pi is active
     bool hasDiagnosticData;   // Received actual diagnostic data from Pi
+    bool hasReceivedTelemetry; // Flag to track if we've ever received TEL: data
     // Diagnostics
     bool checkEngine;
     bool absWarning;
@@ -537,6 +538,7 @@ void setup() {
     telemetry.gForceY = 0;
     telemetry.engineRunning = false;
     telemetry.connected = false;  // Will be set true when Pi sends data
+    telemetry.hasReceivedTelemetry = false;  // Will be set true when first TEL: data received
     
     needsRedraw = true;
     needsFullRedraw = true;
@@ -1018,14 +1020,22 @@ void drawOverviewScreen() {
     
     // Speed below gear
     char speedStr[8];
-    snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
+    if (!telemetry.hasReceivedTelemetry) {
+        snprintf(speedStr, sizeof(speedStr), "--");
+    } else {
+        snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
+    }
     int speedLen = strlen(speedStr);
     LCD_DrawString(gearX - speedLen * 6, gearY + gearRadius + 8, speedStr, MX5_WHITE, COLOR_BG, 2);
     LCD_DrawString(gearX + speedLen * 6 + 4, gearY + gearRadius + 12, "mph", MX5_GRAY, COLOR_BG, 1);
     
     // RPM value display (no bar, just value)
     char rpmStr[8];
-    snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
+    if (!telemetry.hasReceivedTelemetry) {
+        snprintf(rpmStr, sizeof(rpmStr), "--");
+    } else {
+        snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
+    }
     int rpmLen = strlen(rpmStr);
     LCD_DrawString(CENTER_X - rpmLen * 5 - 10, gearY + gearRadius + 30, rpmStr, rpmColor, COLOR_BG, 1);
     LCD_DrawString(CENTER_X + rpmLen * 5 - 5, gearY + gearRadius + 30, "rpm", MX5_GRAY, COLOR_BG, 1);
@@ -2625,6 +2635,7 @@ void parseCommand(String cmd) {
             if (idx >= 9) telemetry.oilPressure = values[8];
             if (idx >= 10) telemetry.engineRunning = (values[9] > 0);
             telemetry.connected = true;
+            telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
         }
     }
