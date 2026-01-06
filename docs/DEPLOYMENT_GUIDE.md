@@ -194,9 +194,11 @@ ssh pi@192.168.1.23 'journalctl -u mx5-display -f'
 
 | Setting | Value |
 |---------|-------|
-| **IP Address** | `192.168.1.23` |
+| **IP Address (Home WiFi)** | `192.168.1.23` |
+| **IP Address (S25 Hotspot)** | `10.62.26.67` |
 | **User** | `pi` |
-| **SSH** | `ssh pi@192.168.1.23` |
+| **SSH (Home)** | `ssh pi@192.168.1.23` |
+| **SSH (Hotspot)** | `ssh pi@10.62.26.67` |
 | **Project Path** | `~/MX5-Telemetry` |
 | **Display Service** | `mx5-display.service` (systemd) |
 
