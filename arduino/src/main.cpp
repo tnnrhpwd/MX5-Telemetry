@@ -140,9 +140,14 @@ volatile uint8_t g_canDataReceived = 0;  // Flag set by interrupt
 
 // Non-volatile state
 uint16_t currentRPM = 0;
+float smoothedRPM = 0.0f;  // Exponential moving average for smooth transitions
 uint8_t currentBrightness = 255;
 bool errorMode = false;
 bool canInitialized = false;
+
+// RPM smoothing configuration
+#define RPM_FILTER_ALPHA 0.35f  // EMA smoothing factor (0.0=no filter, 1.0=no smoothing)
+                                  // 0.35 provides good balance: responsive yet smooth
 
 // LED sequence setting (persisted in EEPROM)
 uint8_t ledSequence = SEQ_CENTER_OUT;  // Default: center-out (mirrored)
@@ -352,7 +357,17 @@ inline void readCANMessages() {
             unsigned long canId = rxId & 0x7FFFFFFF;
             if (canId == MAZDA_RPM_CAN_ID && len >= 2) {
                 uint16_t rawRPM = ((uint16_t)rxBuf[0] << 8) | rxBuf[1];
-                currentRPM = rawRPM >> 2;  // Divide by 4 using bit shift
+                uint16_t instantRPM = rawRPM >> 2;  // Divide by 4 using bit shift
+                
+                // Apply exponential moving average (EMA) filter to reduce jitter
+                // Formula: smoothed = alpha * new + (1-alpha) * previous
+                if (smoothedRPM == 0.0f) {
+                    smoothedRPM = instantRPM;  // Initialize on first reading
+                } else {
+                    smoothedRPM = RPM_FILTER_ALPHA * instantRPM + (1.0f - RPM_FILTER_ALPHA) * smoothedRPM;
+                }
+                
+                currentRPM = (uint16_t)(smoothedRPM + 0.5f);  // Round to nearest integer
             }
         }
     }
@@ -376,14 +391,15 @@ inline void readCANMessages() {
 // 2. Smooth color gradients between RPM zones - no jarring color jumps
 // ============================================================================
 
-// Helper: Linear interpolation between two colors
+// Helper: Linear interpolation between two colors with proper rounding
 inline void interpolateColor(uint8_t r1, uint8_t g1, uint8_t b1,
                              uint8_t r2, uint8_t g2, uint8_t b2,
                              float position,
                              uint8_t* outR, uint8_t* outG, uint8_t* outB) {
-    *outR = r1 + (uint8_t)((int)(r2 - r1) * position);
-    *outG = g1 + (uint8_t)((int)(g2 - g1) * position);
-    *outB = b1 + (uint8_t)((int)(b2 - b1) * position);
+    // Use proper rounding instead of truncation for smoother transitions
+    *outR = r1 + (uint8_t)((float)(r2 - r1) * position + 0.5f);
+    *outG = g1 + (uint8_t)((float)(g2 - g1) * position + 0.5f);
+    *outB = b1 + (uint8_t)((float)(b2 - b1) * position + 0.5f);
 }
 
 // Get smooth RPM color with gradient transitions between zones

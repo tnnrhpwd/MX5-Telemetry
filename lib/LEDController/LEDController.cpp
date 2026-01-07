@@ -137,12 +137,35 @@ void LEDController::normalDrivingState(uint16_t rpm) {
     float position = (float)(rpm - STATE_3_RPM_MIN) / (float)(STATE_3_RPM_MAX - STATE_3_RPM_MIN);
     position = constrain(position, 0.0, 1.0);
     
-    // Calculate how many LEDs per side should be lit
-    uint8_t ledsPerSide = (uint8_t)(position * (LED_COUNT / 2));
-    if (ledsPerSide > LED_COUNT / 2) ledsPerSide = LED_COUNT / 2;
+    // Calculate FRACTIONAL LED position for smooth sub-LED resolution
+    float ledPositionFloat = position * (LED_COUNT / 2);
+    uint8_t fullLEDsPerSide = (uint8_t)ledPositionFloat;
+    float fractionalPart = ledPositionFloat - fullLEDsPerSide;
     
-    // Draw mirrored bar (yellow growing inward from edges)
-    drawMirroredBar(ledsPerSide, STATE_3_COLOR_R, STATE_3_COLOR_G, STATE_3_COLOR_B);
+    if (fullLEDsPerSide > LED_COUNT / 2) fullLEDsPerSide = LED_COUNT / 2;
+    
+    // Draw mirrored bar from edges with fractional brightness on leading LED
+    for (int i = 0; i < LED_COUNT; i++) {
+        bool isLeftSide = (i < LED_COUNT / 2);
+        uint8_t sidePosition = isLeftSide ? i : (LED_COUNT - 1 - i);
+        
+        if (sidePosition < fullLEDsPerSide) {
+            // Fully lit LEDs
+            strip.setPixelColor(i, strip.Color(STATE_3_COLOR_R, STATE_3_COLOR_G, STATE_3_COLOR_B));
+        }
+        else if (sidePosition == fullLEDsPerSide && fractionalPart > 0.05f) {
+            // Partially lit LED (fractional brightness) - threshold prevents flicker
+            uint8_t dimR = (uint8_t)(STATE_3_COLOR_R * fractionalPart);
+            uint8_t dimG = (uint8_t)(STATE_3_COLOR_G * fractionalPart);
+            uint8_t dimB = (uint8_t)(STATE_3_COLOR_B * fractionalPart);
+            strip.setPixelColor(i, strip.Color(dimR, dimG, dimB));
+        }
+        else {
+            strip.setPixelColor(i, 0);
+        }
+    }
+    
+    strip.show();
 }
 
 // ============================================================================
@@ -164,25 +187,28 @@ void LEDController::highRPMShiftState(uint16_t rpm) {
         flashState = !flashState;
     }
     
-    // Calculate how many LEDs per side should be lit (red bars)
-    uint8_t ledsPerSide = (uint8_t)(position * (LED_COUNT / 2));
-    if (ledsPerSide > LED_COUNT / 2) ledsPerSide = LED_COUNT / 2;
+    // Calculate FRACTIONAL LED position for smooth sub-LED resolution
+    float ledPositionFloat = position * (LED_COUNT / 2);
+    uint8_t fullLEDsPerSide = (uint8_t)ledPositionFloat;
+    float fractionalPart = ledPositionFloat - fullLEDsPerSide;
     
-    // Draw all LEDs
+    if (fullLEDsPerSide > LED_COUNT / 2) fullLEDsPerSide = LED_COUNT / 2;
+    
+    // Draw all LEDs with fractional brightness on leading red bars
     for (int i = 0; i < LED_COUNT; i++) {
-        bool isInBar;
-        if (i < LED_COUNT / 2) {
-            // Left side: lit from edge inward
-            isInBar = (i < ledsPerSide);
-        } else {
-            // Right side: lit from edge inward
-            isInBar = (i >= (LED_COUNT - ledsPerSide));
-        }
+        bool isLeftSide = (i < LED_COUNT / 2);
+        uint8_t sidePosition = isLeftSide ? i : (LED_COUNT - 1 - i);
         
-        if (isInBar) {
-            // Red bar
+        if (sidePosition < fullLEDsPerSide) {
+            // Fully lit red bar
             strip.setPixelColor(i, strip.Color(STATE_4_BAR_R, STATE_4_BAR_G, STATE_4_BAR_B));
-        } else {
+        }
+        else if (sidePosition == fullLEDsPerSide && fractionalPart > 0.05f) {
+            // Partially lit LED (fractional brightness) - threshold prevents flicker
+            uint8_t dimR = (uint8_t)(STATE_4_BAR_R * fractionalPart);
+            strip.setPixelColor(i, strip.Color(dimR, 0, 0));
+        }
+        else {
             // Flashing gap in center
             if (flashState) {
                 strip.setPixelColor(i, strip.Color(STATE_4_FLASH_1_R, STATE_4_FLASH_1_G, STATE_4_FLASH_1_B));
