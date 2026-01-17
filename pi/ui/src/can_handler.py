@@ -384,8 +384,8 @@ class CANHandler:
         elif can_id == HSCanID.BRAKE_STATUS:
             self.telemetry.brake_percent = 100 if CANParser.parse_brake_status(data) else 0
             # Oil presence switch (TRUE/FALSE only)
-            self.telemetry.oil_present = CANParser.parse_oil_pressure(data)
-            self.telemetry.oil_pressure_warning = not self.telemetry.oil_present
+            self.telemetry.oil_pressure_ok = CANParser.parse_oil_pressure(data)
+            self.telemetry.oil_pressure_warning = not self.telemetry.oil_pressure_ok
             
         elif can_id == HSCanID.ENGINE_TEMP:
             self.telemetry.coolant_temp_f = CANParser.parse_coolant_temp(data)
