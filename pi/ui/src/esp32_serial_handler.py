@@ -588,10 +588,11 @@ class ESP32SerialHandler:
             # Use lock to prevent collision with screen commands
             with self._write_lock:
                 # Combine all telemetry into fewer messages to reduce serial traffic
-                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_pressure_bool,voltage,fuel,engine
+                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,voltage,fuel,engine
                 msg = f"TEL:{self.telemetry.rpm:.0f},{self.telemetry.speed_kmh:.0f},{self.telemetry.gear},"
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
-                msg += f"{int(self.telemetry.oil_pressure_ok)},{self.telemetry.voltage:.1f},"
+                oil_status = 1 if self.telemetry.oil_pressure_ok else 0
+                msg += f"{oil_status},{self.telemetry.voltage:.1f},"
                 msg += f"{self.telemetry.fuel_level_percent:.0f},"
                 engine_running = 1 if self.telemetry.rpm > 0 else 0
                 msg += f"{engine_running}\n"
