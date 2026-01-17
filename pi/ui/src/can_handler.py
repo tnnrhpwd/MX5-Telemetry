@@ -251,13 +251,13 @@ class CANHandler:
             return False
         
         try:
-            # Initialize HS-CAN (CE0, 500kbps)
+            # Initialize HS-CAN (CE0, 500kbps) - Physical wiring: can1
             self.hs_can = can.interface.Bus(
-                channel='can0',
+                channel='can1',
                 bustype='socketcan',
                 bitrate=500000
             )
-            print("HS-CAN (can0) initialized at 500kbps")
+            print("HS-CAN (can1) initialized at 500kbps")
         except Exception as e:
             print(f"Failed to initialize HS-CAN: {e}")
             print("Trying MCP2515 SPI interface...")
@@ -274,13 +274,13 @@ class CANHandler:
                 self.hs_can = None
         
         try:
-            # Initialize MS-CAN (CE1, 125kbps)
+            # Initialize MS-CAN (CE1, 125kbps) - Physical wiring: can0
             self.ms_can = can.interface.Bus(
-                channel='can1',
+                channel='can0',
                 bustype='socketcan',
                 bitrate=125000
             )
-            print("MS-CAN (can1) initialized at 125kbps")
+            print("MS-CAN (can0) initialized at 125kbps")
         except Exception as e:
             print(f"Failed to initialize MS-CAN: {e}")
             try:
