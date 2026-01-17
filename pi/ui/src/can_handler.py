@@ -128,6 +128,9 @@ class CANParser:
         0=N, 1-6=gears, 7+=Reverse
         """
         if len(data) >= 1:
+            # Check byte 1 for neutral/park indicators
+            if len(data) >= 2 and data[1] == 0x04:
+                return 0  # Neutral/Park
             gear = data[0] & 0x0F
             if gear == 0:
                 return 0  # Neutral
