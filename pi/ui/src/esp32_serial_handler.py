@@ -588,22 +588,25 @@ class ESP32SerialHandler:
             # Use lock to prevent collision with screen commands
             with self._write_lock:
                 # Combine all telemetry into fewer messages to reduce serial traffic
-                # Format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage,fuel,oilpsi,engine
+                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_pressure_bool,voltage,fuel,engine
                 msg = f"TEL:{self.telemetry.rpm:.0f},{self.telemetry.speed_kmh:.0f},{self.telemetry.gear},"
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
-                msg += f"{self.telemetry.oil_temp_f:.0f},{self.telemetry.voltage:.1f},"
-                msg += f"{self.telemetry.fuel_level_percent:.0f},{self.telemetry.oil_pressure_psi:.0f},"
+                msg += f"{int(self.telemetry.oil_pressure_ok)},{self.telemetry.voltage:.1f},"
+                msg += f"{self.telemetry.fuel_level_percent:.0f},"
                 engine_running = 1 if self.telemetry.rpm > 0 else 0
                 msg += f"{engine_running}\n"
                 
                 # Debug logging - log EVERY send to see if data is being transmitted
-                print(f"ESP32 TX: RPM={self.telemetry.rpm:.0f} Speed={self.telemetry.speed_kmh:.0f}mph Gear={self.telemetry.gear} Coolant={self.telemetry.coolant_temp_f:.0f}F Oil={self.telemetry.oil_temp_f:.0f}F Voltage={self.telemetry.voltage:.1f}V")
+                oil_status = "OK" if self.telemetry.oil_pressure_ok else "WARNING"
+                print(f"ESP32 TX: RPM={self.telemetry.rpm:.0f} Speed={self.telemetry.speed_kmh:.0f}mph Gear={self.telemetry.gear} Coolant={self.telemetry.coolant_temp_f:.0f}F Oil={oil_status} Voltage={self.telemetry.voltage:.1f}V")
                 
                 self.serial_conn.write(msg.encode('utf-8'))
                 
                 # Send diagnostics (less frequently important)
                 diag_msg = f"DIAG:{int(self.telemetry.check_engine_light)},{int(self.telemetry.abs_warning)},"
-                diag_msg += f"{int(self.telemetry.oil_pressure_warning)},{int(self.telemetry.battery_warning)},"
+                # Oil pressure warning is the INVERSE of oil_pressure_ok
+                oil_pressure_warning = not self.telemetry.oil_pressure_ok
+                diag_msg += f"{int(oil_pressure_warning)},{int(self.telemetry.battery_warning)},"
                 diag_msg += f"{int(self.telemetry.headlights_on)},{int(self.telemetry.high_beams_on)}\n"
                 self.serial_conn.write(diag_msg.encode('utf-8'))
                 

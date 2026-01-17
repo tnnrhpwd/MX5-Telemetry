@@ -179,20 +179,6 @@ class CANParser:
         return 0
     
     @staticmethod
-    def parse_oil_temp(data: bytes) -> int:
-        """Parse oil temperature (ID 0x420)
-        Returns temperature in Fahrenheit
-        """
-        if len(data) >= 2:
-            temp_c = data[1] - 40
-            temp_f = int(temp_c * 9 / 5 + 32)
-            # Return 0 if temp is unreasonable (sensor disconnected)
-            if temp_f < -20 or temp_f > 300:
-                return 0
-            return temp_f
-        return 0
-    
-    @staticmethod
     def parse_fuel_level(data: bytes) -> float:
         """Parse fuel level percentage (ID 0x430)"""
         if len(data) >= 1:
@@ -213,7 +199,17 @@ class CANParser:
         if len(data) >= 1:
             return bool(data[0] & 0x08)  # Brake bit
         return False
-    
+        
+    @staticmethod
+    def parse_oil_pressure(data: bytes) -> bool:
+        """Parse oil pressure switch status (ID 0x212)
+        Returns True if oil pressure detected, False if no pressure
+        CAN data: 98 00 20 40 01 00 00 00 (byte 4 = 0x01 indicates oil pressure)
+        """
+        if len(data) >= 5:
+            # Oil pressure switch is in byte 4 (0x01 = pressure present)
+            return bool(data[4] & 0x01)
+        return False    
     @staticmethod
     def parse_headlights(data: bytes) -> tuple:
         """Parse headlight status from lighting message
@@ -387,10 +383,12 @@ class CANHandler:
             
         elif can_id == HSCanID.BRAKE_STATUS:
             self.telemetry.brake_percent = 100 if CANParser.parse_brake_status(data) else 0
+            # Oil presence switch (TRUE/FALSE only)
+            self.telemetry.oil_present = CANParser.parse_oil_pressure(data)
+            self.telemetry.oil_pressure_warning = not self.telemetry.oil_present
             
         elif can_id == HSCanID.ENGINE_TEMP:
             self.telemetry.coolant_temp_f = CANParser.parse_coolant_temp(data)
-            self.telemetry.oil_temp_f = CANParser.parse_oil_temp(data)
             
         elif can_id == HSCanID.FUEL_LEVEL:
             self.telemetry.fuel_level_percent = CANParser.parse_fuel_level(data)

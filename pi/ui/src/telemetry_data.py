@@ -38,6 +38,9 @@ class TelemetryData:
     intake_temp_f: int = 0
     ambient_temp_f: int = 0
     
+    # Fluid pressures/status
+    oil_pressure_ok: bool = False
+    
     # Wheel speeds (individual)
     wheel_speed_fl: float = 0.0
     wheel_speed_fr: float = 0.0
