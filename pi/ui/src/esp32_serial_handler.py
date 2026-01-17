@@ -597,7 +597,7 @@ class ESP32SerialHandler:
                 msg += f"{engine_running}\n"
                 
                 # Debug logging - log EVERY send to see if data is being transmitted
-                print(f"ESP32 TX: RPM={self.telemetry.rpm:.0f} Speed={self.telemetry.speed_kmh:.0f} Gear={self.telemetry.gear} Coolant={self.telemetry.coolant_temp_f:.0f}F")
+                print(f"ESP32 TX: RPM={self.telemetry.rpm:.0f} Speed={self.telemetry.speed_kmh:.0f}mph Gear={self.telemetry.gear} Coolant={self.telemetry.coolant_temp_f:.0f}F Oil={self.telemetry.oil_temp_f:.0f}F Voltage={self.telemetry.voltage:.1f}V")
                 
                 self.serial_conn.write(msg.encode('utf-8'))
                 
