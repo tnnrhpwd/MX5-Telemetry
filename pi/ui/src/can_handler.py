@@ -99,12 +99,14 @@ class CANParser:
     @staticmethod
     def parse_speed(data: bytes) -> int:
         """Parse vehicle speed from engine message (ID 0x201)
-        Typically bytes 4-5 or similar, in km/h
+        Typically bytes 4-5 or similar, in km/h, converted to mph
         """
         if len(data) >= 6:
             raw = (data[4] << 8) | data[5]
-            # Speed in km/h, may need scaling
-            return raw // 100
+            # Speed in km/h, convert to mph
+            kmh = raw // 100
+            mph = int(kmh * 0.621371)
+            return mph
         return 0
     
     @staticmethod
@@ -177,6 +179,9 @@ class CANParser:
         if len(data) >= 2:
             temp_c = data[1] - 40
             temp_f = int(temp_c * 9 / 5 + 32)
+            # Return 0 if temp is unreasonable (sensor disconnected)
+            if temp_f < -20 or temp_f > 300:
+                return 0
             return temp_f
         return 0
     

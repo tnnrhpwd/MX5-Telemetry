@@ -233,6 +233,8 @@ void UIManager::renderRPMGauge() {
     char gearText[5];
     if (telemetry.gear == 0) {
         snprintf(gearText, sizeof(gearText), "N");
+    } else if (telemetry.gear < 0) {
+        snprintf(gearText, sizeof(gearText), "R");
     } else {
         snprintf(gearText, sizeof(gearText), "%d", telemetry.gear);
     }
@@ -260,6 +262,8 @@ void UIManager::renderSpeedometer() {
     char gearText[5];
     if (telemetry.gear == 0) {
         snprintf(gearText, sizeof(gearText), "N");
+    } else if (telemetry.gear < 0) {
+        snprintf(gearText, sizeof(gearText), "R");
     } else {
         snprintf(gearText, sizeof(gearText), "%d", telemetry.gear);
     }
