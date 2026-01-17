@@ -105,6 +105,10 @@ class CANParser:
             raw = (data[4] << 8) | data[5]
             # Speed in km/h, convert to mph
             kmh = raw // 100
+            # Filter out static/default values when not moving
+            # 100 km/h (0x2710) appears to be default in ACC mode
+            if kmh >= 100 and data[0] == 0 and data[1] == 0:  # RPM = 0
+                return 0  # Engine off, ignore speed
             mph = int(kmh * 0.621371)
             return mph
         return 0
