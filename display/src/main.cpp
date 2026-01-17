@@ -2618,12 +2618,18 @@ void parseCommand(String cmd) {
         int start = 0;
         for (int i = 0; i <= data.length() && idx < 10; i++) {
             if (i == data.length() || data[i] == ',') {
-                values[idx++] = data.substring(start, i).toFloat();
+                String field = data.substring(start, i);
+                values[idx] = field.toFloat();
+                // Debug gear field specifically
+                if (idx == 2) {
+                    Serial.printf("TEL gear field: '%s' -> %.1f\n", field.c_str(), values[idx]);
+                }
+                idx++;
                 start = i + 1;
             }
         }
         // DEBUG: Print parsed values
-        Serial.printf("TEL parsed: %d fields - RPM=%.0f Speed=%.0f Gear=%d\n", idx, values[0], values[1], values[2]);
+        Serial.printf("TEL parsed: %d fields - RPM=%.0f Speed=%.0f Gear=%.0f\n", idx, values[0], values[1], values[2]);
         
         if (idx >= 7) {  // At least 7 fields required (original protocol)
             telemetry.rpm = values[0];
