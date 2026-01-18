@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>MX5 Remote - Demo</title>
+    <style>
+/* MX5 Remote Control - Minimal Mobile-First Design */
+
+:root {
+    --primary: #00d9ff;
+    --primary-dark: #00a3cc;
+    --bg-dark: #0a0a0a;
+    --bg-card: #1a1a1a;
+    --text: #ffffff;
+    --text-dim: #888888;
+    --border: #333333;
+    --success: #00ff88;
+    --warning: #ffaa00;
+    --danger: #ff3366;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 20px;
+    padding-bottom: 40px;
+}
+
+/* Header */
+header {
+    text-align: center;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 30px;
+}
+
+header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
+.connection-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border-radius: 20px;
+    font-size: 14px;
+}
+
+.connection-status .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Sections */
+section {
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+section h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 15px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Current Screen Display */
+.current-screen {
+    text-align: center;
+    padding: 30px 20px;
+}
+
+.screen-label {
+    font-size: 14px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+}
+
+.screen-name {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+/* Buttons */
+.btn {
+    background: var(--bg-card);
+    color: var(--text);
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    padding: 15px 20px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    touch-action: manipulation;
+}
+
+.btn:active {
+    transform: scale(0.95);
+}
+
+.btn-nav {
+    flex: 1;
+    background: var(--primary);
+    color: var(--bg-dark);
+    border-color: var(--primary);
+}
+
+.btn-nav:active {
+    background: var(--primary-dark);
+}
+
+.button-row {
+    display: flex;
+    gap: 10px;
+}
+
+/* Screen Grid */
+.screen-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.btn-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 20px 10px;
+    min-height: 100px;
+}
+
+.btn-screen.active {
+    border-color: var(--primary);
+    background: rgba(0, 217, 255, 0.1);
+}
+
+.screen-icon {
+    font-size: 32px;
+}
+
+.screen-text {
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
+.btn-screen:active .screen-text {
+    color: var(--text);
+}
+
+/* Settings */
+.setting-item {
+    padding: 15px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.setting-item:last-child {
+    border-bottom: none;
+}
+
+.toggle-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-label span {
+    font-size: 16px;
+}
+
+/* Toggle Switch */
+.toggle {
+    position: relative;
+    width: 50px;
+    height: 28px;
+}
+
+.toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--border);
+    transition: 0.3s;
+    border-radius: 28px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 4px;
+    bottom: 4px;
+    background-color: var(--text);
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.toggle input:checked + .toggle-slider {
+    background-color: var(--primary);
+}
+
+.toggle input:checked + .toggle-slider:before {
+    transform: translateX(22px);
+}
+
+/* Sliders */
+.slider {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--border);
+    outline: none;
+    transition: background 0.2s;
+}
+
+.slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.slider::-webkit-slider-thumb:active {
+    transform: scale(1.2);
+    background: var(--primary-dark);
+}
+
+.slider::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+
+.slider::-moz-range-thumb:active {
+    transform: scale(1.2);
+    background: var(--primary-dark);
+}
+
+.setting-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.setting-header span:first-child {
+    font-size: 16px;
+}
+
+.setting-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+/* Select Dropdown */
+.setting-select {
+    width: 100%;
+    padding: 12px;
+    background: var(--bg-card);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    color: var(--primary);
+    font-size: 16px;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0l6 8 6-8z' fill='%2300d9ff'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 12px;
+    padding-right: 40px;
+}
+
+.setting-select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 10px rgba(0, 217, 255, 0.3);
+}
+
+.setting-select option {
+    background: var(--bg-card);
+    color: var(--primary);
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 20px 0;
+    color: var(--text-dim);
+    font-size: 14px;
+}
+
+footer p {
+    margin: 5px 0;
+}
+
+.hint {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.demo-badge {
+    display: inline-block;
+    background: var(--warning);
+    color: var(--bg-dark);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 10px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 400px) {
+    .screen-buttons {
+        grid-template-columns: 1fr;
+    }
+    
+    .btn-screen {
+        flex-direction: row;
+        justify-content: flex-start;
+        gap: 15px;
+        min-height: auto;
+        padding: 15px;
+    }
+}
+
+/* iOS safe area */
+@supports (padding: max(0px)) {
+    .container {
+        padding-bottom: max(40px, env(safe-area-inset-bottom));
+    }
+}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🏎️ MX5 Remote</h1>
+            <div class="connection-status">
+                <span class="dot"></span>
+                <span>Demo Mode</span>
+            </div>
+            <div class="demo-badge">OFFLINE PREVIEW</div>
+        </header>
+
+        <!-- Current Screen Display -->
+        <section class="current-screen">
+            <div class="screen-label">Current Screen</div>
+            <div class="screen-name" id="current-screen">Overview</div>
+        </section>
+
+        <!-- Navigation Controls -->
+        <section class="nav-controls">
+            <h2>Navigation</h2>
+            <div class="button-row">
+                <button class="btn btn-nav" onclick="prevScreen()">
+                    ← Previous
+                </button>
+                <button class="btn btn-nav" onclick="nextScreen()">
+                    Next →
+                </button>
+            </div>
+        </section>
+
+        <!-- Screen Quick Access -->
+        <section class="screen-grid">
+            <h2>Quick Access</h2>
+            <div class="screen-buttons">
+                <button class="btn btn-screen active" onclick="changeScreen(0)">
+                    <span class="screen-icon">📊</span>
+                    <span class="screen-text">Overview</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(1)">
+                    <span class="screen-icon">🔄</span>
+                    <span class="screen-text">RPM</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(2)">
+                    <span class="screen-icon">🛞</span>
+                    <span class="screen-text">TPMS</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(3)">
+                    <span class="screen-icon">🔧</span>
+                    <span class="screen-text">Engine</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(4)">
+                    <span class="screen-icon">📈</span>
+                    <span class="screen-text">G-Force</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(5)">
+                    <span class="screen-icon">⚠️</span>
+                    <span class="screen-text">Diagnostics</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(6)">
+                    <span class="screen-icon">💻</span>
+                    <span class="screen-text">System</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(7)">
+                    <span class="screen-icon">⚙️</span>
+                    <span class="screen-text">Settings</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Settings -->
+        <section class="settings">
+            <h2>Settings</h2>
+            
+            <!-- Demo Mode Toggle -->
+            <div class="setting-item">
+                <label class="toggle-label">
+                    <span>Demo Mode</span>
+                    <div class="toggle">
+                        <input type="checkbox" id="toggle-demo" checked onchange="logSetting('demo_mode')">
+                        <span class="toggle-slider"></span>
+                    </div>
+                </label>
+            </div>
+            
+            <!-- Brightness Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Brightness</span>
+                    <span class="setting-value" id="brightness-value">200</span>
+                </div>
+                <input type="range" class="slider" id="brightness" 
+                       min="10" max="255" value="200" 
+                       oninput="updateSliderDemo('brightness')">
+            </div>
+            
+            <!-- Volume Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Volume</span>
+                    <span class="setting-value" id="volume-value">70</span>
+                </div>
+                <input type="range" class="slider" id="volume" 
+                       min="0" max="100" value="70" 
+                       oninput="updateSliderDemo('volume')">
+            </div>
+            
+            <!-- Shift RPM Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Shift Light RPM</span>
+                    <span class="setting-value" id="shift-rpm-value">6500</span>
+                </div>
+                <input type="range" class="slider" id="shift-rpm" 
+                       min="4000" max="7500" step="100" value="6500" 
+                       oninput="updateSliderDemo('shift-rpm')">
+            </div>
+            
+            <!-- Redline RPM Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Redline RPM</span>
+                    <span class="setting-value" id="redline-rpm-value">7000</span>
+                </div>
+                <input type="range" class="slider" id="redline-rpm" 
+                       min="5000" max="8000" step="100" value="7000" 
+                       oninput="updateSliderDemo('redline-rpm')">
+            </div>
+            
+            <!-- Speed Units Toggle -->
+            <div class="setting-item">
+                <label class="toggle-label">
+                    <span>Use MPH (off = KM/H)</span>
+                    <div class="toggle">
+                        <input type="checkbox" id="toggle-mph" checked onchange="logSetting('use_mph')">
+                        <span class="toggle-slider"></span>
+                    </div>
+                </label>
+            </div>
+            
+            <!-- Tire Pressure Warning Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Tire Low Pressure (PSI)</span>
+                    <span class="setting-value" id="tire-psi-value">28</span>
+                </div>
+                <input type="range" class="slider" id="tire-psi" 
+                       min="25" max="35" step="0.5" value="28" 
+                       oninput="updateSliderDemo('tire-psi')">
+            </div>
+            
+            <!-- Tire Pressure High Warning Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Tire High Pressure (PSI)</span>
+                    <span class="setting-value" id="tire-high-psi-value">36</span>
+                </div>
+                <input type="range" class="slider" id="tire-high-psi" 
+                       min="32" max="42" step="0.5" value="36" 
+                       oninput="updateSliderDemo('tire-high-psi')">
+            </div>
+            
+            <!-- Coolant Warning Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Coolant Warning (°F)</span>
+                    <span class="setting-value" id="coolant-warn-value">220</span>
+                </div>
+                <input type="range" class="slider" id="coolant-warn" 
+                       min="200" max="240" step="5" value="220" 
+                       oninput="updateSliderDemo('coolant-warn')">
+            </div>
+            
+            <!-- Oil Warning Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Oil Warning (°F)</span>
+                    <span class="setting-value" id="oil-warn-value">260</span>
+                </div>
+                <input type="range" class="slider" id="oil-warn" 
+                       min="240" max="300" step="5" value="260" 
+                       oninput="updateSliderDemo('oil-warn')">
+            </div>
+            
+            <!-- LED Sequence Selector -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>LED Sequence</span>
+                    <span class="setting-value" id="led-seq-value">Center Out</span>
+                </div>
+                <select class="setting-select" id="led-seq" onchange="updateSelectDemo('led-seq')">
+                    <option value="1">Center Out</option>
+                    <option value="2">Left to Right</option>
+                    <option value="3">Right to Left</option>
+                    <option value="4">Center In</option>
+                </select>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <p>MX5 Telemetry Remote Control v1.0</p>
+            <p class="hint">This is an offline preview - actual version connects to your Pi</p>
+        </footer>
+    </div>
+
+    <script>
+// MX5 Remote Control - Demo Mode (Offline Preview)
+
+let currentScreen = 0;
+const screenNames = [
+    'Overview', 'RPM', 'TPMS', 'Engine', 
+    'G-Force', 'Diagnostics', 'System', 'Settings'
+];
+
+// Update current screen display and highlight active button
+function updateCurrentScreen(screen) {
+    document.getElementById('current-screen').textContent = screenNames[screen];
+    
+    // Highlight active screen button
+    document.querySelectorAll('.btn-screen').forEach((btn, index) => {
+        if (index === screen) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    
+    console.log(`Screen changed to: ${screen} (${screenNames[screen]})`);
+}
+
+// Navigation functions
+function changeScreen(screen) {
+    currentScreen = screen;
+    updateCurrentScreen(screen);
+    vibrate();
+}
+
+function nextScreen() {
+    currentScreen = (currentScreen + 1) % 8;
+    updateCurrentScreen(currentScreen);
+    vibrate();
+}
+
+function prevScreen() {
+    currentScreen = (currentScreen - 1 + 8) % 8;
+    updateCurrentScreen(currentScreen);
+    vibrate();
+}
+
+// Settings functions
+function updateSliderDemo(settingId) {
+    const slider = document.getElementById(settingId);
+    const valueDisplay = document.getElementById(`${settingId}-value`);
+    const value = slider.value;
+    
+    // Update display immediately
+    valueDisplay.textContent = value;
+    
+    // Log to console
+    console.log(`${settingId} = ${value}`);
+    vibrate();
+}
+
+function logSetting(settingName) {
+    let enabled;
+    if (settingName === 'demo_mode') {
+        enabled = document.getElementById('toggle-demo').checked;
+    } else if (settingName === 'use_mph') {
+        enabled = document.getElementById('toggle-mph').checked;
+    }
+    console.log(`${settingName} = ${enabled ? 'ON' : 'OFF'}`);
+    vibrate();
+}
+
+// Handle select dropdown changes
+function updateSelectDemo(id) {
+    const select = document.getElementById(id);
+    const valueDisplay = document.getElementById(id + '-value');
+    const selectedOption = select.options[select.selectedIndex];
+    valueDisplay.textContent = selectedOption.text;
+    console.log(`${id} = ${selectedOption.value} (${selectedOption.text})`);
+    vibrate();
+}
+
+// Haptic feedback (if supported)
+function vibrate() {
+    if ('vibrate' in navigator) {
+        navigator.vibrate(50);
+    }
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') {
+        prevScreen();
+    } else if (e.key === 'ArrowRight') {
+        nextScreen();
+    } else if (e.key >= '0' && e.key <= '7') {
+        changeScreen(parseInt(e.key));
+    }
+});
+
+// Initialize
+console.log('MX5 Remote - Demo Mode');
+console.log('Try: Click buttons, use arrow keys, or press 0-7 for screens');
+    </script>
+</body>
+</html>

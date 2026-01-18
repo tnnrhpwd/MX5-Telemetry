@@ -1,0 +1,377 @@
+/* MX5 Remote Control - Minimal Mobile-First Design */
+
+:root {
+    --primary: #00d9ff;
+    --primary-dark: #00a3cc;
+    --bg-dark: #0a0a0a;
+    --bg-card: #1a1a1a;
+    --text: #ffffff;
+    --text-dim: #888888;
+    --border: #333333;
+    --success: #00ff88;
+    --warning: #ffaa00;
+    --danger: #ff3366;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 20px;
+    padding-bottom: 40px;
+}
+
+/* Header */
+header {
+    text-align: center;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 30px;
+}
+
+header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
+.connection-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border-radius: 20px;
+    font-size: 14px;
+}
+
+.connection-status .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    animation: pulse 2s infinite;
+}
+
+.connection-status.connected .dot {
+    background: var(--success);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Sections */
+section {
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+section h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 15px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Current Screen Display */
+.current-screen {
+    text-align: center;
+    padding: 30px 20px;
+}
+
+.screen-label {
+    font-size: 14px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+}
+
+.screen-name {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+/* Buttons */
+.btn {
+    background: var(--bg-card);
+    color: var(--text);
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    padding: 15px 20px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    touch-action: manipulation;
+}
+
+.btn:active {
+    transform: scale(0.95);
+}
+
+.btn-nav {
+    flex: 1;
+    background: var(--primary);
+    color: var(--bg-dark);
+    border-color: var(--primary);
+}
+
+.btn-nav:active {
+    background: var(--primary-dark);
+}
+
+.button-row {
+    display: flex;
+    gap: 10px;
+}
+
+/* Screen Grid */
+.screen-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.btn-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 20px 10px;
+    min-height: 100px;
+}
+
+.btn-screen.active {
+    border-color: var(--primary);
+    background: rgba(0, 217, 255, 0.1);
+}
+
+.screen-icon {
+    font-size: 32px;
+}
+
+.screen-text {
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
+.btn-screen:active .screen-text {
+    color: var(--text);
+}
+
+/* Settings */
+.setting-item {
+    padding: 15px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.setting-item:last-child {
+    border-bottom: none;
+}
+
+.setting-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.setting-header span:first-child {
+    font-size: 16px;
+}
+
+.setting-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.toggle-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-label span {
+    font-size: 16px;
+}
+
+/* Toggle Switch */
+.toggle {
+    position: relative;
+    width: 50px;
+    height: 28px;
+}
+
+.toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--border);
+    transition: 0.3s;
+    border-radius: 28px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 4px;
+    bottom: 4px;
+    background-color: var(--text);
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.toggle input:checked + .toggle-slider {
+    background-color: var(--primary);
+}
+
+.toggle input:checked + .toggle-slider:before {
+    transform: translateX(22px);
+}
+
+/* Sliders */
+.slider {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--border);
+    outline: none;
+    transition: background 0.2s;
+}
+
+.slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.slider::-webkit-slider-thumb:active {
+    transform: scale(1.2);
+    background: var(--primary-dark);
+}
+
+.slider::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+
+.slider::-moz-range-thumb:active {
+    transform: scale(1.2);
+    background: var(--primary-dark);
+}
+
+/* Select Dropdown */
+.setting-select {
+    width: 100%;
+    padding: 12px;
+    background: var(--bg-dark);
+    color: var(--text);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url('data:image/svg+xml;charset=UTF-8,<svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L6 6L11 1" stroke="%2300d9ff" stroke-width="2" stroke-linecap="round"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 40px;
+}
+
+.setting-select:focus {
+    border-color: var(--primary);
+}
+
+.setting-select option {
+    background: var(--bg-card);
+    color: var(--text);
+    padding: 12px;
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 20px 0;
+    color: var(--text-dim);
+    font-size: 14px;
+}
+
+footer p {
+    margin: 5px 0;
+}
+
+.hint {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+/* Responsive adjustments */
+@media (max-width: 400px) {
+    .screen-buttons {
+        grid-template-columns: 1fr;
+    }
+    
+    .btn-screen {
+        flex-direction: row;
+        justify-content: flex-start;
+        gap: 15px;
+        min-height: auto;
+        padding: 15px;
+    }
+}
+
+/* iOS safe area */
+@supports (padding: max(0px)) {
+    .container {
+        padding-bottom: max(40px, env(safe-area-inset-bottom));
+    }
+}
