@@ -159,8 +159,6 @@ class TelemetryData:
     throttle_percent: int = 0
     brake_percent: int = 0
     coolant_temp_f: int = 0
-    oil_temp_f: int = 0
-    oil_pressure_psi: float = 0.0
     intake_temp_f: int = 0
     ambient_temp_f: int = 0
     fuel_level_percent: float = 0.0
@@ -179,7 +177,7 @@ class TelemetryData:
     abs_warning: bool = False
     traction_control_off: bool = False
     traction_control_active: bool = False
-    oil_pressure_warning: bool = True  # True = no oil pressure (default when not connected)
+    oil_status: bool = False  # TRUE = oil present, FALSE = no oil/warning
     battery_warning: bool = False
     door_ajar: bool = False
     seatbelt_warning: bool = False
@@ -225,7 +223,6 @@ class Settings:
     tire_low_psi: float = 28.0
     tire_high_psi: float = 36.0
     coolant_warn_f: int = 220
-    oil_warn_f: int = 260
     demo_mode: bool = False  # False = use real CAN data, True = simulated data
     led_sequence: int = LED_SEQ_CENTER_OUT  # LED sequence mode (1-4)
 
@@ -1499,7 +1496,7 @@ class PiDisplayApp:
         self.telemetry.abs_warning = False
         self.telemetry.traction_control_active = self.telemetry.wheel_slip[2] > 5 or self.telemetry.wheel_slip[3] > 5
         self.telemetry.traction_control_off = False
-        self.telemetry.oil_pressure_warning = self.telemetry.oil_pressure_psi < 20
+        self.telemetry.oil_status = True  # Always OK in demo mode
         self.telemetry.battery_warning = self.telemetry.voltage < 12.0
         self.telemetry.door_ajar = False
         self.telemetry.seatbelt_warning = False
@@ -1533,8 +1530,6 @@ class PiDisplayApp:
         # Check temperatures
         if self.telemetry.coolant_temp_f >= self.settings.coolant_warn_f:
             alerts.append((f"COOLANT: {self.telemetry.coolant_temp_f}F", COLOR_RED))
-        if self.telemetry.oil_temp_f >= self.settings.oil_warn_f:
-            alerts.append((f"OIL TEMP: {self.telemetry.oil_temp_f}F", COLOR_RED))
         
         # Check voltage
         if self.telemetry.voltage < 12.0:
@@ -1739,12 +1734,9 @@ class PiDisplayApp:
         self.screen.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 195)))
         
         # Key values grid
-        # Oil pressure: 2008 MX5 NC GT only has pressure present sensor (not PSI)
-        # oil_pressure_warning = True means NO oil pressure (FALSE)
-        # oil_pressure_warning = False means oil pressure present (TRUE)
-        oil_pressure_present = not self.telemetry.oil_pressure_warning
-        oil_status = "TRUE" if oil_pressure_present else "FALSE"
-        oil_color = COLOR_GREEN if oil_pressure_present else COLOR_RED
+        # Oil status: TRUE = oil present, FALSE = no oil/warning
+        oil_status = "TRUE" if self.telemetry.oil_status else "FALSE"
+        oil_color = COLOR_GREEN if self.telemetry.oil_status else COLOR_RED
         
         values = [
             ("COOL", f"{self.telemetry.coolant_temp_f:.0f}", 
@@ -2037,13 +2029,10 @@ class PiDisplayApp:
         cool_color = COLOR_RED if cool >= self.settings.coolant_warn_f else COLOR_TEAL
         self._render_gauge(150, row1_y, "COOLANT", cool, "F", 180, self.settings.coolant_warn_f, 250, cool_color)
         
-        # Oil Temp
-        oil = self.telemetry.oil_temp_f
-        oil_color = COLOR_RED if oil >= self.settings.oil_warn_f else COLOR_GREEN
-        self._render_gauge(400, row1_y, "OIL TEMP", oil, "F", 150, self.settings.oil_warn_f, 280, oil_color)
-        
-        # Oil Pressure
-        self._render_gauge(650, row1_y, "OIL PSI", self.telemetry.oil_pressure_psi, "", 0, 30, 80, COLOR_ACCENT)
+        # Oil Status (pressure present sensor)
+        oil_val = 1 if self.telemetry.oil_status else 0
+        oil_color = COLOR_GREEN if self.telemetry.oil_status else COLOR_RED
+        self._render_gauge(400, row1_y, "OIL OK", oil_val, "", 0, 0.5, 1, oil_color)
         
         # Fuel
         fuel = self.telemetry.fuel_level_percent
@@ -2333,7 +2322,7 @@ class PiDisplayApp:
             ("CHECK ENGINE", "CEL", self.telemetry.check_engine_light, 'critical'),
             ("ABS WARNING", "ABS", self.telemetry.abs_warning, 'critical'),
             ("TRACTION OFF", "TC OFF", self.telemetry.traction_control_off, 'warning'),
-            ("OIL PRESSURE", "OIL", self.telemetry.oil_pressure_warning, 'critical'),
+            ("OIL PRESSURE", "OIL", not self.telemetry.oil_status, 'critical'),
             ("BATTERY", "BATT", self.telemetry.battery_warning, 'warning'),
             ("BRAKE", "BRAKE", self.telemetry.brake_warning, 'critical'),
             ("AIRBAG", "SRS", self.telemetry.airbag_warning, 'critical'),
@@ -2507,7 +2496,7 @@ class PiDisplayApp:
         active_warnings = sum([
             self.telemetry.check_engine_light,
             self.telemetry.abs_warning,
-            self.telemetry.oil_pressure_warning,
+            not self.telemetry.oil_status,
             self.telemetry.battery_warning,
             self.telemetry.brake_warning,
             self.telemetry.airbag_warning,
