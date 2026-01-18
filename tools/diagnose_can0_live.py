@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+can#!/usr/bin/env python3
 """
 Live CAN0 (HS-CAN) Diagnostic Tool
 Connects to Pi and monitors can0 traffic in real-time to diagnose why coolant/oil data isn't working

@@ -206,12 +206,16 @@ Pi (Central Hub)
 
 | Pin | Signal | Pi CAN Interface | Connects To | Pi4B Wire Color |
 |-----|--------|------------------|-------------|-----------------|
-| 3 | MS-CAN High (125k) | **can1** | MCP2515 (MS-CAN Pi) CANH | Grey |
+| 3 | MS-CAN High (125k) | **can0** (spi0.1) | MCP2515 (MS-CAN Pi) CANH | Grey |
 | 5 | Ground | - | Breadboard GND rail → All devices | Black |
-| 6 | HS-CAN High (500k) | **can0** | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANH | Green |
-| 11 | MS-CAN Low (125k) | **can1** | MCP2515 (MS-CAN Pi) CANL | White |
-| 14 | HS-CAN Low (500k) | **can0** | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANL | Yellow |
+| 6 | HS-CAN High (500k) | **can1** (spi0.0) | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANH | Green |
+| 11 | MS-CAN Low (125k) | **can0** (spi0.1) | MCP2515 (MS-CAN Pi) CANL | White |
+| 14 | HS-CAN Low (500k) | **can1** (spi0.0) | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANL | Yellow |
 | 16 | 12V DC | - | LM2596 → Breadboard 5V rail | Red |
+
+> ⚠️ **CRITICAL:** CAN interface names (can0/can1) are assigned by kernel based on SPI device order, NOT physical wiring!  
+> **This system:** HS-CAN is on **can1** (spi0.0/CE0), MS-CAN is on **can0** (spi0.1/CE1)  
+> If coolant shows 0°F after setup, see [../TROUBLESHOOTING_CAN_INTERFACES.md](../TROUBLESHOOTING_CAN_INTERFACES.md)
 
 ---
 
@@ -219,20 +223,20 @@ Pi (Central Hub)
 
 > **Note**: Uses **BCM GPIO numbering** (Linux/Python standard)
 
-**Wired Pins Summary:**
+**Pi GPIO Connections:**
 
 | Pin | GPIO | Connects To | Purpose |
 |-----|------|-------------|---------|
 | 6 | GND | Breadboard GND | Common ground |
 | 8 | BCM14 (TXD) | Arduino D3 | Serial to Arduino |
 | 10 | BCM15 (RXD) | Arduino D4 | Serial from Arduino |
-| 18 | BCM24 | MCP2515 (MS-CAN Pi) INT | Interrupt (125k) |
+| 18 | BCM24 | MCP2515 (MS-CAN Pi) INT | Interrupt (125k) → **can0** |
 | 19 | BCM10 (MOSI) | Both MCP2515 MOSI | SPI data out |
 | 21 | BCM9 (MISO) | Both MCP2515 MISO | SPI data in |
-| 22 | BCM25 | MCP2515 (HS-CAN Pi) INT | Interrupt (500k) |
+| 22 | BCM25 | MCP2515 (HS-CAN Pi) INT | Interrupt (500k) → **can1** |
 | 23 | BCM11 (SCLK) | Both MCP2515 SCK | SPI clock |
-| 24 | BCM8 (CE0) | MCP2515 (HS-CAN Pi) CS | Chip select |
-| 26 | BCM7 (CE1) | MCP2515 (MS-CAN Pi) CS | Chip select |
+| 24 | BCM8 (CE0) | MCP2515 (HS-CAN Pi) CS | Chip select → **can1** |
+| 26 | BCM7 (CE1) | MCP2515 (MS-CAN Pi) CS | Chip select → **can0** |
 
 **Total: 10 wires from Pi** (1×GND, 2×Serial, 3×SPI shared, 2×INT, 2×CS)
 
@@ -242,13 +246,15 @@ Pi (Central Hub)
 |-------------|-----------|-----------|
 | VCC | Breadboard 5V | Breadboard 5V |
 | GND | Breadboard GND | Breadboard GND |
-| CS | GPIO 8 (Pin 24) | GPIO 7 (Pin 26) |
+| CS | GPIO 8 (Pin 24) **→ can1** | GPIO 7 (Pin 26) **→ can0** |
 | MOSI | GPIO 10 (Pin 19) | (shared) |
 | MISO | GPIO 9 (Pin 21) | (shared) |
 | SCK | GPIO 11 (Pin 23) | (shared) |
 | INT | GPIO 25 (Pin 22) | GPIO 24 (Pin 18) |
-| CANH | OBD Pin 6 | OBD Pin 3 |
-| CANL | OBD Pin 14 | OBD Pin 11 |
+| CANH | OBD Pin 6 (HS) | OBD Pin 3 (MS) |
+| CANL | OBD Pin 14 (HS) | OBD Pin 11 (MS) |
+
+> **Note:** CE0 (GPIO 8) = can1 (HS-CAN), CE1 (GPIO 7) = can0 (MS-CAN) due to kernel SPI device ordering.
 
 **Other Pi Connections:**
 
@@ -336,6 +342,7 @@ OBD Pin 5 (GND) ──────────────► BREADBOARD GND RAI
 - [ ] VCC from breadboard 5V (not Pi 3.3V)
 - [ ] INT pins connected (GPIO 25, 24)
 - [ ] SPI shared, CS separate
+- [ ] **Verify CAN interface mapping matches software config** (see [../TROUBLESHOOTING_CAN_INTERFACES.md](../TROUBLESHOOTING_CAN_INTERFACES.md))
 
 **Arduino:**
 - [ ] Arduino 5V from breadboard
@@ -352,11 +359,22 @@ OBD Pin 5 (GND) ──────────────► BREADBOARD GND RAI
 
 **Pi CAN Bus:**
 ```bash
-ip link show can0 can1
-sudo ip link set can0 up type can bitrate 500000
-sudo ip link set can1 up type can bitrate 125000
-candump can0  # Should see traffic with ignition ON
+# Check interface status
+ip -s link show can0 can1
+
+# Verify interfaces are up with correct bitrates
+# HS-CAN should be on can1, MS-CAN on can0
+sudo ip link set can1 up type can bitrate 500000 listen-only on
+sudo ip link set can0 up type can bitrate 125000 listen-only on
+
+# Check for HS-CAN traffic (should see 0x201, 0x420, 0x200)
+timeout 3 candump can1 | head -10
+
+# Check for MS-CAN traffic (should see 0x250, 0x290)
+timeout 3 candump can0 | head -10
 ```
+
+> ⚠️ **If coolant shows 0°F:** Interface mapping is wrong. See [../TROUBLESHOOTING_CAN_INTERFACES.md](../TROUBLESHOOTING_CAN_INTERFACES.md)
 
 **ESP32 Serial:**
 ```bash
