@@ -77,6 +77,15 @@ except ImportError:
     SERIAL_AVAILABLE = False
     ESP32SerialHandler = None
 
+# Try to import web remote server
+try:
+    from web_server import WebRemoteServer
+    WEB_SERVER_AVAILABLE = True
+except ImportError:
+    WEB_SERVER_AVAILABLE = False
+    WebRemoteServer = None
+    print("Warning: flask/flask-socketio not installed. Web remote disabled.")
+
 # =============================================================================
 # CONSTANTS
 # =============================================================================
@@ -477,8 +486,17 @@ class PiDisplayApp:
         # Arduino serial handler (for LED sequence commands)
         self.arduino_serial = None
         
+        # Web remote server (for phone control)
+        self.web_server = None
+        
+        # Screen names for web interface
+        self.screen_names = [s.name for s in Screen]
+        
         # Initialize data sources based on settings
         self._init_data_sources()
+        
+        # Start web remote server
+        self._init_web_server()
     
     def _init_data_sources(self):
         """Initialize or reinitialize CAN and ESP32 handlers based on demo_mode setting"""
@@ -595,6 +613,16 @@ class PiDisplayApp:
         print(f"Navigation {lock_status}")
         if self.esp32_handler:
             self.esp32_handler.send_nav_lock(locked)
+    
+    def _init_web_server(self):
+        """Initialize web-based remote control server"""
+        if WEB_SERVER_AVAILABLE and WebRemoteServer:
+            print("  Initializing web remote server...")
+            self.web_server = WebRemoteServer(self)
+            self.web_server.start(host='0.0.0.0', port=5000)
+            print("  ✓ Web remote available at http://192.168.1.28:5000")
+        else:
+            print("  ✗ Web server not available - install flask and flask-socketio")
     
     def _on_esp32_screen_change(self, screen_index: int):
         """Callback when ESP32 display changes screen via touch (bidirectional sync)"""
@@ -854,12 +882,12 @@ class PiDisplayApp:
             
             # Forward telemetry to ESP32 (if connected)
             if self.esp32_handler and self.esp32_handler.connected:
-                # Send telemetry at ~5Hz (every 6 frames at 30fps) - reduced to avoid serial congestion
+                # Send telemetry at 30Hz (every 2 frames at 60fps) - 3x faster than before
                 if hasattr(self, '_esp32_tx_counter'):
                     self._esp32_tx_counter += 1
                 else:
                     self._esp32_tx_counter = 0
-                if self._esp32_tx_counter >= 6:
+                if self._esp32_tx_counter >= 2:
                     self._esp32_tx_counter = 0
                     self.esp32_handler.send_telemetry()
             
@@ -922,6 +950,19 @@ class PiDisplayApp:
             pygame.K_SPACE: ButtonEvent.ON_OFF,
         }
         return mapping.get(key, ButtonEvent.NONE)
+    
+    def change_screen(self, screen_index: int):
+        """Change to a specific screen by index (for web remote API)"""
+        screens = list(Screen)
+        if 0 <= screen_index < len(screens):
+            target_screen = screens[screen_index]
+            if target_screen != self.current_screen:
+                # Determine direction for transition
+                direction = 'next' if screen_index > self.current_screen.value else 'prev'
+                self._navigate_to_screen(target_screen, direction)
+                # Notify web clients
+                if self.web_server:
+                    self.web_server.notify_screen_change(screen_index)
     
     def _handle_button(self, button: ButtonEvent):
         """Handle button press"""

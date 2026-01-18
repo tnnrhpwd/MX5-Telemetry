@@ -622,11 +622,12 @@ void loop() {
     }
     
     // Update display at ~60Hz for smooth G-force ball movement
+    // Note: Other screens redraw immediately on data change (event-driven)
     if (millis() - lastUpdate > 16) {
         lastUpdate = millis();
         
-        // Only G-Force screen needs frequent updates (smooth ball movement)
-        // All other screens are static - only update on screen change
+        // Only G-Force screen needs frequent periodic updates (smooth ball movement)
+        // All other screens redraw immediately when new telemetry arrives
         if (currentScreen == SCREEN_GFORCE) {
             needsRedraw = true;
             // G-Force handles its own partial redraw, no needsFullRedraw
@@ -639,7 +640,7 @@ void loop() {
         needsRedraw = true;  // Keep redrawing during transition
     }
     
-    // Redraw screen if needed
+    // Redraw screen if needed (triggers immediately when telemetry arrives)
     if (needsRedraw) {
         needsRedraw = false;
         
@@ -981,6 +982,7 @@ void drawOverviewScreen() {
     }
     
     // Skip if nothing changed and not a full redraw
+    // Note: Redraws immediately when values change (30Hz update rate from Pi)
     if (!needsFullRedraw && !valuesChanged) return;
     
     // If full redraw needed, draw background

@@ -1,7 +1,19 @@
 # MX5-Telemetry Python Dependencies
-# For LED Simulator and data analysis tools
+# For LED Simulator, web remote, and data analysis tools
 
 # Note: tkinter is included with Python standard library
+
+# Web Remote Control (for Pi display control from phone)
+flask>=2.0.0
+flask-socketio>=5.0.0
+python-socketio>=5.0.0
+
+# Raspberry Pi Display Dependencies
+pygame>=2.0.0
+pyserial>=3.5
+
+# CAN Bus Communication (optional - for real vehicle data)
+# python-can>=3.3.0
 
 # LED Simulator v2.1 - Engine Sound Support (optional)
 # Install for realistic engine audio: pip install pyaudio

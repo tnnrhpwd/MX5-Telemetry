@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>MX5 Remote</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🏎️ MX5 Remote</h1>
+            <div class="connection-status" id="connection-status">
+                <span class="dot"></span>
+                <span id="status-text">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- Current Screen Display -->
+        <section class="current-screen">
+            <div class="screen-label">Current Screen</div>
+            <div class="screen-name" id="current-screen">Overview</div>
+        </section>
+
+        <!-- Navigation Controls -->
+        <section class="nav-controls">
+            <h2>Navigation</h2>
+            <div class="button-row">
+                <button class="btn btn-nav" id="btn-prev" onclick="prevScreen()">
+                    ← Previous
+                </button>
+                <button class="btn btn-nav" id="btn-next" onclick="nextScreen()">
+                    Next →
+                </button>
+            </div>
+        </section>
+
+        <!-- Screen Quick Access -->
+        <section class="screen-grid">
+            <h2>Quick Access</h2>
+            <div class="screen-buttons">
+                <button class="btn btn-screen" onclick="changeScreen(0)">
+                    <span class="screen-icon">📊</span>
+                    <span class="screen-text">Overview</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(1)">
+                    <span class="screen-icon">🔄</span>
+                    <span class="screen-text">RPM</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(2)">
+                    <span class="screen-icon">🛞</span>
+                    <span class="screen-text">TPMS</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(3)">
+                    <span class="screen-icon">🔧</span>
+                    <span class="screen-text">Engine</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(4)">
+                    <span class="screen-icon">📈</span>
+                    <span class="screen-text">G-Force</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(5)">
+                    <span class="screen-icon">⚠️</span>
+                    <span class="screen-text">Diagnostics</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(6)">
+                    <span class="screen-icon">💻</span>
+                    <span class="screen-text">System</span>
+                </button>
+                <button class="btn btn-screen" onclick="changeScreen(7)">
+                    <span class="screen-icon">⚙️</span>
+                    <span class="screen-text">Settings</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Settings -->
+        <section class="settings">
+            <h2>Settings</h2>
+            
+            <!-- Demo Mode Toggle -->
+            <div class="setting-item">
+                <label class="toggle-label">
+                    <span>Demo Mode</span>
+                    <div class="toggle">
+                        <input type="checkbox" id="toggle-demo" onchange="toggleSetting('demo_mode')">
+                        <span class="toggle-slider"></span>
+                    </div>
+                </label>
+            </div>
+            
+            <!-- Brightness Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Brightness</span>
+                    <span class="setting-value" id="brightness-value">100</span>
+                </div>
+                <input type="range" class="slider" id="brightness" 
+                       min="10" max="255" value="200" 
+                       oninput="updateSlider('brightness')">
+            </div>
+            
+            <!-- Volume Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Volume</span>
+                    <span class="setting-value" id="volume-value">70</span>
+                </div>
+                <input type="range" class="slider" id="volume" 
+                       min="0" max="100" value="70" 
+                       oninput="updateSlider('volume')">
+            </div>
+            
+            <!-- Shift RPM Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Shift Light RPM</span>
+                    <span class="setting-value" id="shift-rpm-value">6500</span>
+                </div>
+                <input type="range" class="slider" id="shift-rpm" 
+                       min="4000" max="7500" step="100" value="6500" 
+                       oninput="updateSlider('shift-rpm')">
+            </div>
+            
+            <!-- Redline RPM Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Redline RPM</span>
+                    <span class="setting-value" id="redline-rpm-value">7000</span>
+                </div>
+                <input type="range" class="slider" id="redline-rpm" 
+                       min="5000" max="8000" step="100" value="7000" 
+                       oninput="updateSlider('redline-rpm')">
+            </div>
+            
+            <!-- Speed Units Toggle -->
+            <div class="setting-item">
+                <label class="toggle-label">
+                    <span>Use MPH (off = KM/H)</span>
+                    <div class="toggle">
+                        <input type="checkbox" id="toggle-mph" checked onchange="toggleSetting('use_mph')">
+                        <span class="toggle-slider"></span>
+                    </div>
+                </label>
+            </div>
+            
+            <!-- Tire Pressure Warning Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Tire Low Pressure (PSI)</span>
+                    <span class="setting-value" id="tire-psi-value">28</span>
+                </div>
+                <input type="range" class="slider" id="tire-psi" 
+                       min="25" max="35" step="0.5" value="28" 
+                       oninput="updateSlider('tire-psi')">
+            </div>
+            
+            <!-- Tire Pressure High Warning Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Tire High Pressure (PSI)</span>
+                    <span class="setting-value" id="tire-high-psi-value">36</span>
+                </div>
+                <input type="range" class="slider" id="tire-high-psi" 
+                       min="32" max="42" step="0.5" value="36" 
+                       oninput="updateSlider('tire-high-psi')">
+            </div>
+            
+            <!-- Coolant Warning Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Coolant Warning (°F)</span>
+                    <span class="setting-value" id="coolant-warn-value">220</span>
+                </div>
+                <input type="range" class="slider" id="coolant-warn" 
+                       min="200" max="240" step="5" value="220" 
+                       oninput="updateSlider('coolant-warn')">
+            </div>
+            
+            <!-- Oil Warning Slider -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Oil Warning (°F)</span>
+                    <span class="setting-value" id="oil-warn-value">260</span>
+                </div>
+                <input type="range" class="slider" id="oil-warn" 
+                       min="240" max="300" step="5" value="260" 
+                       oninput="updateSlider('oil-warn')">
+            </div>
+            
+            <!-- LED Sequence Selector -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>LED Sequence</span>
+                    <span class="setting-value" id="led-seq-value">Center Out</span>
+                </div>
+                <select class="setting-select" id="led-seq" onchange="updateSelect('led-seq')">
+                    <option value="1">Center Out</option>
+                    <option value="2">Left to Right</option>
+                    <option value="3">Right to Left</option>
+                    <option value="4">Center In</option>
+                </select>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <p>MX5 Telemetry Remote Control v1.0</p>
+            <p class="hint">Save this page to your home screen for quick access</p>
+        </footer>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
