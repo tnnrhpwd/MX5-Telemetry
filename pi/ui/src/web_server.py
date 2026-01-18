@@ -135,19 +135,11 @@ class WebRemoteServer:
                     self.display_app.settings.coolant_warn_f = int(value)
                 elif name == 'led_sequence':
                     self.display_app.settings.led_sequence = int(value)
-                    # Send LED sequence change to Arduino if available
-                    if hasattr(self.display_app, 'arduino_serial') and self.display_app.arduino_serial:
-                        try:
-                            cmd = f"SEQ:{value}\n"
-                            self.display_app.arduino_serial.write(cmd.encode('utf-8'))
-                            print(f"Sent LED sequence {value} to Arduino")
-                        except Exception as e:
-                            print(f"Failed to send LED sequence to Arduino: {e}")
+                    # Send LED sequence change to Arduino using the app's method
+                    if hasattr(self.display_app, '_send_led_sequence_to_arduino'):
+                        self.display_app._send_led_sequence_to_arduino()
                 else:
                     return jsonify({'success': False, 'error': 'Unknown setting'}), 400
-                
-                # Save settings to disk
-                self.display_app.settings.save_settings()
                 
                 # Sync to ESP32 if available
                 if self.display_app.esp32_handler:
