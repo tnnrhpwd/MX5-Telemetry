@@ -70,7 +70,6 @@ class WebRemoteServer:
                     'tire_low_psi': self.display_app.settings.tire_low_psi,
                     'tire_high_psi': self.display_app.settings.tire_high_psi,
                     'coolant_warn_f': self.display_app.settings.coolant_warn_f,
-                    'oil_warn_f': self.display_app.settings.oil_warn_f,
                     'led_sequence': self.display_app.settings.led_sequence
                 }
             })
@@ -134,8 +133,6 @@ class WebRemoteServer:
                     self.display_app.settings.tire_high_psi = float(value)
                 elif name == 'coolant_warn':
                     self.display_app.settings.coolant_warn_f = int(value)
-                elif name == 'oil_warn':
-                    self.display_app.settings.oil_warn_f = int(value)
                 elif name == 'led_sequence':
                     self.display_app.settings.led_sequence = int(value)
                     # Send LED sequence change to Arduino if available
