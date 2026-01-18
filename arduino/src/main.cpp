@@ -57,7 +57,6 @@
 #include <mcp_can.h>
 #include <Adafruit_NeoPixel.h>
 #include <EEPROM.h>
-#include <SoftwareSerial.h>
 
 // ============================================================================
 // CONFIGURATION - Tune these for your setup
@@ -130,8 +129,9 @@ enum LEDSequence {
 MCP_CAN canBus(CAN_CS_PIN);
 Adafruit_NeoPixel strip(LED_COUNT, LED_DATA_PIN, NEO_GRB + NEO_KHZ800);
 
+// Use USB Serial for commands from Pi
 #if ENABLE_SERIAL_CMD
-SoftwareSerial cmdSerial(SERIAL_RX_PIN, SERIAL_TX_PIN);  // RX, TX for commands
+#define cmdSerial Serial
 #endif
 
 // State variables - volatile for interrupt safety
@@ -789,6 +789,9 @@ void setup() {
     #if ENABLE_SERIAL_DEBUG
     Serial.begin(115200);
     Serial.println(F("MX5-Single v1.1"));
+    #elif ENABLE_SERIAL_CMD
+    // Initialize USB Serial for commands from Pi at 9600 baud
+    Serial.begin(9600);
     #endif
     
     // Load LED sequence from EEPROM
@@ -800,8 +803,8 @@ void setup() {
     #endif
     
     // Initialize serial for LED sequence commands from Pi/ESP32
-    #if ENABLE_SERIAL_CMD
-    cmdSerial.begin(9600);  // Lower baud rate for reliability with SoftwareSerial
+    #if ENABLE_SERIAL_CMD && !defined(ENABLE_SERIAL_DEBUG)
+    // Already initialized Serial above
     #endif
     
     // Initialize haptic motor
