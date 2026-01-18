@@ -107,6 +107,25 @@ struct TelemetryData {
 
 TelemetryData telemetry = {0};
 
+// Previous telemetry values for partial update optimization
+// Only redraw values that have actually changed
+struct CachedTelemetry {
+    float rpm;
+    float speed;
+    int gear;
+    float coolantTemp;
+    float fuelLevel;
+    float voltage;
+    float tirePressure[4];
+    bool engineRunning;
+    bool connected;
+    bool oilWarning;
+    bool headlightsOn;
+    bool highBeamsOn;
+    bool initialized;  // Set to true after first full draw
+};
+CachedTelemetry prevTelemetry = {0};
+
 // LED Sequence modes (must match Arduino enum)
 enum LEDSequence {
     SEQ_CENTER_OUT = 1,     // Default: Fill from edges toward center (mirrored)
@@ -335,6 +354,9 @@ void startTransition(ScreenMode toScreen, TransitionType type) {
     currentTransition = type;
     transitionStartTime = millis();
     transitionProgress = 0.0;
+    
+    // Reset cached telemetry so new screen draws fully
+    prevTelemetry.initialized = false;
     
     Serial.printf("Starting transition: %s -> %s (type %d)\n", 
                   SCREEN_NAMES[transitionFromScreen], 
@@ -936,10 +958,35 @@ void handleTouch() {
 }
 
 void drawOverviewScreen() {
-    // Only draw on full redraw to prevent flickering overlaps
-    if (!needsFullRedraw) return;
+    // Check if any displayed values have changed
+    bool valuesChanged = !prevTelemetry.initialized ||
+        (int)telemetry.rpm != (int)prevTelemetry.rpm ||
+        (int)telemetry.speed != (int)prevTelemetry.speed ||
+        telemetry.gear != prevTelemetry.gear ||
+        (int)telemetry.coolantTemp != (int)prevTelemetry.coolantTemp ||
+        (int)telemetry.fuelLevel != (int)prevTelemetry.fuelLevel ||
+        fabsf(telemetry.voltage - prevTelemetry.voltage) > 0.05f ||
+        telemetry.engineRunning != prevTelemetry.engineRunning ||
+        telemetry.connected != prevTelemetry.connected ||
+        telemetry.oilWarning != prevTelemetry.oilWarning ||
+        telemetry.headlightsOn != prevTelemetry.headlightsOn ||
+        telemetry.highBeamsOn != prevTelemetry.highBeamsOn;
     
-    drawBackground();
+    // Check TPMS changes
+    for (int i = 0; i < 4; i++) {
+        if (fabsf(telemetry.tirePressure[i] - prevTelemetry.tirePressure[i]) > 0.05f) {
+            valuesChanged = true;
+            break;
+        }
+    }
+    
+    // Skip if nothing changed and not a full redraw
+    if (!needsFullRedraw && !valuesChanged) return;
+    
+    // If full redraw needed, draw background
+    if (needsFullRedraw) {
+        drawBackground();
+    }
     
     // === RPM ARC GAUGE (Screen border) ===
     // Arc goes around the edge of the circular display
@@ -1176,13 +1223,39 @@ void drawOverviewScreen() {
     }
     
     drawPageIndicator();
+    
+    // Update cached values for next comparison
+    prevTelemetry.rpm = telemetry.rpm;
+    prevTelemetry.speed = telemetry.speed;
+    prevTelemetry.gear = telemetry.gear;
+    prevTelemetry.coolantTemp = telemetry.coolantTemp;
+    prevTelemetry.fuelLevel = telemetry.fuelLevel;
+    prevTelemetry.voltage = telemetry.voltage;
+    prevTelemetry.engineRunning = telemetry.engineRunning;
+    prevTelemetry.connected = telemetry.connected;
+    prevTelemetry.oilWarning = telemetry.oilWarning;
+    prevTelemetry.headlightsOn = telemetry.headlightsOn;
+    prevTelemetry.highBeamsOn = telemetry.highBeamsOn;
+    for (int i = 0; i < 4; i++) {
+        prevTelemetry.tirePressure[i] = telemetry.tirePressure[i];
+    }
+    prevTelemetry.initialized = true;
 }
 
 void drawRPMScreen() {
-    // Only draw on full redraw to prevent flickering overlaps
-    if (!needsFullRedraw) return;
+    // Check if any displayed values have changed
+    bool valuesChanged = !prevTelemetry.initialized ||
+        (int)telemetry.rpm != (int)prevTelemetry.rpm ||
+        (int)telemetry.speed != (int)prevTelemetry.speed ||
+        telemetry.gear != prevTelemetry.gear;
     
-    drawBackground();
+    // Skip if nothing changed and not a full redraw
+    if (!needsFullRedraw && !valuesChanged) return;
+    
+    // If full redraw needed, draw background
+    if (needsFullRedraw) {
+        drawBackground();
+    }
     
     // === LARGE GEAR INDICATOR (Top) ===
     int gearY = 55;
@@ -1299,6 +1372,12 @@ void drawRPMScreen() {
     LCD_DrawString(brakeX, barY + barH + 5, brkPct, MX5_RED, COLOR_BG, 1);
     
     drawPageIndicator();
+    
+    // Update cache for RPM screen values
+    prevTelemetry.rpm = telemetry.rpm;
+    prevTelemetry.speed = telemetry.speed;
+    prevTelemetry.gear = telemetry.gear;
+    prevTelemetry.initialized = true;
 }
 
 void drawTPMSScreen() {
