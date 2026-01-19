@@ -353,8 +353,14 @@ section h2 {
     box-shadow: 0 4px 12px rgba(0, 217, 255, 0.3);
 }
 
+.calibration-btn:hover {
+    background: linear-gradient(135deg, #00d9ff, var(--primary));
+    box-shadow: 0 6px 16px rgba(0, 217, 255, 0.4);
+    transform: translateY(-1px);
+}
+
 .calibration-btn:active {
-    transform: scale(0.98);
+    transform: scale(0.98) translateY(0);
     box-shadow: 0 2px 6px rgba(0, 217, 255, 0.3);
 }
 
