@@ -98,10 +98,10 @@ if ($repoCheck -match "missing") {
     Write-Host "Repository not found on Pi. Setting up fresh clone..." -ForegroundColor Yellow
     
     # Backup existing directory if it exists
-    ssh $piHost "if [ -d ~/mx5-telemetry ]; then mv ~/mx5-telemetry ~/mx5-telemetry-backup-$(date +%Y%m%d-%H%M%S); fi"
+    ssh $piHost 'if [ -d ~/mx5-telemetry ]; then mv ~/mx5-telemetry ~/mx5-telemetry-backup-$(date +%Y%m%d-%H%M%S); fi'
     
     # Clone fresh
-    ssh $piHost "cd ~ && git clone https://github.com/tnnrhpwd/MX5-Telemetry.git mx5-telemetry"
+    ssh $piHost 'cd ~ && git clone https://github.com/tnnrhpwd/MX5-Telemetry.git mx5-telemetry'
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Failed to clone repository on Pi!" -ForegroundColor Red
