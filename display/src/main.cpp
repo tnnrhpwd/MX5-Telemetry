@@ -594,16 +594,16 @@ void loop() {
     static unsigned long maxLoopTime = 0;
     unsigned long loopStart = millis();
     
-    // Update ambient temp from ESP32 sensor only if no CAN data received (every 5 seconds)
+    // Update ambient temp from ESP32 internal sensor (every 5 seconds)
     static unsigned long lastTempUpdate = 0;
     if (millis() - lastTempUpdate > 5000) {
         lastTempUpdate = millis();
-        // Only use ESP32 sensor as fallback if we've never received telemetry from Pi
-        if (!telemetry.hasReceivedTelemetry && temp_sensor != NULL) {
+        if (temp_sensor != NULL) {
             float tsens_celsius;
             if (temperature_sensor_get_celsius(temp_sensor, &tsens_celsius) == ESP_OK) {
-                // ESP32 die temp runs ~30-35°F hotter than ambient, apply offset
-                telemetry.ambientTemp = (tsens_celsius * 9.0 / 5.0 + 32.0) - 33.0;
+                // ESP32 die temp runs significantly hotter than ambient
+                // Calibrated offset: chip reads ~147°F when ambient is ~63°F = 84° offset
+                telemetry.ambientTemp = (tsens_celsius * 9.0 / 5.0 + 32.0) - 84.0;
             }
         }
     }
@@ -2735,13 +2735,13 @@ void parseCommand(String cmd) {
         telemetry.oilPressure = cmd.substring(7).toFloat();
         telemetry.connected = true;
     }
-    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,ambient_temp,fuel,engine,gear_est,clutch)
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch)
     else if (cmd.startsWith("TEL:")) {
         String data = cmd.substring(4);
         int idx = 0;
-        float values[12] = {0};  // Extended to 12 fields for gear_est and clutch
+        float values[10] = {0};  // 10 fields without ambient_temp
         int start = 0;
-        for (int i = 0; i <= data.length() && idx < 12; i++) {
+        for (int i = 0; i <= data.length() && idx < 10; i++) {
             if (i == data.length() || data[i] == ',') {
                 String field = data.substring(start, i);
                 values[idx] = field.toFloat();
@@ -2756,26 +2756,26 @@ void parseCommand(String cmd) {
         // DEBUG: Print parsed values
         Serial.printf("TEL parsed: %d fields - RPM=%.0f Speed=%.0f Gear=%.0f\n", idx, values[0], values[1], values[2]);
         
-        if (idx >= 7) {  // At least 7 fields required (original protocol)
+        if (idx >= 6) {  // At least 6 fields required
             telemetry.rpm = values[0];
             telemetry.speed = values[1];
             telemetry.gear = (int)values[2];
             telemetry.throttle = values[3];
             telemetry.coolantTemp = values[4];
             telemetry.oilTemp = values[5];
-            telemetry.ambientTemp = values[6];
+            // ambient_temp now from ESP32 sensor only
             // Extended fields (if present)
-            if (idx >= 8) telemetry.fuelLevel = values[7];
-            if (idx >= 9) telemetry.oilPressure = values[8];
-            if (idx >= 10) telemetry.engineRunning = (values[9] > 0);
-            if (idx >= 11) telemetry.gearEstimated = (values[10] > 0);
-            if (idx >= 12) telemetry.clutchEngaged = (values[11] > 0);
+            if (idx >= 7) telemetry.fuelLevel = values[6];
+            if (idx >= 8) telemetry.oilPressure = values[7];
+            if (idx >= 9) telemetry.engineRunning = (values[8] > 0);
+            if (idx >= 10) telemetry.gearEstimated = (values[9] > 0);
+            if (idx >= 11) telemetry.clutchEngaged = (values[10] > 0);
             telemetry.connected = true;
             telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
             Serial.println("TEL: Data updated successfully!");
         } else {
-            Serial.printf("TEL: ERROR - Not enough fields (got %d, need 7)\n", idx);
+            Serial.printf("TEL: ERROR - Not enough fields (got %d, need 6)\n", idx);
         }
     }
     else if (cmd == "PING") {
