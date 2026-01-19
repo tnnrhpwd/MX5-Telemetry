@@ -1044,9 +1044,6 @@ void drawOverviewScreen() {
     bool fuelChanged = !prevTelemetry.initialized || (int)telemetry.fuelLevel != (int)prevTelemetry.fuelLevel;
     bool ambientChanged = !prevTelemetry.initialized || (int)telemetry.ambientTemp != (int)prevTelemetry.ambientTemp;
     bool oilChanged = !prevTelemetry.initialized || telemetry.oilWarning != prevTelemetry.oilWarning;
-    bool headlightsChanged = !prevTelemetry.initialized || 
-        telemetry.headlightsOn != prevTelemetry.headlightsOn ||
-        telemetry.highBeamsOn != prevTelemetry.highBeamsOn;
     
     bool tpmsChanged = false;
     for (int i = 0; i < 4; i++) {
@@ -1058,7 +1055,7 @@ void drawOverviewScreen() {
     
     // Check if anything at all changed
     bool anyChange = needsFullRedraw || rpmChanged || speedChanged || gearChanged || 
-        coolantChanged || fuelChanged || ambientChanged || oilChanged || headlightsChanged || tpmsChanged;
+        coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged;
     
     // Skip if nothing changed
     if (!anyChange) return;
@@ -1329,29 +1326,6 @@ void drawOverviewScreen() {
         char fuelStr[8];
         snprintf(fuelStr, sizeof(fuelStr), "%d%%", (int)telemetry.fuelLevel);
         LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + boxH + boxGap + 16, fuelStr, fuelColor, COLOR_BG_CARD, 2);
-    }
-    
-    // === HEADLIGHT INDICATORS (Top right, next to gear) - only redraw when changed ===
-    if (needsFullRedraw || headlightsChanged) {
-        int headlightY = 50;
-        int headlightX = CENTER_X + 90;
-        
-        // Clear headlight indicator area first (in case lights turned off)
-        LCD_FillRect(headlightX - 12, headlightY - 12, 24, 60, COLOR_BG);
-        
-        // Headlights (low beam) - only show when on
-        if (telemetry.headlightsOn) {
-            LCD_FillCircle(headlightX, headlightY, 10, MX5_GREEN);
-            LCD_DrawCircle(headlightX, headlightY, 10, MX5_WHITE);
-            LCD_DrawString(headlightX - 6, headlightY - 4, "H", MX5_WHITE, MX5_GREEN, 1);
-        }
-        
-        // High beams - only show when on
-        if (telemetry.highBeamsOn) {
-            LCD_FillCircle(headlightX, headlightY + 28, 10, MX5_CYAN);
-            LCD_DrawCircle(headlightX, headlightY + 28, 10, MX5_WHITE);
-            LCD_DrawString(headlightX - 6, headlightY + 24, "B", MX5_WHITE, MX5_CYAN, 1);
-        }
     }
     
     // Navigation Lock indicator (right side when locked) - static, only on full redraw
