@@ -91,11 +91,11 @@ Write-Host ""
 
 # Check if repository exists on Pi
 Write-Host "Checking repository on Pi..." -ForegroundColor Cyan
-$repoCheck = ssh $piHost "test -d ~/mx5-telemetry && echo 'exists' || echo 'missing'"
+$repoCheck = ssh $piHost "test -d ~/MX5-Telemetry && echo 'exists' || echo 'missing'"
 
 if ($repoCheck -match "missing") {
     Write-Host "Repository not found. Cloning from GitHub..." -ForegroundColor Yellow
-    ssh $piHost 'cd ~ && git clone https://github.com/tnnrhpwd/MX5-Telemetry.git mx5-telemetry'
+    ssh $piHost 'cd ~ && git clone https://github.com/tnnrhpwd/MX5-Telemetry.git MX5-Telemetry'
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Failed to clone repository on Pi!" -ForegroundColor Red
@@ -108,7 +108,7 @@ if ($repoCheck -match "missing") {
 
 # Pull latest changes on Pi
 Write-Host "Pulling latest changes from GitHub on Pi..." -ForegroundColor Cyan
-ssh $piHost 'cd ~/mx5-telemetry && git pull'
+ssh $piHost 'cd ~/MX5-Telemetry && git pull'
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Git pull on Pi failed!" -ForegroundColor Red
@@ -127,12 +127,12 @@ Write-Host ""
 
 # Flash ESP32 on Pi using full platformio path
 Write-Host "Flashing ESP32 (using cached builds)..." -ForegroundColor Cyan
-ssh $piHost 'cd ~/mx5-telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
+ssh $piHost 'cd ~/MX5-Telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNING: Flash failed, retrying..." -ForegroundColor Yellow
     Start-Sleep -Seconds 2
-    ssh $piHost 'cd ~/mx5-telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
+    ssh $piHost 'cd ~/MX5-Telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: ESP32 flash failed after retry!" -ForegroundColor Red
@@ -158,7 +158,7 @@ if (-not $arduinoChanges) {
 } else {
     # Flash Arduino on Pi using cached builds
     Write-Host "Flashing Arduino (using cached builds)..." -ForegroundColor Cyan
-    ssh $piHost 'cd ~/mx5-telemetry/arduino && ~/.platformio/penv/bin/platformio run --target upload'
+    ssh $piHost 'cd ~/MX5-Telemetry/arduino && ~/.platformio/penv/bin/platformio run --target upload'
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Arduino flash failed!" -ForegroundColor Red
