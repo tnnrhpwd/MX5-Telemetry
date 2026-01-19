@@ -221,6 +221,7 @@ const unsigned long TPMS_DATA_TIMEOUT = 30000; // Data valid for 30 seconds
 
 // TPMS persistence storage
 Preferences tpmsPrefs;
+Preferences imuPrefs;
 char tpmsLastUpdateStr[4][12] = {"--:--:--", "--:--:--", "--:--:--", "--:--:--"};  // HH:MM:SS per tire
 bool tpmsDataFromCache = false;  // True if current data was loaded from NVS cache
 
@@ -305,6 +306,8 @@ void sendTPMSDataToPi();
 void formatTimestamp(unsigned long millis_time, char* buf, size_t bufSize);
 void saveTPMSToNVS();
 void loadTPMSFromNVS();
+void saveIMUCalibrationToNVS();
+void loadIMUCalibrationFromNVS();
 
 // Settings menu state
 int settingsSelection = 0;
@@ -586,6 +589,9 @@ void setup() {
     
     // Load cached TPMS data from NVS
     loadTPMSFromNVS();
+    
+    // Load IMU calibration from NVS
+    loadIMUCalibrationFromNVS();
 }
 
 void loop() {
@@ -770,6 +776,9 @@ void calibrateIMU() {
     Serial.printf("IMU: Offsets - Pitch:%.2f Roll:%.2f AccelX:%.3f AccelY:%.3f AccelZ:%.3f\n",
                   imuCalibrationPitch, imuCalibrationRoll, 
                   imuCalibrationAccelX, imuCalibrationAccelY, imuCalibrationAccelZ);
+    
+    // Save calibration to NVS for persistence
+    saveIMUCalibrationToNVS();
     
     // Send confirmation back to Pi
     Serial.println("OK:CAL_IMU");
@@ -3261,4 +3270,47 @@ void loadTPMSFromNVS() {
                       tpmsLastUpdateStr[0], tpmsLastUpdateStr[1],
                       tpmsLastUpdateStr[2], tpmsLastUpdateStr[3]);
     }
+}
+
+// ============================================================================
+// IMU Calibration NVS Persistence Functions
+// ============================================================================
+
+void saveIMUCalibrationToNVS() {
+    imuPrefs.begin("imu_cal", false);  // Read-write mode
+    
+    imuPrefs.putFloat("pitch", imuCalibrationPitch);
+    imuPrefs.putFloat("roll", imuCalibrationRoll);
+    imuPrefs.putFloat("accelX", imuCalibrationAccelX);
+    imuPrefs.putFloat("accelY", imuCalibrationAccelY);
+    imuPrefs.putFloat("accelZ", imuCalibrationAccelZ);
+    
+    imuPrefs.end();
+    
+    Serial.println("IMU: Calibration saved to NVS");
+}
+
+void loadIMUCalibrationFromNVS() {
+    imuPrefs.begin("imu_cal", true);  // Read-only mode
+    
+    // Check if we have saved calibration data
+    if (!imuPrefs.isKey("pitch")) {
+        Serial.println("IMU: No saved calibration in NVS, using defaults (0,0,0,0,0)");
+        imuPrefs.end();
+        return;
+    }
+    
+    // Load calibration offsets
+    imuCalibrationPitch = imuPrefs.getFloat("pitch", 0.0f);
+    imuCalibrationRoll = imuPrefs.getFloat("roll", 0.0f);
+    imuCalibrationAccelX = imuPrefs.getFloat("accelX", 0.0f);
+    imuCalibrationAccelY = imuPrefs.getFloat("accelY", 0.0f);
+    imuCalibrationAccelZ = imuPrefs.getFloat("accelZ", 0.0f);
+    
+    imuPrefs.end();
+    
+    Serial.println("IMU: Loaded calibration from NVS");
+    Serial.printf("IMU: Offsets - Pitch:%.2f Roll:%.2f AccelX:%.3f AccelY:%.3f AccelZ:%.3f\n",
+                  imuCalibrationPitch, imuCalibrationRoll,
+                  imuCalibrationAccelX, imuCalibrationAccelY, imuCalibrationAccelZ);
 }
