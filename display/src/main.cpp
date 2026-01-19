@@ -1128,6 +1128,18 @@ void drawOverviewScreen() {
                 LCD_DrawPixel(x, y, rpmColor);
             }
         }
+        // If RPM also decreased during color change, erase the old tail
+        if (endAngle < prevEndAngle) {
+            for (int t = 0; t < arcThickness; t++) {
+                int r = arcRadius - t;
+                for (float angle = endAngle; angle <= prevEndAngle; angle += angleStep) {
+                    float rad = angle * 3.14159 / 180.0;
+                    int x = CENTER_X + (int)(r * cos(rad));
+                    int y = CENTER_Y + (int)(r * sin(rad));
+                    LCD_DrawPixel(x, y, MX5_DARKGRAY);
+                }
+            }
+        }
     } else if (endAngle > prevEndAngle) {
         // RPM increased - only draw the new portion (delta)
         for (int t = 0; t < arcThickness; t++) {
@@ -1441,20 +1453,23 @@ void drawRPMScreen() {
     int gaugeRadius = 95;
     int gaugeY = CENTER_Y + 25;
     
-    // Draw continuous arc segments
+    // Draw continuous arc segments - ALWAYS redraw ALL segments to clear old values
     int numSegments = 20;
     for (int i = 0; i < numSegments; i++) {
         float segStart = i / (float)numSegments;
         float segEnd = (i + 1) / (float)numSegments;
         
-        // Determine segment color
-        uint16_t segColor = MX5_DARKGRAY;
+        // Determine segment color - inactive segments get background color
+        uint16_t segColor = COLOR_BG;  // Use background color for inactive segments
         if (segStart < rpmPercent) {
             float rpmAt = segStart * 8000;
             if (rpmAt >= 6400) segColor = MX5_RED;
             else if (rpmAt >= 5600) segColor = MX5_ORANGE;
             else if (rpmAt >= 4000) segColor = MX5_YELLOW;
             else segColor = MX5_GREEN;
+        } else {
+            // Inactive segment - use dark gray outline
+            segColor = MX5_DARKGRAY;
         }
         
         // Arc from -150° to +150° (300° total, open at top)
