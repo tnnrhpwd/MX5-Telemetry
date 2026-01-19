@@ -1053,9 +1053,20 @@ void drawOverviewScreen() {
         }
     }
     
+    // Calculate arc angle early to check if it changed (more precise than integer RPM)
+    float rpmPercent = telemetry.rpm / 8000.0;
+    if (rpmPercent > 1.0) rpmPercent = 1.0;
+    float startAngle = 135.0;  // Bottom-left
+    float totalArc = 270.0;    // Sweep to bottom-right
+    float endAngle = startAngle + (totalArc * rpmPercent);
+    
+    // Arc changed if angle moved by at least 1 degree (matches angleStep)
+    bool arcChanged = !prevTelemetry.initialized || 
+                      fabsf(endAngle - prevTelemetry.arcEndAngle) >= 1.0;
+    
     // Check if anything at all changed
     bool anyChange = needsFullRedraw || rpmChanged || speedChanged || gearChanged || 
-        coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged;
+        coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged || arcChanged;
     
     // Skip if nothing changed
     if (!anyChange) return;
@@ -1071,8 +1082,6 @@ void drawOverviewScreen() {
     // === RPM ARC GAUGE (Screen border) - OPTIMIZED INCREMENTAL UPDATE ===
     // Arc goes around the edge of the circular display
     // Uses Arduino LED color ranges: Blue < 2000 < Green < 3000 < Yellow < 4500 < Orange < 5500 < Red
-    float rpmPercent = telemetry.rpm / 8000.0;
-    if (rpmPercent > 1.0) rpmPercent = 1.0;
     
     uint16_t rpmColor = MX5_BLUE;
     if (telemetry.rpm >= 5500) rpmColor = MX5_RED;
@@ -1084,9 +1093,6 @@ void drawOverviewScreen() {
     // Start angle: 135 degrees (bottom-left), End angle: 405 degrees (bottom-right)
     int arcRadius = 174;  // Just inside the 360px circle edge
     int arcThickness = 14;  // Thicker modern gauge
-    float startAngle = 135.0;  // Bottom-left
-    float totalArc = 270.0;    // Sweep to bottom-right
-    float endAngle = startAngle + (totalArc * rpmPercent);
     
     // OPTIMIZATION: Only update the delta (changed portion) of the arc
     // This reduces pixel operations from ~15000 to only what changed
@@ -1095,6 +1101,21 @@ void drawOverviewScreen() {
     
     // Use larger angle step (1.0 instead of 0.5) for faster drawing - still looks smooth
     const float angleStep = 1.0;
+    
+    // ALWAYS erase the tail first if RPM decreased (before drawing new color)
+    // This ensures the old colored portion gets cleared regardless of color change
+    if (!needsFullRedraw && prevEndAngle >= startAngle && endAngle < prevEndAngle - 0.5) {
+        // RPM decreased - erase the old portion (draw gray over it)
+        for (int t = 0; t < arcThickness; t++) {
+            int r = arcRadius - t;
+            for (float angle = endAngle; angle <= prevEndAngle; angle += angleStep) {
+                float rad = angle * 3.14159 / 180.0;
+                int x = CENTER_X + (int)(r * cos(rad));
+                int y = CENTER_Y + (int)(r * sin(rad));
+                LCD_DrawPixel(x, y, MX5_DARKGRAY);
+            }
+        }
+    }
     
     if (needsFullRedraw || prevEndAngle < startAngle) {
         // Full redraw: draw background arc first, then colored arc
@@ -1128,19 +1149,7 @@ void drawOverviewScreen() {
                 LCD_DrawPixel(x, y, rpmColor);
             }
         }
-        // If RPM also decreased during color change, erase the old tail
-        if (endAngle < prevEndAngle) {
-            for (int t = 0; t < arcThickness; t++) {
-                int r = arcRadius - t;
-                for (float angle = endAngle; angle <= prevEndAngle; angle += angleStep) {
-                    float rad = angle * 3.14159 / 180.0;
-                    int x = CENTER_X + (int)(r * cos(rad));
-                    int y = CENTER_Y + (int)(r * sin(rad));
-                    LCD_DrawPixel(x, y, MX5_DARKGRAY);
-                }
-            }
-        }
-    } else if (endAngle > prevEndAngle) {
+    } else if (endAngle > prevEndAngle + 0.5) {
         // RPM increased - only draw the new portion (delta)
         for (int t = 0; t < arcThickness; t++) {
             int r = arcRadius - t;
@@ -1151,19 +1160,8 @@ void drawOverviewScreen() {
                 LCD_DrawPixel(x, y, rpmColor);
             }
         }
-    } else if (endAngle < prevEndAngle) {
-        // RPM decreased - erase the old portion (draw gray over it)
-        for (int t = 0; t < arcThickness; t++) {
-            int r = arcRadius - t;
-            for (float angle = endAngle; angle <= prevEndAngle; angle += angleStep) {
-                float rad = angle * 3.14159 / 180.0;
-                int x = CENTER_X + (int)(r * cos(rad));
-                int y = CENTER_Y + (int)(r * sin(rad));
-                LCD_DrawPixel(x, y, MX5_DARKGRAY);
-            }
-        }
     }
-    // else: endAngle == prevEndAngle, no arc update needed
+    // Note: decrease case is handled above (before this if-else chain)
     
     // Cache current arc state for next frame
     prevTelemetry.arcEndAngle = endAngle;
