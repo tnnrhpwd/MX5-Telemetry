@@ -602,8 +602,8 @@ void loop() {
             float tsens_celsius;
             if (temperature_sensor_get_celsius(temp_sensor, &tsens_celsius) == ESP_OK) {
                 // ESP32 die temp runs significantly hotter than ambient
-                // Calibrated offset: chip reads ~147°F when ambient is ~63°F = 84° offset
-                telemetry.ambientTemp = (tsens_celsius * 9.0 / 5.0 + 32.0) - 84.0;
+                // Calibrated offset: ~53°F correction for cabin temperature
+                telemetry.ambientTemp = (tsens_celsius * 9.0 / 5.0 + 32.0) - 53.0;
             }
         }
     }
@@ -2762,14 +2762,13 @@ void parseCommand(String cmd) {
             telemetry.gear = (int)values[2];
             telemetry.throttle = values[3];
             telemetry.coolantTemp = values[4];
-            telemetry.oilTemp = values[5];
+            telemetry.oilTemp = values[5];  // This is oil status (0 or 1)
             // ambient_temp now from ESP32 sensor only
             // Extended fields (if present)
             if (idx >= 7) telemetry.fuelLevel = values[6];
-            if (idx >= 8) telemetry.oilPressure = values[7];
-            if (idx >= 9) telemetry.engineRunning = (values[8] > 0);
-            if (idx >= 10) telemetry.gearEstimated = (values[9] > 0);
-            if (idx >= 11) telemetry.clutchEngaged = (values[10] > 0);
+            if (idx >= 8) telemetry.engineRunning = (values[7] > 0);
+            if (idx >= 9) telemetry.gearEstimated = (values[8] > 0);
+            if (idx >= 10) telemetry.clutchEngaged = (values[9] > 0);
             telemetry.connected = true;
             telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
