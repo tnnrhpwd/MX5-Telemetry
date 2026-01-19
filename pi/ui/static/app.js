@@ -114,6 +114,11 @@ function updateSettingsUI(settings) {
         document.getElementById('led-seq').value = settings.led_sequence;
         document.getElementById('led-seq-value').textContent = ledSeqNames[settings.led_sequence] || 'Unknown';
     }
+    if ('clutch_display_mode' in settings) {
+        const clutchModeNames = ['Gear# (Colored)', "'C' for Clutch", "'S' for Shifting", "'-' for Unknown"];
+        document.getElementById('clutch-mode').value = settings.clutch_display_mode;
+        document.getElementById('clutch-mode-value').textContent = clutchModeNames[settings.clutch_display_mode] || 'Unknown';
+    }
 }
 
 // Update current screen display and highlight active button
@@ -211,7 +216,8 @@ function sendSettingUpdate(setting, value) {
         'tire-high-psi': 'tire_high_psi',
         'coolant-warn': 'coolant_warn',
         'oil-warn': 'oil_warn',
-        'led-seq': 'led_sequence'
+        'led-seq': 'led_sequence',
+        'clutch-mode': 'clutch_display_mode'
     };
     
     const apiSetting = settingMap[setting] || setting;
