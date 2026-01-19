@@ -204,6 +204,20 @@
                     <option value="4">Center In</option>
                 </select>
             </div>
+            
+            <!-- Clutch Display Mode Selector -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>Clutch Display Mode</span>
+                    <span class="setting-value" id="clutch-mode-value">Gear# (Colored)</span>
+                </div>
+                <select class="setting-select" id="clutch-mode" onchange="updateSelect('clutch-mode')">
+                    <option value="0">Gear# (Colored)</option>
+                    <option value="1">'C' for Clutch</option>
+                    <option value="2">'S' for Shifting</option>
+                    <option value="3">'-' for Unknown</option>
+                </select>
+            </div>
         </section>
 
         <!-- Footer -->
