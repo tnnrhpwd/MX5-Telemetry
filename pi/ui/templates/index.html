@@ -218,7 +218,21 @@
                     <option value="3">'-' for Unknown</option>
                 </select>
             </div>
+            
+            <!-- IMU Calibration -->
+            <div class="setting-item">
+                <div class="setting-header">
+                    <span>G-Force Calibration</span>
+                </div>
+                <button class="calibration-btn" onclick="calibrateIMU()">
+                    🎯 Set Zero Point (Current Position)
+                </button>
+                <p class="setting-hint">Sets the current orientation as the default zero point for gyroscope readings</p>
+            </div>
         </section>
+
+        <!-- Notification Toast -->
+        <div id="toast" class="toast"></div>
 
         <!-- Footer -->
         <footer>

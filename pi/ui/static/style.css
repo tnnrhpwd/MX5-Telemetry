@@ -337,6 +337,73 @@ section h2 {
     padding: 12px;
 }
 
+/* Calibration Button */
+.calibration-btn {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: var(--bg-dark);
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s;
+    text-transform: none;
+    box-shadow: 0 4px 12px rgba(0, 217, 255, 0.3);
+}
+
+.calibration-btn:active {
+    transform: scale(0.98);
+    box-shadow: 0 2px 6px rgba(0, 217, 255, 0.3);
+}
+
+.setting-hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 8px;
+    line-height: 1.4;
+}
+
+/* Toast Notification */
+.toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-100px);
+    padding: 14px 20px;
+    background: var(--bg-card);
+    border: 2px solid var(--primary);
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    z-index: 10000;
+    opacity: 0;
+    transition: all 0.3s ease;
+    max-width: 90%;
+    text-align: center;
+}
+
+.toast-show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}
+
+.toast-success {
+    border-color: var(--success);
+    color: var(--success);
+}
+
+.toast-error {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.toast-info {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
 /* Footer */
 footer {
     text-align: center;
