@@ -998,18 +998,20 @@ void drawOverviewScreen() {
     
     // === RPM ARC GAUGE (Screen border) ===
     // Arc goes around the edge of the circular display
+    // Uses Arduino LED color ranges: Blue < 2000 < Green < 3000 < Yellow < 4500 < Orange < 5500 < Red
     float rpmPercent = telemetry.rpm / 8000.0;
     if (rpmPercent > 1.0) rpmPercent = 1.0;
     
-    uint16_t rpmColor = MX5_GREEN;
-    if (telemetry.rpm > 6000) rpmColor = MX5_RED;
-    else if (telemetry.rpm > 4500) rpmColor = MX5_ORANGE;
-    else if (telemetry.rpm > 3000) rpmColor = MX5_YELLOW;
+    uint16_t rpmColor = MX5_BLUE;
+    if (telemetry.rpm >= 5500) rpmColor = MX5_RED;
+    else if (telemetry.rpm >= 4500) rpmColor = MX5_ORANGE;
+    else if (telemetry.rpm >= 3000) rpmColor = MX5_YELLOW;
+    else if (telemetry.rpm >= 2000) rpmColor = MX5_GREEN;
     
     // Draw arc from bottom-left, around top, to bottom-right (270 degrees total)
     // Start angle: 135 degrees (bottom-left), End angle: 405 degrees (bottom-right)
     int arcRadius = 174;  // Just inside the 360px circle edge
-    int arcThickness = 8;
+    int arcThickness = 14;  // Thicker modern gauge
     float startAngle = 135.0;  // Bottom-left
     float totalArc = 270.0;    // Sweep to bottom-right
     float endAngle = startAngle + (totalArc * rpmPercent);
@@ -1183,23 +1185,6 @@ void drawOverviewScreen() {
     snprintf(voltStr, sizeof(voltStr), "%.1f", telemetry.voltage);
     LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + boxH + boxGap + 16, voltStr, voltColor, COLOR_BG_CARD, 2);
     
-    // === STATUS INDICATORS (Left and right of key values grid) ===
-    int statusCenterY = gridStartY + boxH + boxGap/2;  // Vertically centered with grid
-    
-    // Engine status (left side)
-    uint16_t engineColor = telemetry.engineRunning ? MX5_GREEN : MX5_RED;
-    int engX = gridStartX - 22;
-    LCD_FillCircle(engX, statusCenterY, 8, engineColor);
-    LCD_DrawCircle(engX, statusCenterY, 8, MX5_WHITE);
-    LCD_DrawString(engX - 9, statusCenterY + 12, "ENG", MX5_GRAY, COLOR_BG, 1);
-    
-    // Connection status (right side)
-    uint16_t connColor = telemetry.connected ? MX5_GREEN : MX5_ORANGE;
-    int comX = gridStartX + 2 * boxW + boxGap + 22;
-    LCD_FillCircle(comX, statusCenterY, 8, connColor);
-    LCD_DrawCircle(comX, statusCenterY, 8, MX5_WHITE);
-    LCD_DrawString(comX - 9, statusCenterY + 12, "COM", MX5_GRAY, COLOR_BG, 1);
-    
     // === HEADLIGHT INDICATORS (Top right, next to gear) - only show when active ===
     int headlightY = 50;
     int headlightX = CENTER_X + 90;
@@ -1218,10 +1203,10 @@ void drawOverviewScreen() {
         LCD_DrawString(headlightX - 6, headlightY + 24, "B", MX5_WHITE, MX5_CYAN, 1);
     }
     
-    // Navigation Lock indicator (below connection status when locked)
+    // Navigation Lock indicator (right side when locked)
     if (navLocked) {
-        int lockX = comX;
-        int lockY = statusCenterY + 32;
+        int lockX = gridStartX + 2 * boxW + boxGap + 22;
+        int lockY = gridStartY + boxH + boxGap/2 + 32;
         // Draw lock icon (small padlock shape)
         uint16_t lockColor = MX5_ORANGE;
         // Lock body (rounded rectangle)
