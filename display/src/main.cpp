@@ -601,8 +601,8 @@ void loop() {
         if (telemetry.ambientTemp == 0 && temp_sensor != NULL) {
             float tsens_celsius;
             if (temperature_sensor_get_celsius(temp_sensor, &tsens_celsius) == ESP_OK) {
-                // ESP32 die temp runs ~15-20°F hotter than ambient, apply offset
-                telemetry.ambientTemp = (tsens_celsius * 9.0 / 5.0 + 32.0) - 18.0;
+                // ESP32 die temp runs ~30-35°F hotter than ambient, apply offset
+                telemetry.ambientTemp = (tsens_celsius * 9.0 / 5.0 + 32.0) - 33.0;
             }
         }
     }
@@ -1195,7 +1195,7 @@ void drawOverviewScreen() {
     LCD_FillRoundRect(gridStartX, gridStartY + boxH + boxGap, boxW, boxH, 4, COLOR_BG_CARD);
     LCD_FillRect(gridStartX, gridStartY + boxH + boxGap, 3, boxH, oilColor);
     LCD_DrawString(gridStartX + 6, gridStartY + boxH + boxGap + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
-    const char* oilStr = oilPressurePresent ? "TRUE" : "FALSE";
+    const char* oilStr = oilPressurePresent ? "Good" : "Bad";
     LCD_DrawString(gridStartX + 6, gridStartY + boxH + boxGap + 16, oilStr, oilColor, COLOR_BG_CARD, 2);
     
     // Box 4: FUEL (bottom-right)
