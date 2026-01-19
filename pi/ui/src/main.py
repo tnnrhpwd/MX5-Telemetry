@@ -225,6 +225,7 @@ class Settings:
     coolant_warn_f: int = 220
     demo_mode: bool = False  # False = use real CAN data, True = simulated data
     led_sequence: int = LED_SEQ_CENTER_OUT  # LED sequence mode (1-4)
+    clutch_display_mode: int = 0  # 0=Gear#(colored), 1='C', 2='S', 3='-'
 
 
 # =============================================================================
@@ -1395,6 +1396,15 @@ class PiDisplayApp:
             self._sync_setting_to_esp32("led_sequence", self.settings.led_sequence)
             # Also send to Arduino via ESP32 serial handler
             self._send_led_sequence_to_arduino()
+        elif sel == 9:  # Clutch Display Mode
+            # Cycle through modes: 0=Gear#, 1='C', 2='S', 3='-'
+            new_mode = self.settings.clutch_display_mode + delta
+            if new_mode > 3:
+                new_mode = 0
+            elif new_mode < 0:
+                new_mode = 3
+            self.settings.clutch_display_mode = new_mode
+            self._sync_setting_to_esp32("clutch_display_mode", self.settings.clutch_display_mode)
     
     def _sync_setting_to_esp32(self, name: str, value):
         """Send a single setting to ESP32 for synchronization"""
@@ -1404,6 +1414,8 @@ class PiDisplayApp:
     def _get_settings_items(self):
         """Return list of (name, value, unit) tuples"""
         led_seq_name = LED_SEQUENCE_NAMES.get(self.settings.led_sequence, "Unknown")
+        clutch_mode_names = ["Gear#", "'C'", "'S'", "'-'"]
+        clutch_mode_name = clutch_mode_names[self.settings.clutch_display_mode] if 0 <= self.settings.clutch_display_mode < 4 else "Unknown"
         return [
             ("Data Source", "DEMO" if self.settings.demo_mode else "CAN BUS", ""),
             ("Brightness", self.settings.brightness, "%"),
@@ -1414,6 +1426,7 @@ class PiDisplayApp:
             ("Low Tire PSI", self.settings.tire_low_psi, ""),
             ("Coolant Warn", self.settings.coolant_warn_f, "°F"),
             ("LED Sequence", led_seq_name, f"({self.settings.led_sequence}/{LED_SEQ_COUNT})"),
+            ("Clutch Display", clutch_mode_name, f"({self.settings.clutch_display_mode + 1}/4)"),
         ]
     
     def _update_demo(self):
@@ -2633,9 +2646,11 @@ class PiDisplayApp:
         # Network IP
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, y, card_w, card_h))
         pygame.draw.rect(self.screen, COLOR_ACCENT, (right_x, y, 5, card_h))
-        txt = self.font_tiny.render("NETWORK IP", True, COLOR_GRAY)
+        txt = self.font_tiny.render("WEB REMOTE", True, COLOR_GRAY)
         self.screen.blit(txt, (right_x + 15, y + 5))
-        txt = self.font_small.render(ip_addr, True, COLOR_ACCENT)
+        # Show web server URL with port
+        web_url = f"{ip_addr}:5000" if ip_addr != "N/A" else "N/A"
+        txt = self.font_small.render(web_url, True, COLOR_ACCENT)
         self.screen.blit(txt, (right_x + 15, y + 28))
         
         # Row 3: Uptime and Power Status

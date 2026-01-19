@@ -95,6 +95,9 @@ struct TelemetryData {
     bool connected;           // Serial connection to Pi is active
     bool hasDiagnosticData;   // Received actual diagnostic data from Pi
     bool hasReceivedTelemetry; // Flag to track if we've ever received TEL: data
+    // Gear estimation (for vehicles without gear sensor)
+    bool gearEstimated;       // True if gear was estimated from speed/RPM
+    bool clutchEngaged;       // True if clutch appears to be pressed
     // Diagnostics
     bool checkEngine;
     bool absWarning;
@@ -106,6 +109,9 @@ struct TelemetryData {
 };
 
 TelemetryData telemetry = {0};
+
+// Settings from Pi
+int clutchDisplayMode = 0;  // 0=Gear#(colored), 1='C', 2='S', 3='-'
 
 // Previous telemetry values for partial update optimization
 // Only redraw values that have actually changed
@@ -1049,9 +1055,15 @@ void drawOverviewScreen() {
     int gearRadius = 38;
     LCD_FillCircle(gearX, gearY, gearRadius, COLOR_BG_CARD);
     
-    // Gear color based on RPM
+    // Gear color - changes based on clutch engagement for rev-matching help
     uint16_t gearGlow = MX5_GREEN;
-    if (telemetry.rpm > 6500) gearGlow = MX5_RED;
+    
+    // If clutch is engaged, use special color (cyan) for rev-matching assistance
+    if (telemetry.clutchEngaged) {
+        gearGlow = MX5_CYAN;  // Rev-matching helper color
+    }
+    // Otherwise, color based on RPM
+    else if (telemetry.rpm > 6500) gearGlow = MX5_RED;
     else if (telemetry.rpm > 5500) gearGlow = MX5_ORANGE;
     else if (telemetry.rpm > 4500) gearGlow = MX5_YELLOW;
     
@@ -1060,11 +1072,35 @@ void drawOverviewScreen() {
         LCD_DrawCircle(gearX, gearY, r, gearGlow);
     }
     
-    // Gear text
+    // Gear text - display based on clutchDisplayMode when clutch is engaged
     char gearStr[4];
-    if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
-    else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
-    else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
+    if (telemetry.clutchEngaged) {
+        // Clutch is engaged - show per user preference
+        switch (clutchDisplayMode) {
+            case 0:  // Gear# (colored) - show estimated gear for rev-matching
+                if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
+                else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+                else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
+                break;
+            case 1:  // 'C' for clutch
+                snprintf(gearStr, sizeof(gearStr), "C");
+                break;
+            case 2:  // 'S' for shifting
+                snprintf(gearStr, sizeof(gearStr), "S");
+                break;
+            case 3:  // '-' for unknown
+                snprintf(gearStr, sizeof(gearStr), "-");
+                break;
+            default:
+                snprintf(gearStr, sizeof(gearStr), "-");
+                break;
+        }
+    } else {
+        // Normal display - show detected/estimated gear
+        if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
+        else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+        else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
+    }
     LCD_DrawString(gearX - 8, gearY - 10, gearStr, gearGlow, COLOR_BG_CARD, 3);
     
     // Speed below gear
@@ -2697,13 +2733,13 @@ void parseCommand(String cmd) {
         telemetry.oilPressure = cmd.substring(7).toFloat();
         telemetry.connected = true;
     }
-    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage,fuel,oilpsi,engine)
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage,fuel,engine,gear_est,clutch)
     else if (cmd.startsWith("TEL:")) {
         String data = cmd.substring(4);
         int idx = 0;
-        float values[10] = {0};  // Extended to 10 fields
+        float values[12] = {0};  // Extended to 12 fields for gear_est and clutch
         int start = 0;
-        for (int i = 0; i <= data.length() && idx < 10; i++) {
+        for (int i = 0; i <= data.length() && idx < 12; i++) {
             if (i == data.length() || data[i] == ',') {
                 String field = data.substring(start, i);
                 values[idx] = field.toFloat();
@@ -2730,6 +2766,8 @@ void parseCommand(String cmd) {
             if (idx >= 8) telemetry.fuelLevel = values[7];
             if (idx >= 9) telemetry.oilPressure = values[8];
             if (idx >= 10) telemetry.engineRunning = (values[9] > 0);
+            if (idx >= 11) telemetry.gearEstimated = (values[10] > 0);
+            if (idx >= 12) telemetry.clutchEngaged = (values[11] > 0);
             telemetry.connected = true;
             telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
@@ -2868,6 +2906,13 @@ void parseSettingsCommand(String data) {
         int seq = value.toInt();
         if (seq >= 1 && seq <= SEQ_COUNT) {
             settings.ledSequence = seq;
+            changed = true;
+        }
+    }
+    else if (name == "clutch_display_mode") {
+        int mode = value.toInt();
+        if (mode >= 0 && mode <= 3) {
+            clutchDisplayMode = mode;
             changed = true;
         }
     }

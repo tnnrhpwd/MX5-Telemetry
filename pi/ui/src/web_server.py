@@ -70,7 +70,8 @@ class WebRemoteServer:
                     'tire_low_psi': self.display_app.settings.tire_low_psi,
                     'tire_high_psi': self.display_app.settings.tire_high_psi,
                     'coolant_warn_f': self.display_app.settings.coolant_warn_f,
-                    'led_sequence': self.display_app.settings.led_sequence
+                    'led_sequence': self.display_app.settings.led_sequence,
+                    'clutch_display_mode': self.display_app.settings.clutch_display_mode
                 }
             })
         
@@ -138,6 +139,8 @@ class WebRemoteServer:
                     # Send LED sequence change to Arduino using the app's method
                     if hasattr(self.display_app, '_send_led_sequence_to_arduino'):
                         self.display_app._send_led_sequence_to_arduino()
+                elif name == 'clutch_display_mode':
+                    self.display_app.settings.clutch_display_mode = int(value)
                 else:
                     return jsonify({'success': False, 'error': 'Unknown setting'}), 400
                 
