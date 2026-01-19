@@ -121,7 +121,7 @@ struct CachedTelemetry {
     int gear;
     float coolantTemp;
     float fuelLevel;
-    float voltage;
+    float ambientTemp;
     float tirePressure[4];
     bool engineRunning;
     bool connected;
@@ -557,7 +557,7 @@ void setup() {
     telemetry.oilPressure = 0;
     telemetry.oilWarning = true;  // Default: no oil pressure
     telemetry.fuelLevel = 0;
-    telemetry.voltage = 0;
+    telemetry.ambientTemp = 0;
     telemetry.tirePressure[0] = 0; telemetry.tirePressure[1] = 0;
     telemetry.tirePressure[2] = 0; telemetry.tirePressure[3] = 0;
     telemetry.tireTemp[0] = 0; telemetry.tireTemp[1] = 0;
@@ -1038,9 +1038,10 @@ void drawOverviewScreen() {
         }
     }
     
-    // Draw tick marks at key RPM points
-    int tickMarks[] = {0, 2000, 4000, 6000, 8000};
-    for (int i = 0; i < 5; i++) {
+    // Draw tick marks matching NC GT tachometer (0-7500 with 1000 RPM intervals)
+    // Marks at: 0, 1000, 2000, 3000, 4000, 5000, 6000, 7000
+    int tickMarks[] = {0, 1000, 2000, 3000, 4000, 5000, 6000, 7000};
+    for (int i = 0; i < 8; i++) {
         float tickPercent = tickMarks[i] / 8000.0;
         float tickAngle = startAngle + (totalArc * tickPercent);
         float rad = tickAngle * 3.14159 / 180.0;
@@ -1626,30 +1627,22 @@ void drawEngineScreen() {
         LCD_FillRoundRect(startX + 10, bottomY + cardH - 20, fuelFillW, 12, 4, fuelColor);
     }
     
-    // === VOLTAGE (Bottom Right) ===
-    uint16_t voltColor = MX5_GREEN;
-    if (telemetry.voltage < 12.0) voltColor = MX5_RED;
-    else if (telemetry.voltage < 12.8) voltColor = MX5_ORANGE;
-    else if (telemetry.voltage > 15.0) voltColor = MX5_RED;
+    // === AMBIENT TEMP (Bottom Right) ===
+    uint16_t ambientColor = MX5_GREEN;
+    if (telemetry.ambientTemp < 32) ambientColor = MX5_CYAN;  // Freezing
+    else if (telemetry.ambientTemp > 95) ambientColor = MX5_RED;  // Hot
+    else if (telemetry.ambientTemp > 85) ambientColor = MX5_ORANGE;  // Warm
     
     LCD_FillRoundRect(rightX, bottomY, cardW, cardH, CARD_RADIUS, COLOR_BG_CARD);
-    LCD_DrawRoundRect(rightX, bottomY, cardW, cardH, CARD_RADIUS, voltColor);
+    LCD_DrawRoundRect(rightX, bottomY, cardW, cardH, CARD_RADIUS, ambientColor);
     
     // Label
-    LCD_DrawString(rightX + 10, bottomY + 8, "BATTERY", MX5_GRAY, COLOR_BG_CARD, 1);
+    LCD_DrawString(rightX + 10, bottomY + 8, "AMBIENT", MX5_GRAY, COLOR_BG_CARD, 1);
     
-    // Voltage value
-    char voltStr[12];
-    snprintf(voltStr, sizeof(voltStr), "%.1fV", telemetry.voltage);
-    LCD_DrawString(rightX + 10, bottomY + 24, voltStr, voltColor, COLOR_BG_CARD, 2);
-    
-    // Progress bar (rounded)
-    float voltPct = constrain((telemetry.voltage - 11.0) / 4.0, 0, 1);
-    LCD_FillRoundRect(rightX + 10, bottomY + cardH - 20, cardW - 20, 12, 4, MX5_DARKGRAY);
-    int voltFillW = (int)((cardW - 20) * voltPct);
-    if (voltFillW > 8) {
-        LCD_FillRoundRect(rightX + 10, bottomY + cardH - 20, voltFillW, 12, 4, voltColor);
-    }
+    // Temperature value
+    char ambStr[12];
+    snprintf(ambStr, sizeof(ambStr), "%.0f°F", telemetry.ambientTemp);
+    LCD_DrawString(rightX + 10, bottomY + 24, ambStr, ambientColor, COLOR_BG_CARD, 2);
     
     drawPageIndicator();
 }
@@ -2625,8 +2618,8 @@ void parseCommand(String cmd) {
         telemetry.fuelLevel = cmd.substring(5).toFloat();
         telemetry.connected = true;
     }
-    else if (cmd.startsWith("VOLT:")) {
-        telemetry.voltage = cmd.substring(5).toFloat();
+    else if (cmd.startsWith("AMBT:")) {
+        telemetry.ambientTemp = cmd.substring(5).toFloat();
         telemetry.connected = true;
     }
     else if (cmd.startsWith("TIRE:")) {
