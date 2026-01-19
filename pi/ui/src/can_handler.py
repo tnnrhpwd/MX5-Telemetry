@@ -100,17 +100,19 @@ class CANParser:
     def parse_speed(data: bytes) -> int:
         """Parse vehicle speed from engine message (ID 0x201)
         Typically bytes 4-5 or similar, in km/h, converted to mph
+        
+        Note: As per international automotive standard, the ECU transmits speed
+        with a +100 km/h offset to avoid negative numbers when in reverse.
+        We subtract 100 to get the true speed value.
         """
         if len(data) >= 6:
             raw = (data[4] << 8) | data[5]
-            # Speed in km/h, convert to mph
+            # Raw value is in 0.01 km/h units
             kmh = raw // 100
-            # Filter out static/default value of 100 km/h (62 mph)
-            # This appears when car is in ACC/ON mode but stationary
-            # The ECU broadcasts 0x2710 (10000) as a default/placeholder value
-            if kmh == 100:
-                return 0  # Filter out the default static value
-            mph = int(kmh * 0.621371)
+            # Subtract the 100 km/h offset used by the ECU
+            true_kmh = kmh - 100
+            # Convert to mph (handle negative values for reverse)
+            mph = int(true_kmh * 0.621371)
             return mph
         return 0
     
