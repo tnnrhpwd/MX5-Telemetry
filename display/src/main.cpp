@@ -83,7 +83,7 @@ struct TelemetryData {
     float oilTemp;
     float oilPressure;
     float fuelLevel;
-    float voltage;
+    float ambientTemp;
     float tirePressure[4];  // FL, FR, RL, RR
     float tireTemp[4];      // FL, FR, RL, RR
     float gForceX;          // Lateral (left/right) - raw accelerometer
@@ -972,7 +972,7 @@ void drawOverviewScreen() {
         telemetry.gear != prevTelemetry.gear ||
         (int)telemetry.coolantTemp != (int)prevTelemetry.coolantTemp ||
         (int)telemetry.fuelLevel != (int)prevTelemetry.fuelLevel ||
-        fabsf(telemetry.voltage - prevTelemetry.voltage) > 0.05f ||
+        (int)telemetry.ambientTemp != (int)prevTelemetry.ambientTemp ||
         telemetry.engineRunning != prevTelemetry.engineRunning ||
         telemetry.connected != prevTelemetry.connected ||
         telemetry.oilWarning != prevTelemetry.oilWarning ||
@@ -1152,38 +1152,39 @@ void drawOverviewScreen() {
     snprintf(coolStr, sizeof(coolStr), "%dF", (int)telemetry.coolantTemp);
     LCD_DrawString(gridStartX + 6, gridStartY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
     
-    // Box 2: OIL PRESSURE (top-right)
+    // Box 2: AMBIENT TEMP (top-right)
+    uint16_t ambientColor = MX5_CYAN;
+    if (telemetry.ambientTemp < 32) ambientColor = MX5_BLUE;  // Freezing
+    else if (telemetry.ambientTemp > 95) ambientColor = MX5_RED;  // Hot
+    else if (telemetry.ambientTemp > 85) ambientColor = MX5_ORANGE;  // Warm
+    LCD_FillRoundRect(gridStartX + boxW + boxGap, gridStartY, boxW, boxH, 4, COLOR_BG_CARD);
+    LCD_FillRect(gridStartX + boxW + boxGap, gridStartY, 3, boxH, ambientColor);
+    LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + 3, "AMB", MX5_GRAY, COLOR_BG_CARD, 1);
+    char ambientStr[8];
+    snprintf(ambientStr, sizeof(ambientStr), "%dF", (int)telemetry.ambientTemp);
+    LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + 16, ambientStr, ambientColor, COLOR_BG_CARD, 2);
+    
+    // Box 3: OIL PRESSURE (bottom-left)
     // 2008 MX5 NC GT only has pressure present sensor (not PSI)
     // oilWarning = true means NO oil pressure (FALSE), false means pressure present (TRUE)
     bool oilPressurePresent = !telemetry.oilWarning;
     uint16_t oilColor = oilPressurePresent ? MX5_GREEN : MX5_RED;
-    LCD_FillRoundRect(gridStartX + boxW + boxGap, gridStartY, boxW, boxH, 4, COLOR_BG_CARD);
-    LCD_FillRect(gridStartX + boxW + boxGap, gridStartY, 3, boxH, oilColor);
-    LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
+    LCD_FillRoundRect(gridStartX, gridStartY + boxH + boxGap, boxW, boxH, 4, COLOR_BG_CARD);
+    LCD_FillRect(gridStartX, gridStartY + boxH + boxGap, 3, boxH, oilColor);
+    LCD_DrawString(gridStartX + 6, gridStartY + boxH + boxGap + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
     const char* oilStr = oilPressurePresent ? "TRUE" : "FALSE";
-    LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + 16, oilStr, oilColor, COLOR_BG_CARD, 2);
+    LCD_DrawString(gridStartX + 6, gridStartY + boxH + boxGap + 16, oilStr, oilColor, COLOR_BG_CARD, 2);
     
-    // Box 3: FUEL (bottom-left)
+    // Box 4: FUEL (bottom-right)
     uint16_t fuelColor = MX5_GREEN;
     if (telemetry.fuelLevel < 15) fuelColor = MX5_RED;
     else if (telemetry.fuelLevel < 25) fuelColor = MX5_ORANGE;
-    LCD_FillRoundRect(gridStartX, gridStartY + boxH + boxGap, boxW, boxH, 4, COLOR_BG_CARD);
-    LCD_FillRect(gridStartX, gridStartY + boxH + boxGap, 3, boxH, fuelColor);
-    LCD_DrawString(gridStartX + 6, gridStartY + boxH + boxGap + 3, "FUEL", MX5_GRAY, COLOR_BG_CARD, 1);
+    LCD_FillRoundRect(gridStartX + boxW + boxGap, gridStartY + boxH + boxGap, boxW, boxH, 4, COLOR_BG_CARD);
+    LCD_FillRect(gridStartX + boxW + boxGap, gridStartY + boxH + boxGap, 3, boxH, fuelColor);
+    LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + boxH + boxGap + 3, "FUEL", MX5_GRAY, COLOR_BG_CARD, 1);
     char fuelStr[8];
     snprintf(fuelStr, sizeof(fuelStr), "%d%%", (int)telemetry.fuelLevel);
-    LCD_DrawString(gridStartX + 6, gridStartY + boxH + boxGap + 16, fuelStr, fuelColor, COLOR_BG_CARD, 2);
-    
-    // Box 4: VOLTAGE (bottom-right)
-    uint16_t voltColor = MX5_GREEN;
-    if (telemetry.voltage < 12.0) voltColor = MX5_RED;
-    else if (telemetry.voltage < 13.0) voltColor = MX5_ORANGE;
-    LCD_FillRoundRect(gridStartX + boxW + boxGap, gridStartY + boxH + boxGap, boxW, boxH, 4, COLOR_BG_CARD);
-    LCD_FillRect(gridStartX + boxW + boxGap, gridStartY + boxH + boxGap, 3, boxH, voltColor);
-    LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + boxH + boxGap + 3, "VOLT", MX5_GRAY, COLOR_BG_CARD, 1);
-    char voltStr[8];
-    snprintf(voltStr, sizeof(voltStr), "%.1f", telemetry.voltage);
-    LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + boxH + boxGap + 16, voltStr, voltColor, COLOR_BG_CARD, 2);
+    LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + boxH + boxGap + 16, fuelStr, fuelColor, COLOR_BG_CARD, 2);
     
     // === HEADLIGHT INDICATORS (Top right, next to gear) - only show when active ===
     int headlightY = 50;
@@ -1259,7 +1260,7 @@ void drawOverviewScreen() {
     prevTelemetry.gear = telemetry.gear;
     prevTelemetry.coolantTemp = telemetry.coolantTemp;
     prevTelemetry.fuelLevel = telemetry.fuelLevel;
-    prevTelemetry.voltage = telemetry.voltage;
+    prevTelemetry.ambientTemp = telemetry.ambientTemp;
     prevTelemetry.engineRunning = telemetry.engineRunning;
     prevTelemetry.connected = telemetry.connected;
     prevTelemetry.oilWarning = telemetry.oilWarning;
@@ -2718,7 +2719,7 @@ void parseCommand(String cmd) {
         telemetry.oilPressure = cmd.substring(7).toFloat();
         telemetry.connected = true;
     }
-    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,voltage,fuel,engine,gear_est,clutch)
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,ambient_temp,fuel,engine,gear_est,clutch)
     else if (cmd.startsWith("TEL:")) {
         String data = cmd.substring(4);
         int idx = 0;
@@ -2746,7 +2747,7 @@ void parseCommand(String cmd) {
             telemetry.throttle = values[3];
             telemetry.coolantTemp = values[4];
             telemetry.oilTemp = values[5];
-            telemetry.voltage = values[6];
+            telemetry.ambientTemp = values[6];
             // Extended fields (if present)
             if (idx >= 8) telemetry.fuelLevel = values[7];
             if (idx >= 9) telemetry.oilPressure = values[8];
