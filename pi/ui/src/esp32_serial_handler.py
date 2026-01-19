@@ -593,13 +593,21 @@ class ESP32SerialHandler:
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
                 oil_val = 1 if self.telemetry.oil_status else 0
                 msg += f"{oil_val},"
-                msg += f"{self.telemetry.fuel_level_percent:.0f},"
+                fuel_pct = self.telemetry.fuel_level_percent
+                msg += f"{fuel_pct:.0f},"
+                # DEBUG: Log what we're sending
+                if fuel_pct > 0:
+                    print(f"DEBUG: Sending fuel={fuel_pct:.1f}% to ESP32")
                 engine_running = 1 if self.telemetry.rpm > 0 else 0
                 msg += f"{engine_running},"
                 # Add gear estimation and clutch flags
                 gear_est = 1 if self.telemetry.gear_estimated else 0
                 clutch = 1 if self.telemetry.clutch_engaged else 0
                 msg += f"{gear_est},{clutch}\n"
+                
+                # DEBUG: Log fuel value
+                if fuel_pct == 0:
+                    print(f"DEBUG: Sending fuel={fuel_pct:.0f}% (telemetry.fuel_level_percent={self.telemetry.fuel_level_percent})")
                 
                 self.serial_conn.write(msg.encode('utf-8'))
                 
