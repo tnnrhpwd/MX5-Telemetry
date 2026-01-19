@@ -2753,8 +2753,11 @@ void parseCommand(String cmd) {
                 start = i + 1;
             }
         }
-        // DEBUG: Print parsed values
+        // DEBUG: Print parsed values and fuel specifically
         Serial.printf("TEL parsed: %d fields - RPM=%.0f Speed=%.0f Gear=%.0f\n", idx, values[0], values[1], values[2]);
+        if (idx >= 7) Serial.printf("  Fuel field[6]=%.0f\n", values[6]);
+        if (idx >= 10) Serial.printf("  All fields: fuel=%.0f engine=%.0f gear_est=%.0f clutch=%.0f\n", 
+            values[6], values[7], values[8], values[9]);
         
         if (idx >= 6) {  // At least 6 fields required
             telemetry.rpm = values[0];
