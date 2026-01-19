@@ -90,6 +90,23 @@ try {
 Write-Host "Connected to Pi" -ForegroundColor Green
 Write-Host ""
 
+# Check if repository exists on Pi, clone if not
+Write-Host "Checking if repository exists on Pi..." -ForegroundColor Cyan
+$repoCheck = ssh $piHost "test -d ~/mx5-telemetry/.git && echo 'exists' || echo 'missing'"
+
+if ($repoCheck -match "missing") {
+    Write-Host "Repository not found on Pi. Cloning from GitHub..." -ForegroundColor Yellow
+    ssh $piHost "cd ~ && git clone https://github.com/tnnrhpwd/MX5-Telemetry.git mx5-telemetry"
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to clone repository on Pi!" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "Repository cloned successfully!" -ForegroundColor Green
+} else {
+    Write-Host "Repository exists on Pi" -ForegroundColor Gray
+}
+
 # Pull latest changes on Pi
 Write-Host "Pulling latest changes from GitHub on Pi..." -ForegroundColor Cyan
 ssh $piHost "cd ~/mx5-telemetry && git pull"
