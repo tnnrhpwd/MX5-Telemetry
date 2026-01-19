@@ -34,6 +34,7 @@
 #include <Wire.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
+#include <driver/temperature_sensor.h>
 #include "Display_ST77916.h"
 #include "Touch_CST816.h"
 #include "QMI8658.h"
@@ -109,6 +110,9 @@ struct TelemetryData {
 };
 
 TelemetryData telemetry = {0};
+
+// ESP32 internal temperature sensor for ambient temp fallback
+temperature_sensor_handle_t temp_sensor = NULL;
 
 // Settings from Pi
 int clutchDisplayMode = 0;  // 0=Gear#(colored), 1='C', 2='S', 3='-'
@@ -558,6 +562,11 @@ void setup() {
     telemetry.oilWarning = true;  // Default: no oil pressure
     telemetry.fuelLevel = 0;
     telemetry.ambientTemp = 0;
+    
+    // Initialize internal temperature sensor for ambient temp fallback
+    temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    temperature_sensor_install(&temp_sensor_config, &temp_sensor);
+    temperature_sensor_enable(temp_sensor);
     telemetry.tirePressure[0] = 0; telemetry.tirePressure[1] = 0;
     telemetry.tirePressure[2] = 0; telemetry.tirePressure[3] = 0;
     telemetry.tireTemp[0] = 0; telemetry.tireTemp[1] = 0;
@@ -584,6 +593,19 @@ void loop() {
     static unsigned long lastPerfReport = 0;
     static unsigned long maxLoopTime = 0;
     unsigned long loopStart = millis();
+    
+    // Update ambient temp from ESP32 sensor if no CAN data (every 5 seconds)
+    static unsigned long lastTempUpdate = 0;
+    if (millis() - lastTempUpdate > 5000) {
+        lastTempUpdate = millis();
+        if (telemetry.ambientTemp == 0 && temp_sensor != NULL) {
+            float tsens_celsius;
+            if (temperature_sensor_get_celsius(temp_sensor, &tsens_celsius) == ESP_OK) {
+                // ESP32 die temp runs ~15-20°F hotter than ambient, apply offset
+                telemetry.ambientTemp = (tsens_celsius * 9.0 / 5.0 + 32.0) - 18.0;
+            }
+        }
+    }
     
     // Handle serial commands FIRST - highest priority for Pi sync
     handleSerialCommands();
