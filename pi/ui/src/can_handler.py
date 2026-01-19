@@ -229,6 +229,98 @@ class CANParser:
 
 
 # =============================================================================
+# Gear Estimation (for 2008 MX5 NC GT without gear sensor)
+# =============================================================================
+
+class GearEstimator:
+    """Estimates gear position from speed/RPM ratio for MX5 NC 6-speed transmission
+    
+    2008 MX5 NC GT does not have a gear position sensor - only Neutral can be detected
+    via CAN bus. This class estimates the current gear based on the relationship between
+    vehicle speed and engine RPM.
+    
+    MX5 NC 6-Speed Manual Transmission Ratios (2006-2015):
+        1st: 3.760    Final Drive: 4.10
+        2nd: 2.269    Tire Size: 205/45R17 (24.3" diameter)
+        3rd: 1.645
+        4th: 1.187
+        5th: 1.000
+        6th: 0.843
+    """
+    
+    # Gear ratios for 2008 MX5 NC 6-speed manual
+    GEAR_RATIOS = {
+        1: 3.760,
+        2: 2.269,
+        3: 1.645,
+        4: 1.187,
+        5: 1.000,
+        6: 0.843,
+    }
+    
+    FINAL_DRIVE = 4.10
+    TIRE_DIAMETER_INCHES = 24.3  # 205/45R17
+    
+    # Calculated expected MPH per 1000 RPM for each gear
+    # Formula: (RPM * tire_circumference * 60) / (gear_ratio * final_drive * 63360)
+    # where 63360 = inches per mile
+    MPH_PER_1000_RPM = {}
+    
+    def __init__(self):
+        """Calculate MPH per 1000 RPM for each gear"""
+        tire_circumference = 3.14159 * self.TIRE_DIAMETER_INCHES
+        for gear, ratio in self.GEAR_RATIOS.items():
+            # MPH = (RPM * tire_circ * 60) / (gear_ratio * final_drive * 63360)
+            mph_per_rpm = (tire_circumference * 60) / (ratio * self.FINAL_DRIVE * 63360)
+            self.MPH_PER_1000_RPM[gear] = mph_per_rpm * 1000
+    
+    def estimate_gear(self, speed_mph: float, rpm: int) -> tuple:
+        """Estimate gear from speed and RPM
+        
+        Returns:
+            tuple: (gear, clutch_engaged, confidence)
+                gear: Estimated gear number (1-6), 0 for neutral, -1 for reverse
+                clutch_engaged: True if clutch appears to be pressed
+                confidence: How well the ratio matches (0.0-1.0)
+        """
+        # Handle stationary/neutral cases
+        if speed_mph < 2:
+            return (0, False, 1.0)  # Neutral when stationary
+        
+        if rpm < 500:
+            return (0, False, 1.0)  # Engine off or idle
+        
+        # Check for reverse (negative speed from CAN)
+        if speed_mph < 0:
+            return (-1, False, 1.0)
+        
+        # Calculate actual speed/RPM ratio
+        actual_ratio = speed_mph / rpm
+        
+        # Find best matching gear
+        best_gear = 1
+        best_error = float('inf')
+        
+        for gear, mph_per_1k in self.MPH_PER_1000_RPM.items():
+            expected_ratio = mph_per_1k / 1000
+            error = abs(actual_ratio - expected_ratio)
+            if error < best_error:
+                best_error = error
+                best_gear = gear
+        
+        # Calculate confidence (how close the ratio is to expected)
+        expected_ratio = self.MPH_PER_1000_RPM[best_gear] / 1000
+        ratio_difference = abs(actual_ratio - expected_ratio) / expected_ratio
+        confidence = max(0.0, 1.0 - ratio_difference * 2.0)
+        
+        # Detect clutch engagement: ratio is way off (>30% difference)
+        # This happens when clutch is pressed or tires are slipping
+        clutch_engaged = ratio_difference > 0.30
+        
+        return (best_gear, clutch_engaged, confidence)
+
+
+# =============================================================================
 # CAN Handler Class
 # =============================================================================
 
@@ -254,6 +346,9 @@ class CANHandler:
         self.connected = False
         self.last_hs_msg_time = 0
         self.last_ms_msg_time = 0
+        
+        # Gear estimator for vehicles without gear position sensor
+        self.gear_estimator = GearEstimator()
         
     def start(self) -> bool:
         """Initialize and start CAN bus reading"""
@@ -369,11 +464,21 @@ class CANHandler:
             self.telemetry.rpm = CANParser.parse_rpm(data)
             self.telemetry.speed_kmh = CANParser.parse_speed(data)
             
+            # Estimate gear and clutch status after we have RPM and speed
+            self._update_gear_estimation()
+            
         elif can_id == HSCanID.THROTTLE:
             self.telemetry.throttle_percent = CANParser.parse_throttle(data)
             
         elif can_id == HSCanID.GEAR_POSITION:
-            self.telemetry.gear = CANParser.parse_gear(data)
+            can_gear = CANParser.parse_gear(data)
+            # Only use CAN gear if it's Neutral (0) - 2008 MX5 NC GT only detects Neutral
+            if can_gear == 0:
+                self.telemetry.gear = 0
+                self.telemetry.gear_estimated = False
+                self.telemetry.clutch_engaged = False
+            # For all other gears, rely on estimation
+            # (estimation happens in _update_gear_estimation after RPM/speed update)
             
         elif can_id == HSCanID.WHEEL_SPEEDS:
             speeds = CANParser.parse_wheel_speeds(data)
@@ -431,6 +536,33 @@ class CANHandler:
         hs_ok = (now - self.last_hs_msg_time) < 1.0 if self.hs_can else False
         ms_ok = (now - self.last_ms_msg_time) < 1.0 if self.ms_can else False
         return hs_ok or ms_ok
+
+    def _update_gear_estimation(self):
+        """Update gear estimation based on current speed and RPM
+        
+        Called after receiving RPM/speed data. Estimates gear for vehicles
+        without gear position sensor (2008 MX5 NC GT only detects Neutral).
+        """
+        # Skip if already in detected neutral
+        if self.telemetry.gear == 0 and not self.telemetry.gear_estimated:
+            return
+        
+        # Estimate gear from speed/RPM ratio
+        estimated_gear, clutch_engaged, confidence = self.gear_estimator.estimate_gear(
+            self.telemetry.speed_kmh, 
+            self.telemetry.rpm
+        )
+        
+        # Update telemetry with estimated values
+        # (but don't override CAN-detected neutral)
+        if estimated_gear != 0:  # Not estimating neutral, use estimation
+            self.telemetry.gear = estimated_gear
+            self.telemetry.gear_estimated = True
+            self.telemetry.clutch_engaged = clutch_engaged
+        elif self.telemetry.gear != 0:  # Was estimated, now should be neutral
+            self.telemetry.gear = estimated_gear
+            self.telemetry.gear_estimated = True
+            self.telemetry.clutch_engaged = False
 
 
 # =============================================================================

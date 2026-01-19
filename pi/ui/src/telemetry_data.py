@@ -29,6 +29,8 @@ class TelemetryData:
     rpm: int = 0
     speed_kmh: int = 0
     gear: int = 0
+    gear_estimated: bool = False  # True if gear was estimated from speed/RPM ratio
+    clutch_engaged: bool = False  # True if clutch appears to be pressed
     throttle_percent: int = 0
     brake_active: bool = False
     
