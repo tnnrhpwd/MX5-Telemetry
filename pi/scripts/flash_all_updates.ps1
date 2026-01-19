@@ -127,14 +127,14 @@ Write-Host "[2/4] Flashing ESP32 Display..." -ForegroundColor Green
 Write-Host "Changes: Updated display text rendering and gear estimation features" -ForegroundColor Gray
 Write-Host ""
 
-# Flash ESP32 on Pi using existing platformio installation
+# Flash ESP32 on Pi using full platformio path
 Write-Host "Flashing ESP32 (using cached builds)..." -ForegroundColor Cyan
-ssh $piHost 'bash -lc "cd ~/mx5-telemetry/display && pio run --target upload"'
+ssh $piHost 'cd ~/mx5-telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNING: Flash failed, retrying..." -ForegroundColor Yellow
     Start-Sleep -Seconds 2
-    ssh $piHost 'bash -lc "cd ~/mx5-telemetry/display && pio run --target upload"'
+    ssh $piHost 'cd ~/mx5-telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: ESP32 flash failed after retry!" -ForegroundColor Red
@@ -161,7 +161,7 @@ if (-not $arduinoChanges) {
 } else {
     # Flash Arduino on Pi using cached builds
     Write-Host "Flashing Arduino (using cached builds)..." -ForegroundColor Cyan
-    ssh $piHost 'bash -lc "cd ~/mx5-telemetry/arduino && pio run --target upload"'
+    ssh $piHost 'cd ~/mx5-telemetry/arduino && ~/.platformio/penv/bin/platformio run --target upload'
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Arduino flash failed!" -ForegroundColor Red
