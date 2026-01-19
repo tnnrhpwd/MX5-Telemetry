@@ -1185,24 +1185,28 @@ void drawOverviewScreen() {
     }
     
     // === GEAR + SPEED (Center top) === 
-    // Only redraw gear indicator when gear or RPM changed (gear ring color depends on RPM)
-    if (needsFullRedraw || gearChanged || rpmChanged) {
+    // Determine gear ring color based on RPM thresholds
+    uint16_t gearGlow = MX5_GREEN;
+    if (telemetry.clutchEngaged) {
+        gearGlow = MX5_CYAN;  // Rev-matching helper color
+    } else if (telemetry.rpm > 6500) {
+        gearGlow = MX5_RED;
+    } else if (telemetry.rpm > 5500) {
+        gearGlow = MX5_ORANGE;
+    } else if (telemetry.rpm > 4500) {
+        gearGlow = MX5_YELLOW;
+    }
+    
+    // Cache previous gear glow to detect color threshold crossings
+    static uint16_t prevGearGlow = 0;
+    bool gearGlowChanged = (gearGlow != prevGearGlow);
+    
+    // Only redraw gear indicator when gear changed or ring color changed (not every RPM change)
+    if (needsFullRedraw || gearChanged || gearGlowChanged) {
         int gearX = CENTER_X;
         int gearY = 70;
         int gearRadius = 38;
         LCD_FillCircle(gearX, gearY, gearRadius, COLOR_BG_CARD);
-        
-        // Gear color - changes based on clutch engagement for rev-matching help
-        uint16_t gearGlow = MX5_GREEN;
-        
-        // If clutch is engaged, use special color (cyan) for rev-matching assistance
-        if (telemetry.clutchEngaged) {
-            gearGlow = MX5_CYAN;  // Rev-matching helper color
-        }
-        // Otherwise, color based on RPM
-        else if (telemetry.rpm > 6500) gearGlow = MX5_RED;
-        else if (telemetry.rpm > 5500) gearGlow = MX5_ORANGE;
-        else if (telemetry.rpm > 4500) gearGlow = MX5_YELLOW;
         
         // Draw gear ring
         for (int r = gearRadius; r > gearRadius - 3; r--) {
@@ -1239,6 +1243,9 @@ void drawOverviewScreen() {
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
         LCD_DrawString(gearX - 8, gearY - 10, gearStr, gearGlow, COLOR_BG_CARD, 3);
+        
+        // Update cached gear glow
+        prevGearGlow = gearGlow;
     }
     
     // Speed below gear - only redraw when speed changed
