@@ -707,6 +707,23 @@ class ESP32SerialHandler:
         except Exception as e:
             print(f"ESP32 serial write error: {e}")
     
+    def send_calibrate_imu(self):
+        """Send command to ESP32 to calibrate IMU gyroscope zero point"""
+        if not self.serial_conn or not self._running or not self.connected:
+            print("ESP32: Cannot calibrate IMU - not connected")
+            return False
+        
+        try:
+            with self._write_lock:
+                self.serial_conn.write(b"CAL_IMU\n")
+                self.serial_conn.flush()
+                self.last_tx_time = time.time()
+                print("ESP32: Sent IMU calibration command")
+                return True
+        except Exception as e:
+            print(f"ESP32 IMU calibration error: {e}")
+            return False
+    
     def send_setting(self, name: str, value):
         """
         Send a single setting to ESP32 display for synchronization.

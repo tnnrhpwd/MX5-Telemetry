@@ -162,6 +162,19 @@ class WebRemoteServer:
                 self.display_app.sleeping = False
                 self.display_app.last_activity = time.time()
             return jsonify({'success': True})
+        
+        @self.app.route('/api/calibrate_imu', methods=['POST'])
+        def calibrate_imu():
+            """Calibrate IMU gyroscope zero point"""
+            try:
+                # Send calibration command to ESP32
+                if self.display_app.esp32_handler:
+                    self.display_app.esp32_handler.send_calibrate_imu()
+                    return jsonify({'success': True, 'message': 'Calibration command sent'})
+                else:
+                    return jsonify({'success': False, 'message': 'ESP32 not connected'}), 503
+            except Exception as e:
+                return jsonify({'success': False, 'message': str(e)}), 500
     
     def _setup_socketio(self):
         """Setup WebSocket event handlers"""

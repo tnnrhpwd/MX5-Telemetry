@@ -745,6 +745,36 @@ static float orientationRoll = 0;   // Roll angle in degrees (left/right tilt)
 static unsigned long lastIMUUpdate = 0;
 static bool imuInitialized = false;
 
+// IMU Calibration offsets (set by user via CAL_IMU command)
+static float imuCalibrationPitch = 0;  // Pitch offset to subtract
+static float imuCalibrationRoll = 0;   // Roll offset to subtract
+static float imuCalibrationAccelX = 0; // Accel X offset
+static float imuCalibrationAccelY = 0; // Accel Y offset
+static float imuCalibrationAccelZ = 0; // Accel Z offset
+
+void calibrateIMU() {
+    // Capture current IMU readings as the zero point
+    // This allows user to set any orientation as the default
+    imu.update();
+    
+    // Store current orientation as offset
+    imuCalibrationPitch = orientationPitch;
+    imuCalibrationRoll = orientationRoll;
+    
+    // Store current raw accelerometer readings as offset
+    imuCalibrationAccelX = imu.ax;
+    imuCalibrationAccelY = imu.ay - 1.0; // Subtract 1G since we want level to read 1G up
+    imuCalibrationAccelZ = imu.az;
+    
+    Serial.println("IMU: Calibrated to current position as zero");
+    Serial.printf("IMU: Offsets - Pitch:%.2f Roll:%.2f AccelX:%.3f AccelY:%.3f AccelZ:%.3f\n",
+                  imuCalibrationPitch, imuCalibrationRoll, 
+                  imuCalibrationAccelX, imuCalibrationAccelY, imuCalibrationAccelZ);
+    
+    // Send confirmation back to Pi
+    Serial.println("OK:CAL_IMU");
+}
+
 void updateIMU() {
     imu.update();
     
@@ -788,9 +818,10 @@ void updateIMU() {
     // ==========================================================================
     
     // Raw accelerometer in G units (already mapped to car coordinates conceptually)
-    float accelLateral = imu.ax;     // Positive = tilted right (gravity pulls left)
-    float accelVertical = imu.ay;    // Positive = up, ~1G when level
-    float accelBackward = imu.az;    // Positive = nose up (gravity pulls backward)
+    // Apply calibration offsets
+    float accelLateral = imu.ax - imuCalibrationAccelX;     // Positive = tilted right (gravity pulls left)
+    float accelVertical = imu.ay - imuCalibrationAccelY;    // Positive = up, ~1G when level
+    float accelBackward = imu.az - imuCalibrationAccelZ;    // Positive = nose up (gravity pulls backward)
     
     // ==========================================================================
     // ORIENTATION FROM ACCELEROMETER (Primary source - always stable)
@@ -852,6 +883,10 @@ void updateIMU() {
     // Complementary filter: blend gyro-integrated value with accelerometer
     orientationPitch = (1.0 - alpha) * gyroPitch + alpha * accelPitch;
     orientationRoll = (1.0 - alpha) * gyroRoll + alpha * accelRoll;
+    
+    // Apply user calibration offsets (subtract to make calibration point = zero)
+    orientationPitch -= imuCalibrationPitch;
+    orientationRoll -= imuCalibrationRoll;
     
     // Clamp to reasonable range
     orientationPitch = constrain(orientationPitch, -30.0f, 30.0f);
@@ -2783,6 +2818,10 @@ void parseCommand(String cmd) {
     else if (cmd == "PING") {
         telemetry.connected = true;
         Serial.println("PONG");
+    }
+    else if (cmd == "CAL_IMU") {
+        // Calibrate IMU to current position as zero point
+        calibrateIMU();
     }
     else if (cmd == "STATUS") {
         Serial.printf("SCREEN:%d,RPM:%.0f,SPEED:%.0f,GEAR:%d,CONNECTED:%d\n",
