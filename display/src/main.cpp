@@ -1074,8 +1074,11 @@ void drawOverviewScreen() {
     } else {
         snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
     }
+    // Clear fixed area for speed text to prevent ghosting (size 2 = ~12px wide per char, 16px tall)
+    int speedY = gearY + gearRadius + 8;
+    LCD_FillRect(CENTER_X - 36, speedY, 72, 16, COLOR_BG);  // Clear area for up to 6 chars
     int speedLen = strlen(speedStr);
-    LCD_DrawString(gearX - speedLen * 6, gearY + gearRadius + 8, speedStr, MX5_WHITE, COLOR_BG, 2);
+    LCD_DrawString(gearX - speedLen * 6, speedY, speedStr, MX5_WHITE, COLOR_BG, 2);
     LCD_DrawString(gearX + speedLen * 6 + 4, gearY + gearRadius + 12, "mph", MX5_GRAY, COLOR_BG, 1);
     
     // RPM value display (no bar, just value)
@@ -1085,9 +1088,12 @@ void drawOverviewScreen() {
     } else {
         snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
     }
+    // Clear fixed area for RPM text to prevent ghosting (size 1 = ~5px wide per char, 8px tall)
+    int rpmY = gearY + gearRadius + 30;
+    LCD_FillRect(CENTER_X - 40, rpmY, 50, 8, COLOR_BG);  // Clear area for up to 8 chars
     int rpmLen = strlen(rpmStr);
-    LCD_DrawString(CENTER_X - rpmLen * 5 - 10, gearY + gearRadius + 30, rpmStr, rpmColor, COLOR_BG, 1);
-    LCD_DrawString(CENTER_X + rpmLen * 5 - 5, gearY + gearRadius + 30, "rpm", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(CENTER_X - rpmLen * 5 - 10, rpmY, rpmStr, rpmColor, COLOR_BG, 1);
+    LCD_DrawString(CENTER_X + rpmLen * 5 - 5, rpmY, "rpm", MX5_GRAY, COLOR_BG, 1);
     
     // === KEY VALUES (2x2 grid - centered) ===
     int boxW = 75;
