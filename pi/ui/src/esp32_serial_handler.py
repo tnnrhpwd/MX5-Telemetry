@@ -26,7 +26,7 @@ Protocol (ESP32 -> Pi):
     OK:SCREEN_X\n            - Confirmation of screen change
 
 Protocol (Pi -> ESP32):
-    TEL:3500,65,3,45,185,210,14.2\n  - RPM,speed,gear,throttle,coolant,oil,voltage
+    TEL:3500,65,3,45,185,1,72,95,1,0,0\n  - RPM,speed,gear,throttle,coolant,oil,ambient_temp,fuel,engine,gear_est,clutch
     SCREEN:0\n                        - Change to screen 0 (Overview)
     SCREEN:1\n                        - Change to screen 1 (RPM)
     LEFT\n                            - Next screen
