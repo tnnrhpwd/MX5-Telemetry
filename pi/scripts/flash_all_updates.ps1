@@ -168,8 +168,6 @@ if (-not $arduinoChanges) {
     Write-Host "Arduino flashed successfully!" -ForegroundColor Green
 }
 
-Prompt-Continue "Ready to restart Pi services?"
-
 # ====================================
 # 4. Restart Pi Services
 # ====================================
