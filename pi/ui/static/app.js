@@ -268,6 +268,40 @@ function toggleSetting(settingName) {
         .catch(err => console.error('Error:', err));
 }
 
+// Calibrate IMU gyroscope zero point
+function calibrateIMU() {
+    fetch('/api/calibrate_imu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('✓ Gyroscope calibrated successfully!', 'success');
+                vibrate();
+            } else {
+                showToast('✗ Calibration failed: ' + (data.message || 'Unknown error'), 'error');
+            }
+        })
+        .catch(err => {
+            console.error('Error calibrating IMU:', err);
+            showToast('✗ Calibration error', 'error');
+        });
+}
+
+// Show toast notification
+function showToast(message, type = 'info') {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    
+    toast.textContent = message;
+    toast.className = 'toast toast-' + type + ' toast-show';
+    
+    setTimeout(() => {
+        toast.className = 'toast';
+    }, 3000);
+}
+
 // Haptic feedback (if supported)
 function vibrate() {
     if ('vibrate' in navigator) {
