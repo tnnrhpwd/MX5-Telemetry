@@ -132,9 +132,24 @@ Write-Host "[2/4] Flashing ESP32 Display..." -ForegroundColor Green
 Write-Host "Changes: Updated display text rendering and gear estimation features" -ForegroundColor Gray
 Write-Host ""
 
+# Check if PlatformIO is installed on Pi
+Write-Host "Checking PlatformIO on Pi..." -ForegroundColor Cyan
+$pioCheck = ssh $piHost 'command -v platformio || command -v pio || echo "missing"'
+
+if ($pioCheck -match "missing") {
+    Write-Host "PlatformIO not found. Installing..." -ForegroundColor Yellow
+    ssh $piHost 'curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py -o get-platformio.py && python3 get-platformio.py'
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to install PlatformIO!" -ForegroundColor Red
+        Write-Host "You may need to install it manually: pip3 install platformio" -ForegroundColor Yellow
+        exit 1
+    }
+}
+
 # Build and flash ESP32 on Pi
 Write-Host "Building and flashing ESP32 on Pi..." -ForegroundColor Cyan
-ssh $piHost "cd ~/mx5-telemetry/display && pio run --target upload"
+ssh $piHost 'cd ~/mx5-telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: ESP32 flash failed!" -ForegroundColor Red
@@ -159,7 +174,7 @@ if (-not $arduinoChanges) {
 } else {
     # Build and flash Arduino on Pi
     Write-Host "Building and flashing Arduino on Pi..." -ForegroundColor Cyan
-    ssh $piHost "cd ~/mx5-telemetry/arduino && pio run --target upload"
+    ssh $piHost 'cd ~/mx5-telemetry/arduino && ~/.platformio/penv/bin/platformio run --target upload'
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Arduino flash failed!" -ForegroundColor Red
