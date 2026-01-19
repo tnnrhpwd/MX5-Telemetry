@@ -60,7 +60,7 @@ class HSCanID:
     STEERING_ANGLE = 0x4B8      # Steering wheel angle
     BRAKE_STATUS = 0x212        # Brake pedal status
     GEAR_POSITION = 0x231       # Current gear
-    ENGINE_TEMP = 0x420         # Coolant and oil temps
+    ENGINE_TEMP = 0x420         # Coolant and ambient temps
     FUEL_LEVEL = 0x430          # Fuel level
     BATTERY_VOLTAGE = 0x440     # System voltage
 
@@ -177,6 +177,18 @@ class CANParser:
         if len(data) >= 1:
             # Typically offset by 40C
             temp_c = data[0] - 40
+            temp_f = int(temp_c * 9 / 5 + 32)
+            return temp_f
+        return 0
+    
+    @staticmethod
+    def parse_ambient_temp(data: bytes) -> int:
+        """Parse ambient/outside temperature (ID 0x420, byte 1)
+        Returns temperature in Fahrenheit
+        """
+        if len(data) >= 2:
+            # Same offset as coolant: value - 40 = °C
+            temp_c = data[1] - 40
             temp_f = int(temp_c * 9 / 5 + 32)
             return temp_f
         return 0
@@ -496,6 +508,7 @@ class CANHandler:
             
         elif can_id == HSCanID.ENGINE_TEMP:
             self.telemetry.coolant_temp_f = CANParser.parse_coolant_temp(data)
+            self.telemetry.ambient_temp_f = CANParser.parse_ambient_temp(data)
             
         elif can_id == HSCanID.FUEL_LEVEL:
             self.telemetry.fuel_level_percent = CANParser.parse_fuel_level(data)
