@@ -90,17 +90,12 @@ try {
 Write-Host "Connected to Pi" -ForegroundColor Green
 Write-Host ""
 
-# Check if repository exists on Pi, clone if not
-Write-Host "Checking if repository exists on Pi..." -ForegroundColor Cyan
-$repoCheck = ssh $piHost "test -d ~/mx5-telemetry/.git && echo 'exists' || echo 'missing'"
+# Check if repository exists on Pi
+Write-Host "Checking repository on Pi..." -ForegroundColor Cyan
+$repoCheck = ssh $piHost "test -d ~/mx5-telemetry && echo 'exists' || echo 'missing'"
 
 if ($repoCheck -match "missing") {
-    Write-Host "Repository not found on Pi. Setting up fresh clone..." -ForegroundColor Yellow
-    
-    # Backup existing directory if it exists
-    ssh $piHost 'if [ -d ~/mx5-telemetry ]; then mv ~/mx5-telemetry ~/mx5-telemetry-backup-$(date +%Y%m%d-%H%M%S); fi'
-    
-    # Clone fresh
+    Write-Host "Repository not found. Cloning from GitHub..." -ForegroundColor Yellow
     ssh $piHost 'cd ~ && git clone https://github.com/tnnrhpwd/MX5-Telemetry.git mx5-telemetry'
     
     if ($LASTEXITCODE -ne 0) {
@@ -114,7 +109,7 @@ if ($repoCheck -match "missing") {
 
 # Pull latest changes on Pi
 Write-Host "Pulling latest changes from GitHub on Pi..." -ForegroundColor Cyan
-ssh $piHost "cd ~/mx5-telemetry && git pull"
+ssh $piHost 'cd ~/mx5-telemetry && git pull'
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Git pull on Pi failed!" -ForegroundColor Red
@@ -132,28 +127,20 @@ Write-Host "[2/4] Flashing ESP32 Display..." -ForegroundColor Green
 Write-Host "Changes: Updated display text rendering and gear estimation features" -ForegroundColor Gray
 Write-Host ""
 
-# Check if PlatformIO is installed on Pi
-Write-Host "Checking PlatformIO on Pi..." -ForegroundColor Cyan
-$pioCheck = ssh $piHost 'command -v platformio || command -v pio || echo "missing"'
-
-if ($pioCheck -match "missing") {
-    Write-Host "PlatformIO not found. Installing..." -ForegroundColor Yellow
-    ssh $piHost 'curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py -o get-platformio.py && python3 get-platformio.py'
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Failed to install PlatformIO!" -ForegroundColor Red
-        Write-Host "You may need to install it manually: pip3 install platformio" -ForegroundColor Yellow
-        exit 1
-    }
-}
-
-# Build and flash ESP32 on Pi
-Write-Host "Building and flashing ESP32 on Pi..." -ForegroundColor Cyan
-ssh $piHost 'cd ~/mx5-telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
+# Flash ESP32 on Pi using existing platformio installation
+Write-Host "Flashing ESP32 (using cached builds)..." -ForegroundColor Cyan
+ssh $piHost 'bash -lc "cd ~/mx5-telemetry/display && pio run --target upload"'
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: ESP32 flash failed!" -ForegroundColor Red
-    exit 1
+    Write-Host "WARNING: Flash failed, retrying..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 2
+    ssh $piHost 'bash -lc "cd ~/mx5-telemetry/display && pio run --target upload"'
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: ESP32 flash failed after retry!" -ForegroundColor Red
+        Write-Host "You may need to manually reset the ESP32 or check the USB connection" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 Write-Host "ESP32 Display flashed successfully!" -ForegroundColor Green
@@ -172,9 +159,9 @@ $arduinoChanges = git log -4 --name-only --oneline | Select-String "arduino/src/
 if (-not $arduinoChanges) {
     Write-Host "Arduino code unchanged - skipping flash" -ForegroundColor Yellow
 } else {
-    # Build and flash Arduino on Pi
-    Write-Host "Building and flashing Arduino on Pi..." -ForegroundColor Cyan
-    ssh $piHost 'cd ~/mx5-telemetry/arduino && ~/.platformio/penv/bin/platformio run --target upload'
+    # Flash Arduino on Pi using cached builds
+    Write-Host "Flashing Arduino (using cached builds)..." -ForegroundColor Cyan
+    ssh $piHost 'bash -lc "cd ~/mx5-telemetry/arduino && pio run --target upload"'
     
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Arduino flash failed!" -ForegroundColor Red
