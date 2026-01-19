@@ -95,7 +95,12 @@ Write-Host "Checking if repository exists on Pi..." -ForegroundColor Cyan
 $repoCheck = ssh $piHost "test -d ~/mx5-telemetry/.git && echo 'exists' || echo 'missing'"
 
 if ($repoCheck -match "missing") {
-    Write-Host "Repository not found on Pi. Cloning from GitHub..." -ForegroundColor Yellow
+    Write-Host "Repository not found on Pi. Setting up fresh clone..." -ForegroundColor Yellow
+    
+    # Backup existing directory if it exists
+    ssh $piHost "if [ -d ~/mx5-telemetry ]; then mv ~/mx5-telemetry ~/mx5-telemetry-backup-$(date +%Y%m%d-%H%M%S); fi"
+    
+    # Clone fresh
     ssh $piHost "cd ~ && git clone https://github.com/tnnrhpwd/MX5-Telemetry.git mx5-telemetry"
     
     if ($LASTEXITCODE -ne 0) {
