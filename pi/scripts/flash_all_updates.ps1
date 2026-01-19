@@ -64,7 +64,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Successfully pushed to GitHub!" -ForegroundColor Green
-Prompt-Continue "Ready to connect to Pi and pull changes?"
 
 # ====================================
 # 1. Connect to Pi and Pull Changes
@@ -118,7 +117,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Successfully pulled changes on Pi!" -ForegroundColor Green
-Prompt-Continue "Ready to flash ESP32?"
 
 # ====================================
 # 2. Flash ESP32 Display (via Pi)
@@ -144,7 +142,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "ESP32 Display flashed successfully!" -ForegroundColor Green
-Prompt-Continue "Ready to flash Arduino?"
 
 # ====================================
 # 3. Flash Arduino (via Pi)

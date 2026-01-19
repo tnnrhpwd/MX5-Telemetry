@@ -594,11 +594,12 @@ void loop() {
     static unsigned long maxLoopTime = 0;
     unsigned long loopStart = millis();
     
-    // Update ambient temp from ESP32 sensor if no CAN data (every 5 seconds)
+    // Update ambient temp from ESP32 sensor only if no CAN data received (every 5 seconds)
     static unsigned long lastTempUpdate = 0;
     if (millis() - lastTempUpdate > 5000) {
         lastTempUpdate = millis();
-        if (telemetry.ambientTemp == 0 && temp_sensor != NULL) {
+        // Only use ESP32 sensor as fallback if we've never received telemetry from Pi
+        if (!telemetry.hasReceivedTelemetry && temp_sensor != NULL) {
             float tsens_celsius;
             if (temperature_sensor_get_celsius(temp_sensor, &tsens_celsius) == ESP_OK) {
                 // ESP32 die temp runs ~30-35°F hotter than ambient, apply offset
@@ -1137,10 +1138,10 @@ void drawOverviewScreen() {
     }
     // Clear fixed area for speed text to prevent ghosting (size 2 = ~12px wide per char, 16px tall)
     int speedY = gearY + gearRadius + 8;
-    LCD_FillRect(CENTER_X - 36, speedY, 72, 16, COLOR_BG);  // Clear area for up to 6 chars
+    LCD_FillRect(CENTER_X - 36, speedY, 72, 16, COLOR_BG_CARD);  // Clear area for up to 6 chars
     int speedLen = strlen(speedStr);
-    LCD_DrawString(gearX - speedLen * 6, speedY, speedStr, MX5_WHITE, COLOR_BG, 2);
-    LCD_DrawString(gearX + speedLen * 6 + 4, gearY + gearRadius + 12, "mph", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(gearX - speedLen * 6, speedY, speedStr, MX5_WHITE, COLOR_BG_CARD, 2);
+    LCD_DrawString(gearX + speedLen * 6 + 4, gearY + gearRadius + 12, "mph", MX5_GRAY, COLOR_BG_CARD, 1);
     
     // RPM value display (no bar, just value)
     char rpmStr[8];
@@ -1151,10 +1152,10 @@ void drawOverviewScreen() {
     }
     // Clear fixed area for RPM text to prevent ghosting (size 1 = ~5px wide per char, 8px tall)
     int rpmY = gearY + gearRadius + 30;
-    LCD_FillRect(CENTER_X - 40, rpmY, 50, 8, COLOR_BG);  // Clear area for up to 8 chars
+    LCD_FillRect(CENTER_X - 40, rpmY, 50, 8, COLOR_BG_CARD);  // Clear area for up to 8 chars
     int rpmLen = strlen(rpmStr);
-    LCD_DrawString(CENTER_X - rpmLen * 5 - 10, rpmY, rpmStr, rpmColor, COLOR_BG, 1);
-    LCD_DrawString(CENTER_X + rpmLen * 5 - 5, rpmY, "rpm", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(CENTER_X - rpmLen * 5 - 10, rpmY, rpmStr, rpmColor, COLOR_BG_CARD, 1);
+    LCD_DrawString(CENTER_X + rpmLen * 5 - 5, rpmY, "rpm", MX5_GRAY, COLOR_BG_CARD, 1);
     
     // === KEY VALUES (2x2 grid - centered) ===
     int boxW = 75;
