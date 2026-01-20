@@ -1079,9 +1079,14 @@ void drawOverviewScreen() {
         prevTelemetry.arcColor = MX5_DARKGRAY;
     }
     
-    // === RPM ARC GAUGE (Screen border) - OPTIMIZED INCREMENTAL UPDATE ===
+    // === RPM ARC GAUGE (Screen border) - SEGMENT-BASED INCREMENTAL UPDATE ===
     // Arc goes around the edge of the circular display
     // Uses Arduino LED color ranges: Blue < 2000 < Green < 3000 < Yellow < 4500 < Orange < 5500 < Red
+    //
+    // SOLUTION TO GHOSTING: Use discrete segments instead of continuous angles.
+    // Each segment represents a fixed portion of the arc. When RPM changes, we only
+    // update the segments that changed state (colored <-> gray). This ensures
+    // pixel-perfect coverage with no gaps or missed pixels.
     
     uint16_t rpmColor = MX5_BLUE;
     if (telemetry.rpm >= 5500) rpmColor = MX5_RED;
@@ -1089,82 +1094,85 @@ void drawOverviewScreen() {
     else if (telemetry.rpm >= 3000) rpmColor = MX5_YELLOW;
     else if (telemetry.rpm >= 2000) rpmColor = MX5_GREEN;
     
-    // Draw arc from bottom-left, around top, to bottom-right (270 degrees total)
-    // Start angle: 135 degrees (bottom-left), End angle: 405 degrees (bottom-right)
+    // Arc parameters
     int arcRadius = 174;  // Just inside the 360px circle edge
     int arcThickness = 14;  // Thicker modern gauge
     
-    // OPTIMIZATION: Only update the delta (changed portion) of the arc
-    // This reduces pixel operations from ~15000 to only what changed
-    float prevEndAngle = prevTelemetry.arcEndAngle;
+    // Segment-based approach: divide arc into discrete segments
+    // Total arc = 270 degrees, use 270 segments (1 degree each) for smooth appearance
+    const int NUM_SEGMENTS = 270;
+    const float DEGREES_PER_SEGMENT = 1.0f;
+    
+    // Calculate which segment the current RPM ends at (0 to NUM_SEGMENTS)
+    float rpmPercent = telemetry.rpm / 8000.0f;
+    if (rpmPercent > 1.0f) rpmPercent = 1.0f;
+    int currentSegment = (int)(rpmPercent * NUM_SEGMENTS);
+    
+    // Calculate previous segment from cached angle
+    float prevRpmPercent = (prevTelemetry.arcEndAngle - startAngle) / totalArc;
+    if (prevRpmPercent < 0) prevRpmPercent = 0;
+    if (prevRpmPercent > 1.0f) prevRpmPercent = 1.0f;
+    int prevSegment = (int)(prevRpmPercent * NUM_SEGMENTS);
+    
     bool colorChanged = (rpmColor != prevTelemetry.arcColor);
     
-    // Use larger angle step (1.0 instead of 0.5) for faster drawing - still looks smooth
-    const float angleStep = 1.0;
-    
-    // ALWAYS erase the tail first if RPM decreased (before drawing new color)
-    // This ensures the old colored portion gets cleared regardless of color change
-    if (!needsFullRedraw && prevEndAngle >= startAngle && endAngle < prevEndAngle - 0.5) {
-        // RPM decreased - erase the old portion (draw gray over it)
+    // Helper lambda to draw a single segment (all pixels for one degree of arc)
+    auto drawSegment = [&](int segmentIndex, uint16_t color) {
+        float segStartAngle = startAngle + (segmentIndex * DEGREES_PER_SEGMENT);
+        float segEndAngle = segStartAngle + DEGREES_PER_SEGMENT;
+        
+        // Draw all pixels in this segment with finer step to ensure full coverage
         for (int t = 0; t < arcThickness; t++) {
             int r = arcRadius - t;
-            for (float angle = endAngle; angle <= prevEndAngle; angle += angleStep) {
-                float rad = angle * 3.14159 / 180.0;
-                int x = CENTER_X + (int)(r * cos(rad));
-                int y = CENTER_Y + (int)(r * sin(rad));
-                LCD_DrawPixel(x, y, MX5_DARKGRAY);
+            // Use 0.3 degree step within segment to ensure no gaps
+            for (float angle = segStartAngle; angle <= segEndAngle; angle += 0.3f) {
+                float rad = angle * 3.14159f / 180.0f;
+                int x = CENTER_X + (int)(r * cosf(rad));
+                int y = CENTER_Y + (int)(r * sinf(rad));
+                LCD_DrawPixel(x, y, color);
             }
+        }
+    };
+    
+    if (needsFullRedraw || prevSegment < 0) {
+        // Full redraw: draw all gray segments first, then colored segments
+        for (int seg = 0; seg < NUM_SEGMENTS; seg++) {
+            drawSegment(seg, MX5_DARKGRAY);
+        }
+        for (int seg = 0; seg < currentSegment; seg++) {
+            drawSegment(seg, rpmColor);
+        }
+    } else if (currentSegment > prevSegment) {
+        // RPM increased - draw new colored segments
+        for (int seg = prevSegment; seg < currentSegment; seg++) {
+            drawSegment(seg, rpmColor);
+        }
+        // If color changed, also redraw existing colored portion
+        if (colorChanged) {
+            for (int seg = 0; seg < prevSegment; seg++) {
+                drawSegment(seg, rpmColor);
+            }
+        }
+    } else if (currentSegment < prevSegment) {
+        // RPM decreased - erase segments that are no longer colored (draw gray)
+        for (int seg = currentSegment; seg < prevSegment; seg++) {
+            drawSegment(seg, MX5_DARKGRAY);
+        }
+        // If color changed, also redraw remaining colored portion
+        if (colorChanged && currentSegment > 0) {
+            for (int seg = 0; seg < currentSegment; seg++) {
+                drawSegment(seg, rpmColor);
+            }
+        }
+    } else if (colorChanged && currentSegment > 0) {
+        // Same segment count but color changed - redraw colored portion
+        for (int seg = 0; seg < currentSegment; seg++) {
+            drawSegment(seg, rpmColor);
         }
     }
     
-    if (needsFullRedraw || prevEndAngle < startAngle) {
-        // Full redraw: draw background arc first, then colored arc
-        for (int t = 0; t < arcThickness; t++) {
-            int r = arcRadius - t;
-            for (float angle = startAngle; angle <= startAngle + totalArc; angle += angleStep) {
-                float rad = angle * 3.14159 / 180.0;
-                int x = CENTER_X + (int)(r * cos(rad));
-                int y = CENTER_Y + (int)(r * sin(rad));
-                LCD_DrawPixel(x, y, MX5_DARKGRAY);
-            }
-        }
-        // Draw filled RPM arc
-        for (int t = 0; t < arcThickness; t++) {
-            int r = arcRadius - t;
-            for (float angle = startAngle; angle <= endAngle; angle += angleStep) {
-                float rad = angle * 3.14159 / 180.0;
-                int x = CENTER_X + (int)(r * cos(rad));
-                int y = CENTER_Y + (int)(r * sin(rad));
-                LCD_DrawPixel(x, y, rpmColor);
-            }
-        }
-    } else if (colorChanged) {
-        // Color changed (RPM crossed a threshold) - redraw just the colored portion
-        for (int t = 0; t < arcThickness; t++) {
-            int r = arcRadius - t;
-            for (float angle = startAngle; angle <= endAngle; angle += angleStep) {
-                float rad = angle * 3.14159 / 180.0;
-                int x = CENTER_X + (int)(r * cos(rad));
-                int y = CENTER_Y + (int)(r * sin(rad));
-                LCD_DrawPixel(x, y, rpmColor);
-            }
-        }
-    } else if (endAngle > prevEndAngle + 0.5) {
-        // RPM increased - only draw the new portion (delta)
-        for (int t = 0; t < arcThickness; t++) {
-            int r = arcRadius - t;
-            for (float angle = prevEndAngle; angle <= endAngle; angle += angleStep) {
-                float rad = angle * 3.14159 / 180.0;
-                int x = CENTER_X + (int)(r * cos(rad));
-                int y = CENTER_Y + (int)(r * sin(rad));
-                LCD_DrawPixel(x, y, rpmColor);
-            }
-        }
-    }
-    // Note: decrease case is handled above (before this if-else chain)
-    
-    // Cache current arc state for next frame
-    prevTelemetry.arcEndAngle = endAngle;
+    // Cache current state for next frame
+    prevTelemetry.arcEndAngle = startAngle + (currentSegment * DEGREES_PER_SEGMENT);
     prevTelemetry.arcColor = rpmColor;
     
     // Draw tick marks matching NC GT tachometer (0-7500 with 1000 RPM intervals)
@@ -1184,7 +1192,45 @@ void drawOverviewScreen() {
         }
     }
     
-    // === GEAR + SPEED (Center top) === 
+    // === MPH and RPM at top ===
+    // MPH on left side
+    if (needsFullRedraw || speedChanged) {
+        char speedStr[8];
+        if (!telemetry.hasReceivedTelemetry) {
+            snprintf(speedStr, sizeof(speedStr), "--");
+        } else {
+            snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
+        }
+        int speedX = 50;
+        int speedY = 35;
+        // Clear area
+        LCD_FillRect(speedX - 10, speedY - 5, 80, 35, COLOR_BG);
+        // Draw label
+        LCD_DrawString(speedX, speedY, "mph", MX5_GRAY, COLOR_BG, 1);
+        // Draw value
+        LCD_DrawString(speedX, speedY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
+    }
+    
+    // RPM on right side
+    if (needsFullRedraw || rpmChanged) {
+        char rpmStr[8];
+        if (!telemetry.hasReceivedTelemetry) {
+            snprintf(rpmStr, sizeof(rpmStr), "--");
+        } else {
+            snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
+        }
+        int rpmX = SCREEN_WIDTH - 100;
+        int rpmY = 35;
+        // Clear area
+        LCD_FillRect(rpmX - 10, rpmY - 5, 100, 35, COLOR_BG);
+        // Draw label
+        LCD_DrawString(rpmX, rpmY, "rpm", MX5_GRAY, COLOR_BG, 1);
+        // Draw value (right-aligned look)
+        int rpmLen = strlen(rpmStr);
+        LCD_DrawString(rpmX + 50 - rpmLen * 9, rpmY + 12, rpmStr, rpmColor, COLOR_BG, 3);
+    }
+    
+    // === LARGE GEAR INDICATOR (Center) === 
     // Determine gear ring color based on RPM thresholds
     uint16_t gearGlow = MX5_GREEN;
     if (telemetry.clutchEngaged) {
@@ -1204,12 +1250,12 @@ void drawOverviewScreen() {
     // Only redraw gear indicator when gear changed or ring color changed (not every RPM change)
     if (needsFullRedraw || gearChanged || gearGlowChanged) {
         int gearX = CENTER_X;
-        int gearY = 70;
-        int gearRadius = 38;
+        int gearY = CENTER_Y - 10;  // Centered vertically
+        int gearRadius = 55;  // Larger gear circle
         LCD_FillCircle(gearX, gearY, gearRadius, COLOR_BG_CARD);
         
-        // Draw gear ring
-        for (int r = gearRadius; r > gearRadius - 3; r--) {
+        // Draw gear ring (thicker)
+        for (int r = gearRadius; r > gearRadius - 4; r--) {
             LCD_DrawCircle(gearX, gearY, r, gearGlow);
         }
         
@@ -1242,113 +1288,86 @@ void drawOverviewScreen() {
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
-        LCD_DrawString(gearX - 8, gearY - 10, gearStr, gearGlow, COLOR_BG_CARD, 3);
+        // Larger gear text (size 6 for bigger display)
+        int textOffset = (strlen(gearStr) == 1) ? -18 : -27;  // Center single/double chars
+        LCD_DrawString(gearX + textOffset, gearY - 20, gearStr, gearGlow, COLOR_BG_CARD, 6);
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
     }
     
-    // Speed below gear - only redraw when speed changed
-    int gearX = CENTER_X;
-    int gearY = 70;
-    int gearRadius = 38;
-    if (needsFullRedraw || speedChanged) {
-        char speedStr[8];
-        if (!telemetry.hasReceivedTelemetry) {
-            snprintf(speedStr, sizeof(speedStr), "--");
-        } else {
-            snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
-        }
-        // Clear fixed area for speed text to prevent ghosting (size 2 = ~12px wide per char, 16px tall)
-        int speedY = gearY + gearRadius + 8;
-        LCD_FillRect(CENTER_X - 36, speedY, 72, 16, COLOR_BG_CARD);  // Clear area for up to 6 chars
-        int speedLen = strlen(speedStr);
-        LCD_DrawString(gearX - speedLen * 6, speedY, speedStr, MX5_WHITE, COLOR_BG_CARD, 2);
-        LCD_DrawString(gearX + speedLen * 6 + 4, gearY + gearRadius + 12, "mph", MX5_GRAY, COLOR_BG_CARD, 1);
-    }
+    // === LEFT SIDE: Coolant and Ambient (vertical stack) ===
+    int leftBoxX = 28;
+    int leftBoxY = CENTER_Y - 25;
+    int leftBoxW = 70;
+    int leftBoxH = 32;
+    int leftBoxGap = 8;
     
-    // RPM value display (no bar, just value) - only redraw when RPM changed
-    if (needsFullRedraw || rpmChanged) {
-        char rpmStr[8];
-        if (!telemetry.hasReceivedTelemetry) {
-            snprintf(rpmStr, sizeof(rpmStr), "--");
-        } else {
-            snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
-        }
-        // Clear fixed area for RPM text to prevent ghosting (size 1 = ~5px wide per char, 8px tall)
-        int rpmY = gearY + gearRadius + 30;
-        LCD_FillRect(CENTER_X - 40, rpmY, 50, 8, COLOR_BG_CARD);  // Clear area for up to 8 chars
-        int rpmLen = strlen(rpmStr);
-        LCD_DrawString(CENTER_X - rpmLen * 5 - 10, rpmY, rpmStr, rpmColor, COLOR_BG_CARD, 1);
-        LCD_DrawString(CENTER_X + rpmLen * 5 - 5, rpmY, "rpm", MX5_GRAY, COLOR_BG_CARD, 1);
-    }
-    
-    // === KEY VALUES (2x2 grid - centered) ===
-    // Each box only redraws when its specific value changes
-    int boxW = 75;
-    int boxH = 32;
-    int boxGap = 8;
-    int gridStartX = CENTER_X - boxW - boxGap/2;
-    int gridStartY = gearY + gearRadius + 48;
-    
-    // Box 1: COOLANT (top-left) - only redraw when coolant temp changed
+    // COOLANT (left top)
     if (needsFullRedraw || coolantChanged) {
         uint16_t coolColor = MX5_CYAN;
         if (telemetry.coolantTemp == 0) coolColor = MX5_RED;  // No data received
         else if (telemetry.coolantTemp > 220) coolColor = MX5_RED;
         else if (telemetry.coolantTemp > 200) coolColor = MX5_ORANGE;
-        LCD_FillRoundRect(gridStartX, gridStartY, boxW, boxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(gridStartX, gridStartY, 3, boxH, coolColor);
-        LCD_DrawString(gridStartX + 6, gridStartY + 3, "COOL", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_FillRoundRect(leftBoxX, leftBoxY, leftBoxW, leftBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(leftBoxX, leftBoxY, 3, leftBoxH, coolColor);
+        LCD_DrawString(leftBoxX + 6, leftBoxY + 3, "COOL", MX5_GRAY, COLOR_BG_CARD, 1);
         char coolStr[8];
         snprintf(coolStr, sizeof(coolStr), "%dF", (int)telemetry.coolantTemp);
-        LCD_DrawString(gridStartX + 6, gridStartY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(leftBoxX + 6, leftBoxY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
     }
     
-    // Box 2: AMBIENT TEMP (top-right) - only redraw when ambient temp changed
+    // AMBIENT (left bottom)
     if (needsFullRedraw || ambientChanged) {
         uint16_t ambientColor = MX5_CYAN;
         if (telemetry.ambientTemp < 32) ambientColor = MX5_BLUE;  // Freezing
         else if (telemetry.ambientTemp > 95) ambientColor = MX5_RED;  // Hot
         else if (telemetry.ambientTemp > 85) ambientColor = MX5_ORANGE;  // Warm
-        LCD_FillRoundRect(gridStartX + boxW + boxGap, gridStartY, boxW, boxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(gridStartX + boxW + boxGap, gridStartY, 3, boxH, ambientColor);
-        LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + 3, "AMB", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_FillRoundRect(leftBoxX, leftBoxY + leftBoxH + leftBoxGap, leftBoxW, leftBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(leftBoxX, leftBoxY + leftBoxH + leftBoxGap, 3, leftBoxH, ambientColor);
+        LCD_DrawString(leftBoxX + 6, leftBoxY + leftBoxH + leftBoxGap + 3, "AMB", MX5_GRAY, COLOR_BG_CARD, 1);
         char ambientStr[8];
         snprintf(ambientStr, sizeof(ambientStr), "%dF", (int)telemetry.ambientTemp);
-        LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + 16, ambientStr, ambientColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(leftBoxX + 6, leftBoxY + leftBoxH + leftBoxGap + 16, ambientStr, ambientColor, COLOR_BG_CARD, 2);
     }
     
-    // Box 3: OIL PRESSURE (bottom-left) - only redraw when oil status changed
+    // === RIGHT SIDE: Oil and Fuel (vertical stack) ===
+    int rightBoxX = SCREEN_WIDTH - 98;
+    int rightBoxY = CENTER_Y - 25;
+    int rightBoxW = 70;
+    int rightBoxH = 32;
+    int rightBoxGap = 8;
+    
+    // OIL (right top)
     if (needsFullRedraw || oilChanged) {
         // 2008 MX5 NC GT only has pressure present sensor (not PSI)
         // oilWarning = true means NO oil pressure (FALSE), false means pressure present (TRUE)
         bool oilPressurePresent = !telemetry.oilWarning;
         uint16_t oilColor = oilPressurePresent ? MX5_GREEN : MX5_RED;
-        LCD_FillRoundRect(gridStartX, gridStartY + boxH + boxGap, boxW, boxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(gridStartX, gridStartY + boxH + boxGap, 3, boxH, oilColor);
-        LCD_DrawString(gridStartX + 6, gridStartY + boxH + boxGap + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_FillRoundRect(rightBoxX, rightBoxY, rightBoxW, rightBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(rightBoxX, rightBoxY, 3, rightBoxH, oilColor);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
         const char* oilStr = oilPressurePresent ? "Good" : "Bad";
-        LCD_DrawString(gridStartX + 6, gridStartY + boxH + boxGap + 16, oilStr, oilColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 16, oilStr, oilColor, COLOR_BG_CARD, 2);
     }
     
-    // Box 4: FUEL (bottom-right) - only redraw when fuel level changed
+    // FUEL (right bottom)
     if (needsFullRedraw || fuelChanged) {
         uint16_t fuelColor = MX5_GREEN;
         if (telemetry.fuelLevel < 15) fuelColor = MX5_RED;
         else if (telemetry.fuelLevel < 25) fuelColor = MX5_ORANGE;
-        LCD_FillRoundRect(gridStartX + boxW + boxGap, gridStartY + boxH + boxGap, boxW, boxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(gridStartX + boxW + boxGap, gridStartY + boxH + boxGap, 3, boxH, fuelColor);
-        LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + boxH + boxGap + 3, "FUEL", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_FillRoundRect(rightBoxX, rightBoxY + rightBoxH + rightBoxGap, rightBoxW, rightBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(rightBoxX, rightBoxY + rightBoxH + rightBoxGap, 3, rightBoxH, fuelColor);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + rightBoxH + rightBoxGap + 3, "FUEL", MX5_GRAY, COLOR_BG_CARD, 1);
         char fuelStr[8];
         snprintf(fuelStr, sizeof(fuelStr), "%d%%", (int)telemetry.fuelLevel);
-        LCD_DrawString(gridStartX + boxW + boxGap + 6, gridStartY + boxH + boxGap + 16, fuelStr, fuelColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + rightBoxH + rightBoxGap + 16, fuelStr, fuelColor, COLOR_BG_CARD, 2);
     }
     
-    // Navigation Lock indicator (right side when locked) - static, only on full redraw
+    // Navigation Lock indicator (bottom right when locked) - static, only on full redraw
     if (needsFullRedraw && navLocked) {
-        int lockX = gridStartX + 2 * boxW + boxGap + 22;
-        int lockY = gridStartY + boxH + boxGap/2 + 32;
+        int lockX = SCREEN_WIDTH - 35;
+        int lockY = SCREEN_HEIGHT - 50;
         // Draw lock icon (small padlock shape)
         uint16_t lockColor = MX5_ORANGE;
         // Lock body (rounded rectangle)
@@ -1361,13 +1380,13 @@ void drawOverviewScreen() {
         LCD_DrawString(lockX - 9, lockY + 13, "LCK", MX5_ORANGE, COLOR_BG, 1);
     }
     
-    // === TPMS (2x2 grid below key values) - only redraw when TPMS changed ===
+    // === TPMS (2x2 grid at bottom) - only redraw when TPMS changed ===
     if (needsFullRedraw || tpmsChanged) {
         int tireW = 55;
         int tireH = 38;
         int tireGap = 6;
         int tpmsStartX = CENTER_X - tireW - tireGap/2;
-        int tpmsStartY = gridStartY + 2 * boxH + 2 * boxGap + 8;
+        int tpmsStartY = SCREEN_HEIGHT - 110;  // Fixed position at bottom
         
         const char* tireNames[] = {"FL", "FR", "RL", "RR"};
         int tirePositions[4][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}}; // col, row
