@@ -1,6 +1,17 @@
 # MX5 Telemetry - Complete Deployment Guide
 
-## 📋 Table of Contents
+## � Quick Reference
+
+**Raspberry Pi Network Access:**
+- **Home WiFi:** `ssh pi@192.168.1.23` or `ssh pi@mx5pi.local`
+- **Phone Hotspot:** `ssh pi@10.62.26.67`
+- **Web Interface:** `http://<pi-ip>:5000` (e.g., http://192.168.1.23:5000 or http://10.62.26.67:5000)
+
+**Quick Deploy:** Run `flash_all_updates.ps1` (auto-detects Pi network)
+
+---
+
+## �📋 Table of Contents
 
 1. [System Overview](#system-overview)
 2. [Hardware Setup](#hardware-setup)
@@ -52,7 +63,9 @@ Pi (Central Hub)
 - **VS Code** with PlatformIO extension installed
 - **Arduino Nano** (CH340 or FTDI) with USB cable
 - **ESP32-S3** (Waveshare 1.85" Round Display) with USB-C cable
-- **Raspberry Pi 4B** (already configured at 192.168.1.23)
+- **Raspberry Pi 4B** - Network IPs:
+  - **Home WiFi:** 192.168.1.23 or mx5pi.local
+  - **Phone Hotspot:** 10.62.26.67
 - **MCP2515 CAN modules** (3x - two for Pi, one for Arduino)
 - **OBD-II breakout or splitter** for CAN bus access
 
@@ -70,7 +83,7 @@ See [hardware/HARDWARE.md](hardware/HARDWARE.md) for complete wiring diagrams, p
 |--------|---------------|------------|-------------------|
 | **Arduino Nano** | **Local** (plug into PC) | USB-C to PC | Disconnected from vehicle for upload |
 | **ESP32-S3** | **Remote** (via Pi SSH) | USB-C to Pi (`/dev/ttyACM0`) | Permanently connected to Pi |
-| **Pi App** | **Remote** (SSH) | Network | Always on network at 192.168.1.23 |
+| **Pi App** | **Remote** (SSH) | Network | Home: 192.168.1.23, Hotspot: 10.62.26.67 |
 
 ### Method 1: VS Code Tasks (Recommended) ⭐
 
@@ -118,8 +131,10 @@ The ESP32 is permanently connected to the Pi. Upload remotely:
 # First, push your changes to GitHub
 git add -A && git commit -m "Your message" && git push
 
-# Then SSH to Pi and flash
+# Then SSH to Pi and flash (use home network IP or hotspot IP)
 ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
+# OR if on phone hotspot:
+ssh pi@10.62.26.67 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 ```
 
 **Troubleshooting ESP32 Upload:**
@@ -129,9 +144,12 @@ ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d d
 #### Pi Application (Remote Update)
 
 ```powershell
-# Push changes, then update and restart
+# Push changes, then update and restart (home network)
 git push
 ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
+
+# Or on phone hotspot:
+ssh pi@10.62.26.67 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
 ```
 
 #### Full Deploy (All in One)
@@ -168,7 +186,12 @@ The workspace includes preconfigured tasks for rapid deployment:
 
 #### SSH to Pi
 ```bash
+# Home network:
 ssh pi@192.168.1.23
+# Or hostname: ssh pi@mx5pi.local
+
+# Phone hotspot:
+ssh pi@10.62.26.67
 ```
 
 #### Update Pi & Restart Display

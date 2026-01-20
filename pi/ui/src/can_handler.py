@@ -484,12 +484,15 @@ class CANHandler:
             
         elif can_id == HSCanID.GEAR_POSITION:
             can_gear = CANParser.parse_gear(data)
-            # Only use CAN gear if it's Neutral (0) - 2008 MX5 NC GT only detects Neutral
-            if can_gear == 0:
+            # Only use CAN gear if it's Neutral (0) AND vehicle is stationary
+            # 2008 MX5 NC GT only reliably detects Neutral via the neutral safety switch
+            # When driving with speed > 2 MPH and RPM > 500, we must rely on gear estimation
+            # because the CAN gear data is unreliable for non-neutral gears
+            if can_gear == 0 and self.telemetry.speed_kmh < 3 and self.telemetry.rpm < 1000:
                 self.telemetry.gear = 0
                 self.telemetry.gear_estimated = False
                 self.telemetry.clutch_engaged = False
-            # For all other gears, rely on estimation
+            # For all other cases (driving), rely on estimation
             # (estimation happens in _update_gear_estimation after RPM/speed update)
             
         elif can_id == HSCanID.WHEEL_SPEEDS:
@@ -556,9 +559,10 @@ class CANHandler:
         Called after receiving RPM/speed data. Estimates gear for vehicles
         without gear position sensor (2008 MX5 NC GT only detects Neutral).
         """
-        # Skip if already in detected neutral
-        if self.telemetry.gear == 0 and not self.telemetry.gear_estimated:
-            return
+        # Always try to estimate gear - the estimate_gear function handles
+        # low speed/RPM cases and returns neutral appropriately.
+        # We no longer skip based on current gear state because CAN neutral
+        # detection is only trusted when stationary (handled in _process_hs_message)
         
         # Estimate gear from speed/RPM ratio
         estimated_gear, clutch_engaged, confidence = self.gear_estimator.estimate_gear(
@@ -567,15 +571,17 @@ class CANHandler:
         )
         
         # Update telemetry with estimated values
-        # (but don't override CAN-detected neutral)
-        if estimated_gear != 0:  # Not estimating neutral, use estimation
+        if estimated_gear != 0:  # In gear - use estimation
             self.telemetry.gear = estimated_gear
             self.telemetry.gear_estimated = True
             self.telemetry.clutch_engaged = clutch_engaged
-        elif self.telemetry.gear != 0:  # Was estimated, now should be neutral
-            self.telemetry.gear = estimated_gear
-            self.telemetry.gear_estimated = True
-            self.telemetry.clutch_engaged = False
+        else:  # Neutral from estimation (low speed or RPM)
+            # Only set neutral if we were previously in an estimated gear
+            # This prevents overriding CAN-detected neutral when stationary
+            if self.telemetry.gear_estimated:
+                self.telemetry.gear = 0
+                self.telemetry.gear_estimated = True
+                self.telemetry.clutch_engaged = False
 
 
 # =============================================================================

@@ -103,16 +103,27 @@ Write-Host ""
 
 # Check if Pi is reachable
 Write-Host "Checking Pi connection..." -ForegroundColor Cyan
-$piHost = "pi@mx5pi.local"
 
-# Test SSH connection
-try {
-    $testResult = ssh -o ConnectTimeout=5 $piHost "echo Connected" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Connection failed"
+# Try home network first (192.168.1.23 or mx5pi.local), then hotspot (10.62.26.67)
+$piHosts = @("pi@mx5pi.local", "pi@192.168.1.23", "pi@10.62.26.67")
+$piHost = $null
+
+foreach ($host in $piHosts) {
+    Write-Host "Trying $host..." -ForegroundColor Gray
+    try {
+        $testResult = ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no $host "echo Connected" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $piHost = $host
+            break
+        }
+    } catch {
+        # Try next host
     }
-} catch {
-    Write-Host "ERROR: Cannot connect to Pi at $piHost" -ForegroundColor Red
+}
+
+if (-not $piHost) {
+    Write-Host "ERROR: Cannot connect to Pi" -ForegroundColor Red
+    Write-Host "Tried: mx5pi.local (home), 192.168.1.23 (home), 10.62.26.67 (hotspot)" -ForegroundColor Yellow
     Write-Host "Make sure the Pi is powered on and connected to the network." -ForegroundColor Yellow
     exit 1
 }
