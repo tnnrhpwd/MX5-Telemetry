@@ -38,8 +38,9 @@ The Pi → Pioneer HDMI connection is notoriously difficult due to:
 
 #### Step 1: Verify Basic HDMI Functionality
 ```bash
-# SSH into Pi
-ssh pi@192.168.1.23
+# SSH into Pi (home network or hotspot)
+ssh pi@192.168.1.23  # home network
+ssh pi@10.62.26.67   # phone hotspot
 
 # Check if HDMI is detected
 tvservice -s
