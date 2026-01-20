@@ -1104,8 +1104,7 @@ void drawOverviewScreen() {
     const float DEGREES_PER_SEGMENT = 1.0f;
     
     // Calculate which segment the current RPM ends at (0 to NUM_SEGMENTS)
-    float rpmPercent = telemetry.rpm / 8000.0f;
-    if (rpmPercent > 1.0f) rpmPercent = 1.0f;
+    // Reuse rpmPercent calculated earlier
     int currentSegment = (int)(rpmPercent * NUM_SEGMENTS);
     
     // Calculate previous segment from cached angle
