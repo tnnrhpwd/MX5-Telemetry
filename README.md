@@ -8,6 +8,14 @@ A real-time telemetry and visual feedback system for the 2008 Mazda Miata NC (MX
 ![ESP32-S3](https://img.shields.io/badge/ESP32--S3-Display-blue.svg)
 ![Build System](https://img.shields.io/badge/Build-PlatformIO-orange.svg)
 
+## 🔗 Quick Access
+
+**Pi Network IPs:**
+- Home WiFi: `192.168.1.23` or `mx5pi.local`
+- Phone Hotspot: `10.62.26.67`
+
+**Web Interface:** `http://<pi-ip>:5000`
+
 ## 🎯 Architecture
 
 | Module | Hardware | Purpose | Location |
