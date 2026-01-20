@@ -1200,7 +1200,7 @@ void drawOverviewScreen() {
         } else {
             snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
         }
-        int speedX = 85;
+        int speedX = 110;
         int speedY = 35;
         // Clear area
         LCD_FillRect(speedX - 10, speedY - 5, 80, 35, COLOR_BG);
@@ -1218,7 +1218,7 @@ void drawOverviewScreen() {
         } else {
             snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
         }
-        int rpmX = SCREEN_WIDTH - 135;
+        int rpmX = SCREEN_WIDTH - 160;
         int rpmY = 35;
         // Clear area
         LCD_FillRect(rpmX - 10, rpmY - 5, 100, 35, COLOR_BG);
@@ -1287,16 +1287,17 @@ void drawOverviewScreen() {
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
-        // Larger gear text (size 7 for bigger display, better centered)
-        int textOffset = (strlen(gearStr) == 1) ? -21 : -31;  // Center single/double chars
-        LCD_DrawString(gearX + textOffset, gearY - 23, gearStr, gearGlow, COLOR_BG_CARD, 7);
+        // Larger gear text (size 8 for bigger display, centered down and right)
+        int textOffsetX = (strlen(gearStr) == 1) ? -18 : -28;  // Center single/double chars horizontally
+        int textOffsetY = -18;  // Position lower for better centering
+        LCD_DrawString(gearX + textOffsetX, gearY + textOffsetY, gearStr, gearGlow, COLOR_BG_CARD, 8);
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
     }
     
     // === LEFT SIDE: Coolant and Ambient (vertical stack) ===
-    int leftBoxX = 28;
+    int leftBoxX = 50;  // Moved right, closer to gear
     int leftBoxY = CENTER_Y - 25;
     int leftBoxW = 70;
     int leftBoxH = 32;
