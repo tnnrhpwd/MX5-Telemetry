@@ -1200,7 +1200,7 @@ void drawOverviewScreen() {
         } else {
             snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
         }
-        int speedX = 50;
+        int speedX = 85;
         int speedY = 35;
         // Clear area
         LCD_FillRect(speedX - 10, speedY - 5, 80, 35, COLOR_BG);
@@ -1218,7 +1218,7 @@ void drawOverviewScreen() {
         } else {
             snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
         }
-        int rpmX = SCREEN_WIDTH - 100;
+        int rpmX = SCREEN_WIDTH - 135;
         int rpmY = 35;
         // Clear area
         LCD_FillRect(rpmX - 10, rpmY - 5, 100, 35, COLOR_BG);
@@ -1249,8 +1249,8 @@ void drawOverviewScreen() {
     // Only redraw gear indicator when gear changed or ring color changed (not every RPM change)
     if (needsFullRedraw || gearChanged || gearGlowChanged) {
         int gearX = CENTER_X;
-        int gearY = CENTER_Y - 10;  // Centered vertically
-        int gearRadius = 55;  // Larger gear circle
+        int gearY = CENTER_Y - 5;  // More centered vertically
+        int gearRadius = 58;  // Larger gear circle
         LCD_FillCircle(gearX, gearY, gearRadius, COLOR_BG_CARD);
         
         // Draw gear ring (thicker)
@@ -1287,9 +1287,9 @@ void drawOverviewScreen() {
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
-        // Larger gear text (size 6 for bigger display)
-        int textOffset = (strlen(gearStr) == 1) ? -18 : -27;  // Center single/double chars
-        LCD_DrawString(gearX + textOffset, gearY - 20, gearStr, gearGlow, COLOR_BG_CARD, 6);
+        // Larger gear text (size 7 for bigger display, better centered)
+        int textOffset = (strlen(gearStr) == 1) ? -21 : -31;  // Center single/double chars
+        LCD_DrawString(gearX + textOffset, gearY - 23, gearStr, gearGlow, COLOR_BG_CARD, 7);
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
