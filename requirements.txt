@@ -12,6 +12,9 @@ python-socketio>=5.0.0
 pygame>=2.0.0
 pyserial>=3.5
 
+# ESP32 Display Simulator (Hot-reload support)
+watchdog>=6.0.0
+
 # CAN Bus Communication (optional - for real vehicle data)
 # python-can>=3.3.0
 
