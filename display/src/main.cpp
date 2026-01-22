@@ -1203,7 +1203,7 @@ void drawOverviewScreen() {
     }
     
     // === MPH and RPM at top ===
-    // MPH on left side
+    // MPH on left side - moved down by 30px for better layout
     if (needsFullRedraw || speedChanged) {
         char speedStr[8];
         if (!telemetry.hasReceivedTelemetry) {
@@ -1212,7 +1212,7 @@ void drawOverviewScreen() {
             snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
         }
         int speedX = 110;
-        int speedY = 35;
+        int speedY = 65;  // Moved down 30px from 35
         // Clear area
         LCD_FillRect(speedX - 10, speedY - 5, 80, 35, COLOR_BG);
         // Draw label
@@ -1221,7 +1221,7 @@ void drawOverviewScreen() {
         LCD_DrawString(speedX, speedY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
     }
     
-    // RPM on right side
+    // RPM on right side - moved down to match speed
     if (needsFullRedraw || rpmChanged) {
         char rpmStr[8];
         if (!telemetry.hasReceivedTelemetry) {
@@ -1230,7 +1230,7 @@ void drawOverviewScreen() {
             snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
         }
         int rpmX = SCREEN_WIDTH - 160;
-        int rpmY = 35;
+        int rpmY = 65;  // Moved down 30px from 35
         // Clear area
         LCD_FillRect(rpmX - 10, rpmY - 5, 100, 35, COLOR_BG);
         // Draw label
@@ -1342,6 +1342,26 @@ void drawOverviewScreen() {
         LCD_DrawString(leftBoxX + 6, leftBoxY + leftBoxH + leftBoxGap + 16, ambientStr, ambientColor, COLOR_BG_CARD, 2);
     }
     
+    // === OIL STATUS INDICATOR (below ambient, compact) ===
+    // Shows oil pressure status from CAN (TRUE = OK, FALSE = WARNING)
+    if (needsFullRedraw || oilChanged) {
+        int oilBoxX = leftBoxX;
+        int oilBoxY = leftBoxY + 2 * (leftBoxH + leftBoxGap);  // Below ambient box
+        int oilBoxW = leftBoxW;
+        int oilBoxH = 22;  // Compact height
+        
+        // Oil status color: green = OK, red = warning/no pressure
+        uint16_t oilColor = telemetry.oilWarning ? MX5_RED : MX5_GREEN;
+        
+        LCD_FillRoundRect(oilBoxX, oilBoxY, oilBoxW, oilBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(oilBoxX, oilBoxY, 3, oilBoxH, oilColor);
+        LCD_DrawString(oilBoxX + 6, oilBoxY + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
+        
+        // Show status text
+        const char* oilStatus = telemetry.oilWarning ? "LOW" : "OK";
+        LCD_DrawString(oilBoxX + 30, oilBoxY + 3, oilStatus, oilColor, COLOR_BG_CARD, 1);
+    }
+    
     // === RIGHT SIDE: Combined GAS indicator (MPG, Tank%, Range) ===
     int rightBoxX = SCREEN_WIDTH - 98;
     int rightBoxY = CENTER_Y - 35;  // Taller box, centered
@@ -1381,19 +1401,19 @@ void drawOverviewScreen() {
         // "GAS" label (grey)
         LCD_DrawString(rightBoxX + 6, rightBoxY + 3, "GAS", MX5_GRAY, COLOR_BG_CARD, 1);
         
-        // MPG value (row 1)
+        // MPG value (row 1) - size 2 to match tank% and range
         char mpgStr[10];
         if (telemetry.averageMPG > 0) {
-            snprintf(mpgStr, sizeof(mpgStr), "%.1fmpg", telemetry.averageMPG);
+            snprintf(mpgStr, sizeof(mpgStr), "%.0fmpg", telemetry.averageMPG);
         } else {
             snprintf(mpgStr, sizeof(mpgStr), "--mpg");
         }
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 1);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 2);
         
         // Tank % (row 2)
         char tankStr[10];
         snprintf(tankStr, sizeof(tankStr), "%d%%", (int)telemetry.fuelLevel);
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 32, tankStr, tankColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 36, tankStr, tankColor, COLOR_BG_CARD, 2);
         
         // Range miles (row 3)
         char rangeStr[10];
@@ -1402,7 +1422,7 @@ void drawOverviewScreen() {
         } else {
             snprintf(rangeStr, sizeof(rangeStr), "--mi");
         }
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 54, rangeStr, rangeColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 56, rangeStr, rangeColor, COLOR_BG_CARD, 2);
     }
     
     // Navigation Lock indicator (bottom right when locked) - static, only on full redraw
