@@ -58,7 +58,7 @@ if (-not $piHost) {
 
 Write-Host ""
 Write-Host "Building and uploading ESP32 firmware on Pi..." -ForegroundColor Cyan
-ssh $piHost "cd ~/mx5-telemetry && git pull && ~/.local/bin/pio run -d display --target upload"
+ssh $piHost "cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: ESP32 flash failed!" -ForegroundColor Red

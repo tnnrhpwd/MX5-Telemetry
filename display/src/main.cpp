@@ -1342,53 +1342,67 @@ void drawOverviewScreen() {
         LCD_DrawString(leftBoxX + 6, leftBoxY + leftBoxH + leftBoxGap + 16, ambientStr, ambientColor, COLOR_BG_CARD, 2);
     }
     
-    // === RIGHT SIDE: MPG and Range (vertical stack) ===
+    // === RIGHT SIDE: Combined GAS indicator (MPG, Tank%, Range) ===
     int rightBoxX = SCREEN_WIDTH - 98;
-    int rightBoxY = CENTER_Y - 25;
+    int rightBoxY = CENTER_Y - 35;  // Taller box, centered
     int rightBoxW = 70;
-    int rightBoxH = 32;
-    int rightBoxGap = 8;
+    int rightBoxH = 72;  // Combined height for all 3 values
     
-    // MPG (right top) - Average fuel efficiency
-    if (needsFullRedraw || mpgChanged) {
+    // GAS indicator - shows MPG, tank %, and estimated range
+    if (needsFullRedraw || mpgChanged || rangeChanged || fuelChanged) {
+        // Determine accent color based on fuel level (most urgent indicator)
+        uint16_t accentColor = MX5_GREEN;
+        if (telemetry.fuelLevel < 15) accentColor = MX5_RED;
+        else if (telemetry.fuelLevel < 25) accentColor = MX5_ORANGE;
+        else if (telemetry.fuelLevel < 40) accentColor = MX5_YELLOW;
+        
+        // MPG color
         uint16_t mpgColor = MX5_GREEN;
-        if (telemetry.averageMPG < 20) mpgColor = MX5_ORANGE;
-        else if (telemetry.averageMPG < 15) mpgColor = MX5_RED;
-        else if (telemetry.averageMPG > 30) mpgColor = MX5_CYAN;  // Great efficiency
-        LCD_FillRoundRect(rightBoxX, rightBoxY, rightBoxW, rightBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(rightBoxX, rightBoxY, 3, rightBoxH, mpgColor);
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 3, "MPG", MX5_GRAY, COLOR_BG_CARD, 1);
-        char mpgStr[8];
-        if (telemetry.averageMPG > 0) {
-            snprintf(mpgStr, sizeof(mpgStr), "%.1f", telemetry.averageMPG);
-        } else {
-            snprintf(mpgStr, sizeof(mpgStr), "--");
-        }
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 2);
-    }
-    
-    // RANGE (right bottom) - Estimated miles remaining with fuel indicator
-    if (needsFullRedraw || rangeChanged || fuelChanged) {
-        // Color based on range and fuel level
+        if (telemetry.averageMPG < 15) mpgColor = MX5_RED;
+        else if (telemetry.averageMPG < 20) mpgColor = MX5_ORANGE;
+        else if (telemetry.averageMPG > 30) mpgColor = MX5_CYAN;
+        
+        // Tank % color
+        uint16_t tankColor = MX5_GREEN;
+        if (telemetry.fuelLevel < 15) tankColor = MX5_RED;
+        else if (telemetry.fuelLevel < 25) tankColor = MX5_ORANGE;
+        else if (telemetry.fuelLevel < 40) tankColor = MX5_YELLOW;
+        
+        // Range color
         uint16_t rangeColor = MX5_GREEN;
-        if (telemetry.rangeMiles < 30 || telemetry.fuelLevel < 15) rangeColor = MX5_RED;
-        else if (telemetry.rangeMiles < 60 || telemetry.fuelLevel < 25) rangeColor = MX5_ORANGE;
+        if (telemetry.rangeMiles < 30) rangeColor = MX5_RED;
+        else if (telemetry.rangeMiles < 60) rangeColor = MX5_ORANGE;
         else if (telemetry.rangeMiles < 100) rangeColor = MX5_YELLOW;
         
-        LCD_FillRoundRect(rightBoxX, rightBoxY + rightBoxH + rightBoxGap, rightBoxW, rightBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(rightBoxX, rightBoxY + rightBoxH + rightBoxGap, 3, rightBoxH, rangeColor);
-        // Show fuel % as label (compact)
-        char rangeLabel[12];
-        snprintf(rangeLabel, sizeof(rangeLabel), "~%d%%", (int)telemetry.fuelLevel);
-        LCD_DrawString(rightBoxX + 6, rightBoxY + rightBoxH + rightBoxGap + 3, rangeLabel, MX5_GRAY, COLOR_BG_CARD, 1);
-        // Show range in miles
+        // Draw box background
+        LCD_FillRoundRect(rightBoxX, rightBoxY, rightBoxW, rightBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(rightBoxX, rightBoxY, 3, rightBoxH, accentColor);  // Left accent bar
+        
+        // "GAS" label (grey)
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 3, "GAS", MX5_GRAY, COLOR_BG_CARD, 1);
+        
+        // MPG value (row 1)
+        char mpgStr[10];
+        if (telemetry.averageMPG > 0) {
+            snprintf(mpgStr, sizeof(mpgStr), "%.1fmpg", telemetry.averageMPG);
+        } else {
+            snprintf(mpgStr, sizeof(mpgStr), "--mpg");
+        }
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 1);
+        
+        // Tank % (row 2)
+        char tankStr[10];
+        snprintf(tankStr, sizeof(tankStr), "%d%%", (int)telemetry.fuelLevel);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 32, tankStr, tankColor, COLOR_BG_CARD, 2);
+        
+        // Range miles (row 3)
         char rangeStr[10];
         if (telemetry.rangeMiles > 0) {
             snprintf(rangeStr, sizeof(rangeStr), "%dmi", telemetry.rangeMiles);
         } else {
             snprintf(rangeStr, sizeof(rangeStr), "--mi");
         }
-        LCD_DrawString(rightBoxX + 6, rightBoxY + rightBoxH + rightBoxGap + 16, rangeStr, rangeColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 54, rangeStr, rangeColor, COLOR_BG_CARD, 2);
     }
     
     // Navigation Lock indicator (bottom right when locked) - static, only on full redraw
