@@ -560,9 +560,13 @@ class CANHandler:
         if self.telemetry.gear == 0 and not self.telemetry.gear_estimated:
             return
         
+        # Convert speed from km/h to mph for gear estimation
+        # The GearEstimator expects speed in MPH
+        speed_mph = self.telemetry.speed_kmh * 0.621371
+        
         # Estimate gear from speed/RPM ratio
         estimated_gear, clutch_engaged, confidence = self.gear_estimator.estimate_gear(
-            self.telemetry.speed_kmh, 
+            speed_mph, 
             self.telemetry.rpm
         )
         

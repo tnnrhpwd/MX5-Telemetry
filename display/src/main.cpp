@@ -1477,27 +1477,36 @@ void drawRPMScreen() {
     int gaugeRadius = 95;
     int gaugeY = CENTER_Y + 25;
     
-    // Draw continuous arc segments - ALWAYS redraw ALL segments to clear old values
+    // Track which segment was last active to minimize redraws
+    static int prevActiveSegment = -1;
     int numSegments = 20;
+    int currentActiveSegment = (int)(rpmPercent * numSegments);
+    if (currentActiveSegment > numSegments) currentActiveSegment = numSegments;
+    
+    // Only redraw segments that changed state (or all on full redraw)
     for (int i = 0; i < numSegments; i++) {
-        float segStart = i / (float)numSegments;
-        float segEnd = (i + 1) / (float)numSegments;
+        bool wasActive = (i < prevActiveSegment);
+        bool isActive = (i < currentActiveSegment);
         
-        // Determine segment color - inactive segments get background color
-        uint16_t segColor = COLOR_BG;  // Use background color for inactive segments
-        if (segStart < rpmPercent) {
+        // Skip if segment state unchanged and not full redraw
+        if (!needsFullRedraw && wasActive == isActive) continue;
+        
+        float segStart = i / (float)numSegments;
+        
+        // Determine segment color - inactive segments get dark gray
+        uint16_t segColor;
+        if (isActive) {
             float rpmAt = segStart * 8000;
             if (rpmAt >= 6400) segColor = MX5_RED;
             else if (rpmAt >= 5600) segColor = MX5_ORANGE;
             else if (rpmAt >= 4000) segColor = MX5_YELLOW;
             else segColor = MX5_GREEN;
         } else {
-            // Inactive segment - use dark gray outline
             segColor = MX5_DARKGRAY;
         }
         
         // Arc from -150° to +150° (300° total, open at top)
-        float startAngle = (120 + i * 15) * PI / 180.0;  // Start from bottom-left
+        float startAngle = (120 + i * 15) * PI / 180.0;
         float endAngle = (120 + (i + 1) * 15) * PI / 180.0;
         
         // Draw thick arc segment
@@ -1507,6 +1516,7 @@ void drawRPMScreen() {
             LCD_FillCircle(px, py, 8, segColor);
         }
     }
+    prevActiveSegment = currentActiveSegment;
     
     // RPM tick labels (0, 2, 4, 6, 8)
     const char* rpmLabels[] = {"0", "2", "4", "6", "8"};
@@ -1521,11 +1531,11 @@ void drawRPMScreen() {
     char rpmStr[8];
     snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
     int rpmLen = strlen(rpmStr);
-    LCD_DrawString(CENTER_X - rpmLen * 10, gaugeY - 8, rpmStr, MX5_WHITE, COLOR_BG, 3);
-    LCD_DrawString(CENTER_X - 12, gaugeY + 22, "RPM", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(CENTER_X - rpmLen * 10, gaugeY + 5, rpmStr, MX5_WHITE, COLOR_BG, 3);
+    LCD_DrawString(CENTER_X - 12, gaugeY + 35, "RPM", MX5_GRAY, COLOR_BG, 1);
     
     // === SPEED (Bottom) ===
-    int speedY = SCREEN_HEIGHT - 70;
+    int speedY = SCREEN_HEIGHT - 50;
     char speedStr[8];
     snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
     int speedLen = strlen(speedStr);
