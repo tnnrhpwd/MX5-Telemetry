@@ -159,3 +159,7 @@ display/full_build.log
 
 # Temporary image conversion files
 display/output-onlinepngtools.*
+
+# User data files (persistent storage)
+data/mpg_data.json
+data/tpms_cache.json
