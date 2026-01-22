@@ -153,6 +153,12 @@ Potential improvements to consider:
 - Check tire pressure (affects effective diameter)
 - Verify tire size matches 205/45R17 specification
 - Consider tire wear (reduces diameter slightly)
+- **NOTE**: A previous bug caused double conversion of speed to MPH (fixed 2026-01-22)
+
+**Neutral not showing**:
+- CAN neutral detection is now trusted at speeds up to 10 MPH
+- At higher speeds, system relies on gear estimation (which returns neutral when speed < 2 MPH)
+- If neutral isn't showing when stationary, check CAN bus connection
 
 **Clutch not detected**:
 - Threshold may need adjustment for driving style
