@@ -22,41 +22,52 @@ function Prompt-Continue {
 }
 
 # ====================================
-# 1. Flash ESP32 Display
+# 1. Connect to Pi and flash ESP32 remotely
 # ====================================
-Write-Host "[1/3] Flashing ESP32 Display..." -ForegroundColor Green
+Write-Host "[1/3] Flashing ESP32 Display (via Pi)..." -ForegroundColor Green
 Write-Host "Changes: Updated display text rendering and gear estimation features" -ForegroundColor Gray
 Write-Host ""
 
-cd "$workspaceRoot\display"
+# Check if Pi is reachable
+Write-Host "Checking Pi connection..." -ForegroundColor Cyan
 
-# Check if PlatformIO is available
-try {
-    pio --version | Out-Null
-} catch {
-    Write-Host "ERROR: PlatformIO not found. Please install it first." -ForegroundColor Red
+# Try home network first (192.168.1.23 or mx5pi.local), then hotspot (10.62.26.67)
+$piHosts = @("pi@mx5pi.local", "pi@192.168.1.23", "pi@10.62.26.67")
+$piHost = $null
+
+foreach ($hostAddress in $piHosts) {
+    Write-Host "Trying $hostAddress..." -ForegroundColor Gray
+    try {
+        $testResult = ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no $hostAddress "echo Connected" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $piHost = $hostAddress
+            Write-Host "Connected to Pi at $piHost" -ForegroundColor Green
+            break
+        }
+    } catch {
+        # Try next host
+    }
+}
+
+if (-not $piHost) {
+    Write-Host "ERROR: Cannot connect to Pi" -ForegroundColor Red
+    Write-Host "Tried: mx5pi.local (home), 192.168.1.23 (home), 10.62.26.67 (hotspot)" -ForegroundColor Yellow
+    Write-Host "Make sure the Pi is powered on and connected to the network." -ForegroundColor Yellow
     exit 1
 }
 
-# Build and upload ESP32
-Write-Host "Building ESP32 firmware..." -ForegroundColor Cyan
-pio run
+Write-Host ""
+Write-Host "Building and uploading ESP32 firmware on Pi..." -ForegroundColor Cyan
+ssh $piHost "cd ~/mx5-telemetry && git pull && ~/.local/bin/pio run -d display --target upload"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: ESP32 build failed!" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "Uploading to ESP32..." -ForegroundColor Cyan
-pio run --target upload
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: ESP32 upload failed!" -ForegroundColor Red
+    Write-Host "ERROR: ESP32 flash failed!" -ForegroundColor Red
     exit 1
 }
 
 Write-Host "ESP32 Display flashed successfully!" -ForegroundColor Green
-Prompt-Continue "Ready to flash Arduino?"
+Write-Host ""
+Prompt-Continue "Ready to update Pi service?"
 
 # ====================================
 # 2. Flash Arduino
@@ -95,43 +106,10 @@ if (-not $arduinoChanges) {
 Prompt-Continue "Ready to deploy to Raspberry Pi?"
 
 # ====================================
-# 3. Deploy to Raspberry Pi
+# 3. Update Pi Service
 # ====================================
-Write-Host "[3/3] Deploying to Raspberry Pi..." -ForegroundColor Green
-Write-Host "Changes: Updated CAN handler, gear estimation, clutch detection, web server" -ForegroundColor Gray
-Write-Host ""
-
-# Check if Pi is reachable
-Write-Host "Checking Pi connection..." -ForegroundColor Cyan
-$piHost = "pi@mx5pi.local"
-
-# Test SSH connection
-try {
-    $testResult = ssh -o ConnectTimeout=5 $piHost "echo Connected" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Connection failed"
-    }
-} catch {
-    Write-Host "ERROR: Cannot connect to Pi at $piHost" -ForegroundColor Red
-    Write-Host "Make sure the Pi is powered on and connected to the network." -ForegroundColor Yellow
-    exit 1
-}
-
-Write-Host "Connected to Pi" -ForegroundColor Green
-Write-Host ""
-
-# Copy updated files to Pi
-Write-Host "Copying updated files to Pi..." -ForegroundColor Cyan
-
-# Copy the entire pi/ui directory
-scp -r "$workspaceRoot\pi\ui\*" "${piHost}:~/mx5-telemetry/ui/"
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Failed to copy files to Pi!" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "Files copied successfully" -ForegroundColor Green
+Write-Host "[3/3] Updating Pi Service..." -ForegroundColor Green
+Write-Host "Changes: Updated CAN handler, gear estimation, clutch detection" -ForegroundColor Gray
 Write-Host ""
 
 # Restart the display service
