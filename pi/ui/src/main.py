@@ -86,6 +86,15 @@ except ImportError:
     WebRemoteServer = None
     print("Warning: flask/flask-socketio not installed. Web remote disabled.")
 
+# Try to import MPG calculator
+try:
+    from mpg_calculator import MPGCalculator
+    MPG_CALCULATOR_AVAILABLE = True
+except ImportError:
+    MPG_CALCULATOR_AVAILABLE = False
+    MPGCalculator = None
+    print("Warning: mpg_calculator not found. MPG features disabled.")
+
 # =============================================================================
 # CONSTANTS
 # =============================================================================
@@ -173,6 +182,11 @@ class TelemetryData:
     g_longitudinal: float = 0.0
     lap_time_ms: int = 0
     best_lap_ms: int = 0
+    
+    # MPG and range data (calculated by MPGCalculator)
+    instant_mpg: float = 0.0
+    average_mpg: float = 0.0
+    range_miles: int = 0
     
     # Diagnostics data
     check_engine_light: bool = False
@@ -489,6 +503,9 @@ class PiDisplayApp:
         # Web remote server (for phone control)
         self.web_server = None
         
+        # MPG calculator for fuel efficiency tracking
+        self.mpg_calculator = None
+        
         # Screen names for web interface
         self.screen_names = [s.name for s in Screen]
         
@@ -507,6 +524,22 @@ class PiDisplayApp:
         if self.esp32_handler:
             self.esp32_handler.stop()
             self.esp32_handler = None
+        if self.mpg_calculator:
+            self.mpg_calculator.stop()
+            self.mpg_calculator = None
+        
+        # Initialize MPG calculator (works in both demo and real mode)
+        if MPG_CALCULATOR_AVAILABLE and MPGCalculator:
+            print("  Initializing MPG calculator...")
+            # Use cross-platform data directory
+            import os
+            if os.name == 'nt':  # Windows
+                data_dir = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data')
+            else:  # Linux/Pi
+                data_dir = "/home/pi/MX5-Telemetry/data"
+            self.mpg_calculator = MPGCalculator(data_dir=data_dir)
+            self.mpg_calculator.start()
+            print(f"  ✓ MPG calculator started (avg: {self.mpg_calculator.average_mpg:.1f} MPG)")
         
         # Initialize Arduino serial for LED sequence commands (optional, non-blocking)
         try:
@@ -876,6 +909,24 @@ class PiDisplayApp:
             # Real mode: CAN handler reads data automatically in background thread
             # Real mode: ESP32 handler receives TPMS/IMU data automatically
             
+            # Update MPG calculator with latest telemetry data
+            if self.mpg_calculator:
+                # Convert speed to MPH (telemetry stores km/h)
+                speed_mph = self.telemetry.speed_kmh * 0.621371
+                engine_running = self.telemetry.rpm > 0
+                
+                # Update calculator
+                self.mpg_calculator.update(
+                    speed_mph=speed_mph,
+                    raw_fuel_pct=self.telemetry.fuel_level_percent,
+                    engine_running=engine_running
+                )
+                
+                # Copy calculated values back to telemetry for display/transmission
+                self.telemetry.instant_mpg = self.mpg_calculator.instant_mpg
+                self.telemetry.average_mpg = self.mpg_calculator.average_mpg
+                self.telemetry.range_miles = self.mpg_calculator.range_miles
+            
             # Update lap timer if running (independent of demo mode)
             if self.lap_timer_running:
                 self.telemetry.lap_time_ms = int(time.time() * 1000 - self.lap_timer_start_time)
@@ -907,6 +958,8 @@ class PiDisplayApp:
             self.clock.tick(60)  # 60 FPS for smooth G-force ball movement
         
         # Cleanup
+        if self.mpg_calculator:
+            self.mpg_calculator.stop()
         if self.can_handler:
             self.can_handler.stop()
         if self.esp32_handler:

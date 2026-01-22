@@ -26,7 +26,11 @@ Protocol (ESP32 -> Pi):
     OK:SCREEN_X\n            - Confirmation of screen change
 
 Protocol (Pi -> ESP32):
-    TEL:3500,65,3,45,185,1,72,95,1,0,0\n  - RPM,speed,gear,throttle,coolant,oil,ambient_temp,fuel,engine,gear_est,clutch
+    TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles
+        Example: TEL:3500,65,3,45,185,1,72,1,0,0,28.5,156
+        Fields: RPM, speed(km/h), gear, throttle%, coolant°F, oil_ok(0/1), 
+                fuel%, engine_on(0/1), gear_estimated(0/1), clutch(0/1),
+                average_mpg, estimated_range_miles
     SCREEN:0\n                        - Change to screen 0 (Overview)
     SCREEN:1\n                        - Change to screen 1 (RPM)
     LEFT\n                            - Next screen
@@ -588,26 +592,23 @@ class ESP32SerialHandler:
             # Use lock to prevent collision with screen commands
             with self._write_lock:
                 # Combine all telemetry into fewer messages to reduce serial traffic
-                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch
+                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles
                 msg = f"TEL:{self.telemetry.rpm:.0f},{self.telemetry.speed_kmh:.0f},{self.telemetry.gear},"
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
                 oil_val = 1 if self.telemetry.oil_status else 0
                 msg += f"{oil_val},"
                 fuel_pct = self.telemetry.fuel_level_percent
                 msg += f"{fuel_pct:.0f},"
-                # DEBUG: Log what we're sending
-                if fuel_pct > 0:
-                    print(f"DEBUG: Sending fuel={fuel_pct:.1f}% to ESP32")
                 engine_running = 1 if self.telemetry.rpm > 0 else 0
                 msg += f"{engine_running},"
                 # Add gear estimation and clutch flags
                 gear_est = 1 if self.telemetry.gear_estimated else 0
                 clutch = 1 if self.telemetry.clutch_engaged else 0
-                msg += f"{gear_est},{clutch}\n"
-                
-                # DEBUG: Log fuel value
-                if fuel_pct == 0:
-                    print(f"DEBUG: Sending fuel={fuel_pct:.0f}% (telemetry.fuel_level_percent={self.telemetry.fuel_level_percent})")
+                msg += f"{gear_est},{clutch},"
+                # Add MPG data (average MPG and estimated range in miles)
+                avg_mpg = self.telemetry.average_mpg
+                range_miles = self.telemetry.range_miles
+                msg += f"{avg_mpg:.1f},{range_miles}\n"
                 
                 self.serial_conn.write(msg.encode('utf-8'))
                 

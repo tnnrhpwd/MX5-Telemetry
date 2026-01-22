@@ -67,6 +67,12 @@ class TelemetryData:
     turn_signal_right: bool = False
     ac_running: bool = False
     
+    # Diagnostics
+    check_engine_light: bool = False
+    abs_warning: bool = False
+    oil_warning: bool = False
+    battery_warning: bool = False
+    
     # IMU - Raw accelerometer (includes gravity)
     g_lateral: float = 0.0       # Accel X (left/right)
     g_longitudinal: float = 0.0  # Accel Y (forward/back)
