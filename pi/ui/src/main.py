@@ -911,8 +911,9 @@ class PiDisplayApp:
             
             # Update MPG calculator with latest telemetry data
             if self.mpg_calculator:
-                # Convert speed to MPH (telemetry stores km/h)
-                speed_mph = self.telemetry.speed_kmh * 0.621371
+                # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
+                # Despite the misleading variable name, we use it directly
+                speed_mph = self.telemetry.speed_kmh
                 engine_running = self.telemetry.rpm > 0
                 
                 # Update calculator

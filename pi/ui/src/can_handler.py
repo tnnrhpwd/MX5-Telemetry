@@ -484,11 +484,11 @@ class CANHandler:
             
         elif can_id == HSCanID.GEAR_POSITION:
             can_gear = CANParser.parse_gear(data)
-            # Only use CAN gear if it's Neutral (0) AND vehicle is stationary
-            # 2008 MX5 NC GT only reliably detects Neutral via the neutral safety switch
-            # When driving with speed > 2 MPH and RPM > 500, we must rely on gear estimation
-            # because the CAN gear data is unreliable for non-neutral gears
-            if can_gear == 0 and self.telemetry.speed_kmh < 3 and self.telemetry.rpm < 1000:
+            # Use CAN neutral signal directly - the neutral safety switch is reliable
+            # 2008 MX5 NC GT reliably detects Neutral via the neutral safety switch
+            # Trust CAN neutral at low speeds (< 10 mph) since clutch must be engaged
+            # to be in neutral while rolling. At higher speeds, rely on gear estimation.
+            if can_gear == 0 and self.telemetry.speed_kmh < 10:
                 self.telemetry.gear = 0
                 self.telemetry.gear_estimated = False
                 self.telemetry.clutch_engaged = False
@@ -564,9 +564,9 @@ class CANHandler:
         # We no longer skip based on current gear state because CAN neutral
         # detection is only trusted when stationary (handled in _process_hs_message)
         
-        # Convert speed from km/h to mph for gear estimation
-        # The GearEstimator expects speed in MPH
-        speed_mph = self.telemetry.speed_kmh * 0.621371
+        # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
+        # Despite the misleading variable name, we use it directly for gear estimation
+        speed_mph = self.telemetry.speed_kmh
         
         # Estimate gear from speed/RPM ratio
         estimated_gear, clutch_engaged, confidence = self.gear_estimator.estimate_gear(
