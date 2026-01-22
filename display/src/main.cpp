@@ -92,6 +92,9 @@ struct TelemetryData {
     float gForceZ;          // Vertical - raw accelerometer
     float linearAccelX;     // Lateral pure acceleration (gravity removed)
     float linearAccelY;     // Longitudinal pure acceleration (gravity removed)
+    // MPG and range data (calculated on Pi)
+    float averageMPG;       // Average fuel efficiency (miles per gallon)
+    int rangeMiles;         // Estimated range remaining (miles)
     bool engineRunning;
     bool connected;           // Serial connection to Pi is active
     bool hasDiagnosticData;   // Received actual diagnostic data from Pi
@@ -127,6 +130,8 @@ struct CachedTelemetry {
     float fuelLevel;
     float ambientTemp;
     float tirePressure[4];
+    float averageMPG;       // Cached MPG value
+    int rangeMiles;         // Cached range value
     bool engineRunning;
     // RPM arc optimization - cache the arc state to enable incremental updates
     float arcEndAngle;       // Last drawn arc end angle (in degrees)
@@ -1044,6 +1049,11 @@ void drawOverviewScreen() {
     bool fuelChanged = !prevTelemetry.initialized || (int)telemetry.fuelLevel != (int)prevTelemetry.fuelLevel;
     bool ambientChanged = !prevTelemetry.initialized || (int)telemetry.ambientTemp != (int)prevTelemetry.ambientTemp;
     bool oilChanged = !prevTelemetry.initialized || telemetry.oilWarning != prevTelemetry.oilWarning;
+    // MPG and range change detection
+    bool mpgChanged = !prevTelemetry.initialized || 
+                      fabsf(telemetry.averageMPG - prevTelemetry.averageMPG) >= 0.1f;
+    bool rangeChanged = !prevTelemetry.initialized || 
+                        telemetry.rangeMiles != prevTelemetry.rangeMiles;
     
     bool tpmsChanged = false;
     for (int i = 0; i < 4; i++) {
@@ -1066,7 +1076,8 @@ void drawOverviewScreen() {
     
     // Check if anything at all changed
     bool anyChange = needsFullRedraw || rpmChanged || speedChanged || gearChanged || 
-        coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged || arcChanged;
+        coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged || 
+        arcChanged || mpgChanged || rangeChanged;
     
     // Skip if nothing changed
     if (!anyChange) return;
@@ -1331,37 +1342,53 @@ void drawOverviewScreen() {
         LCD_DrawString(leftBoxX + 6, leftBoxY + leftBoxH + leftBoxGap + 16, ambientStr, ambientColor, COLOR_BG_CARD, 2);
     }
     
-    // === RIGHT SIDE: Oil and Fuel (vertical stack) ===
+    // === RIGHT SIDE: MPG and Range (vertical stack) ===
     int rightBoxX = SCREEN_WIDTH - 98;
     int rightBoxY = CENTER_Y - 25;
     int rightBoxW = 70;
     int rightBoxH = 32;
     int rightBoxGap = 8;
     
-    // OIL (right top)
-    if (needsFullRedraw || oilChanged) {
-        // 2008 MX5 NC GT only has pressure present sensor (not PSI)
-        // oilWarning = true means NO oil pressure (FALSE), false means pressure present (TRUE)
-        bool oilPressurePresent = !telemetry.oilWarning;
-        uint16_t oilColor = oilPressurePresent ? MX5_GREEN : MX5_RED;
+    // MPG (right top) - Average fuel efficiency
+    if (needsFullRedraw || mpgChanged) {
+        uint16_t mpgColor = MX5_GREEN;
+        if (telemetry.averageMPG < 20) mpgColor = MX5_ORANGE;
+        else if (telemetry.averageMPG < 15) mpgColor = MX5_RED;
+        else if (telemetry.averageMPG > 30) mpgColor = MX5_CYAN;  // Great efficiency
         LCD_FillRoundRect(rightBoxX, rightBoxY, rightBoxW, rightBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(rightBoxX, rightBoxY, 3, rightBoxH, oilColor);
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
-        const char* oilStr = oilPressurePresent ? "Good" : "Bad";
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 16, oilStr, oilColor, COLOR_BG_CARD, 2);
+        LCD_FillRect(rightBoxX, rightBoxY, 3, rightBoxH, mpgColor);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 3, "MPG", MX5_GRAY, COLOR_BG_CARD, 1);
+        char mpgStr[8];
+        if (telemetry.averageMPG > 0) {
+            snprintf(mpgStr, sizeof(mpgStr), "%.1f", telemetry.averageMPG);
+        } else {
+            snprintf(mpgStr, sizeof(mpgStr), "--");
+        }
+        LCD_DrawString(rightBoxX + 6, rightBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 2);
     }
     
-    // FUEL (right bottom)
-    if (needsFullRedraw || fuelChanged) {
-        uint16_t fuelColor = MX5_GREEN;
-        if (telemetry.fuelLevel < 15) fuelColor = MX5_RED;
-        else if (telemetry.fuelLevel < 25) fuelColor = MX5_ORANGE;
+    // RANGE (right bottom) - Estimated miles remaining with fuel indicator
+    if (needsFullRedraw || rangeChanged || fuelChanged) {
+        // Color based on range and fuel level
+        uint16_t rangeColor = MX5_GREEN;
+        if (telemetry.rangeMiles < 30 || telemetry.fuelLevel < 15) rangeColor = MX5_RED;
+        else if (telemetry.rangeMiles < 60 || telemetry.fuelLevel < 25) rangeColor = MX5_ORANGE;
+        else if (telemetry.rangeMiles < 100) rangeColor = MX5_YELLOW;
+        
         LCD_FillRoundRect(rightBoxX, rightBoxY + rightBoxH + rightBoxGap, rightBoxW, rightBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(rightBoxX, rightBoxY + rightBoxH + rightBoxGap, 3, rightBoxH, fuelColor);
-        LCD_DrawString(rightBoxX + 6, rightBoxY + rightBoxH + rightBoxGap + 3, "FUEL", MX5_GRAY, COLOR_BG_CARD, 1);
-        char fuelStr[8];
-        snprintf(fuelStr, sizeof(fuelStr), "%d%%", (int)telemetry.fuelLevel);
-        LCD_DrawString(rightBoxX + 6, rightBoxY + rightBoxH + rightBoxGap + 16, fuelStr, fuelColor, COLOR_BG_CARD, 2);
+        LCD_FillRect(rightBoxX, rightBoxY + rightBoxH + rightBoxGap, 3, rightBoxH, rangeColor);
+        // Show fuel % as label (compact)
+        char rangeLabel[12];
+        snprintf(rangeLabel, sizeof(rangeLabel), "~%d%%", (int)telemetry.fuelLevel);
+        LCD_DrawString(rightBoxX + 6, rightBoxY + rightBoxH + rightBoxGap + 3, rangeLabel, MX5_GRAY, COLOR_BG_CARD, 1);
+        // Show range in miles
+        char rangeStr[10];
+        if (telemetry.rangeMiles > 0) {
+            snprintf(rangeStr, sizeof(rangeStr), "%dmi", telemetry.rangeMiles);
+        } else {
+            snprintf(rangeStr, sizeof(rangeStr), "--mi");
+        }
+        LCD_DrawString(rightBoxX + 6, rightBoxY + rightBoxH + rightBoxGap + 16, rangeStr, rangeColor, COLOR_BG_CARD, 2);
     }
     
     // Navigation Lock indicator (bottom right when locked) - static, only on full redraw
@@ -1426,6 +1453,8 @@ void drawOverviewScreen() {
     prevTelemetry.coolantTemp = telemetry.coolantTemp;
     prevTelemetry.fuelLevel = telemetry.fuelLevel;
     prevTelemetry.ambientTemp = telemetry.ambientTemp;
+    prevTelemetry.averageMPG = telemetry.averageMPG;
+    prevTelemetry.rangeMiles = telemetry.rangeMiles;
     prevTelemetry.engineRunning = telemetry.engineRunning;
     prevTelemetry.connected = telemetry.connected;
     prevTelemetry.oilWarning = telemetry.oilWarning;
@@ -2889,31 +2918,22 @@ void parseCommand(String cmd) {
         telemetry.oilPressure = cmd.substring(7).toFloat();
         telemetry.connected = true;
     }
-    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch)
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles)
     else if (cmd.startsWith("TEL:")) {
         String data = cmd.substring(4);
         int idx = 0;
-        float values[10] = {0};  // 10 fields without ambient_temp
+        float values[12] = {0};  // 12 fields including MPG data
         int start = 0;
-        for (int i = 0; i <= data.length() && idx < 10; i++) {
+        for (int i = 0; i <= data.length() && idx < 12; i++) {
             if (i == data.length() || data[i] == ',') {
                 String field = data.substring(start, i);
                 values[idx] = field.toFloat();
-                // Debug gear field specifically
-                if (idx == 2) {
-                    Serial.printf("TEL gear field: '%s' -> %.1f\n", field.c_str(), values[idx]);
-                }
                 idx++;
                 start = i + 1;
             }
         }
-        // DEBUG: Print parsed values and fuel specifically
-        Serial.printf("TEL parsed: %d fields - RPM=%.0f Speed=%.0f Gear=%.0f\n", idx, values[0], values[1], values[2]);
-        if (idx >= 7) Serial.printf("  Fuel field[6]=%.0f\n", values[6]);
-        if (idx >= 10) Serial.printf("  All fields: fuel=%.0f engine=%.0f gear_est=%.0f clutch=%.0f\n", 
-            values[6], values[7], values[8], values[9]);
         
-        if (idx >= 6) {  // At least 6 fields required
+        if (idx >= 6) {  // At least 6 fields required for basic telemetry
             telemetry.rpm = values[0];
             telemetry.speed = values[1];
             telemetry.gear = (int)values[2];
@@ -2926,10 +2946,12 @@ void parseCommand(String cmd) {
             if (idx >= 8) telemetry.engineRunning = (values[7] > 0);
             if (idx >= 9) telemetry.gearEstimated = (values[8] > 0);
             if (idx >= 10) telemetry.clutchEngaged = (values[9] > 0);
+            // MPG data fields (new)
+            if (idx >= 11) telemetry.averageMPG = values[10];
+            if (idx >= 12) telemetry.rangeMiles = (int)values[11];
             telemetry.connected = true;
             telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
-            Serial.println("TEL: Data updated successfully!");
         } else {
             Serial.printf("TEL: ERROR - Not enough fields (got %d, need 6)\n", idx);
         }

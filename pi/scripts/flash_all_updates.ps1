@@ -1,5 +1,5 @@
 # Flash All Updates Script
-# Commits changes, pushes to GitHub, pulls on Pi, and flashes devices
+# Flashes ESP32 display, Arduino, and Pi with recent changes
 
 $ErrorActionPreference = "Stop"
 $workspaceRoot = "c:\Users\tanne\Documents\Github\MX5-Telemetry"
@@ -21,158 +21,95 @@ function Prompt-Continue {
     }
 }
 
-cd $workspaceRoot
-
 # ====================================
-# 0. Commit and Push Changes
+# 1. Connect to Pi and flash ESP32 remotely
 # ====================================
-Write-Host "[0/4] Committing and pushing changes to GitHub..." -ForegroundColor Green
+Write-Host "[1/3] Flashing ESP32 Display (via Pi)..." -ForegroundColor Green
+Write-Host "Changes: Updated display text rendering and gear estimation features" -ForegroundColor Gray
 Write-Host ""
-
-# Check for uncommitted changes
-$status = git status --porcelain
-if ($status) {
-    Write-Host "Uncommitted changes detected:" -ForegroundColor Yellow
-    git status --short
-    Write-Host ""
-    
-    $commitMsg = Read-Host "Enter commit message (or press Enter for auto-message)"
-    if ([string]::IsNullOrWhiteSpace($commitMsg)) {
-        $commitMsg = "Update firmware and Pi code - auto-commit for flash"
-    }
-    
-    Write-Host "Staging all changes..." -ForegroundColor Cyan
-    git add -A
-    
-    Write-Host "Committing changes..." -ForegroundColor Cyan
-    git commit -m "$commitMsg"
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Git commit failed!" -ForegroundColor Red
-        exit 1
-    }
-} else {
-    Write-Host "No uncommitted changes" -ForegroundColor Gray
-}
-
-Write-Host "Pushing to GitHub..." -ForegroundColor Cyan
-git push
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Git push failed!" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "Successfully pushed to GitHub!" -ForegroundColor Green
-
-# ====================================
-# 1. Connect to Pi and Pull Changes
-# ====================================
-Write-Host "[1/4] Connecting to Pi and pulling changes..." -ForegroundColor Green
-Write-Host ""
-
-$piHost = "pi@192.168.1.23"
 
 # Check if Pi is reachable
 Write-Host "Checking Pi connection..." -ForegroundColor Cyan
-try {
-    $testResult = ssh -o ConnectTimeout=5 $piHost "echo Connected" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Connection failed"
+
+# Try home network first (192.168.1.23 or mx5pi.local), then hotspot (10.62.26.67)
+$piHosts = @("pi@mx5pi.local", "pi@192.168.1.23", "pi@10.62.26.67")
+$piHost = $null
+
+foreach ($hostAddress in $piHosts) {
+    Write-Host "Trying $hostAddress..." -ForegroundColor Gray
+    try {
+        $testResult = ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no $hostAddress "echo Connected" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $piHost = $hostAddress
+            Write-Host "Connected to Pi at $piHost" -ForegroundColor Green
+            break
+        }
+    } catch {
+        # Try next host
     }
-} catch {
-    Write-Host "ERROR: Cannot connect to Pi at $piHost" -ForegroundColor Red
+}
+
+if (-not $piHost) {
+    Write-Host "ERROR: Cannot connect to Pi" -ForegroundColor Red
+    Write-Host "Tried: mx5pi.local (home), 192.168.1.23 (home), 10.62.26.67 (hotspot)" -ForegroundColor Yellow
     Write-Host "Make sure the Pi is powered on and connected to the network." -ForegroundColor Yellow
     exit 1
 }
 
-Write-Host "Connected to Pi" -ForegroundColor Green
 Write-Host ""
-
-# Check if repository exists on Pi
-Write-Host "Checking repository on Pi..." -ForegroundColor Cyan
-$repoCheck = ssh $piHost "test -d ~/MX5-Telemetry && echo 'exists' || echo 'missing'"
-
-if ($repoCheck -match "missing") {
-    Write-Host "Repository not found. Cloning from GitHub..." -ForegroundColor Yellow
-    ssh $piHost 'cd ~ && git clone https://github.com/tnnrhpwd/MX5-Telemetry.git MX5-Telemetry'
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Failed to clone repository on Pi!" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "Repository cloned successfully!" -ForegroundColor Green
-} else {
-    Write-Host "Repository exists on Pi" -ForegroundColor Gray
-}
-
-# Pull latest changes on Pi
-Write-Host "Pulling latest changes from GitHub on Pi..." -ForegroundColor Cyan
-ssh $piHost 'cd ~/MX5-Telemetry && git pull'
+Write-Host "Building and uploading ESP32 firmware on Pi..." -ForegroundColor Cyan
+ssh $piHost "cd ~/mx5-telemetry && git pull && ~/.local/bin/pio run -d display --target upload"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Git pull on Pi failed!" -ForegroundColor Red
-    Write-Host "You may need to SSH to the Pi and resolve conflicts manually." -ForegroundColor Yellow
+    Write-Host "ERROR: ESP32 flash failed!" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "Successfully pulled changes on Pi!" -ForegroundColor Green
-
-# ====================================
-# 2. Flash ESP32 Display (via Pi)
-# ====================================
-Write-Host "[2/4] Flashing ESP32 Display..." -ForegroundColor Green
-Write-Host "Changes: Updated display text rendering and gear estimation features" -ForegroundColor Gray
-Write-Host ""
-
-# Flash ESP32 on Pi using full platformio path
-Write-Host "Flashing ESP32 (using cached builds)..." -ForegroundColor Cyan
-ssh $piHost 'cd ~/MX5-Telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "WARNING: Flash failed, retrying..." -ForegroundColor Yellow
-    Start-Sleep -Seconds 2
-    ssh $piHost 'cd ~/MX5-Telemetry/display && ~/.platformio/penv/bin/platformio run --target upload'
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: ESP32 flash failed after retry!" -ForegroundColor Red
-        Write-Host "You may need to manually reset the ESP32 or check the USB connection" -ForegroundColor Yellow
-        exit 1
-    }
-}
-
 Write-Host "ESP32 Display flashed successfully!" -ForegroundColor Green
+Write-Host ""
+Prompt-Continue "Ready to update Pi service?"
 
 # ====================================
-# 3. Flash Arduino (via Pi)
+# 2. Flash Arduino
 # ====================================
-Write-Host "[3/4] Flashing Arduino..." -ForegroundColor Green
+Write-Host "[2/3] Flashing Arduino..." -ForegroundColor Green
 Write-Host "Note: Arduino code hasn't changed in recent commits" -ForegroundColor Gray
 Write-Host "Checking if flash is needed..." -ForegroundColor Gray
 Write-Host ""
+
+cd "$workspaceRoot\arduino"
 
 # Check if Arduino code was modified in recent commits
 $arduinoChanges = git log -4 --name-only --oneline | Select-String "arduino/src/"
 if (-not $arduinoChanges) {
     Write-Host "Arduino code unchanged - skipping flash" -ForegroundColor Yellow
 } else {
-    # Flash Arduino on Pi using cached builds
-    Write-Host "Flashing Arduino (using cached builds)..." -ForegroundColor Cyan
-    ssh $piHost 'cd ~/MX5-Telemetry/arduino && ~/.platformio/penv/bin/platformio run --target upload'
+    Write-Host "Building Arduino firmware..." -ForegroundColor Cyan
+    pio run
     
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Arduino flash failed!" -ForegroundColor Red
+        Write-Host "ERROR: Arduino build failed!" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host "Uploading to Arduino..." -ForegroundColor Cyan
+    pio run --target upload
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Arduino upload failed!" -ForegroundColor Red
         exit 1
     }
     
     Write-Host "Arduino flashed successfully!" -ForegroundColor Green
 }
 
+Prompt-Continue "Ready to deploy to Raspberry Pi?"
+
 # ====================================
-# 4. Restart Pi Services
+# 3. Update Pi Service
 # ====================================
-Write-Host "[4/4] Restarting Pi services..." -ForegroundColor Green
-Write-Host "Changes: Updated CAN handler, gear estimation, clutch detection, web server" -ForegroundColor Gray
+Write-Host "[3/3] Updating Pi Service..." -ForegroundColor Green
+Write-Host "Changes: Updated CAN handler, gear estimation, clutch detection" -ForegroundColor Gray
 Write-Host ""
 
 # Restart the display service
@@ -198,11 +135,9 @@ Write-Host "   All Updates Flashed Successfully!" -ForegroundColor Green
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Summary of changes deployed:" -ForegroundColor White
-Write-Host "  - Git: Committed and pushed to GitHub" -ForegroundColor Gray
-Write-Host "  - Pi: Pulled latest changes" -ForegroundColor Gray
 Write-Host "  - ESP32: Gear estimation, improved text rendering" -ForegroundColor Gray
 Write-Host "  - Arduino: No changes (skipped)" -ForegroundColor Gray
-Write-Host "  - Pi Service: Restarted with new code" -ForegroundColor Gray
+Write-Host "  - Pi: CAN handler speed parsing, clutch detection, gear estimation" -ForegroundColor Gray
 Write-Host ""
 
 cd $workspaceRoot
