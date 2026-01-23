@@ -1301,14 +1301,14 @@ void drawOverviewScreen() {
         // Large gear text (size 24 = 3x previous size 8)
         // Font: each char is approx 6px wide x 8px tall per size unit
         // Size 24: ~144px wide, ~192px tall per character
-        // User requested: move right by char width, down by half char height from center
         int fontSize = 24;
         int charWidth = fontSize * 6;   // ~144px for size 24
         int charHeight = fontSize * 8;  // ~192px for size 24
-        // Start centered, then apply user offsets (right by charWidth, down by charHeight/2)
-        int textOffsetX = -charWidth/2 + charWidth;      // = +charWidth/2
-        int textOffsetY = -charHeight/2 + charHeight/2;  // = 0
-        LCD_DrawString(gearX + textOffsetX, gearY + textOffsetY, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
+        // Center the text in the gear circle
+        // LCD_DrawString draws from top-left, so offset by half width/height
+        int textX = gearX - charWidth / 2;
+        int textY = gearY - charHeight / 2;
+        LCD_DrawString(textX, textY, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
