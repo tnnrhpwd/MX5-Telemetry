@@ -1298,10 +1298,17 @@ void drawOverviewScreen() {
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
-        // Larger gear text (size 8 for bigger display, centered down and right)
-        int textOffsetX = (strlen(gearStr) == 1) ? -18 : -28;  // Center single/double chars horizontally
-        int textOffsetY = -18;  // Position lower for better centering
-        LCD_DrawString(gearX + textOffsetX, gearY + textOffsetY, gearStr, gearGlow, COLOR_BG_CARD, 8);
+        // Large gear text (size 24 = 3x previous size 8)
+        // Font: each char is approx 6px wide x 8px tall per size unit
+        // Size 24: ~144px wide, ~192px tall per character
+        // User requested: move right by char width, down by half char height from center
+        int fontSize = 24;
+        int charWidth = fontSize * 6;   // ~144px for size 24
+        int charHeight = fontSize * 8;  // ~192px for size 24
+        // Start centered, then apply user offsets (right by charWidth, down by charHeight/2)
+        int textOffsetX = -charWidth/2 + charWidth;      // = +charWidth/2
+        int textOffsetY = -charHeight/2 + charHeight/2;  // = 0
+        LCD_DrawString(gearX + textOffsetX, gearY + textOffsetY, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
