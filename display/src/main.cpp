@@ -1110,9 +1110,10 @@ void drawOverviewScreen() {
     int arcThickness = 14;  // Thicker modern gauge
     
     // Segment-based approach: divide arc into discrete segments
-    // Total arc = 270 degrees, use 270 segments (1 degree each) for smooth appearance
-    const int NUM_SEGMENTS = 270;
-    const float DEGREES_PER_SEGMENT = 1.0f;
+    // Total arc = 270 degrees, use 135 segments (2 degrees each) for faster updates
+    // Reduced from 270 segments to cut update time in half while maintaining visual quality
+    const int NUM_SEGMENTS = 135;
+    const float DEGREES_PER_SEGMENT = 2.0f;
     
     // Calculate which segment the current RPM ends at (0 to NUM_SEGMENTS)
     // Reuse rpmPercent calculated earlier
@@ -1241,16 +1242,21 @@ void drawOverviewScreen() {
     }
     
     // === LARGE GEAR INDICATOR (Center) === 
-    // Determine gear ring color based on RPM thresholds
+    // Determine gear ring color based on RPM thresholds (used for rev-matching during shifts)
+    // When clutch is engaged with speed > 0, use RPM colors to help driver match revs
     uint16_t gearGlow = MX5_GREEN;
-    if (telemetry.clutchEngaged) {
-        gearGlow = MX5_CYAN;  // Rev-matching helper color
-    } else if (telemetry.rpm > 6500) {
+    if (telemetry.rpm > 6500) {
         gearGlow = MX5_RED;
     } else if (telemetry.rpm > 5500) {
         gearGlow = MX5_ORANGE;
     } else if (telemetry.rpm > 4500) {
         gearGlow = MX5_YELLOW;
+    } else if (telemetry.rpm > 3000) {
+        gearGlow = MX5_GREEN;
+    } else if (telemetry.rpm > 2000) {
+        gearGlow = MX5_CYAN;  // Lower RPM range - cyan indicates "safe" rev range
+    } else {
+        gearGlow = MX5_BLUE;  // Very low RPM - blue indicates might stall/lug
     }
     
     // Cache previous gear glow to detect color threshold crossings
@@ -1261,11 +1267,11 @@ void drawOverviewScreen() {
     if (needsFullRedraw || gearChanged || gearGlowChanged) {
         int gearX = 180;  // Exact center of 360px display
         int gearY = 180;  // Exact center of 360px display
-        int gearRadius = 58;  // Larger gear circle
+        int gearRadius = 68;  // Larger gear circle (was 58)
         LCD_FillCircle(gearX, gearY, gearRadius, COLOR_BG_CARD);
         
         // Draw gear ring (thicker)
-        for (int r = gearRadius; r > gearRadius - 4; r--) {
+        for (int r = gearRadius; r > gearRadius - 5; r--) {
             LCD_DrawCircle(gearX, gearY, r, gearGlow);
         }
         
@@ -1299,12 +1305,12 @@ void drawOverviewScreen() {
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
         // Draw gear text centered in the gear circle
-        // Font size 6 gives ~36x48 pixel characters, good fit for 58px radius circle
-        int fontSize = 6;
+        // Font size 8 gives ~48x64 pixel characters - bigger for better visibility
+        int fontSize = 8;
         // Center of screen (180, 180) for 360x360 display
-        // Text position: center minus half of character size
-        int textX = 180 - 18;  // 180 - (36/2) = 162
-        int textY = 180 - 24;  // 180 - (48/2) = 156
+        // Text position: center minus half of character size (at size 8: ~24x32 per char)
+        int textX = 180 - 24;  // 180 - (48/2) = 156
+        int textY = 180 - 32;  // 180 - (64/2) = 148
         LCD_DrawString(textX, textY, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
         
         // Update cached gear glow
@@ -1359,11 +1365,11 @@ void drawOverviewScreen() {
         
         LCD_FillRoundRect(oilBoxX, oilBoxY, oilBoxW, oilBoxH, 4, COLOR_BG_CARD);
         LCD_FillRect(oilBoxX, oilBoxY, 3, oilBoxH, oilColor);
-        LCD_DrawString(oilBoxX + 6, oilBoxY + 3, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_DrawString(oilBoxX + 6, oilBoxY + 2, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
         
-        // Show status text
+        // Show status text (size 2 to match other indicators)
         const char* oilStatus = telemetry.oilWarning ? "LOW" : "OK";
-        LCD_DrawString(oilBoxX + 30, oilBoxY + 3, oilStatus, oilColor, COLOR_BG_CARD, 1);
+        LCD_DrawString(oilBoxX + 28, oilBoxY + 2, oilStatus, oilColor, COLOR_BG_CARD, 2);
     }
     
     // === RIGHT SIDE: Combined GAS indicator (MPG, Tank%, Range) ===
