@@ -166,6 +166,14 @@ class MPGCalculator:
         """Start the calculator and load persistent data"""
         self._running = True
         self._load_data()
+        
+        # Initialize outputs to reasonable defaults immediately
+        # This ensures MPG/range display something before engine starts
+        with self._lock:
+            self._average_mpg = self.lifetime.average_mpg
+            if self._average_mpg <= 0:
+                self._average_mpg = 26.0  # EPA default
+        
         print(f"MPG Calculator started. Lifetime: {self.lifetime.total_miles:.1f} mi, "
               f"{self.lifetime.total_gallons:.2f} gal, avg {self.lifetime.average_mpg:.1f} MPG")
     
@@ -248,15 +256,12 @@ class MPGCalculator:
         
         self._engine_was_running = engine_running
         
-        # Only process if engine is running
-        if not engine_running:
-            return
-        
-        # Update smoothed fuel level (EMA filter)
+        # Always update smoothed fuel and outputs (even when engine off)
+        # This ensures the fuel gauge and range display work while parked
         self._update_fuel_ema(raw_fuel_pct)
         
-        # Only accumulate distance/fuel when actually driving
-        if speed_mph >= self.MIN_DRIVING_SPEED_MPH and self._trip_active:
+        # Only process distance/fuel consumption if engine is running
+        if engine_running and speed_mph >= self.MIN_DRIVING_SPEED_MPH and self._trip_active:
             # Accumulate distance
             distance_increment = (speed_mph / 3600.0) * dt_seconds  # miles
             self.trip.distance_miles += distance_increment
@@ -279,13 +284,13 @@ class MPGCalculator:
         # Store previous smoothed value for next delta calculation
         self._prev_smoothed_fuel_pct = self._smoothed_fuel_pct
         
-        # Calculate instant MPG periodically
-        if current_time - self._last_instant_calc_time >= self._instant_calc_interval:
+        # Calculate instant MPG periodically (only when engine running)
+        if engine_running and current_time - self._last_instant_calc_time >= self._instant_calc_interval:
             self._calculate_instant_mpg()
             self._last_instant_calc_time = current_time
         
-        # Update output values
-        self._update_outputs()
+        # Update output values (pass raw fuel for fallback range calculation)
+        self._update_outputs(raw_fuel_pct)
         
         # Periodic save
         if current_time - self._last_save_time >= self.SAVE_INTERVAL_SEC:
@@ -320,8 +325,12 @@ class MPGCalculator:
         self._instant_distance_buffer = 0.0
         self._instant_fuel_buffer = 0.0
     
-    def _update_outputs(self):
-        """Update thread-safe output values"""
+    def _update_outputs(self, raw_fuel_pct: float = None):
+        """Update thread-safe output values
+        
+        Args:
+            raw_fuel_pct: Optional raw fuel percentage for fallback calculation
+        """
         with self._lock:
             # Average MPG from lifetime data
             self._average_mpg = self.lifetime.average_mpg
@@ -337,14 +346,20 @@ class MPGCalculator:
             # Clamp to reasonable range
             self._average_mpg = min(self._average_mpg, self.MAX_REASONABLE_MPG)
             
-            # Calculate range
-            if self._smoothed_fuel_pct is not None:
-                remaining_gal = (self._smoothed_fuel_pct / 100.0) * self.TANK_CAPACITY_GAL
+            # Calculate range - prefer smoothed fuel, fallback to raw fuel
+            fuel_pct = self._smoothed_fuel_pct
+            if fuel_pct is None and raw_fuel_pct is not None and raw_fuel_pct > 0:
+                fuel_pct = raw_fuel_pct
+            
+            if fuel_pct is not None and fuel_pct > 0:
+                remaining_gal = (fuel_pct / 100.0) * self.TANK_CAPACITY_GAL
                 self._range_miles = int(remaining_gal * self._average_mpg)
             
             # Update smoothed fuel for display
             if self._smoothed_fuel_pct is not None:
                 self._smoothed_fuel_display = self._smoothed_fuel_pct
+            elif raw_fuel_pct is not None:
+                self._smoothed_fuel_display = raw_fuel_pct
     
     def _start_trip(self, initial_fuel_pct: float):
         """Start a new trip when engine starts"""
@@ -408,8 +423,25 @@ class MPGCalculator:
                 self.lifetime.recent_trip_mpgs = data.get('recent_trip_mpgs', [])
                 self.lifetime.recent_trip_distances = data.get('recent_trip_distances', [])
                 
+                # Validate and fix corrupted data
+                if self.lifetime.total_miles < 0:
+                    print(f"MPG: Fixing negative total_miles: {self.lifetime.total_miles}")
+                    self.lifetime.total_miles = 0.0
+                if self.lifetime.total_gallons < 0:
+                    print(f"MPG: Fixing negative total_gallons: {self.lifetime.total_gallons}")
+                    self.lifetime.total_gallons = 0.0
+                
+                # Check for unreasonable MPG (would indicate bad data)
+                if self.lifetime.total_gallons > 0:
+                    calculated_mpg = self.lifetime.total_miles / self.lifetime.total_gallons
+                    if calculated_mpg > 100 or calculated_mpg < 5:
+                        print(f"MPG: Data appears corrupted (calculated MPG: {calculated_mpg:.1f})")
+                        print(f"  total_miles={self.lifetime.total_miles}, total_gallons={self.lifetime.total_gallons}")
+                        # Keep the data but it will fall back to recent trips or EPA default
+                
                 print(f"MPG: Loaded data - {self.lifetime.total_miles:.1f} mi total, "
-                      f"{len(self.lifetime.recent_trip_mpgs)} recent trips")
+                      f"{len(self.lifetime.recent_trip_mpgs)} recent trips, "
+                      f"avg {self.lifetime.average_mpg:.1f} MPG")
             else:
                 print("MPG: No existing data file, starting fresh")
                 
