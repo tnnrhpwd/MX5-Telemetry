@@ -57,11 +57,18 @@ if (-not $piHost) {
 }
 
 Write-Host ""
+# Stop the display service first to free up serial port and prevent collision
+Write-Host "Stopping display service to free serial port..." -ForegroundColor Cyan
+ssh $piHost "sudo systemctl stop mx5-display.service"
+Start-Sleep -Seconds 2  # Give serial port time to release
+
 Write-Host "Building and uploading ESP32 firmware on Pi..." -ForegroundColor Cyan
 ssh $piHost "cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload"
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: ESP32 flash failed!" -ForegroundColor Red
+$flashResult = $LASTEXITCODE
+if ($flashResult -ne 0) {
+    Write-Host "ERROR: ESP32 flash failed! Restarting display service..." -ForegroundColor Red
+    ssh $piHost "sudo systemctl start mx5-display.service"
     exit 1
 }
 
