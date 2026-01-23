@@ -36,7 +36,7 @@ class TripData:
     @property
     def mpg(self) -> float:
         """Calculate trip MPG"""
-        if self.fuel_used_gal > 0.01:  # Avoid division by zero
+        if self.fuel_used_gal > 0.001:  # Lowered threshold for faster display
             return self.distance_miles / self.fuel_used_gal
         return 0.0
 
@@ -63,7 +63,7 @@ class LifetimeData:
     @property
     def average_mpg(self) -> float:
         """Calculate lifetime average MPG"""
-        if self.total_gallons > 0.1:
+        if self.total_gallons > 0.01:  # Lowered from 0.1 for faster display
             return self.total_miles / self.total_gallons
         # Fall back to recent trips weighted average
         if self.recent_trip_distances and sum(self.recent_trip_distances) > 0:
@@ -71,7 +71,7 @@ class LifetimeData:
             weighted_sum = sum(mpg * dist for mpg, dist in 
                              zip(self.recent_trip_mpgs, self.recent_trip_distances))
             return weighted_sum / total_dist
-        return 0.0
+        return 26.0  # Return EPA default instead of 0 so display shows something
 
 
 class MPGCalculator:
@@ -102,8 +102,8 @@ class MPGCalculator:
     
     # Fuel EMA smoothing factor
     # Lower = smoother but slower response
-    # 0.02 means ~50 samples (1.7 sec at 30Hz) to reach 63% of step change
-    FUEL_EMA_ALPHA = 0.02
+    # 0.05 means ~20 samples (0.7 sec at 30Hz) to reach 63% of step change
+    FUEL_EMA_ALPHA = 0.05  # Increased from 0.02 for faster response
     
     # Minimum speed to consider "driving" (avoids noise at idle)
     MIN_DRIVING_SPEED_MPH = 3.0
