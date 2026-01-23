@@ -1259,8 +1259,8 @@ void drawOverviewScreen() {
     
     // Only redraw gear indicator when gear changed or ring color changed (not every RPM change)
     if (needsFullRedraw || gearChanged || gearGlowChanged) {
-        int gearX = CENTER_X;
-        int gearY = CENTER_Y - 5;  // More centered vertically
+        int gearX = 180;  // Exact center of 360px display
+        int gearY = 180;  // Exact center of 360px display
         int gearRadius = 58;  // Larger gear circle
         LCD_FillCircle(gearX, gearY, gearRadius, COLOR_BG_CARD);
         
@@ -1298,16 +1298,13 @@ void drawOverviewScreen() {
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
-        // Large gear text (size 24 = 3x previous size 8)
-        // Font: each char is approx 6px wide x 8px tall per size unit
-        // Size 24: ~144px wide, ~192px tall per character
-        int fontSize = 24;
-        int charWidth = fontSize * 6;   // ~144px for size 24
-        int charHeight = fontSize * 8;  // ~192px for size 24
-        // Center the text in the gear circle
-        // LCD_DrawString draws from top-left, so offset by half width/height
-        int textX = gearX - charWidth / 2;
-        int textY = gearY - charHeight / 2;
+        // Draw gear text centered in the gear circle
+        // Font size 6 gives ~36x48 pixel characters, good fit for 58px radius circle
+        int fontSize = 6;
+        // Center of screen (180, 180) for 360x360 display
+        // Text position: center minus half of character size
+        int textX = 180 - 18;  // 180 - (36/2) = 162
+        int textY = 180 - 24;  // 180 - (48/2) = 156
         LCD_DrawString(textX, textY, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
         
         // Update cached gear glow
