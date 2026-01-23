@@ -9,18 +9,6 @@ Write-Host "   MX5 Telemetry - Flash All Updates" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Function to prompt for continuation
-function Prompt-Continue {
-    param([string]$message)
-    Write-Host ""
-    Write-Host "$message" -ForegroundColor Yellow
-    $response = Read-Host "Continue? (y/n)"
-    if ($response -ne 'y') {
-        Write-Host "Aborted by user." -ForegroundColor Red
-        exit 1
-    }
-}
-
 # ====================================
 # 1. Connect to Pi and flash ESP32 remotely
 # ====================================
@@ -74,7 +62,6 @@ if ($flashResult -ne 0) {
 
 Write-Host "ESP32 Display flashed successfully!" -ForegroundColor Green
 Write-Host ""
-Prompt-Continue "Ready to update Pi service?"
 
 # ====================================
 # 2. Flash Arduino
@@ -109,8 +96,6 @@ if (-not $arduinoChanges) {
     
     Write-Host "Arduino flashed successfully!" -ForegroundColor Green
 }
-
-Prompt-Continue "Ready to deploy to Raspberry Pi?"
 
 # ====================================
 # 3. Update Pi Service
