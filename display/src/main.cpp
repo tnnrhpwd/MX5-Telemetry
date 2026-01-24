@@ -1455,9 +1455,6 @@ void drawOverviewScreen() {
     // GAS (right side) - shows MPG, tank %, and estimated range
     int gasBoxX = SCREEN_WIDTH - 98;
     int gasBoxW = 70;
-    // GAS (right side) - shows MPG, tank %, and estimated range
-    int gasBoxX = SCREEN_WIDTH - 98;
-    int gasBoxW = 70;
     
     if (needsFullRedraw || mpgChanged || rangeChanged || fuelChanged) {
         // Determine accent color based on fuel level (most urgent indicator)
