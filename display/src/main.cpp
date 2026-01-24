@@ -278,28 +278,28 @@ unsigned long bootStartTime = 0;   // Set in setup()
 bool piDataReceived = false;       // Set true when first valid telemetry data arrives
 int lastBootCountdown = 99;        // Track countdown for redraw detection (start high so first frame triggers)
 
-// Fun loading messages during boot (kept short for font size 3)
+// Fun loading messages during boot (UPPERCASE for font size 3 - 15x21 font)
 const char* LOADING_MESSAGES[] = {
-    "Rocket boosters...",
-    "Flux capacitor...",
-    "Hamster wheels...",
-    "Downloading RAM...",
-    "Spline reticulation",
-    "Engaging warp...",
-    "Brewing coffee...",
-    "Polishing pixels...",
-    "Car spirits...",
-    "Laser cannons...",
-    "Turbo snails...",
-    "Spaghetti code...",
-    "Code monkeys...",
-    "Electrons ready",
-    "Sensor talks...",
-    "Awesomeness init",
-    "Dad jokes...",
-    "Crystal ball...",
-    "Magic tuning...",
-    "Aligning chakras"
+    "ROCKET BOOSTERS",
+    "FLUX CAPACITOR",
+    "HAMSTER WHEELS",
+    "DOWNLOADING RAM",
+    "SPLINE RETICLE",
+    "ENGAGING WARP",
+    "BREWING COFFEE",
+    "POLISHING PIXELS",
+    "CAR SPIRITS",
+    "LASER CANNONS",
+    "TURBO SNAILS",
+    "SPAGHETTI CODE",
+    "CODE MONKEYS",
+    "ELECTRONS READY",
+    "SENSOR TALKS",
+    "AWESOMENESS INIT",
+    "DAD JOKES",
+    "CRYSTAL BALL",
+    "MAGIC TUNING",
+    "ALIGNING CHAKRAS"
 };
 const int NUM_LOADING_MESSAGES = 20;
 int currentLoadingMessage = 0;
@@ -1471,12 +1471,12 @@ void drawOverviewScreen() {
                 LCD_DrawLine(msgBoxX, bottomY + i, msgBoxX + msgBoxW, bottomY + i, MX5_CYAN);
             }
             
-            // Draw loading message centered in box (font size 3)
+            // Draw loading message centered in box (font size 3 - UPPERCASE only)
             const char* msg = LOADING_MESSAGES[currentLoadingMessage];
             int msgLen = strlen(msg);
-            int msgWidth = msgLen * 18;  // Size 3 font is ~18px per char
+            int msgWidth = msgLen * 16;  // Size 3 font is 15px wide + 1px gap = 16px per char
             int msgX = 180 - msgWidth / 2;  // Center on screen
-            LCD_DrawString(msgX, boxY + 8, msg, MX5_CYAN, COLOR_BG_CARD, 3);
+            LCD_DrawString(msgX, boxY + 6, msg, MX5_CYAN, COLOR_BG_CARD, 3);
         }
     } else {
     // RPM on left side - centered in box (80-180)
@@ -1671,16 +1671,15 @@ void drawOverviewScreen() {
     bool hideDuringBoot = !piDataReceived;
     
     // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
-    // Hidden until Pi data is received
+    // Hidden until Pi data is received - ALWAYS clear on every frame during boot
     if (hideDuringBoot) {
         // Don't draw side indicators until Pi data received - they're hidden
-        // Clear the areas on every redraw during boot to ensure they stay hidden
+        // Clear the areas on EVERY frame during boot to ensure they stay hidden
+        // (background image may have box backgrounds baked in)
         int sideBoxY = CENTER_Y - 36;
         int sideBoxH = 72;
-        if (needsFullRedraw || bootCountdownChanged) {
-            LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
-            LCD_FillRoundRect(SCREEN_WIDTH - 110, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
-        }
+        LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
+        LCD_FillRoundRect(SCREEN_WIDTH - 110, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
     } else {
     // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
     // Both boxes aligned to same Y position and height for visual balance
