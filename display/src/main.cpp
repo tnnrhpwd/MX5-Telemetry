@@ -1529,7 +1529,7 @@ void drawOverviewScreen() {
     }
     
     // GAS (right side) - shows MPG, tank %, and estimated range
-    int gasBoxX = SCREEN_WIDTH - 98;
+    int gasBoxX = SCREEN_WIDTH - 110;
     int gasBoxW = 70;
     
     if (needsFullRedraw || mpgChanged || rangeChanged || fuelChanged) {
