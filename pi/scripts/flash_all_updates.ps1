@@ -10,6 +10,51 @@ Write-Host "================================================" -ForegroundColor C
 Write-Host ""
 
 # ====================================
+# 0. Auto-commit and push changes
+# ====================================
+cd $workspaceRoot
+
+# Check for uncommitted changes
+$gitStatus = git status --porcelain
+if ($gitStatus) {
+    Write-Host "[0/3] Auto-committing changes..." -ForegroundColor Green
+    
+    # Generate descriptive commit message
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm"
+    $changedAreas = @()
+    
+    # Check which areas have changes
+    if ($gitStatus | Select-String "display/") { $changedAreas += "ESP32" }
+    if ($gitStatus | Select-String "arduino/") { $changedAreas += "Arduino" }
+    if ($gitStatus | Select-String "pi/") { $changedAreas += "Pi" }
+    if ($gitStatus | Select-String "tools/") { $changedAreas += "Tools" }
+    if ($gitStatus | Select-String "docs/") { $changedAreas += "Docs" }
+    
+    if ($changedAreas.Count -eq 0) {
+        $areaStr = "updates"
+    } else {
+        $areaStr = $changedAreas -join "/"
+    }
+    
+    $commitMsg = "Auto-commit: $areaStr changes - $timestamp"
+    
+    Write-Host "Committing with message: $commitMsg" -ForegroundColor Cyan
+    git add -A
+    git commit -m $commitMsg
+    
+    Write-Host "Pushing to remote..." -ForegroundColor Cyan
+    git push
+    
+    Write-Host "Changes committed and pushed!" -ForegroundColor Green
+    Write-Host ""
+} else {
+    Write-Host "No uncommitted changes detected" -ForegroundColor Gray
+    Write-Host ""
+}
+
+
+
+# ====================================
 # 1. Connect to Pi and flash ESP32 remotely
 # ====================================
 Write-Host "[1/3] Flashing ESP32 Display (via Pi)..." -ForegroundColor Green
