@@ -278,6 +278,33 @@ unsigned long bootStartTime = 0;   // Set in setup()
 bool piDataReceived = false;       // Set true when first valid telemetry data arrives
 int lastBootCountdown = 99;        // Track countdown for redraw detection (start high so first frame triggers)
 
+// Fun loading messages during boot
+const char* LOADING_MESSAGES[] = {
+    "Preparing rocket boosters...",
+    "Calibrating flux capacitor...",
+    "Warming up hamster wheels...",
+    "Downloading more RAM...",
+    "Reticulating splines...",
+    "Engaging warp drive...",
+    "Brewing coffee for CPU...",
+    "Polishing pixels...",
+    "Summoning car spirits...",
+    "Charging laser cannons...",
+    "Inflating turbo snails...",
+    "Untangling spaghetti code...",
+    "Feeding the code monkeys...",
+    "Convincing electrons...",
+    "Negotiating with sensors...",
+    "Initializing awesomeness...",
+    "Loading dad jokes...",
+    "Consulting crystal ball...",
+    "Tuning magic frequencies...",
+    "Aligning chakras..."
+};
+const int NUM_LOADING_MESSAGES = 20;
+int currentLoadingMessage = 0;
+unsigned long lastMessageChange = 0;
+
 // Page transition animation state
 enum TransitionType {
     TRANSITION_NONE = 0,
@@ -612,6 +639,8 @@ void setup() {
     // Start boot countdown timer
     bootStartTime = millis();
     piDataReceived = false;
+    currentLoadingMessage = random(NUM_LOADING_MESSAGES);  // Start with random message
+    lastMessageChange = millis();
     
     Serial.println("Setup complete!");
     
@@ -1386,10 +1415,50 @@ void drawOverviewScreen() {
     }  // End of hideTopDuringBoot check for RPM arc
     
     // === MPH and RPM at top ===
-    // Hidden during Pi boot countdown, shown once piDataReceived is true
+    // During boot: show fun loading messages
+    // After Pi data received: show centered RPM (left) and MPH (right)
     // Positioned so RPM ends at screen center and MPH starts at screen center
-    if (!hideTopDuringBoot) {
-    // RPM on left side - right edge at screen center
+    
+    // Background box dimensions (same for both)
+    int boxW = 100;
+    int boxH = 35;
+    int boxY = 60;  // Y position for both boxes
+    int rpmBoxX = 80;   // RPM box: 80-180 (ends at center)
+    int mphBoxX = 180;  // MPH box: 180-280 (starts at center)
+    
+    if (hideTopDuringBoot) {
+        // Show loading messages during boot countdown
+        // Change message every 5 seconds
+        static int lastDisplayedMessage = -1;
+        bool messageChanged = false;
+        
+        if (millis() - lastMessageChange >= 5000) {
+            // Pick a new random message (different from current)
+            int newMessage;
+            do {
+                newMessage = random(NUM_LOADING_MESSAGES);
+            } while (newMessage == currentLoadingMessage && NUM_LOADING_MESSAGES > 1);
+            currentLoadingMessage = newMessage;
+            lastMessageChange = millis();
+            messageChanged = true;
+        }
+        
+        // Redraw loading message area when message changes or on full redraw
+        if (needsFullRedraw || messageChanged || bootCountdownChanged || lastDisplayedMessage != currentLoadingMessage) {
+            lastDisplayedMessage = currentLoadingMessage;
+            
+            // Clear the entire top area where RPM/MPH would be
+            LCD_FillRect(rpmBoxX, boxY, boxW * 2, boxH, COLOR_BG);
+            
+            // Draw loading message centered across both box areas
+            const char* msg = LOADING_MESSAGES[currentLoadingMessage];
+            int msgLen = strlen(msg);
+            int msgWidth = msgLen * 6;  // Size 1 font is ~6px per char
+            int msgX = 180 - msgWidth / 2;  // Center on screen
+            LCD_DrawString(msgX, boxY + 12, msg, MX5_CYAN, COLOR_BG, 1);
+        }
+    } else {
+    // RPM on left side - centered in box (80-180)
     if (needsFullRedraw || rpmChanged) {
         char rpmStr[8];
         if (!telemetry.hasReceivedTelemetry) {
@@ -1397,18 +1466,22 @@ void drawOverviewScreen() {
         } else {
             snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
         }
-        int rpmX = 90;  // Background: 80-180 (ends at center)
-        int rpmY = 65;
-        // Clear area - ends at screen center (180)
-        LCD_FillRect(rpmX - 10, rpmY - 5, 100, 35, COLOR_BG);
-        // Draw label
-        LCD_DrawString(rpmX, rpmY, "rpm", MX5_GRAY, COLOR_BG, 1);
-        // Draw value (right-aligned look)
+        // Clear box area
+        LCD_FillRect(rpmBoxX, boxY, boxW, boxH, COLOR_BG);
+        
+        // Draw "rpm" label centered at top of box
+        int labelWidth = 3 * 6;  // "rpm" = 3 chars, size 1 = 6px/char
+        int labelX = rpmBoxX + (boxW - labelWidth) / 2;
+        LCD_DrawString(labelX, boxY, "rpm", MX5_GRAY, COLOR_BG, 1);
+        
+        // Draw RPM value centered below label
         int rpmLen = strlen(rpmStr);
-        LCD_DrawString(rpmX + 50 - rpmLen * 9, rpmY + 12, rpmStr, rpmColor, COLOR_BG, 3);
+        int valueWidth = rpmLen * 18;  // Size 3 = ~18px per char
+        int valueX = rpmBoxX + (boxW - valueWidth) / 2;
+        LCD_DrawString(valueX, boxY + 12, rpmStr, rpmColor, COLOR_BG, 3);
     }
     
-    // MPH on right side - left edge at screen center
+    // MPH on right side - centered in box (180-280)
     if (needsFullRedraw || speedChanged) {
         char speedStr[8];
         if (!telemetry.hasReceivedTelemetry) {
@@ -1416,14 +1489,19 @@ void drawOverviewScreen() {
         } else {
             snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
         }
-        int speedX = 190;  // Background: 180-280 (starts at center)
-        int speedY = 65;
-        // Clear area - starts at screen center (180)
-        LCD_FillRect(speedX - 10, speedY - 5, 100, 35, COLOR_BG);
-        // Draw label
-        LCD_DrawString(speedX, speedY, "mph", MX5_GRAY, COLOR_BG, 1);
-        // Draw value
-        LCD_DrawString(speedX, speedY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
+        // Clear box area
+        LCD_FillRect(mphBoxX, boxY, boxW, boxH, COLOR_BG);
+        
+        // Draw "mph" label centered at top of box
+        int labelWidth = 3 * 6;  // "mph" = 3 chars, size 1 = 6px/char
+        int labelX = mphBoxX + (boxW - labelWidth) / 2;
+        LCD_DrawString(labelX, boxY, "mph", MX5_GRAY, COLOR_BG, 1);
+        
+        // Draw speed value centered below label
+        int speedLen = strlen(speedStr);
+        int valueWidth = speedLen * 18;  // Size 3 = ~18px per char
+        int valueX = mphBoxX + (boxW - valueWidth) / 2;
+        LCD_DrawString(valueX, boxY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
     }
     }  // End hideTopDuringBoot check
     
@@ -1555,19 +1633,20 @@ void drawOverviewScreen() {
         }  // End of showBootCountdown else block
     }
     
-    // Use same hiding logic for side indicators
-    bool hideDuringBoot = !piDataReceived && currentBootCountdown > 0;
+    // Hide side indicators until Pi data is received (not just during countdown)
+    // This ensures boxes don't appear after countdown ends but before Pi data arrives
+    bool hideDuringBoot = !piDataReceived;
     
     // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
-    // Hidden during Pi boot countdown
+    // Hidden until Pi data is received
     if (hideDuringBoot) {
-        // Don't draw side indicators during boot - they're hidden
-        // Just clear the areas if needed on full redraw
-        if (needsFullRedraw) {
-            int sideBoxY = CENTER_Y - 36;
-            int sideBoxH = 72;
+        // Don't draw side indicators until Pi data received - they're hidden
+        // Clear the areas on every redraw during boot to ensure they stay hidden
+        int sideBoxY = CENTER_Y - 36;
+        int sideBoxH = 72;
+        if (needsFullRedraw || bootCountdownChanged) {
             LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
-            LCD_FillRoundRect(SCREEN_WIDTH - 98, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
+            LCD_FillRoundRect(SCREEN_WIDTH - 110, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
         }
     } else {
     // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
