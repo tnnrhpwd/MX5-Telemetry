@@ -1188,6 +1188,11 @@ void drawOverviewScreen() {
     if (currentBootCountdown < 0) currentBootCountdown = 0;
     bool inBootCountdown = !piDataReceived && currentBootCountdown > 0;
     bool bootCountdownChanged = inBootCountdown && (currentBootCountdown != lastBootCountdown);
+    
+    // Detect when countdown JUST ended (was counting, now at 0 or piDataReceived)
+    bool wasInCountdown = !piDataReceived && lastBootCountdown > 0;
+    bool countdownJustEnded = wasInCountdown && !inBootCountdown;
+    
     // Update lastBootCountdown immediately so next frame can detect change
     // (Must happen before early return check)
     lastBootCountdown = currentBootCountdown;
@@ -1197,8 +1202,8 @@ void drawOverviewScreen() {
     bool justReceivedPiData = piDataReceived && !prevPiDataReceived;
     prevPiDataReceived = piDataReceived;
     
-    // Force full redraw when Pi data first arrives to show all hidden indicators
-    if (justReceivedPiData) {
+    // Force full redraw when Pi data first arrives OR countdown ends to show all indicators
+    if (justReceivedPiData || countdownJustEnded) {
         needsFullRedraw = true;
     }
     
@@ -1224,7 +1229,7 @@ void drawOverviewScreen() {
     // Check if anything at all changed
     bool anyChange = needsFullRedraw || rpmChanged || speedChanged || gearChanged || 
         coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged || 
-        arcChanged || mpgChanged || rangeChanged || bootCountdownChanged || justReceivedPiData;
+        arcChanged || mpgChanged || rangeChanged || bootCountdownChanged || justReceivedPiData || countdownJustEnded;
     
     // Skip if nothing changed
     if (!anyChange) return;
@@ -3044,18 +3049,22 @@ void parseCommand(String cmd) {
     else if (cmd.startsWith("COOLANT:")) {
         telemetry.coolantTemp = cmd.substring(8).toFloat();
         telemetry.connected = true;
+        if (!piDataReceived) { piDataReceived = true; needsFullRedraw = true; }
     }
     else if (cmd.startsWith("OIL:")) {
         telemetry.oilTemp = cmd.substring(4).toFloat();
         telemetry.connected = true;
+        if (!piDataReceived) { piDataReceived = true; needsFullRedraw = true; }
     }
     else if (cmd.startsWith("FUEL:")) {
         telemetry.fuelLevel = cmd.substring(5).toFloat();
         telemetry.connected = true;
+        if (!piDataReceived) { piDataReceived = true; needsFullRedraw = true; }
     }
     else if (cmd.startsWith("AMBT:")) {
         telemetry.ambientTemp = cmd.substring(5).toFloat();
         telemetry.connected = true;
+        if (!piDataReceived) { piDataReceived = true; needsFullRedraw = true; }
     }
     else if (cmd.startsWith("TIRE:")) {
         // Format: TIRE:FL,FR,RL,RR
@@ -3069,6 +3078,7 @@ void parseCommand(String cmd) {
             }
         }
         telemetry.connected = true;
+        if (!piDataReceived) { piDataReceived = true; needsFullRedraw = true; }
     }
     // Per-tire temperatures from Pi (format: TIRE_TEMP:FL,FR,RL,RR in Fahrenheit)
     else if (cmd.startsWith("TIRE_TEMP:")) {
@@ -3110,10 +3120,12 @@ void parseCommand(String cmd) {
             telemetry.gForceY = gData.substring(commaPos + 1).toFloat();
         }
         telemetry.connected = true;
+        if (!piDataReceived) { piDataReceived = true; needsFullRedraw = true; }
     }
     else if (cmd.startsWith("ENGINE:")) {
         telemetry.engineRunning = (cmd.substring(7).toInt() == 1);
         telemetry.connected = true;
+        if (!piDataReceived) { piDataReceived = true; needsFullRedraw = true; }
     }
     // Diagnostics update from Pi (format: DIAG:checkEngine,abs,oilWarn,battery,headlights,highBeams)
     else if (cmd.startsWith("DIAG:")) {
