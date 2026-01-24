@@ -1291,6 +1291,15 @@ void drawOverviewScreen() {
         // Reset arc cache so full arc is redrawn
         prevTelemetry.arcEndAngle = 135.0;  // Start angle
         prevTelemetry.arcColor = MX5_DARKGRAY;
+        
+        // If Pi data not received yet, immediately clear side indicator areas
+        // This prevents background image from showing box backgrounds during boot
+        if (!piDataReceived) {
+            int sideBoxY = CENTER_Y - 36;
+            int sideBoxH = 72;
+            LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
+            LCD_FillRoundRect(SCREEN_WIDTH - 110, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
+        }
     }
     
     // Calculate boot countdown early for hiding elements
