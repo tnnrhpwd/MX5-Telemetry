@@ -1258,6 +1258,13 @@ void drawOverviewScreen() {
     // Show indicators once Pi data is received OR countdown has finished
     bool hideTopDuringBoot = !piDataReceived && currentBootCountdown > 0;
     
+    // Calculate RPM color for both arc and text display
+    uint16_t rpmColor = MX5_BLUE;
+    if (telemetry.rpm >= 5500) rpmColor = MX5_RED;
+    else if (telemetry.rpm >= 4500) rpmColor = MX5_ORANGE;
+    else if (telemetry.rpm >= 3000) rpmColor = MX5_YELLOW;
+    else if (telemetry.rpm >= 2000) rpmColor = MX5_GREEN;
+    
     // === RPM ARC GAUGE (Screen border) - SEGMENT-BASED INCREMENTAL UPDATE ===
     // Hidden during boot countdown
     if (!hideTopDuringBoot) {
@@ -1268,12 +1275,6 @@ void drawOverviewScreen() {
     // Each segment represents a fixed portion of the arc. When RPM changes, we only
     // update the segments that changed state (colored <-> gray). This ensures
     // pixel-perfect coverage with no gaps or missed pixels.
-    
-    uint16_t rpmColor = MX5_BLUE;
-    if (telemetry.rpm >= 5500) rpmColor = MX5_RED;
-    else if (telemetry.rpm >= 4500) rpmColor = MX5_ORANGE;
-    else if (telemetry.rpm >= 3000) rpmColor = MX5_YELLOW;
-    else if (telemetry.rpm >= 2000) rpmColor = MX5_GREEN;
     
     // Arc parameters
     int arcRadius = 174;  // Just inside the 360px circle edge
