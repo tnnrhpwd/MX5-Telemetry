@@ -1188,10 +1188,19 @@ void drawOverviewScreen() {
     if (currentBootCountdown < 0) currentBootCountdown = 0;
     bool inBootCountdown = !piDataReceived && currentBootCountdown > 0;
     bool bootCountdownChanged = inBootCountdown && (currentBootCountdown != lastBootCountdown);
+    // Update lastBootCountdown immediately so next frame can detect change
+    // (Must happen before early return check)
+    lastBootCountdown = currentBootCountdown;
+    
     // Also trigger redraw when transitioning OUT of countdown (piDataReceived just became true)
     static bool prevPiDataReceived = false;
     bool justReceivedPiData = piDataReceived && !prevPiDataReceived;
     prevPiDataReceived = piDataReceived;
+    
+    // Force full redraw when Pi data first arrives to show all hidden indicators
+    if (justReceivedPiData) {
+        needsFullRedraw = true;
+    }
     
     bool tpmsChanged = false;
     for (int i = 0; i < 4; i++) {
@@ -1670,9 +1679,7 @@ void drawOverviewScreen() {
         prevTelemetry.tirePressure[i] = telemetry.tirePressure[i];
     }
     prevTelemetry.initialized = true;
-    
-    // Update lastBootCountdown for next frame's change detection
-    lastBootCountdown = currentBootCountdown;
+    // Note: lastBootCountdown is updated at the start of function before early return check
 }
 
 void drawRPMScreen() {
