@@ -278,28 +278,28 @@ unsigned long bootStartTime = 0;   // Set in setup()
 bool piDataReceived = false;       // Set true when first valid telemetry data arrives
 int lastBootCountdown = 99;        // Track countdown for redraw detection (start high so first frame triggers)
 
-// Fun loading messages during boot
+// Fun loading messages during boot (kept short for font size 3)
 const char* LOADING_MESSAGES[] = {
-    "Preparing rocket boosters...",
-    "Calibrating flux capacitor...",
-    "Warming up hamster wheels...",
-    "Downloading more RAM...",
-    "Reticulating splines...",
-    "Engaging warp drive...",
-    "Brewing coffee for CPU...",
+    "Rocket boosters...",
+    "Flux capacitor...",
+    "Hamster wheels...",
+    "Downloading RAM...",
+    "Spline reticulation",
+    "Engaging warp...",
+    "Brewing coffee...",
     "Polishing pixels...",
-    "Summoning car spirits...",
-    "Charging laser cannons...",
-    "Inflating turbo snails...",
-    "Untangling spaghetti code...",
-    "Feeding the code monkeys...",
-    "Convincing electrons...",
-    "Negotiating with sensors...",
-    "Initializing awesomeness...",
-    "Loading dad jokes...",
-    "Consulting crystal ball...",
-    "Tuning magic frequencies...",
-    "Aligning chakras..."
+    "Car spirits...",
+    "Laser cannons...",
+    "Turbo snails...",
+    "Spaghetti code...",
+    "Code monkeys...",
+    "Electrons ready",
+    "Sensor talks...",
+    "Awesomeness init",
+    "Dad jokes...",
+    "Crystal ball...",
+    "Magic tuning...",
+    "Aligning chakras"
 };
 const int NUM_LOADING_MESSAGES = 20;
 int currentLoadingMessage = 0;
@@ -1439,6 +1439,7 @@ void drawOverviewScreen() {
         // Show loading messages during boot countdown
         // Change message every 5 seconds
         static int lastDisplayedMessage = -1;
+        static bool loadingBoxDrawn = false;
         bool messageChanged = false;
         
         if (millis() - lastMessageChange >= 5000) {
@@ -1452,13 +1453,17 @@ void drawOverviewScreen() {
             messageChanged = true;
         }
         
-        // Redraw loading message area when message changes or on full redraw
-        if (needsFullRedraw || messageChanged || bootCountdownChanged || lastDisplayedMessage != currentLoadingMessage) {
+        // Only redraw when message changes or on first draw (not every countdown tick)
+        if (needsFullRedraw || messageChanged || !loadingBoxDrawn) {
             lastDisplayedMessage = currentLoadingMessage;
+            loadingBoxDrawn = true;
             
-            // Draw background box for loading message
-            int msgBoxX = rpmBoxX - 5;
-            int msgBoxW = boxW * 2 + 10;
+            // Clear a wide area to handle any message length (full width between side indicators)
+            LCD_FillRect(50, boxY - 5, 260, boxH + 15, COLOR_BG);
+            
+            // Draw background box for loading message (centered, fixed width)
+            int msgBoxX = 70;
+            int msgBoxW = 220;  // Fixed width to contain all messages
             LCD_FillRoundRect(msgBoxX, boxY - 2, msgBoxW, boxH + 4, 6, COLOR_BG_CARD);
             // Draw bottom border only
             int bottomY = boxY + boxH + 2;
@@ -1466,7 +1471,7 @@ void drawOverviewScreen() {
                 LCD_DrawLine(msgBoxX, bottomY + i, msgBoxX + msgBoxW, bottomY + i, MX5_CYAN);
             }
             
-            // Draw loading message centered across both box areas (font size 3 to match MPH values)
+            // Draw loading message centered in box (font size 3)
             const char* msg = LOADING_MESSAGES[currentLoadingMessage];
             int msgLen = strlen(msg);
             int msgWidth = msgLen * 18;  // Size 3 font is ~18px per char
