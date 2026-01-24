@@ -1456,13 +1456,14 @@ void drawOverviewScreen() {
         if (needsFullRedraw || messageChanged || bootCountdownChanged || lastDisplayedMessage != currentLoadingMessage) {
             lastDisplayedMessage = currentLoadingMessage;
             
-            // Draw rounded background box with border for loading message
+            // Draw background box for loading message
             int msgBoxX = rpmBoxX - 5;
             int msgBoxW = boxW * 2 + 10;
             LCD_FillRoundRect(msgBoxX, boxY - 2, msgBoxW, boxH + 4, 6, COLOR_BG_CARD);
-            // Draw border around the box
+            // Draw bottom border only
+            int bottomY = boxY + boxH + 2;
             for (int i = 0; i < 2; i++) {
-                LCD_DrawRoundRect(msgBoxX - i, boxY - 2 - i, msgBoxW + i*2, boxH + 4 + i*2, 6, MX5_CYAN);
+                LCD_DrawLine(msgBoxX, bottomY + i, msgBoxX + msgBoxW, bottomY + i, MX5_CYAN);
             }
             
             // Draw loading message centered across both box areas (font size 3 to match MPH values)
@@ -1494,6 +1495,12 @@ void drawOverviewScreen() {
         int valueWidth = rpmLen * 18;  // Size 3 = ~18px per char
         int valueX = rpmBoxX + (boxW - valueWidth) / 2;
         LCD_DrawString(valueX, boxY + 12, rpmStr, rpmColor, COLOR_BG, 3);
+        
+        // Draw bottom border
+        int bottomY = boxY + boxH;
+        for (int i = 0; i < 2; i++) {
+            LCD_DrawLine(rpmBoxX, bottomY + i, rpmBoxX + boxW, bottomY + i, rpmColor);
+        }
     }
     
     // MPH on right side - centered in box (180-280)
@@ -1517,6 +1524,12 @@ void drawOverviewScreen() {
         int valueWidth = speedLen * 18;  // Size 3 = ~18px per char
         int valueX = mphBoxX + (boxW - valueWidth) / 2;
         LCD_DrawString(valueX, boxY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
+        
+        // Draw bottom border
+        int bottomY = boxY + boxH;
+        for (int i = 0; i < 2; i++) {
+            LCD_DrawLine(mphBoxX, bottomY + i, mphBoxX + boxW, bottomY + i, MX5_WHITE);
+        }
     }
     }  // End hideTopDuringBoot check
     
