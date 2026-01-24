@@ -8,7 +8,7 @@ Mobile web interface for controlling the MX5 Telemetry display system when parke
 
 | Network | Typical IP Address | URL to Try |
 |---------|-------------------|------------|
-| Home WiFi | `192.168.1.28` | `http://192.168.1.28:5000` |
+| Home WiFi | `192.168.1.23` | `http://192.168.1.23:5000` |
 | iPhone Hotspot | `172.20.10.2` - `172.20.10.4` | `http://172.20.10.2:5000` |
 | Android Hotspot | `192.168.43.2` - `192.168.43.4` | `http://192.168.43.2:5000` |
 | mDNS (any) | `mx5-telemetry.local` | `http://mx5-telemetry.local:5000` |
@@ -43,7 +43,7 @@ python3 main.py
 
 You'll see:
 ```
-✓ Web remote available at http://192.168.1.28:5000
+✓ Web remote available at http://192.168.1.23:5000
 ```
 
 ### 3. Find the IP Address
@@ -51,19 +51,19 @@ You'll see:
 The easiest way to find the web remote URL is to **look at the System screen** on your Pi display:
 1. Navigate to **System** screen (Screen 6)
 2. Look at the **"WEB REMOTE"** card
-3. The URL shown (e.g., `192.168.1.28:5000`) is what you type into your phone's browser
+3. The URL shown (e.g., `192.168.1.23:5000`) is what you type into your phone's browser
 
 ### 4. Connect Phone - Real-World Scenarios
 
 #### Scenario 1: Home WiFi (Garage Start)
 **What happens:** Car starts in garage, Pi auto-connects to home WiFi
 
-**Web URL:** `http://192.168.1.28:5000`
+**Web URL:** `http://192.168.1.23:5000`
 
 **How to access:**
 1. Phone connects to your home WiFi
 2. Open browser on phone
-3. Go to `http://192.168.1.28:5000`
+3. Go to `http://192.168.1.23:5000`
 
 ---
 
@@ -143,7 +143,7 @@ wpa_passphrase=YourPasswordHere
 **Solution Options:**
 
 **Option A - Try common IPs based on network:**
-- Home WiFi: `http://192.168.1.28:5000`
+- Home WiFi: `http://192.168.1.23:5000`
 - iPhone hotspot: Try `http://172.20.10.2:5000` through `http://172.20.10.4:5000`
 - Android hotspot: Try `http://192.168.43.2:5000` through `http://192.168.43.4:5000`
 - Pi hotspot: `http://192.168.50.1:5000`
@@ -210,8 +210,8 @@ Now you have a native-feeling app icon!
 ### Your Typical Day - Step by Step (WIRELESS CARPLAY VERSION)
 
 **Morning in Garage:**
-1. ✅ Start car → Pi boots and connects to home WiFi (192.168.1.28)
-2. ✅ You can access web remote from any device on home WiFi: `http://192.168.1.28:5000`
+1. ✅ Start car → Pi boots and connects to home WiFi (192.168.1.23)
+2. ✅ You can access web remote from any device on home WiFi: `http://192.168.1.23:5000`
 
 **Leaving Garage - THE PROBLEM:**
 3. ❌ Enable phone hotspot → Pi switches to phone hotspot
