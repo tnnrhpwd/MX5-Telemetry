@@ -1315,8 +1315,8 @@ void drawOverviewScreen() {
         }
         int speedX = 110;
         int speedY = 65;  // Moved down 30px from 35
-        // Clear area
-        LCD_FillRect(speedX - 10, speedY - 5, 80, 35, COLOR_BG);
+        // Clear area (matches RPM width)
+        LCD_FillRect(speedX - 10, speedY - 5, 100, 35, COLOR_BG);
         // Draw label
         LCD_DrawString(speedX, speedY, "mph", MX5_GRAY, COLOR_BG, 1);
         // Draw value
@@ -1333,7 +1333,7 @@ void drawOverviewScreen() {
         }
         int rpmX = SCREEN_WIDTH - 160;
         int rpmY = 65;  // Moved down 30px from 35
-        // Clear area
+        // Clear area (matches MPH width)
         LCD_FillRect(rpmX - 10, rpmY - 5, 100, 35, COLOR_BG);
         // Draw label
         LCD_DrawString(rpmX, rpmY, "rpm", MX5_GRAY, COLOR_BG, 1);
@@ -1413,49 +1413,33 @@ void drawOverviewScreen() {
         prevGearGlow = gearGlow;
     }
     
-    // === LEFT SIDE: Coolant and Ambient (vertical stack) ===
-    int leftBoxX = 50;  // Moved right, closer to gear
-    int leftBoxY = CENTER_Y - 25;
-    int leftBoxW = 70;
-    int leftBoxH = 32;
-    int leftBoxGap = 8;
+    // === SIDE INDICATORS: Coolant (left), Oil (middle-left), Gas (right) ===
+    // All boxes aligned to same Y position and height for visual balance
+    int sideBoxY = CENTER_Y - 36;  // Common Y for all side indicators
+    int sideBoxH = 72;  // Common height for all side indicators
     
-    // COOLANT (left top)
+    // COOLANT (left side)
+    int coolBoxX = 50;
+    int coolBoxW = 70;
     if (needsFullRedraw || coolantChanged) {
         uint16_t coolColor = MX5_CYAN;
         if (telemetry.coolantTemp == 0) coolColor = MX5_RED;  // No data received
         else if (telemetry.coolantTemp > 220) coolColor = MX5_RED;
         else if (telemetry.coolantTemp > 200) coolColor = MX5_ORANGE;
-        LCD_FillRoundRect(leftBoxX, leftBoxY, leftBoxW, leftBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(leftBoxX, leftBoxY, 3, leftBoxH, coolColor);
-        LCD_DrawString(leftBoxX + 6, leftBoxY + 3, "COOL", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_FillRoundRect(coolBoxX, sideBoxY, coolBoxW, sideBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(coolBoxX, sideBoxY, 3, sideBoxH, coolColor);
+        LCD_DrawString(coolBoxX + 6, sideBoxY + 3, "COOL", MX5_GRAY, COLOR_BG_CARD, 1);
         char coolStr[8];
         snprintf(coolStr, sizeof(coolStr), "%dF", (int)telemetry.coolantTemp);
-        LCD_DrawString(leftBoxX + 6, leftBoxY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(coolBoxX + 6, sideBoxY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
     }
     
-    // AMBIENT (left bottom)
-    if (needsFullRedraw || ambientChanged) {
-        uint16_t ambientColor = MX5_CYAN;
-        if (telemetry.ambientTemp < 32) ambientColor = MX5_BLUE;  // Freezing
-        else if (telemetry.ambientTemp > 95) ambientColor = MX5_RED;  // Hot
-        else if (telemetry.ambientTemp > 85) ambientColor = MX5_ORANGE;  // Warm
-        LCD_FillRoundRect(leftBoxX, leftBoxY + leftBoxH + leftBoxGap, leftBoxW, leftBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(leftBoxX, leftBoxY + leftBoxH + leftBoxGap, 3, leftBoxH, ambientColor);
-        LCD_DrawString(leftBoxX + 6, leftBoxY + leftBoxH + leftBoxGap + 3, "AMB", MX5_GRAY, COLOR_BG_CARD, 1);
-        char ambientStr[8];
-        snprintf(ambientStr, sizeof(ambientStr), "%dF", (int)telemetry.ambientTemp);
-        LCD_DrawString(leftBoxX + 6, leftBoxY + leftBoxH + leftBoxGap + 16, ambientStr, ambientColor, COLOR_BG_CARD, 2);
-    }
-    
-    // === OIL STATUS INDICATOR (below ambient, compact) ===
-    // Shows oil pressure status from CAN (TRUE = OK, FALSE = WARNING)
+    // OIL STATUS (middle-left, between coolant and gas)
+    int oilBoxX = 50;
+    int oilBoxY = sideBoxY + 42;  // Positioned within same visual group
+    int oilBoxW = 70;
+    int oilBoxH = 22;
     if (needsFullRedraw || oilChanged) {
-        int oilBoxX = leftBoxX;
-        int oilBoxY = leftBoxY + 2 * (leftBoxH + leftBoxGap);  // Below ambient box
-        int oilBoxW = leftBoxW;
-        int oilBoxH = 22;  // Compact height
-        
         // Oil status color: green = OK, red = warning/no pressure
         uint16_t oilColor = telemetry.oilWarning ? MX5_RED : MX5_GREEN;
         
@@ -1463,18 +1447,18 @@ void drawOverviewScreen() {
         LCD_FillRect(oilBoxX, oilBoxY, 3, oilBoxH, oilColor);
         LCD_DrawString(oilBoxX + 6, oilBoxY + 2, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
         
-        // Show status text (size 2 to match other indicators)
+        // Show status text
         const char* oilStatus = telemetry.oilWarning ? "LOW" : "OK";
         LCD_DrawString(oilBoxX + 28, oilBoxY + 2, oilStatus, oilColor, COLOR_BG_CARD, 2);
     }
     
-    // === RIGHT SIDE: Combined GAS indicator (MPG, Tank%, Range) ===
-    int rightBoxX = SCREEN_WIDTH - 98;
-    int rightBoxY = CENTER_Y - 35;  // Taller box, centered
-    int rightBoxW = 70;
-    int rightBoxH = 72;  // Combined height for all 3 values
+    // GAS (right side) - shows MPG, tank %, and estimated range
+    int gasBoxX = SCREEN_WIDTH - 98;
+    int gasBoxW = 70;
+    // GAS (right side) - shows MPG, tank %, and estimated range
+    int gasBoxX = SCREEN_WIDTH - 98;
+    int gasBoxW = 70;
     
-    // GAS indicator - shows MPG, tank %, and estimated range
     if (needsFullRedraw || mpgChanged || rangeChanged || fuelChanged) {
         // Determine accent color based on fuel level (most urgent indicator)
         uint16_t accentColor = MX5_GREEN;
@@ -1495,43 +1479,46 @@ void drawOverviewScreen() {
         else if (telemetry.fuelLevel < 25) tankColor = MX5_ORANGE;
         else if (telemetry.fuelLevel < 40) tankColor = MX5_YELLOW;
         
-        // Range color
+        // Calculate display range first (may need fallback calculation)
+        int displayRange = telemetry.rangeMiles;
+        if (displayRange <= 0 && telemetry.fuelLevel > 0) {
+            // Calculate range from fuel level: fuel% * 12.7gal tank * 26mpg EPA / 100
+            float mpgForCalc = telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f;
+            displayRange = (int)(telemetry.fuelLevel * 12.7f * mpgForCalc / 100.0f);
+        }
+        
+        // Range color (based on actual display value)
         uint16_t rangeColor = MX5_GREEN;
-        if (telemetry.rangeMiles < 30) rangeColor = MX5_RED;
-        else if (telemetry.rangeMiles < 60) rangeColor = MX5_ORANGE;
-        else if (telemetry.rangeMiles < 100) rangeColor = MX5_YELLOW;
+        if (displayRange < 30) rangeColor = MX5_RED;
+        else if (displayRange < 60) rangeColor = MX5_ORANGE;
+        else if (displayRange < 100) rangeColor = MX5_YELLOW;
         
         // Draw box background
-        LCD_FillRoundRect(rightBoxX, rightBoxY, rightBoxW, rightBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(rightBoxX, rightBoxY, 3, rightBoxH, accentColor);  // Left accent bar
+        LCD_FillRoundRect(gasBoxX, sideBoxY, gasBoxW, sideBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(gasBoxX, sideBoxY, 3, sideBoxH, accentColor);  // Left accent bar
         
         // "GAS" label (grey)
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 3, "GAS", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_DrawString(gasBoxX + 6, sideBoxY + 3, "GAS", MX5_GRAY, COLOR_BG_CARD, 1);
         
         // MPG value (row 1) - size 2 to match tank% and range
         char mpgStr[10];
         // Always show MPG - defaults to EPA average (26) if no data yet
         snprintf(mpgStr, sizeof(mpgStr), "%.0fmpg", telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f);
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(gasBoxX + 6, sideBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 2);
         
         // Tank % (row 2)
         char tankStr[10];
         snprintf(tankStr, sizeof(tankStr), "%d%%", (int)telemetry.fuelLevel);
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 36, tankStr, tankColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(gasBoxX + 6, sideBoxY + 36, tankStr, tankColor, COLOR_BG_CARD, 2);
         
-        // Range miles (row 3) - calculate from fuel% if no range data
+        // Range miles (row 3) - displayRange already calculated above
         char rangeStr[10];
-        int displayRange = telemetry.rangeMiles;
-        if (displayRange <= 0 && telemetry.fuelLevel > 0) {
-            // Calculate range from fuel level: fuel% * 12.7gal tank * 26mpg EPA / 100
-            displayRange = (int)(telemetry.fuelLevel * 12.7f * 26.0f / 100.0f);
-        }
         if (displayRange > 0) {
             snprintf(rangeStr, sizeof(rangeStr), "%dmi", displayRange);
         } else {
             snprintf(rangeStr, sizeof(rangeStr), "--mi");
         }
-        LCD_DrawString(rightBoxX + 6, rightBoxY + 56, rangeStr, rangeColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(gasBoxX + 6, sideBoxY + 56, rangeStr, rangeColor, COLOR_BG_CARD, 2);
     }
     
     // Navigation Lock indicator (bottom right when locked) - static, only on full redraw
