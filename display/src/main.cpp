@@ -1388,9 +1388,11 @@ void drawOverviewScreen() {
         // Gear text - display based on engine state and clutch
         char gearStr[4];
         
-        // When engine is off, show 'G' (unknown gear state)
+        // When engine is off, show 'G' unless we have a definitive gear from CAN (neutral/reverse)
         if (!telemetry.engineRunning) {
-            snprintf(gearStr, sizeof(gearStr), "G");
+            if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
+            else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+            else snprintf(gearStr, sizeof(gearStr), "G");  // Unknown gear when engine off
         } else if (telemetry.clutchEngaged) {
             // Clutch is engaged - show per user preference
             switch (clutchDisplayMode) {
