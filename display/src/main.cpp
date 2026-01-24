@@ -1425,9 +1425,19 @@ void drawOverviewScreen() {
         bool showBootCountdown = !piDataReceived && bootCountdown > 0;
         
         if (showBootCountdown) {
-            // Show countdown during Pi boot
-            snprintf(gearStr, sizeof(gearStr), "%d", bootCountdown);
-        } else if (!telemetry.engineRunning) {
+            // Show countdown during Pi boot - use small font for countdown
+            char countdownStr[4];
+            snprintf(countdownStr, sizeof(countdownStr), "%d", bootCountdown);
+            // Draw countdown text with regular font (size 8) centered in circle
+            int textWidth = strlen(countdownStr) * 12;  // Size 8 font is ~12px per char
+            LCD_DrawString(gearX - textWidth/2, gearY - 16, countdownStr, gearGlow, COLOR_BG_CARD, 8);
+            
+            // Update cached gear glow and countdown
+            prevGearGlow = gearGlow;
+            lastBootCountdown = bootCountdown;
+        } else {
+            // Not showing countdown - determine gear text to display
+        if (!telemetry.engineRunning) {
             // When engine is off, show gear if known from CAN (neutral/reverse), else 'G'
             if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
@@ -1465,9 +1475,8 @@ void drawOverviewScreen() {
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
-        
-        // Track boot countdown for redraw detection
-        lastBootCountdown = showBootCountdown ? bootCountdown : -1;
+        lastBootCountdown = -1;  // Not showing countdown
+        }  // End of showBootCountdown else block
     }
     
     // Calculate boot countdown for hiding elements
@@ -3001,18 +3010,26 @@ void parseCommand(String cmd) {
     else if (cmd.startsWith("RPM:")) {
         telemetry.rpm = cmd.substring(4).toFloat();
         telemetry.connected = true;
-        piDataReceived = true;  // Pi is sending data, end boot countdown
-        needsFullRedraw = true;  // Redraw to show indicators
+        if (!piDataReceived) {
+            piDataReceived = true;  // Pi is sending data, end boot countdown
+            needsFullRedraw = true;  // Force full redraw to show all indicators
+        }
     }
     else if (cmd.startsWith("SPEED:")) {
         telemetry.speed = cmd.substring(6).toFloat();
         telemetry.connected = true;
-        piDataReceived = true;
+        if (!piDataReceived) {
+            piDataReceived = true;
+            needsFullRedraw = true;
+        }
     }
     else if (cmd.startsWith("GEAR:")) {
         telemetry.gear = cmd.substring(5).toInt();
         telemetry.connected = true;
-        piDataReceived = true;
+        if (!piDataReceived) {
+            piDataReceived = true;
+            needsFullRedraw = true;
+        }
     }
     else if (cmd.startsWith("COOLANT:")) {
         telemetry.coolantTemp = cmd.substring(8).toFloat();
