@@ -278,28 +278,28 @@ unsigned long bootStartTime = 0;   // Set in setup()
 bool piDataReceived = false;       // Set true when first valid telemetry data arrives
 int lastBootCountdown = 99;        // Track countdown for redraw detection (start high so first frame triggers)
 
-// Fun loading messages during boot (UPPERCASE for font size 3 - 15x21 font)
+// Fun loading messages during boot (font size 2 - 10x14 has full character set)
 const char* LOADING_MESSAGES[] = {
-    "ROCKET BOOSTERS",
-    "FLUX CAPACITOR",
-    "HAMSTER WHEELS",
-    "DOWNLOADING RAM",
-    "SPLINE RETICLE",
-    "ENGAGING WARP",
-    "BREWING COFFEE",
-    "POLISHING PIXELS",
-    "CAR SPIRITS",
-    "LASER CANNONS",
-    "TURBO SNAILS",
-    "SPAGHETTI CODE",
-    "CODE MONKEYS",
-    "ELECTRONS READY",
-    "SENSOR TALKS",
-    "AWESOMENESS INIT",
-    "DAD JOKES",
-    "CRYSTAL BALL",
-    "MAGIC TUNING",
-    "ALIGNING CHAKRAS"
+    "Rocket boosters...",
+    "Flux capacitor...",
+    "Hamster wheels...",
+    "Downloading RAM...",
+    "Spline reticulation",
+    "Engaging warp...",
+    "Brewing coffee...",
+    "Polishing pixels...",
+    "Car spirits...",
+    "Laser cannons...",
+    "Turbo snails...",
+    "Spaghetti code...",
+    "Code monkeys...",
+    "Electrons ready",
+    "Sensor talks...",
+    "Awesomeness init",
+    "Dad jokes...",
+    "Crystal ball...",
+    "Magic tuning...",
+    "Aligning chakras"
 };
 const int NUM_LOADING_MESSAGES = 20;
 int currentLoadingMessage = 0;
@@ -1471,12 +1471,12 @@ void drawOverviewScreen() {
                 LCD_DrawLine(msgBoxX, bottomY + i, msgBoxX + msgBoxW, bottomY + i, MX5_CYAN);
             }
             
-            // Draw loading message centered in box (font size 3 - UPPERCASE only)
+            // Draw loading message centered in box (font size 2 - full character set)
             const char* msg = LOADING_MESSAGES[currentLoadingMessage];
             int msgLen = strlen(msg);
-            int msgWidth = msgLen * 16;  // Size 3 font is 15px wide + 1px gap = 16px per char
+            int msgWidth = msgLen * 11;  // Size 2 font is 10px wide + 1px gap = 11px per char
             int msgX = 180 - msgWidth / 2;  // Center on screen
-            LCD_DrawString(msgX, boxY + 6, msg, MX5_CYAN, COLOR_BG_CARD, 3);
+            LCD_DrawString(msgX, boxY + 10, msg, MX5_CYAN, COLOR_BG_CARD, 2);
         }
     } else {
     // RPM on left side - centered in box (80-180)
