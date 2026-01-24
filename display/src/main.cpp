@@ -1039,6 +1039,83 @@ void handleTouch() {
     }
 }
 
+// Draw large gear indicator character (4x bigger than font size 8)
+// Uses filled rectangles for fast rendering - 7-segment style
+// Character size: ~40x70 pixels (fits in 50px radius circle)
+void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, uint16_t bgColor) {
+    // Segment dimensions for large digit
+    int segW = 8;   // Segment width (thickness)
+    int segL = 28;  // Segment length
+    int gap = 2;    // Gap between segments
+    
+    // Total digit size: width = segL + 2*gap, height = 2*segL + 3*gap + segW
+    int digitW = segL;
+    int digitH = 2 * segL + segW + 2 * gap;
+    
+    // Center position
+    int x = centerX - digitW / 2;
+    int y = centerY - digitH / 2;
+    
+    char c = str[0];
+    
+    // 7-segment layout:
+    //   AAA
+    //  F   B
+    //   GGG
+    //  E   C
+    //   DDD
+    
+    // Segment positions relative to top-left
+    // A: top horizontal
+    // B: top-right vertical
+    // C: bottom-right vertical
+    // D: bottom horizontal
+    // E: bottom-left vertical
+    // F: top-left vertical
+    // G: middle horizontal
+    
+    bool segA = false, segB = false, segC = false, segD = false;
+    bool segE = false, segF = false, segG = false;
+    
+    // Define which segments are on for each character
+    switch (c) {
+        case '0': case 'O': segA=1; segB=1; segC=1; segD=1; segE=1; segF=1; segG=0; break;
+        case '1':           segA=0; segB=1; segC=1; segD=0; segE=0; segF=0; segG=0; break;
+        case '2':           segA=1; segB=1; segC=0; segD=1; segE=1; segF=0; segG=1; break;
+        case '3':           segA=1; segB=1; segC=1; segD=1; segE=0; segF=0; segG=1; break;
+        case '4':           segA=0; segB=1; segC=1; segD=0; segE=0; segF=1; segG=1; break;
+        case '5': case 'S': segA=1; segB=0; segC=1; segD=1; segE=0; segF=1; segG=1; break;
+        case '6':           segA=1; segB=0; segC=1; segD=1; segE=1; segF=1; segG=1; break;
+        case 'N':           segA=0; segB=1; segC=1; segD=0; segE=1; segF=1; segG=0; break;  // N for neutral
+        case 'R':           segA=1; segB=1; segC=0; segD=0; segE=1; segF=1; segG=1; break;  // R for reverse
+        case 'C':           segA=1; segB=0; segC=0; segD=1; segE=1; segF=1; segG=0; break;  // C for clutch
+        case '-':           segA=0; segB=0; segC=0; segD=0; segE=0; segF=0; segG=1; break;  // - for unknown
+        default:            segA=0; segB=0; segC=0; segD=0; segE=0; segF=0; segG=1; break;  // Default to dash
+    }
+    
+    // Draw segments using filled rectangles (fast!)
+    // A: top horizontal
+    if (segA) LCD_FillRect(x + gap, y, segL - 2*gap, segW, color);
+    
+    // B: top-right vertical  
+    if (segB) LCD_FillRect(x + segL - segW, y + gap, segW, segL - gap, color);
+    
+    // C: bottom-right vertical
+    if (segC) LCD_FillRect(x + segL - segW, y + segL + gap, segW, segL - gap, color);
+    
+    // D: bottom horizontal
+    if (segD) LCD_FillRect(x + gap, y + 2*segL, segL - 2*gap, segW, color);
+    
+    // E: bottom-left vertical
+    if (segE) LCD_FillRect(x, y + segL + gap, segW, segL - gap, color);
+    
+    // F: top-left vertical
+    if (segF) LCD_FillRect(x, y + gap, segW, segL - gap, color);
+    
+    // G: middle horizontal
+    if (segG) LCD_FillRect(x + gap, y + segL - segW/2, segL - 2*gap, segW, color);
+}
+
 void drawOverviewScreen() {
     // GRANULAR CHANGE DETECTION - only redraw specific elements that changed
     // This dramatically reduces draw time by avoiding full-screen redraws
@@ -1304,14 +1381,9 @@ void drawOverviewScreen() {
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
-        // Draw gear text centered in the gear circle
-        // Use largest available font size (8) - simple and clean
-        int fontSize = 8;
-        // Font size 8 gives approximately 24x32 pixel characters
-        // Center the text in the circle
-        int textX = 180 - 12;  // Center minus half char width (24/2)
-        int textY = 180 - 16;  // Center minus half char height (32/2)
-        LCD_DrawString(textX, textY, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
+        // Draw gear text centered in the gear circle using custom large font
+        // 7-segment style digits scaled to fill the gear circle (~70px tall)
+        drawLargeGear(180, 180, gearStr, gearGlow, COLOR_BG_CARD);
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
