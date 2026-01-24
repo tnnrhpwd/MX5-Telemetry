@@ -1128,6 +1128,15 @@ void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, ui
             LCD_FillRect(x, y + charH - w, charW, w, color);     // Bottom
             break;
             
+        case 'G':
+            // G shape - C with a horizontal bar coming in from right
+            LCD_FillRect(x, y, charW, w, color);                 // Top
+            LCD_FillRect(x, y, w, charH, color);                 // Left vertical
+            LCD_FillRect(x, y + charH - w, charW, w, color);     // Bottom
+            LCD_FillRect(x + charW - w, y + charH/2, w, charH/2, color); // Right bottom vertical
+            LCD_FillRect(x + charW/2, y + charH/2 - w/2, charW/2, w, color); // Middle bar from center to right
+            break;
+            
         case '-':
             // Just a horizontal bar in the middle
             LCD_FillRect(x + 4, y + charH/2 - w/2, charW - 8, w, color);
@@ -1376,9 +1385,13 @@ void drawOverviewScreen() {
             LCD_DrawCircle(gearX, gearY, r, gearGlow);
         }
         
-        // Gear text - display based on clutchDisplayMode when clutch is engaged
+        // Gear text - display based on engine state and clutch
         char gearStr[4];
-        if (telemetry.clutchEngaged) {
+        
+        // When engine is off, show 'G' (unknown gear state)
+        if (!telemetry.engineRunning) {
+            snprintf(gearStr, sizeof(gearStr), "G");
+        } else if (telemetry.clutchEngaged) {
             // Clutch is engaged - show per user preference
             switch (clutchDisplayMode) {
                 case 0:  // Gear# (colored) - show estimated gear for rev-matching
@@ -1413,43 +1426,36 @@ void drawOverviewScreen() {
         prevGearGlow = gearGlow;
     }
     
-    // === SIDE INDICATORS: Coolant (left), Oil (middle-left), Gas (right) ===
-    // All boxes aligned to same Y position and height for visual balance
+    // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
+    // Both boxes aligned to same Y position and height for visual balance
     int sideBoxY = CENTER_Y - 36;  // Common Y for all side indicators
     int sideBoxH = 72;  // Common height for all side indicators
     
-    // COOLANT (left side)
-    int coolBoxX = 50;
-    int coolBoxW = 70;
-    if (needsFullRedraw || coolantChanged) {
+    // COOLANT + OIL COMBINED (left side) - matches gas box height
+    int leftBoxX = 50;
+    int leftBoxW = 70;
+    if (needsFullRedraw || coolantChanged || oilChanged) {
+        // Use coolant color for main accent (more critical indicator)
         uint16_t coolColor = MX5_CYAN;
         if (telemetry.coolantTemp == 0) coolColor = MX5_RED;  // No data received
         else if (telemetry.coolantTemp > 220) coolColor = MX5_RED;
         else if (telemetry.coolantTemp > 200) coolColor = MX5_ORANGE;
-        LCD_FillRoundRect(coolBoxX, sideBoxY, coolBoxW, sideBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(coolBoxX, sideBoxY, 3, sideBoxH, coolColor);
-        LCD_DrawString(coolBoxX + 6, sideBoxY + 3, "COOL", MX5_GRAY, COLOR_BG_CARD, 1);
+        
+        // Draw combined box background
+        LCD_FillRoundRect(leftBoxX, sideBoxY, leftBoxW, sideBoxH, 4, COLOR_BG_CARD);
+        LCD_FillRect(leftBoxX, sideBoxY, 3, sideBoxH, coolColor);  // Left accent bar
+        
+        // COOLANT section (top)
+        LCD_DrawString(leftBoxX + 6, sideBoxY + 3, "COOL", MX5_GRAY, COLOR_BG_CARD, 1);
         char coolStr[8];
         snprintf(coolStr, sizeof(coolStr), "%dF", (int)telemetry.coolantTemp);
-        LCD_DrawString(coolBoxX + 6, sideBoxY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
-    }
-    
-    // OIL STATUS (middle-left, between coolant and gas)
-    int oilBoxX = 50;
-    int oilBoxY = sideBoxY + 42;  // Positioned within same visual group
-    int oilBoxW = 70;
-    int oilBoxH = 22;
-    if (needsFullRedraw || oilChanged) {
-        // Oil status color: green = OK, red = warning/no pressure
+        LCD_DrawString(leftBoxX + 6, sideBoxY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
+        
+        // OIL section (bottom) - status text below label
         uint16_t oilColor = telemetry.oilWarning ? MX5_RED : MX5_GREEN;
-        
-        LCD_FillRoundRect(oilBoxX, oilBoxY, oilBoxW, oilBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(oilBoxX, oilBoxY, 3, oilBoxH, oilColor);
-        LCD_DrawString(oilBoxX + 6, oilBoxY + 2, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
-        
-        // Show status text
+        LCD_DrawString(leftBoxX + 6, sideBoxY + 42, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
         const char* oilStatus = telemetry.oilWarning ? "LOW" : "OK";
-        LCD_DrawString(oilBoxX + 28, oilBoxY + 2, oilStatus, oilColor, COLOR_BG_CARD, 2);
+        LCD_DrawString(leftBoxX + 6, sideBoxY + 56, oilStatus, oilColor, COLOR_BG_CARD, 2);
     }
     
     // GAS (right side) - shows MPG, tank %, and estimated range
