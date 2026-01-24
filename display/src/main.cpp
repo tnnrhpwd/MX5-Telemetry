@@ -1305,18 +1305,13 @@ void drawOverviewScreen() {
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
         // Draw gear text centered in the gear circle
-        // Use 2x2 offset pattern for 2x larger text (more reliable than 3x3)
-        int fontSize = 8;  // Use max font size as base
-        // Center position for 2x scaled text (font 8 = ~24x32 pixels, so 2x = ~48x64)
-        int baseX = 180 - 24;  // Center minus half of 2x scaled width
-        int baseY = 180 - 32;  // Center minus half of 2x scaled height
-        
-        // Draw 2x2 grid of characters with 6-pixel offsets for clear 2x effect
-        for (int dy = 0; dy < 2; dy++) {
-            for (int dx = 0; dx < 2; dx++) {
-                LCD_DrawString(baseX + dx * 6, baseY + dy * 6, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
-            }
-        }
+        // Use largest available font size (8) - simple and clean
+        int fontSize = 8;
+        // Font size 8 gives approximately 24x32 pixel characters
+        // Center the text in the circle
+        int textX = 180 - 12;  // Center minus half char width (24/2)
+        int textY = 180 - 16;  // Center minus half char height (32/2)
+        LCD_DrawString(textX, textY, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
