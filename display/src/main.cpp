@@ -1450,12 +1450,12 @@ void drawOverviewScreen() {
             // Clear the entire top area where RPM/MPH would be
             LCD_FillRect(rpmBoxX, boxY, boxW * 2, boxH, COLOR_BG);
             
-            // Draw loading message centered across both box areas
+            // Draw loading message centered across both box areas (font size 3 to match MPH values)
             const char* msg = LOADING_MESSAGES[currentLoadingMessage];
             int msgLen = strlen(msg);
-            int msgWidth = msgLen * 6;  // Size 1 font is ~6px per char
+            int msgWidth = msgLen * 18;  // Size 3 font is ~18px per char
             int msgX = 180 - msgWidth / 2;  // Center on screen
-            LCD_DrawString(msgX, boxY + 12, msg, MX5_CYAN, COLOR_BG, 1);
+            LCD_DrawString(msgX, boxY + 8, msg, MX5_CYAN, COLOR_BG, 3);
         }
     } else {
     // RPM on left side - centered in box (80-180)
