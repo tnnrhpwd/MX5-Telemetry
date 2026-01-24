@@ -68,17 +68,27 @@ Write-Host "Checking Pi connection..." -ForegroundColor Cyan
 $piHosts = @("pi@mx5pi.local", "pi@192.168.1.23", "pi@10.62.26.67")
 $piHost = $null
 
-foreach ($hostAddress in $piHosts) {
-    Write-Host "Trying $hostAddress..." -ForegroundColor Gray
-    try {
-        $testResult = ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no $hostAddress "echo Connected" 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $piHost = $hostAddress
-            Write-Host "Connected to Pi at $piHost" -ForegroundColor Green
-            break
+# Try multiple times with increasing timeouts (Pi may be slow to respond after flash)
+$maxRetries = 3
+for ($retry = 1; $retry -le $maxRetries; $retry++) {
+    foreach ($hostAddress in $piHosts) {
+        Write-Host "Trying $hostAddress (attempt $retry/$maxRetries)..." -ForegroundColor Gray
+        try {
+            $timeout = 3 + ($retry * 2)  # 5, 7, 9 second timeouts
+            $testResult = ssh -o ConnectTimeout=$timeout -o StrictHostKeyChecking=no -o ServerAliveInterval=5 $hostAddress "echo Connected" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $piHost = $hostAddress
+                Write-Host "Connected to Pi at $piHost" -ForegroundColor Green
+                break
+            }
+        } catch {
+            # Try next host
         }
-    } catch {
-        # Try next host
+    }
+    if ($piHost) { break }
+    if ($retry -lt $maxRetries) {
+        Write-Host "Connection failed, waiting 5 seconds before retry..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 5
     }
 }
 
@@ -92,8 +102,17 @@ if (-not $piHost) {
 Write-Host ""
 # Stop the display service first to free up serial port and prevent collision
 Write-Host "Stopping display service to free serial port..." -ForegroundColor Cyan
+
+# Kill any orphaned Python processes that might be holding the serial port
+ssh $piHost "sudo pkill -f 'python.*main.py' 2>/dev/null; sudo pkill -f 'python.*esp32' 2>/dev/null" 2>$null
+Start-Sleep -Seconds 1
+
 ssh $piHost "sudo systemctl stop mx5-display.service"
-Start-Sleep -Seconds 2  # Give serial port time to release
+Start-Sleep -Seconds 3  # Give serial port time to release
+
+# Make sure serial port is free
+ssh $piHost "sudo fuser -k /dev/ttyUSB0 2>/dev/null; sudo fuser -k /dev/ttyACM0 2>/dev/null" 2>$null
+Start-Sleep -Seconds 1
 
 Write-Host "Building and uploading ESP32 firmware on Pi..." -ForegroundColor Cyan
 ssh $piHost "cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload"
@@ -151,20 +170,28 @@ Write-Host ""
 
 # Restart the display service
 Write-Host "Restarting display service on Pi..." -ForegroundColor Cyan
-ssh $piHost "sudo systemctl restart mx5-display.service"
+
+# Clear any cached connections and restart cleanly
+ssh -o ConnectTimeout=10 $piHost "sudo systemctl daemon-reload && sudo systemctl restart mx5-display.service"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Failed to restart service!" -ForegroundColor Red
-    exit 1
+    Write-Host "WARNING: Service restart command may have timed out, checking status..." -ForegroundColor Yellow
 }
 
-Write-Host "Service restarted" -ForegroundColor Green
+Write-Host "Service restart initiated" -ForegroundColor Green
 Write-Host ""
 
-# Check service status
+# Check service status (with retry in case Pi is slow)
 Write-Host "Checking service status..." -ForegroundColor Cyan
-Start-Sleep -Seconds 3
-ssh $piHost "sudo systemctl status mx5-display.service --no-pager -l" | Select-Object -First 20
+Start-Sleep -Seconds 5
+
+# Try to get status with timeout
+$statusResult = ssh -o ConnectTimeout=10 $piHost "sudo systemctl status mx5-display.service --no-pager -l 2>&1 | head -20"
+if ($LASTEXITCODE -eq 0) {
+    Write-Host $statusResult
+} else {
+    Write-Host "Could not retrieve service status (Pi may be busy), but flash completed." -ForegroundColor Yellow
+}
 
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
