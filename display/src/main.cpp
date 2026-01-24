@@ -264,7 +264,7 @@ bool navLocked = false;       // Navigation lock state (from Pi SWC handler)
 const int PI_BOOT_COUNTDOWN = 37;  // Seconds to countdown from
 unsigned long bootStartTime = 0;   // Set in setup()
 bool piDataReceived = false;       // Set true when first valid telemetry data arrives
-int lastBootCountdown = -1;        // Track countdown for redraw detection
+int lastBootCountdown = 99;        // Track countdown for redraw detection (start high so first frame triggers)
 
 // Page transition animation state
 enum TransitionType {
@@ -1183,10 +1183,15 @@ void drawOverviewScreen() {
     bool rangeChanged = !prevTelemetry.initialized || 
                         telemetry.rangeMiles != prevTelemetry.rangeMiles;
     
-    // Boot countdown change detection
+    // Boot countdown change detection - triggers redraw every second during countdown
     int currentBootCountdown = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
     if (currentBootCountdown < 0) currentBootCountdown = 0;
-    bool bootCountdownChanged = (!piDataReceived && currentBootCountdown > 0 && currentBootCountdown != lastBootCountdown);
+    bool inBootCountdown = !piDataReceived && currentBootCountdown > 0;
+    bool bootCountdownChanged = inBootCountdown && (currentBootCountdown != lastBootCountdown);
+    // Also trigger redraw when transitioning OUT of countdown (piDataReceived just became true)
+    static bool prevPiDataReceived = false;
+    bool justReceivedPiData = piDataReceived && !prevPiDataReceived;
+    prevPiDataReceived = piDataReceived;
     
     bool tpmsChanged = false;
     for (int i = 0; i < 4; i++) {
@@ -1210,7 +1215,7 @@ void drawOverviewScreen() {
     // Check if anything at all changed
     bool anyChange = needsFullRedraw || rpmChanged || speedChanged || gearChanged || 
         coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged || 
-        arcChanged || mpgChanged || rangeChanged || bootCountdownChanged;
+        arcChanged || mpgChanged || rangeChanged || bootCountdownChanged || justReceivedPiData;
     
     // Skip if nothing changed
     if (!anyChange) return;
@@ -1337,12 +1342,11 @@ void drawOverviewScreen() {
     }
     
     // Calculate boot countdown early for hiding elements
-    int earlyBootCountdown = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
-    if (earlyBootCountdown < 0) earlyBootCountdown = 0;
-    bool hideTopDuringBoot = !piDataReceived && earlyBootCountdown > 0;
+    // Show indicators once Pi data is received OR countdown has finished
+    bool hideTopDuringBoot = !piDataReceived && currentBootCountdown > 0;
     
     // === MPH and RPM at top ===
-    // Hidden during Pi boot countdown
+    // Hidden during Pi boot countdown, shown once piDataReceived is true
     if (!hideTopDuringBoot) {
     // MPH on left side - moved down by 30px for better layout
     if (needsFullRedraw || speedChanged) {
@@ -1404,8 +1408,8 @@ void drawOverviewScreen() {
     static uint16_t prevGearGlow = 0;
     bool gearGlowChanged = (gearGlow != prevGearGlow);
     
-    // Only redraw gear indicator when gear changed, color changed, or countdown changed
-    if (needsFullRedraw || gearChanged || gearGlowChanged || bootCountdownChanged) {
+    // Only redraw gear indicator when gear changed, color changed, countdown changed, or just received Pi data
+    if (needsFullRedraw || gearChanged || gearGlowChanged || bootCountdownChanged || justReceivedPiData) {
         int gearX = 180;  // Exact center of 360px display
         int gearY = 180;  // Exact center of 360px display
         int gearRadius = 50;  // Reduced gear circle radius for better fit
@@ -1419,10 +1423,9 @@ void drawOverviewScreen() {
         // Gear text - display based on boot state, engine state and clutch
         char gearStr[4];
         
-        // Calculate boot countdown
-        int bootCountdown = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
-        if (bootCountdown < 0) bootCountdown = 0;
-        bool showBootCountdown = !piDataReceived && bootCountdown > 0;
+        // Calculate boot countdown for display
+        int bootCountdown = currentBootCountdown;  // Use value calculated earlier
+        bool showBootCountdown = inBootCountdown;  // Use flag calculated earlier
         
         if (showBootCountdown) {
             // Show countdown during Pi boot - use small font for countdown
@@ -1432,9 +1435,8 @@ void drawOverviewScreen() {
             int textWidth = strlen(countdownStr) * 12;  // Size 8 font is ~12px per char
             LCD_DrawString(gearX - textWidth/2, gearY - 16, countdownStr, gearGlow, COLOR_BG_CARD, 8);
             
-            // Update cached gear glow and countdown
+            // Update cached gear glow
             prevGearGlow = gearGlow;
-            lastBootCountdown = bootCountdown;
         } else {
             // Not showing countdown - determine gear text to display
         if (!telemetry.engineRunning) {
@@ -1475,14 +1477,12 @@ void drawOverviewScreen() {
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
-        lastBootCountdown = -1;  // Not showing countdown
+        // Don't set lastBootCountdown here - it's updated at end of function
         }  // End of showBootCountdown else block
     }
     
-    // Calculate boot countdown for hiding elements
-    int bootCountdownCheck = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
-    if (bootCountdownCheck < 0) bootCountdownCheck = 0;
-    bool hideDuringBoot = !piDataReceived && bootCountdownCheck > 0;
+    // Use same hiding logic for side indicators
+    bool hideDuringBoot = !piDataReceived && currentBootCountdown > 0;
     
     // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
     // Hidden during Pi boot countdown
@@ -1670,6 +1670,9 @@ void drawOverviewScreen() {
         prevTelemetry.tirePressure[i] = telemetry.tirePressure[i];
     }
     prevTelemetry.initialized = true;
+    
+    // Update lastBootCountdown for next frame's change detection
+    lastBootCountdown = currentBootCountdown;
 }
 
 void drawRPMScreen() {
