@@ -1456,15 +1456,21 @@ void drawOverviewScreen() {
         if (needsFullRedraw || messageChanged || bootCountdownChanged || lastDisplayedMessage != currentLoadingMessage) {
             lastDisplayedMessage = currentLoadingMessage;
             
-            // Clear the entire top area where RPM/MPH would be
-            LCD_FillRect(rpmBoxX, boxY, boxW * 2, boxH, COLOR_BG);
+            // Draw rounded background box with border for loading message
+            int msgBoxX = rpmBoxX - 5;
+            int msgBoxW = boxW * 2 + 10;
+            LCD_FillRoundRect(msgBoxX, boxY - 2, msgBoxW, boxH + 4, 6, COLOR_BG_CARD);
+            // Draw border around the box
+            for (int i = 0; i < 2; i++) {
+                LCD_DrawRoundRect(msgBoxX - i, boxY - 2 - i, msgBoxW + i*2, boxH + 4 + i*2, 6, MX5_CYAN);
+            }
             
             // Draw loading message centered across both box areas (font size 3 to match MPH values)
             const char* msg = LOADING_MESSAGES[currentLoadingMessage];
             int msgLen = strlen(msg);
             int msgWidth = msgLen * 18;  // Size 3 font is ~18px per char
             int msgX = 180 - msgWidth / 2;  // Center on screen
-            LCD_DrawString(msgX, boxY + 8, msg, MX5_CYAN, COLOR_BG, 3);
+            LCD_DrawString(msgX, boxY + 8, msg, MX5_CYAN, COLOR_BG_CARD, 3);
         }
     } else {
     // RPM on left side - centered in box (80-180)
