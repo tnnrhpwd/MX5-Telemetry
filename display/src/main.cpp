@@ -1040,80 +1040,104 @@ void handleTouch() {
 }
 
 // Draw large gear indicator character (4x bigger than font size 8)
-// Uses filled rectangles for fast rendering - 7-segment style
-// Character size: ~40x70 pixels (fits in 50px radius circle)
+// Uses filled rectangles for proper letter shapes
+// Character size: ~50x70 pixels (fits in 50px radius circle)
 void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, uint16_t bgColor) {
-    // Segment dimensions for large digit
-    int segW = 8;   // Segment width (thickness)
-    int segL = 28;  // Segment length
-    int gap = 2;    // Gap between segments
+    int w = 10;     // Stroke width
+    int charW = 44; // Character width
+    int charH = 64; // Character height
     
-    // Total digit size: width = segL + 2*gap, height = 2*segL + 3*gap + segW
-    int digitW = segL;
-    int digitH = 2 * segL + segW + 2 * gap;
-    
-    // Center position
-    int x = centerX - digitW / 2;
-    int y = centerY - digitH / 2;
+    // Center position (top-left corner)
+    int x = centerX - charW / 2;
+    int y = centerY - charH / 2;
     
     char c = str[0];
     
-    // 7-segment layout:
-    //   AAA
-    //  F   B
-    //   GGG
-    //  E   C
-    //   DDD
-    
-    // Segment positions relative to top-left
-    // A: top horizontal
-    // B: top-right vertical
-    // C: bottom-right vertical
-    // D: bottom horizontal
-    // E: bottom-left vertical
-    // F: top-left vertical
-    // G: middle horizontal
-    
-    bool segA = false, segB = false, segC = false, segD = false;
-    bool segE = false, segF = false, segG = false;
-    
-    // Define which segments are on for each character
     switch (c) {
-        case '0': case 'O': segA=1; segB=1; segC=1; segD=1; segE=1; segF=1; segG=0; break;
-        case '1':           segA=0; segB=1; segC=1; segD=0; segE=0; segF=0; segG=0; break;
-        case '2':           segA=1; segB=1; segC=0; segD=1; segE=1; segF=0; segG=1; break;
-        case '3':           segA=1; segB=1; segC=1; segD=1; segE=0; segF=0; segG=1; break;
-        case '4':           segA=0; segB=1; segC=1; segD=0; segE=0; segF=1; segG=1; break;
-        case '5': case 'S': segA=1; segB=0; segC=1; segD=1; segE=0; segF=1; segG=1; break;
-        case '6':           segA=1; segB=0; segC=1; segD=1; segE=1; segF=1; segG=1; break;
-        case 'N':           segA=0; segB=1; segC=1; segD=0; segE=1; segF=1; segG=0; break;  // N for neutral
-        case 'R':           segA=1; segB=1; segC=0; segD=0; segE=1; segF=1; segG=1; break;  // R for reverse
-        case 'C':           segA=1; segB=0; segC=0; segD=1; segE=1; segF=1; segG=0; break;  // C for clutch
-        case '-':           segA=0; segB=0; segC=0; segD=0; segE=0; segF=0; segG=1; break;  // - for unknown
-        default:            segA=0; segB=0; segC=0; segD=0; segE=0; segF=0; segG=1; break;  // Default to dash
+        case '1':
+            // Vertical bar, slightly right of center
+            LCD_FillRect(x + charW/2 - w/2, y, w, charH, color);
+            // Small serif at top left
+            LCD_FillRect(x + charW/2 - w/2 - w, y, w, w, color);
+            break;
+            
+        case '2':
+            LCD_FillRect(x, y, charW, w, color);           // Top
+            LCD_FillRect(x + charW - w, y, w, charH/2, color);  // Top right vertical
+            LCD_FillRect(x, y + charH/2 - w/2, charW, w, color); // Middle
+            LCD_FillRect(x, y + charH/2, w, charH/2, color);    // Bottom left vertical
+            LCD_FillRect(x, y + charH - w, charW, w, color);    // Bottom
+            break;
+            
+        case '3':
+            LCD_FillRect(x, y, charW, w, color);                 // Top
+            LCD_FillRect(x + charW - w, y, w, charH, color);     // Right vertical
+            LCD_FillRect(x, y + charH/2 - w/2, charW, w, color); // Middle
+            LCD_FillRect(x, y + charH - w, charW, w, color);     // Bottom
+            break;
+            
+        case '4':
+            LCD_FillRect(x, y, w, charH/2 + w, color);           // Left top vertical
+            LCD_FillRect(x, y + charH/2 - w/2, charW, w, color); // Middle horizontal
+            LCD_FillRect(x + charW - w, y, w, charH, color);     // Right full vertical
+            break;
+            
+        case '5':
+            LCD_FillRect(x, y, charW, w, color);                 // Top
+            LCD_FillRect(x, y, w, charH/2, color);               // Top left vertical
+            LCD_FillRect(x, y + charH/2 - w/2, charW, w, color); // Middle
+            LCD_FillRect(x + charW - w, y + charH/2, w, charH/2, color); // Bottom right
+            LCD_FillRect(x, y + charH - w, charW, w, color);     // Bottom
+            break;
+            
+        case '6':
+            LCD_FillRect(x, y, charW, w, color);                 // Top
+            LCD_FillRect(x, y, w, charH, color);                 // Left vertical
+            LCD_FillRect(x, y + charH/2 - w/2, charW, w, color); // Middle
+            LCD_FillRect(x + charW - w, y + charH/2, w, charH/2, color); // Bottom right
+            LCD_FillRect(x, y + charH - w, charW, w, color);     // Bottom
+            break;
+            
+        case 'N':
+            // Left vertical
+            LCD_FillRect(x, y, w, charH, color);
+            // Right vertical
+            LCD_FillRect(x + charW - w, y, w, charH, color);
+            // Diagonal - draw as series of small rectangles
+            for (int i = 0; i < charH; i += 4) {
+                int dx = (i * (charW - w)) / charH;
+                LCD_FillRect(x + dx, y + i, w + 2, 6, color);
+            }
+            break;
+            
+        case 'R':
+            LCD_FillRect(x, y, w, charH, color);                 // Left vertical
+            LCD_FillRect(x, y, charW - w/2, w, color);           // Top
+            LCD_FillRect(x + charW - w, y, w, charH/2, color);   // Top right vertical
+            LCD_FillRect(x, y + charH/2 - w/2, charW - w/2, w, color); // Middle
+            // Diagonal leg
+            for (int i = 0; i < charH/2; i += 4) {
+                int dx = (i * (charW - w)) / (charH/2);
+                LCD_FillRect(x + charW/3 + dx, y + charH/2 + i, w + 2, 6, color);
+            }
+            break;
+            
+        case 'C':
+            LCD_FillRect(x, y, charW, w, color);                 // Top
+            LCD_FillRect(x, y, w, charH, color);                 // Left vertical
+            LCD_FillRect(x, y + charH - w, charW, w, color);     // Bottom
+            break;
+            
+        case '-':
+            // Just a horizontal bar in the middle
+            LCD_FillRect(x + 4, y + charH/2 - w/2, charW - 8, w, color);
+            break;
+            
+        default:
+            // Default to dash
+            LCD_FillRect(x + 4, y + charH/2 - w/2, charW - 8, w, color);
+            break;
     }
-    
-    // Draw segments using filled rectangles (fast!)
-    // A: top horizontal
-    if (segA) LCD_FillRect(x + gap, y, segL - 2*gap, segW, color);
-    
-    // B: top-right vertical  
-    if (segB) LCD_FillRect(x + segL - segW, y + gap, segW, segL - gap, color);
-    
-    // C: bottom-right vertical
-    if (segC) LCD_FillRect(x + segL - segW, y + segL + gap, segW, segL - gap, color);
-    
-    // D: bottom horizontal
-    if (segD) LCD_FillRect(x + gap, y + 2*segL, segL - 2*gap, segW, color);
-    
-    // E: bottom-left vertical
-    if (segE) LCD_FillRect(x, y + segL + gap, segW, segL - gap, color);
-    
-    // F: top-left vertical
-    if (segF) LCD_FillRect(x, y + gap, segW, segL - gap, color);
-    
-    // G: middle horizontal
-    if (segG) LCD_FillRect(x + gap, y + segL - segW/2, segL - 2*gap, segW, color);
 }
 
 void drawOverviewScreen() {
