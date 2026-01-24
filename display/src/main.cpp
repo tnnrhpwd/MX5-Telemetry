@@ -1551,11 +1551,13 @@ void drawOverviewScreen() {
             int tireX = tpmsStartX + col * (tireW + tireGap);
             int tireY = tpmsStartY + row * (tireH + tireGap);
             
-            // Color based on pressure
+            // Color based on pressure (PSI thresholds)
+            // Green: 27-32 PSI (normal), Yellow: 25-26 or 36-38 PSI (caution), Red: <25 or >38 PSI (danger)
             uint16_t tireColor = MX5_GREEN;
-            if (telemetry.tirePressure[i] < 28.0) tireColor = MX5_RED;
-            else if (telemetry.tirePressure[i] > 36.0) tireColor = MX5_YELLOW;
-            else if (telemetry.tirePressure[i] < 30.0) tireColor = MX5_ORANGE;
+            if (telemetry.tirePressure[i] < 25.0) tireColor = MX5_RED;          // Danger: < 25 PSI
+            else if (telemetry.tirePressure[i] < 27.0) tireColor = MX5_YELLOW;  // Caution: 25-26 PSI
+            else if (telemetry.tirePressure[i] > 38.0) tireColor = MX5_RED;     // Danger: > 38 PSI
+            else if (telemetry.tirePressure[i] > 32.0) tireColor = MX5_YELLOW;  // Caution: 33-38 PSI
             
             LCD_FillRoundRect(tireX, tireY, tireW, tireH, 3, COLOR_BG_CARD);
             LCD_FillRect(tireX, tireY, 2, tireH, tireColor);
@@ -1778,12 +1780,13 @@ void drawTPMSScreen() {
     const int tireOffsetX = 55, tireOffsetY = 38;
     
     // Helper lambda for tire color based on pressure (PSI)
+    // Green: 27-32 PSI (normal), Yellow: 25-26 or 36-38 PSI (caution), Red: <25 or >38 PSI (danger)
     auto getTireColor = [](float psi) -> uint16_t {
-        if (psi < 26) return MX5_RED;      // Dangerously low
-        if (psi < 28) return MX5_ORANGE;   // Low warning
-        if (psi > 36) return MX5_ORANGE;   // High warning
-        if (psi > 38) return MX5_RED;      // Dangerously high
-        return MX5_GREEN;                   // Normal 28-36 PSI
+        if (psi < 25.0) return MX5_RED;      // Danger: Risk of sidewall damage
+        if (psi < 27.0) return MX5_YELLOW;   // Caution: Check for slow leak
+        if (psi > 38.0) return MX5_RED;      // Danger: Risk of overheating
+        if (psi > 32.0) return MX5_YELLOW;   // Caution: Slightly overinflated
+        return MX5_GREEN;                    // Normal: 27-32 PSI
     };
     
     // Helper to draw tire with tread pattern (rounded)
@@ -3319,21 +3322,21 @@ void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex) {
     
     // Expected manufacturer data format (17+ bytes):
     // AC 00 85 3D 3C 00 0A 25 00 D0 28 11 11 11 1F 13 14
-    // Byte 2: Pressure (raw + 56 = kPa, / 6.895 = PSI)
+    // Byte 2: Pressure (raw value in kPa offset format)
     // Byte 3: Temperature (raw - 45 = Celsius, convert to F)
-    // Note: Calibrated against manufacturer app readings on 2025-12-15
     
     if (mfgData.length() >= 4) {
         uint8_t pressureRaw = (uint8_t)mfgData[2];
         uint8_t tempRaw = (uint8_t)mfgData[3];
         
         // Decode pressure: raw + 56 = kPa, then convert to PSI
-        // Calibrated: 29.2 PSI manufacturer = 29.2 PSI decoded
+        // Calibration offset: +0.2 PSI to better match manufacturer app readings
+        // Calibrated against manufacturer app on 2026-01-24:
+        // FR: ESP 28.3 vs Mfg 28.7, RL: ESP 29.2 vs Mfg 29.2, RR: ESP 28.9 vs Mfg 28.7
         float pressure_kPa = pressureRaw + 56.0f;
-        float pressure_psi = pressure_kPa / 6.895f;
+        float pressure_psi = (pressure_kPa / 6.895f) + 0.2f;  // Calibration offset
         
         // Decode temperature: raw - 45 = Celsius, then convert to Fahrenheit
-        // Calibrated: 64.4°F manufacturer ≈ 64°F decoded
         float temp_c = tempRaw - 45.0f;
         float temp_f = temp_c * 9.0f / 5.0f + 32.0f;
         
