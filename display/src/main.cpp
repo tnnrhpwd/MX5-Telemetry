@@ -260,6 +260,12 @@ bool needsRedraw = true;
 bool needsFullRedraw = true;  // Set to true on screen change to redraw background
 bool navLocked = false;       // Navigation lock state (from Pi SWC handler)
 
+// Boot countdown - Pi takes ~37 seconds to boot and send data
+const int PI_BOOT_COUNTDOWN = 37;  // Seconds to countdown from
+unsigned long bootStartTime = 0;   // Set in setup()
+bool piDataReceived = false;       // Set true when first valid telemetry data arrives
+int lastBootCountdown = -1;        // Track countdown for redraw detection
+
 // Page transition animation state
 enum TransitionType {
     TRANSITION_NONE = 0,
@@ -590,6 +596,11 @@ void setup() {
     
     needsRedraw = true;
     needsFullRedraw = true;
+    
+    // Start boot countdown timer
+    bootStartTime = millis();
+    piDataReceived = false;
+    
     Serial.println("Setup complete!");
     
     // Initialize BLE TPMS scanner (after display is ready)
@@ -1137,6 +1148,13 @@ void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, ui
             LCD_FillRect(x + charW/2, y + charH/2 - w/2, charW/2, w, color); // Middle bar from center to right
             break;
             
+        case '0':
+            LCD_FillRect(x, y, charW, w, color);                 // Top
+            LCD_FillRect(x, y, w, charH, color);                 // Left
+            LCD_FillRect(x + charW - w, y, w, charH, color);     // Right
+            LCD_FillRect(x, y + charH - w, charW, w, color);     // Bottom
+            break;
+            
         case '-':
             // Just a horizontal bar in the middle
             LCD_FillRect(x + 4, y + charH/2 - w/2, charW - 8, w, color);
@@ -1165,6 +1183,11 @@ void drawOverviewScreen() {
     bool rangeChanged = !prevTelemetry.initialized || 
                         telemetry.rangeMiles != prevTelemetry.rangeMiles;
     
+    // Boot countdown change detection
+    int currentBootCountdown = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
+    if (currentBootCountdown < 0) currentBootCountdown = 0;
+    bool bootCountdownChanged = (!piDataReceived && currentBootCountdown > 0 && currentBootCountdown != lastBootCountdown);
+    
     bool tpmsChanged = false;
     for (int i = 0; i < 4; i++) {
         if (fabsf(telemetry.tirePressure[i] - prevTelemetry.tirePressure[i]) > 0.05f) {
@@ -1187,7 +1210,7 @@ void drawOverviewScreen() {
     // Check if anything at all changed
     bool anyChange = needsFullRedraw || rpmChanged || speedChanged || gearChanged || 
         coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged || 
-        arcChanged || mpgChanged || rangeChanged;
+        arcChanged || mpgChanged || rangeChanged || bootCountdownChanged;
     
     // Skip if nothing changed
     if (!anyChange) return;
@@ -1313,7 +1336,14 @@ void drawOverviewScreen() {
         }
     }
     
+    // Calculate boot countdown early for hiding elements
+    int earlyBootCountdown = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
+    if (earlyBootCountdown < 0) earlyBootCountdown = 0;
+    bool hideTopDuringBoot = !piDataReceived && earlyBootCountdown > 0;
+    
     // === MPH and RPM at top ===
+    // Hidden during Pi boot countdown
+    if (!hideTopDuringBoot) {
     // MPH on left side - moved down by 30px for better layout
     if (needsFullRedraw || speedChanged) {
         char speedStr[8];
@@ -1350,6 +1380,7 @@ void drawOverviewScreen() {
         int rpmLen = strlen(rpmStr);
         LCD_DrawString(rpmX + 50 - rpmLen * 9, rpmY + 12, rpmStr, rpmColor, COLOR_BG, 3);
     }
+    }  // End hideTopDuringBoot check
     
     // === LARGE GEAR INDICATOR (Center) === 
     // Determine gear ring color based on RPM thresholds (used for rev-matching during shifts)
@@ -1373,8 +1404,8 @@ void drawOverviewScreen() {
     static uint16_t prevGearGlow = 0;
     bool gearGlowChanged = (gearGlow != prevGearGlow);
     
-    // Only redraw gear indicator when gear changed or ring color changed (not every RPM change)
-    if (needsFullRedraw || gearChanged || gearGlowChanged) {
+    // Only redraw gear indicator when gear changed, color changed, or countdown changed
+    if (needsFullRedraw || gearChanged || gearGlowChanged || bootCountdownChanged) {
         int gearX = 180;  // Exact center of 360px display
         int gearY = 180;  // Exact center of 360px display
         int gearRadius = 50;  // Reduced gear circle radius for better fit
@@ -1385,11 +1416,19 @@ void drawOverviewScreen() {
             LCD_DrawCircle(gearX, gearY, r, gearGlow);
         }
         
-        // Gear text - display based on engine state and clutch
+        // Gear text - display based on boot state, engine state and clutch
         char gearStr[4];
         
-        // When engine is off, show 'G' unless we have a definitive gear from CAN (neutral/reverse)
-        if (!telemetry.engineRunning) {
+        // Calculate boot countdown
+        int bootCountdown = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
+        if (bootCountdown < 0) bootCountdown = 0;
+        bool showBootCountdown = !piDataReceived && bootCountdown > 0;
+        
+        if (showBootCountdown) {
+            // Show countdown during Pi boot
+            snprintf(gearStr, sizeof(gearStr), "%d", bootCountdown);
+        } else if (!telemetry.engineRunning) {
+            // When engine is off, show gear if known from CAN (neutral/reverse), else 'G'
             if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "G");  // Unknown gear when engine off
@@ -1426,8 +1465,28 @@ void drawOverviewScreen() {
         
         // Update cached gear glow
         prevGearGlow = gearGlow;
+        
+        // Track boot countdown for redraw detection
+        lastBootCountdown = showBootCountdown ? bootCountdown : -1;
     }
     
+    // Calculate boot countdown for hiding elements
+    int bootCountdownCheck = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
+    if (bootCountdownCheck < 0) bootCountdownCheck = 0;
+    bool hideDuringBoot = !piDataReceived && bootCountdownCheck > 0;
+    
+    // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
+    // Hidden during Pi boot countdown
+    if (hideDuringBoot) {
+        // Don't draw side indicators during boot - they're hidden
+        // Just clear the areas if needed on full redraw
+        if (needsFullRedraw) {
+            int sideBoxY = CENTER_Y - 36;
+            int sideBoxH = 72;
+            LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
+            LCD_FillRoundRect(SCREEN_WIDTH - 98, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
+        }
+    } else {
     // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
     // Both boxes aligned to same Y position and height for visual balance
     int sideBoxY = CENTER_Y - 36;  // Common Y for all side indicators
@@ -1525,6 +1584,7 @@ void drawOverviewScreen() {
         }
         LCD_DrawString(gasBoxX + 6, sideBoxY + 56, rangeStr, rangeColor, COLOR_BG_CARD, 2);
     }
+    }  // End of hideDuringBoot else block
     
     // Navigation Lock indicator (bottom right when locked) - static, only on full redraw
     if (needsFullRedraw && navLocked) {
@@ -2941,14 +3001,18 @@ void parseCommand(String cmd) {
     else if (cmd.startsWith("RPM:")) {
         telemetry.rpm = cmd.substring(4).toFloat();
         telemetry.connected = true;
+        piDataReceived = true;  // Pi is sending data, end boot countdown
+        needsFullRedraw = true;  // Redraw to show indicators
     }
     else if (cmd.startsWith("SPEED:")) {
         telemetry.speed = cmd.substring(6).toFloat();
         telemetry.connected = true;
+        piDataReceived = true;
     }
     else if (cmd.startsWith("GEAR:")) {
         telemetry.gear = cmd.substring(5).toInt();
         telemetry.connected = true;
+        piDataReceived = true;
     }
     else if (cmd.startsWith("COOLANT:")) {
         telemetry.coolantTemp = cmd.substring(8).toFloat();
@@ -3338,11 +3402,12 @@ void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex) {
         uint8_t tempRaw = (uint8_t)mfgData[3];
         
         // Decode pressure: raw + 56 = kPa, then convert to PSI
-        // Calibration offset: +0.2 PSI to better match manufacturer app readings
+        // Calibration offset: +0.6 PSI to better match manufacturer app readings
         // Calibrated against manufacturer app on 2026-01-24:
-        // FR: ESP 28.3 vs Mfg 28.7, RL: ESP 29.2 vs Mfg 29.2, RR: ESP 28.9 vs Mfg 28.7
+        // FR: ESP 28.3 vs Mfg 28.7, FL: ESP 27.6 vs Mfg 29.2, RL: ESP 29.2 vs Mfg 29.2, RR: ESP 29.2 vs Mfg 28.7
+        // Universal offset of +0.6 minimizes average error across all four tires
         float pressure_kPa = pressureRaw + 56.0f;
-        float pressure_psi = (pressure_kPa / 6.895f) + 0.2f;  // Calibration offset
+        float pressure_psi = (pressure_kPa / 6.895f) + 0.6f;  // Universal calibration offset
         
         // Decode temperature: raw - 45 = Celsius, then convert to Fahrenheit
         float temp_c = tempRaw - 45.0f;
