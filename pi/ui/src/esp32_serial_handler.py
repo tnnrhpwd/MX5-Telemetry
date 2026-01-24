@@ -606,9 +606,22 @@ class ESP32SerialHandler:
                 clutch = 1 if self.telemetry.clutch_engaged else 0
                 msg += f"{gear_est},{clutch},"
                 # Add MPG data (average MPG and estimated range in miles)
-                avg_mpg = self.telemetry.average_mpg
+                # Use defaults if no data calculated yet
+                avg_mpg = self.telemetry.average_mpg if self.telemetry.average_mpg > 0 else 26.0
+                fuel_pct = self.telemetry.fuel_level_percent
                 range_miles = self.telemetry.range_miles
+                # Calculate range fallback if no range but have fuel data
+                if range_miles <= 0 and fuel_pct > 0:
+                    range_miles = int(fuel_pct * 12.7 * avg_mpg / 100)
                 msg += f"{avg_mpg:.1f},{range_miles}\n"
+                
+                # Debug: log MPG data periodically (every ~5 seconds)
+                if not hasattr(self, '_mpg_debug_counter'):
+                    self._mpg_debug_counter = 0
+                self._mpg_debug_counter += 1
+                if self._mpg_debug_counter >= 150:  # ~5 sec at 30Hz
+                    self._mpg_debug_counter = 0
+                    print(f"[MPG DEBUG] fuel={fuel_pct:.1f}%, avg_mpg={self.telemetry.average_mpg:.1f}, range={self.telemetry.range_miles}, sending: mpg={avg_mpg:.1f}, range={range_miles}")
                 
                 self.serial_conn.write(msg.encode('utf-8'))
                 
