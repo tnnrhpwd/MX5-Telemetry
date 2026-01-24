@@ -1267,7 +1267,7 @@ void drawOverviewScreen() {
     if (needsFullRedraw || gearChanged || gearGlowChanged) {
         int gearX = 180;  // Exact center of 360px display
         int gearY = 180;  // Exact center of 360px display
-        int gearRadius = 68;  // Larger gear circle (was 58)
+        int gearRadius = 50;  // Reduced gear circle radius for better fit
         LCD_FillCircle(gearX, gearY, gearRadius, COLOR_BG_CARD);
         
         // Draw gear ring (thicker)
@@ -1309,8 +1309,8 @@ void drawOverviewScreen() {
         int fontSize = 8;
         // Center of screen (180, 180) for 360x360 display
         // Text position: center minus half of character size (at size 8: ~24x32 per char)
-        int textX = 180 - 24;  // 180 - (48/2) = 156
-        int textY = 180 - 32;  // 180 - (64/2) = 148
+        int textX = 180;  // 180 - (48/2) = 156
+        int textY = 180;  // 180 - (64/2) = 148
         LCD_DrawString(textX, textY, gearStr, gearGlow, COLOR_BG_CARD, fontSize);
         
         // Update cached gear glow
