@@ -1484,9 +1484,10 @@ void drawOverviewScreen() {
         
         // MPG color
         uint16_t mpgColor = MX5_GREEN;
-        if (telemetry.averageMPG < 15) mpgColor = MX5_RED;
-        else if (telemetry.averageMPG < 20) mpgColor = MX5_ORANGE;
-        else if (telemetry.averageMPG > 30) mpgColor = MX5_CYAN;
+        float displayMPG = telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f;
+        if (displayMPG < 15) mpgColor = MX5_RED;
+        else if (displayMPG < 20) mpgColor = MX5_ORANGE;
+        else if (displayMPG > 30) mpgColor = MX5_CYAN;
         
         // Tank % color
         uint16_t tankColor = MX5_GREEN;
@@ -1509,11 +1510,8 @@ void drawOverviewScreen() {
         
         // MPG value (row 1) - size 2 to match tank% and range
         char mpgStr[10];
-        if (telemetry.averageMPG > 0) {
-            snprintf(mpgStr, sizeof(mpgStr), "%.0fmpg", telemetry.averageMPG);
-        } else {
-            snprintf(mpgStr, sizeof(mpgStr), "--mpg");
-        }
+        // Always show MPG - defaults to EPA average (26) if no data yet
+        snprintf(mpgStr, sizeof(mpgStr), "%.0fmpg", telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f);
         LCD_DrawString(rightBoxX + 6, rightBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 2);
         
         // Tank % (row 2)
@@ -1521,10 +1519,15 @@ void drawOverviewScreen() {
         snprintf(tankStr, sizeof(tankStr), "%d%%", (int)telemetry.fuelLevel);
         LCD_DrawString(rightBoxX + 6, rightBoxY + 36, tankStr, tankColor, COLOR_BG_CARD, 2);
         
-        // Range miles (row 3)
+        // Range miles (row 3) - calculate from fuel% if no range data
         char rangeStr[10];
-        if (telemetry.rangeMiles > 0) {
-            snprintf(rangeStr, sizeof(rangeStr), "%dmi", telemetry.rangeMiles);
+        int displayRange = telemetry.rangeMiles;
+        if (displayRange <= 0 && telemetry.fuelLevel > 0) {
+            // Calculate range from fuel level: fuel% * 12.7gal tank * 26mpg EPA / 100
+            displayRange = (int)(telemetry.fuelLevel * 12.7f * 26.0f / 100.0f);
+        }
+        if (displayRange > 0) {
+            snprintf(rangeStr, sizeof(rangeStr), "%dmi", displayRange);
         } else {
             snprintf(rangeStr, sizeof(rangeStr), "--mi");
         }
