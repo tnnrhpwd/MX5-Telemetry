@@ -698,6 +698,16 @@ void loop() {
             needsRedraw = true;
             // G-Force handles its own partial redraw, no needsFullRedraw
         }
+        
+        // During boot countdown, keep redrawing Overview screen to update countdown
+        // Check once per second (1000ms) to trigger countdown redraw
+        static unsigned long lastCountdownCheck = 0;
+        if (!piDataReceived && currentScreen == SCREEN_OVERVIEW) {
+            if (millis() - lastCountdownCheck >= 1000) {
+                lastCountdownCheck = millis();
+                needsRedraw = true;  // Trigger redraw for countdown update
+            }
+        }
     }
     
     // Update page transition animation
