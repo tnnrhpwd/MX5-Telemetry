@@ -120,6 +120,18 @@ temperature_sensor_handle_t temp_sensor = NULL;
 // Settings from Pi
 int clutchDisplayMode = 0;  // 0=Gear#(colored), 1='C', 2='S', 3='-'
 
+// MX5 NC gear ratios for rev-match calculation
+// MPH per 1000 RPM for each gear (calculated from gear ratios, final drive, tire size)
+const float MPH_PER_1000_RPM[] = {
+    0.0f,    // Gear 0 (neutral) - not used
+    4.92f,   // Gear 1: 3.760 ratio
+    8.16f,   // Gear 2: 2.269 ratio
+    11.25f,  // Gear 3: 1.645 ratio
+    15.59f,  // Gear 4: 1.187 ratio
+    18.51f,  // Gear 5: 1.000 ratio
+    21.95f   // Gear 6: 0.843 ratio
+};
+
 // Previous telemetry values for partial update optimization
 // Only redraw values that have actually changed
 struct CachedTelemetry {
@@ -1242,7 +1254,13 @@ void drawOverviewScreen() {
         prevTelemetry.arcColor = MX5_DARKGRAY;
     }
     
+    // Calculate boot countdown early for hiding elements
+    // Show indicators once Pi data is received OR countdown has finished
+    bool hideTopDuringBoot = !piDataReceived && currentBootCountdown > 0;
+    
     // === RPM ARC GAUGE (Screen border) - SEGMENT-BASED INCREMENTAL UPDATE ===
+    // Hidden during boot countdown
+    if (!hideTopDuringBoot) {
     // Arc goes around the edge of the circular display
     // Uses Arduino LED color ranges: Blue < 2000 < Green < 3000 < Yellow < 4500 < Orange < 5500 < Red
     //
@@ -1354,33 +1372,13 @@ void drawOverviewScreen() {
             LCD_DrawLine(x1, y1, x2, y2, MX5_WHITE);
         }
     }
-    
-    // Calculate boot countdown early for hiding elements
-    // Show indicators once Pi data is received OR countdown has finished
-    bool hideTopDuringBoot = !piDataReceived && currentBootCountdown > 0;
+    }  // End of hideTopDuringBoot check for RPM arc
     
     // === MPH and RPM at top ===
     // Hidden during Pi boot countdown, shown once piDataReceived is true
+    // Positioned so RPM ends at screen center and MPH starts at screen center
     if (!hideTopDuringBoot) {
-    // MPH on left side - moved down by 30px for better layout
-    if (needsFullRedraw || speedChanged) {
-        char speedStr[8];
-        if (!telemetry.hasReceivedTelemetry) {
-            snprintf(speedStr, sizeof(speedStr), "--");
-        } else {
-            snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
-        }
-        int speedX = 110;
-        int speedY = 65;  // Moved down 30px from 35
-        // Clear area (matches RPM width)
-        LCD_FillRect(speedX - 10, speedY - 5, 100, 35, COLOR_BG);
-        // Draw label
-        LCD_DrawString(speedX, speedY, "mph", MX5_GRAY, COLOR_BG, 1);
-        // Draw value
-        LCD_DrawString(speedX, speedY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
-    }
-    
-    // RPM on right side - moved down to match speed
+    // RPM on left side - right edge at screen center
     if (needsFullRedraw || rpmChanged) {
         char rpmStr[8];
         if (!telemetry.hasReceivedTelemetry) {
@@ -1388,9 +1386,9 @@ void drawOverviewScreen() {
         } else {
             snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
         }
-        int rpmX = SCREEN_WIDTH - 160;
-        int rpmY = 65;  // Moved down 30px from 35
-        // Clear area (matches MPH width)
+        int rpmX = 90;  // Background: 80-180 (ends at center)
+        int rpmY = 65;
+        // Clear area - ends at screen center (180)
         LCD_FillRect(rpmX - 10, rpmY - 5, 100, 35, COLOR_BG);
         // Draw label
         LCD_DrawString(rpmX, rpmY, "rpm", MX5_GRAY, COLOR_BG, 1);
@@ -1398,24 +1396,75 @@ void drawOverviewScreen() {
         int rpmLen = strlen(rpmStr);
         LCD_DrawString(rpmX + 50 - rpmLen * 9, rpmY + 12, rpmStr, rpmColor, COLOR_BG, 3);
     }
+    
+    // MPH on right side - left edge at screen center
+    if (needsFullRedraw || speedChanged) {
+        char speedStr[8];
+        if (!telemetry.hasReceivedTelemetry) {
+            snprintf(speedStr, sizeof(speedStr), "--");
+        } else {
+            snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
+        }
+        int speedX = 190;  // Background: 180-280 (starts at center)
+        int speedY = 65;
+        // Clear area - starts at screen center (180)
+        LCD_FillRect(speedX - 10, speedY - 5, 100, 35, COLOR_BG);
+        // Draw label
+        LCD_DrawString(speedX, speedY, "mph", MX5_GRAY, COLOR_BG, 1);
+        // Draw value
+        LCD_DrawString(speedX, speedY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
+    }
     }  // End hideTopDuringBoot check
     
     // === LARGE GEAR INDICATOR (Center) === 
-    // Determine gear ring color based on RPM thresholds (used for rev-matching during shifts)
-    // When clutch is engaged with speed > 0, use RPM colors to help driver match revs
+    // Determine gear ring color based on rev-match quality
+    // Compare current RPM to expected RPM for the displayed gear at current speed
+    // This helps driver match revs during shifts and shows if in optimal gear
     uint16_t gearGlow = MX5_GREEN;
-    if (telemetry.rpm > 6500) {
-        gearGlow = MX5_RED;
-    } else if (telemetry.rpm > 5500) {
-        gearGlow = MX5_ORANGE;
-    } else if (telemetry.rpm > 4500) {
-        gearGlow = MX5_YELLOW;
-    } else if (telemetry.rpm > 3000) {
-        gearGlow = MX5_GREEN;
-    } else if (telemetry.rpm > 2000) {
-        gearGlow = MX5_CYAN;  // Lower RPM range - cyan indicates "safe" rev range
+    
+    // Calculate expected RPM for current gear at current speed
+    int displayGear = telemetry.gear;
+    if (displayGear >= 1 && displayGear <= 6 && telemetry.speed > 0) {
+        // Convert speed from km/h to mph for calculation
+        float speedMph = telemetry.speed * 0.621371f;
+        float expectedRpm = (speedMph / MPH_PER_1000_RPM[displayGear]) * 1000.0f;
+        float rpmDiff = telemetry.rpm - expectedRpm;
+        float rpmDiffPercent = (expectedRpm > 0) ? (rpmDiff / expectedRpm) * 100.0f : 0;
+        
+        // Color based on RPM difference from expected:
+        // Green = matched (within 10%)
+        // Yellow/Orange = RPM too high (need to shift up or let off gas)
+        // Cyan/Blue = RPM too low (need to shift down or rev up)
+        if (abs(rpmDiffPercent) < 10) {
+            gearGlow = MX5_GREEN;      // Perfect rev match!
+        } else if (rpmDiffPercent > 30) {
+            gearGlow = MX5_RED;        // RPM way too high - shift up!
+        } else if (rpmDiffPercent > 20) {
+            gearGlow = MX5_ORANGE;     // RPM high - consider shifting up
+        } else if (rpmDiffPercent > 10) {
+            gearGlow = MX5_YELLOW;     // RPM slightly high
+        } else if (rpmDiffPercent < -30) {
+            gearGlow = MX5_BLUE;       // RPM way too low - shift down or rev up!
+        } else if (rpmDiffPercent < -20) {
+            gearGlow = MX5_CYAN;       // RPM low - consider shifting down
+        } else {
+            gearGlow = MX5_CYAN;       // RPM slightly low
+        }
     } else {
-        gearGlow = MX5_BLUE;  // Very low RPM - blue indicates might stall/lug
+        // Neutral, reverse, or stationary - use RPM-based coloring
+        if (telemetry.rpm > 6500) {
+            gearGlow = MX5_RED;
+        } else if (telemetry.rpm > 5500) {
+            gearGlow = MX5_ORANGE;
+        } else if (telemetry.rpm > 4500) {
+            gearGlow = MX5_YELLOW;
+        } else if (telemetry.rpm > 3000) {
+            gearGlow = MX5_GREEN;
+        } else if (telemetry.rpm > 2000) {
+            gearGlow = MX5_CYAN;
+        } else {
+            gearGlow = MX5_BLUE;
+        }
     }
     
     // Cache previous gear glow to detect color threshold crossings
@@ -1454,10 +1503,10 @@ void drawOverviewScreen() {
         } else {
             // Not showing countdown - determine gear text to display
         if (!telemetry.engineRunning) {
-            // When engine is off, show gear if known from CAN (neutral/reverse), else 'G'
+            // When engine is off, show gear from Pi (neutral, reverse, or suggested gear)
             if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
             else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
-            else snprintf(gearStr, sizeof(gearStr), "G");  // Unknown gear when engine off
+            else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);  // Show suggested gear
         } else if (telemetry.clutchEngaged) {
             // Clutch is engaged - show per user preference
             switch (clutchDisplayMode) {
@@ -1546,59 +1595,66 @@ void drawOverviewScreen() {
     int gasBoxX = SCREEN_WIDTH - 110;
     int gasBoxW = 70;
     
-    if (needsFullRedraw || mpgChanged || rangeChanged || fuelChanged) {
-        // Determine accent color based on fuel level (most urgent indicator)
-        uint16_t accentColor = MX5_GREEN;
-        if (telemetry.fuelLevel < 15) accentColor = MX5_RED;
-        else if (telemetry.fuelLevel < 25) accentColor = MX5_ORANGE;
-        else if (telemetry.fuelLevel < 40) accentColor = MX5_YELLOW;
-        
-        // MPG color
-        uint16_t mpgColor = MX5_GREEN;
-        float displayMPG = telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f;
-        if (displayMPG < 15) mpgColor = MX5_RED;
-        else if (displayMPG < 20) mpgColor = MX5_ORANGE;
-        else if (displayMPG > 30) mpgColor = MX5_CYAN;
-        
-        // Tank % color
-        uint16_t tankColor = MX5_GREEN;
-        if (telemetry.fuelLevel < 15) tankColor = MX5_RED;
-        else if (telemetry.fuelLevel < 25) tankColor = MX5_ORANGE;
-        else if (telemetry.fuelLevel < 40) tankColor = MX5_YELLOW;
-        
-        // Calculate display range first (may need fallback calculation)
-        int displayRange = telemetry.rangeMiles;
-        if (displayRange <= 0 && telemetry.fuelLevel > 0) {
-            // Calculate range from fuel level: fuel% * 12.7gal tank * 26mpg EPA / 100
-            float mpgForCalc = telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f;
-            displayRange = (int)(telemetry.fuelLevel * 12.7f * mpgForCalc / 100.0f);
-        }
-        
-        // Range color (based on actual display value)
-        uint16_t rangeColor = MX5_GREEN;
-        if (displayRange < 30) rangeColor = MX5_RED;
-        else if (displayRange < 60) rangeColor = MX5_ORANGE;
-        else if (displayRange < 100) rangeColor = MX5_YELLOW;
-        
-        // Draw box background
+    // Calculate colors and values first (needed for both full and partial redraws)
+    uint16_t gasAccentColor = MX5_GREEN;
+    if (telemetry.fuelLevel < 15) gasAccentColor = MX5_RED;
+    else if (telemetry.fuelLevel < 25) gasAccentColor = MX5_ORANGE;
+    else if (telemetry.fuelLevel < 40) gasAccentColor = MX5_YELLOW;
+    
+    uint16_t mpgColor = MX5_GREEN;
+    float displayMPG = telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f;
+    if (displayMPG < 15) mpgColor = MX5_RED;
+    else if (displayMPG < 20) mpgColor = MX5_ORANGE;
+    else if (displayMPG > 30) mpgColor = MX5_CYAN;
+    
+    uint16_t tankColor = MX5_GREEN;
+    if (telemetry.fuelLevel < 15) tankColor = MX5_RED;
+    else if (telemetry.fuelLevel < 25) tankColor = MX5_ORANGE;
+    else if (telemetry.fuelLevel < 40) tankColor = MX5_YELLOW;
+    
+    int displayRange = telemetry.rangeMiles;
+    if (displayRange <= 0 && telemetry.fuelLevel > 0) {
+        float mpgForCalc = telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f;
+        displayRange = (int)(telemetry.fuelLevel * 12.7f * mpgForCalc / 100.0f);
+    }
+    
+    uint16_t rangeColor = MX5_GREEN;
+    if (displayRange < 30) rangeColor = MX5_RED;
+    else if (displayRange < 60) rangeColor = MX5_ORANGE;
+    else if (displayRange < 100) rangeColor = MX5_YELLOW;
+    
+    // Draw box background and static elements only on full redraw
+    if (needsFullRedraw) {
         LCD_FillRoundRect(gasBoxX, sideBoxY, gasBoxW, sideBoxH, 4, COLOR_BG_CARD);
-        LCD_FillRect(gasBoxX, sideBoxY, 3, sideBoxH, accentColor);  // Left accent bar
-        
-        // "GAS" label (grey)
+        LCD_FillRect(gasBoxX, sideBoxY, 3, sideBoxH, gasAccentColor);  // Left accent bar
         LCD_DrawString(gasBoxX + 6, sideBoxY + 3, "GAS", MX5_GRAY, COLOR_BG_CARD, 1);
-        
-        // MPG value (row 1) - size 2 to match tank% and range
+    }
+    
+    // Only update accent bar color if fuel level changed (affects accent color)
+    if (fuelChanged && !needsFullRedraw) {
+        LCD_FillRect(gasBoxX, sideBoxY, 3, sideBoxH, gasAccentColor);
+    }
+    
+    // MPG value (row 1) - only redraw if MPG actually changed
+    if (needsFullRedraw || mpgChanged) {
+        // Clear just the MPG value area
+        LCD_FillRect(gasBoxX + 6, sideBoxY + 16, gasBoxW - 10, 16, COLOR_BG_CARD);
         char mpgStr[10];
-        // Always show MPG - defaults to EPA average (26) if no data yet
-        snprintf(mpgStr, sizeof(mpgStr), "%.0fmpg", telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f);
+        snprintf(mpgStr, sizeof(mpgStr), "%.0fmpg", displayMPG);
         LCD_DrawString(gasBoxX + 6, sideBoxY + 16, mpgStr, mpgColor, COLOR_BG_CARD, 2);
-        
-        // Tank % (row 2)
+    }
+    
+    // Tank % (row 2) - only redraw if fuel level changed
+    if (needsFullRedraw || fuelChanged) {
+        LCD_FillRect(gasBoxX + 6, sideBoxY + 36, gasBoxW - 10, 16, COLOR_BG_CARD);
         char tankStr[10];
         snprintf(tankStr, sizeof(tankStr), "%d%%", (int)telemetry.fuelLevel);
         LCD_DrawString(gasBoxX + 6, sideBoxY + 36, tankStr, tankColor, COLOR_BG_CARD, 2);
-        
-        // Range miles (row 3) - displayRange already calculated above
+    }
+    
+    // Range miles (row 3) - only redraw if range changed
+    if (needsFullRedraw || rangeChanged) {
+        LCD_FillRect(gasBoxX + 6, sideBoxY + 56, gasBoxW - 10, 16, COLOR_BG_CARD);
         char rangeStr[10];
         if (displayRange > 0) {
             snprintf(rangeStr, sizeof(rangeStr), "%dmi", displayRange);
