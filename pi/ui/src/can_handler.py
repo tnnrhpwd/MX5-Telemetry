@@ -286,6 +286,29 @@ class GearEstimator:
             mph_per_rpm = (tire_circumference * 60) / (ratio * self.FINAL_DRIVE * 63360)
             self.MPH_PER_1000_RPM[gear] = mph_per_rpm * 1000
     
+    def suggest_gear_for_speed(self, speed_mph: float) -> int:
+        """Suggest the appropriate gear for a given speed
+        
+        Returns the gear that would put the engine in optimal RPM range (~3000-4000 RPM)
+        """
+        if speed_mph < 2:
+            return 1  # Suggest 1st gear when stationary/very slow
+        
+        # Find gear that gives ~3500 RPM at current speed (middle of optimal range)
+        target_rpm = 3500
+        best_gear = 1
+        best_rpm_diff = float('inf')
+        
+        for gear, mph_per_1k in self.MPH_PER_1000_RPM.items():
+            # Calculate what RPM would be in this gear at current speed
+            expected_rpm = (speed_mph / mph_per_1k) * 1000
+            rpm_diff = abs(expected_rpm - target_rpm)
+            if rpm_diff < best_rpm_diff:
+                best_rpm_diff = rpm_diff
+                best_gear = gear
+        
+        return best_gear
+    
     def estimate_gear(self, speed_mph: float, rpm: int) -> tuple:
         """Estimate gear from speed and RPM
         
@@ -295,16 +318,20 @@ class GearEstimator:
                 clutch_engaged: True if clutch appears to be pressed
                 confidence: How well the ratio matches (0.0-1.0)
         """
-        # Handle stationary/neutral cases
-        if speed_mph < 2:
-            return (0, False, 1.0)  # Neutral when stationary
-        
-        if rpm < 500:
-            return (0, False, 1.0)  # Engine off or idle
-        
         # Check for reverse (negative speed from CAN)
         if speed_mph < 0:
             return (-1, False, 1.0)
+        
+        # If RPM is too low to calculate ratio, suggest gear based on speed
+        # This handles stationary/idle cases - suggest 1st at low speed
+        if rpm < 500:
+            suggested = self.suggest_gear_for_speed(speed_mph)
+            return (suggested, True, 0.0)  # clutch_engaged=True, confidence=0
+        
+        # Very low speed - can't reliably estimate from ratio, suggest based on speed
+        if speed_mph < 3:
+            suggested = self.suggest_gear_for_speed(speed_mph)
+            return (suggested, True, 0.0)  # Suggest gear, but indicate not from ratio
         
         # Calculate actual speed/RPM ratio
         actual_ratio = speed_mph / rpm
@@ -558,34 +585,31 @@ class CANHandler:
         
         Called after receiving RPM/speed data. Estimates gear for vehicles
         without gear position sensor (2008 MX5 NC GT only detects Neutral).
-        """
-        # Always try to estimate gear - the estimate_gear function handles
-        # low speed/RPM cases and returns neutral appropriately.
-        # We no longer skip based on current gear state because CAN neutral
-        # detection is only trusted when stationary (handled in _process_hs_message)
         
+        The gear estimator now always returns a suggested gear based on speed/RPM
+        when not in neutral. CAN neutral detection takes priority.
+        """
         # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
         # Despite the misleading variable name, we use it directly for gear estimation
         speed_mph = self.telemetry.speed_kmh
         
-        # Estimate gear from speed/RPM ratio
+        # Estimate gear from speed/RPM ratio (or suggest based on speed if ratio unknown)
         estimated_gear, clutch_engaged, confidence = self.gear_estimator.estimate_gear(
             speed_mph, 
             self.telemetry.rpm
         )
         
         # Update telemetry with estimated values
-        if estimated_gear != 0:  # In gear - use estimation
+        # Note: estimate_gear now always returns a gear (1-6) when not reverse
+        # CAN neutral detection (gear_estimated=False, gear=0) takes priority
+        if not self.telemetry.gear_estimated and self.telemetry.gear == 0:
+            # CAN neutral was detected - preserve it, don't override with estimation
+            pass
+        else:
+            # Use estimated/suggested gear
             self.telemetry.gear = estimated_gear
             self.telemetry.gear_estimated = True
             self.telemetry.clutch_engaged = clutch_engaged
-        else:  # Neutral from estimation (low speed or RPM)
-            # Only set neutral if we were previously in an estimated gear
-            # This prevents overriding CAN-detected neutral when stationary
-            if self.telemetry.gear_estimated:
-                self.telemetry.gear = 0
-                self.telemetry.gear_estimated = True
-                self.telemetry.clutch_engaged = False
 
 
 # =============================================================================
