@@ -309,34 +309,106 @@ class GearEstimator:
         
         return best_gear
     
-    def estimate_gear(self, speed_mph: float, rpm: int) -> tuple:
+    def get_expected_rpm_for_gear(self, speed_mph: float, gear: int) -> float:
+        """Calculate the expected RPM for a given speed and gear
+        
+        Returns expected RPM, or 0 if gear invalid
+        """
+        if gear < 1 or gear > 6:
+            return 0.0
+        mph_per_1k = self.MPH_PER_1000_RPM.get(gear, 0)
+        if mph_per_1k <= 0:
+            return 0.0
+        return (speed_mph / mph_per_1k) * 1000
+    
+    def get_gear_color(self, speed_mph: float, rpm: int, recommended_gear: int) -> str:
+        """Determine gear indicator color based on RPM vs expected for recommended gear
+        
+        Returns color string:
+            'red' - RPM too high for recommended gear (need to shift up or let off gas)
+            'blue' - RPM too low for recommended gear (need to shift down or give gas)
+            'green' - RPM is appropriate for recommended gear
+            'yellow' - RPM slightly off
+        """
+        if recommended_gear < 1 or recommended_gear > 6:
+            return 'green'
+        
+        if speed_mph < 2:
+            # At very low/no speed, color based on absolute RPM
+            if rpm > 4000:
+                return 'red'  # Too high for starting
+            elif rpm < 1000:
+                return 'blue'  # Too low / stall risk
+            else:
+                return 'green'
+        
+        # Calculate expected RPM for recommended gear at current speed
+        expected_rpm = self.get_expected_rpm_for_gear(speed_mph, recommended_gear)
+        if expected_rpm <= 0:
+            return 'green'
+        
+        rpm_diff_percent = ((rpm - expected_rpm) / expected_rpm) * 100
+        
+        # Color coding:
+        # Green: within ±15% of expected (good match)
+        # Yellow: 15-30% off (slightly off)
+        # Red: >30% too high (RPM too high - shift up or let off)
+        # Blue: >30% too low (RPM too low - shift down or more gas)
+        if abs(rpm_diff_percent) <= 15:
+            return 'green'
+        elif rpm_diff_percent > 30:
+            return 'red'
+        elif rpm_diff_percent < -30:
+            return 'blue'
+        elif rpm_diff_percent > 15:
+            return 'yellow'  # Slightly high
+        else:
+            return 'cyan'  # Slightly low
+    
+    def estimate_gear(self, speed_mph: float, rpm: int, is_in_neutral: bool = False) -> tuple:
         """Estimate gear from speed and RPM
         
+        Args:
+            speed_mph: Vehicle speed in MPH
+            rpm: Engine RPM
+            is_in_neutral: True if CAN bus neutral signal detected
+        
         Returns:
-            tuple: (gear, clutch_engaged, confidence)
-                gear: Estimated gear number (1-6), 0 for neutral, -1 for reverse
-                clutch_engaged: True if clutch appears to be pressed
-                confidence: How well the ratio matches (0.0-1.0)
+            tuple: (gear, clutch_engaged, confidence, recommended_gear, gear_color)
+                gear: Estimated current gear (1-6), 0 for neutral, -1 for reverse
+                clutch_engaged: True if clutch appears to be pressed (ratio mismatch)
+                confidence: How well the ratio matches expected (0.0-1.0)
+                recommended_gear: Suggested gear for current speed (1-6)
+                gear_color: Color indicator ('red', 'blue', 'green', 'yellow', 'cyan')
         """
+        # If CAN reports neutral, return neutral
+        if is_in_neutral:
+            recommended = self.suggest_gear_for_speed(speed_mph)
+            color = self.get_gear_color(speed_mph, rpm, recommended)
+            return (0, False, 1.0, recommended, color)
+        
         # Check for reverse (negative speed from CAN)
         if speed_mph < 0:
-            return (-1, False, 1.0)
+            return (-1, False, 1.0, -1, 'green')
         
-        # If RPM is too low to calculate ratio, suggest gear based on speed
-        # This handles stationary/idle cases - suggest 1st at low speed
+        # Always calculate recommended gear based on speed
+        recommended_gear = self.suggest_gear_for_speed(speed_mph)
+        
+        # If RPM is too low to calculate ratio, return recommended gear
+        # This handles stationary/idle cases
         if rpm < 500:
-            suggested = self.suggest_gear_for_speed(speed_mph)
-            return (suggested, True, 0.0)  # clutch_engaged=True, confidence=0
+            color = self.get_gear_color(speed_mph, rpm, recommended_gear)
+            return (recommended_gear, True, 0.0, recommended_gear, color)
         
-        # Very low speed - can't reliably estimate from ratio, suggest based on speed
+        # Very low speed - can't reliably estimate from ratio
         if speed_mph < 3:
-            suggested = self.suggest_gear_for_speed(speed_mph)
-            return (suggested, True, 0.0)  # Suggest gear, but indicate not from ratio
+            color = self.get_gear_color(speed_mph, rpm, recommended_gear)
+            return (recommended_gear, True, 0.0, recommended_gear, color)
         
         # Calculate actual speed/RPM ratio
         actual_ratio = speed_mph / rpm
         
-        # Find best matching gear
+        # Find best matching gear from ratio
         best_gear = 1
         best_error = float('inf')
         
@@ -353,10 +425,17 @@ class GearEstimator:
         confidence = max(0.0, 1.0 - ratio_difference * 2.0)
         
         # Detect clutch engagement: ratio is way off (>30% difference)
-        # This happens when clutch is pressed or tires are slipping
         clutch_engaged = ratio_difference > 0.30
         
-        return (best_gear, clutch_engaged, confidence)
+        # Determine which gear to display:
+        # - If ratio matches a gear well (>50% confidence), show that gear
+        # - If ratio doesn't match (clutch in, shifting), show recommended gear
+        display_gear = best_gear if confidence > 0.50 else recommended_gear
+        
+        # Calculate color based on RPM vs recommended gear
+        color = self.get_gear_color(speed_mph, rpm, recommended_gear)
+        
+        return (display_gear, clutch_engaged, confidence, recommended_gear, color)
 
 
 # =============================================================================
@@ -513,14 +592,13 @@ class CANHandler:
             can_gear = CANParser.parse_gear(data)
             # Use CAN neutral signal directly - the neutral safety switch is reliable
             # 2008 MX5 NC GT reliably detects Neutral via the neutral safety switch
-            # Trust CAN neutral at low speeds (< 10 mph) since clutch must be engaged
-            # to be in neutral while rolling. At higher speeds, rely on gear estimation.
-            if can_gear == 0 and self.telemetry.speed_kmh < 10:
-                self.telemetry.gear = 0
-                self.telemetry.gear_estimated = False
-                self.telemetry.clutch_engaged = False
-            # For all other cases (driving), rely on estimation
-            # (estimation happens in _update_gear_estimation after RPM/speed update)
+            # Trust CAN neutral signal and store it so gear estimation can use it
+            if can_gear == 0:
+                self.telemetry.is_in_neutral = True
+            else:
+                self.telemetry.is_in_neutral = False
+            # Don't set gear here - let _update_gear_estimation handle it
+            # The gear estimation will check is_in_neutral and show N or estimated gear
             
         elif can_id == HSCanID.WHEEL_SPEEDS:
             speeds = CANParser.parse_wheel_speeds(data)
@@ -583,33 +661,36 @@ class CANHandler:
     def _update_gear_estimation(self):
         """Update gear estimation based on current speed and RPM
         
-        Called after receiving RPM/speed data. Estimates gear for vehicles
-        without gear position sensor (2008 MX5 NC GT only detects Neutral).
+        Called after receiving RPM/speed data. Uses CAN neutral signal and
+        speed/RPM ratio to determine:
+        1. If in neutral (CAN signal) - show N with recommended gear color
+        2. If ratio matches a gear - show that gear
+        3. If ratio doesn't match - show recommended gear for speed
         
-        The gear estimator now always returns a suggested gear based on speed/RPM
-        when not in neutral. CAN neutral detection takes priority.
+        Color coding shows if RPM is appropriate for the recommended gear:
+        - Green: RPM is good for the speed
+        - Red: RPM too high (shift up or let off gas)
+        - Blue: RPM too low (shift down or more gas)
         """
         # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
-        # Despite the misleading variable name, we use it directly for gear estimation
         speed_mph = self.telemetry.speed_kmh
         
-        # Estimate gear from speed/RPM ratio (or suggest based on speed if ratio unknown)
-        estimated_gear, clutch_engaged, confidence = self.gear_estimator.estimate_gear(
+        # Get gear estimation with all new fields
+        result = self.gear_estimator.estimate_gear(
             speed_mph, 
-            self.telemetry.rpm
+            self.telemetry.rpm,
+            self.telemetry.is_in_neutral
         )
         
-        # Update telemetry with estimated values
-        # Note: estimate_gear now always returns a gear (1-6) when not reverse
-        # CAN neutral detection (gear_estimated=False, gear=0) takes priority
-        if not self.telemetry.gear_estimated and self.telemetry.gear == 0:
-            # CAN neutral was detected - preserve it, don't override with estimation
-            pass
-        else:
-            # Use estimated/suggested gear
-            self.telemetry.gear = estimated_gear
-            self.telemetry.gear_estimated = True
-            self.telemetry.clutch_engaged = clutch_engaged
+        # Unpack the 5-tuple result
+        estimated_gear, clutch_engaged, confidence, recommended_gear, gear_color = result
+        
+        # Update all telemetry fields
+        self.telemetry.gear = estimated_gear
+        self.telemetry.gear_estimated = (confidence < 1.0)  # True if not 100% from CAN
+        self.telemetry.clutch_engaged = clutch_engaged
+        self.telemetry.recommended_gear = recommended_gear
+        self.telemetry.gear_color = gear_color
 
 
 # =============================================================================
