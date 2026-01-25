@@ -592,7 +592,8 @@ class ESP32SerialHandler:
             # Use lock to prevent collision with screen commands
             with self._write_lock:
                 # Combine all telemetry into fewer messages to reduce serial traffic
-                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles
+                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color
+                # gear_color: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
                 msg = f"TEL:{self.telemetry.rpm:.0f},{self.telemetry.speed_kmh:.0f},{self.telemetry.gear},"
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
                 oil_val = 1 if self.telemetry.oil_status else 0
@@ -613,7 +614,11 @@ class ESP32SerialHandler:
                 # Calculate range fallback if no range but have fuel data
                 if range_miles <= 0 and fuel_pct > 0:
                     range_miles = int(fuel_pct * 12.7 * avg_mpg / 100)
-                msg += f"{avg_mpg:.1f},{range_miles}\n"
+                msg += f"{avg_mpg:.1f},{range_miles},"
+                # Add gear color indicator (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
+                color_map = {'green': 0, 'red': 1, 'blue': 2, 'yellow': 3, 'cyan': 4}
+                gear_color_val = color_map.get(self.telemetry.gear_color, 0)
+                msg += f"{gear_color_val}\n"
                 
                 # Debug: log MPG data periodically (every ~5 seconds)
                 if not hasattr(self, '_mpg_debug_counter'):

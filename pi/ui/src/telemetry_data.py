@@ -31,6 +31,9 @@ class TelemetryData:
     gear: int = 0
     gear_estimated: bool = False  # True if gear was estimated from speed/RPM ratio
     clutch_engaged: bool = False  # True if clutch appears to be pressed
+    recommended_gear: int = 1     # Suggested gear for current speed (1-6)
+    gear_color: str = 'green'     # Color indicator: red/blue/green/yellow/cyan
+    is_in_neutral: bool = False   # True if CAN neutral signal detected
     throttle_percent: int = 0
     brake_active: bool = False
     

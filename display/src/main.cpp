@@ -102,6 +102,7 @@ struct TelemetryData {
     // Gear estimation (for vehicles without gear sensor)
     bool gearEstimated;       // True if gear was estimated from speed/RPM
     bool clutchEngaged;       // True if clutch appears to be pressed
+    int gearColor;            // Gear color from Pi: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
     // Diagnostics
     bool checkEngine;
     bool absWarning;
@@ -138,6 +139,7 @@ struct CachedTelemetry {
     float rpm;
     float speed;
     int gear;
+    int gearColor;           // Cached gear color from Pi
     float coolantTemp;
     float fuelLevel;
     float ambientTemp;
@@ -273,7 +275,7 @@ bool needsFullRedraw = true;  // Set to true on screen change to redraw backgrou
 bool navLocked = false;       // Navigation lock state (from Pi SWC handler)
 
 // Boot countdown - Pi takes ~37 seconds to boot and send data
-const int PI_BOOT_COUNTDOWN = 37;  // Seconds to countdown from
+const int PI_BOOT_COUNTDOWN = 30;  // Seconds to countdown from
 unsigned long bootStartTime = 0;   // Set in setup()
 bool piDataReceived = false;       // Set true when first valid telemetry data arrives
 int lastBootCountdown = 99;        // Track countdown for redraw detection (start high so first frame triggers)
@@ -1291,15 +1293,8 @@ void drawOverviewScreen() {
         // Reset arc cache so full arc is redrawn
         prevTelemetry.arcEndAngle = 135.0;  // Start angle
         prevTelemetry.arcColor = MX5_DARKGRAY;
-        
-        // If Pi data not received yet, immediately clear side indicator areas
-        // This prevents background image from showing box backgrounds during boot
-        if (!piDataReceived) {
-            int sideBoxY = CENTER_Y - 36;
-            int sideBoxH = 72;
-            LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
-            LCD_FillRoundRect(SCREEN_WIDTH - 110, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
-        }
+        // Note: Side indicator areas are cleared later in the hideDuringBoot section
+        // using a static flag to ensure they're only cleared once per boot cycle
     }
     
     // Calculate boot countdown early for hiding elements
@@ -1479,21 +1474,38 @@ void drawOverviewScreen() {
             LCD_DrawString(msgX, boxY + 10, msg, MX5_CYAN, COLOR_BG_CARD, 2);
         }
     } else {
+    // Static flags to track if labels have been drawn (reset on full redraw)
+    static bool rpmLabelDrawn = false;
+    static bool mphLabelDrawn = false;
+    if (needsFullRedraw) {
+        rpmLabelDrawn = false;
+        mphLabelDrawn = false;
+    }
+    
+    // Track previous RPM color for border updates
+    static uint16_t prevRpmColor = 0;
+    bool rpmColorChanged = (rpmColor != prevRpmColor);
+    
     // RPM on left side - centered in box (80-180)
-    if (needsFullRedraw || rpmChanged) {
+    if (needsFullRedraw || rpmChanged || rpmColorChanged) {
         char rpmStr[8];
         if (!telemetry.hasReceivedTelemetry) {
             snprintf(rpmStr, sizeof(rpmStr), "--");
         } else {
             snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
         }
-        // Clear box area
-        LCD_FillRect(rpmBoxX, boxY, boxW, boxH, COLOR_BG);
         
-        // Draw "rpm" label centered at top of box
-        int labelWidth = 3 * 6;  // "rpm" = 3 chars, size 1 = 6px/char
-        int labelX = rpmBoxX + (boxW - labelWidth) / 2;
-        LCD_DrawString(labelX, boxY, "rpm", MX5_GRAY, COLOR_BG, 1);
+        // Draw label only once (or on full redraw)
+        if (!rpmLabelDrawn) {
+            LCD_FillRect(rpmBoxX, boxY, boxW, boxH, COLOR_BG);
+            int labelWidth = 3 * 6;  // "rpm" = 3 chars, size 1 = 6px/char
+            int labelX = rpmBoxX + (boxW - labelWidth) / 2;
+            LCD_DrawString(labelX, boxY, "rpm", MX5_GRAY, COLOR_BG, 1);
+            rpmLabelDrawn = true;
+        } else {
+            // Only clear value area (below label)
+            LCD_FillRect(rpmBoxX, boxY + 12, boxW, boxH - 12, COLOR_BG);
+        }
         
         // Draw RPM value centered below label
         int rpmLen = strlen(rpmStr);
@@ -1501,11 +1513,12 @@ void drawOverviewScreen() {
         int valueX = rpmBoxX + (boxW - valueWidth) / 2;
         LCD_DrawString(valueX, boxY + 12, rpmStr, rpmColor, COLOR_BG, 3);
         
-        // Draw bottom border
+        // Draw bottom border (color changes with RPM)
         int bottomY = boxY + boxH;
         for (int i = 0; i < 2; i++) {
             LCD_DrawLine(rpmBoxX, bottomY + i, rpmBoxX + boxW, bottomY + i, rpmColor);
         }
+        prevRpmColor = rpmColor;
     }
     
     // MPH on right side - centered in box (180-280)
@@ -1516,13 +1529,19 @@ void drawOverviewScreen() {
         } else {
             snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
         }
-        // Clear box area
-        LCD_FillRect(mphBoxX, boxY, boxW, boxH, COLOR_BG);
         
-        // Draw "mph" label centered at top of box
-        int labelWidth = 3 * 6;  // "mph" = 3 chars, size 1 = 6px/char
-        int labelX = mphBoxX + (boxW - labelWidth) / 2;
-        LCD_DrawString(labelX, boxY, "mph", MX5_GRAY, COLOR_BG, 1);
+        // Draw label and border only once (or on full redraw)
+        bool drawLabelAndBorder = !mphLabelDrawn;
+        if (!mphLabelDrawn) {
+            LCD_FillRect(mphBoxX, boxY, boxW, boxH, COLOR_BG);
+            int labelWidth = 3 * 6;  // "mph" = 3 chars, size 1 = 6px/char
+            int labelX = mphBoxX + (boxW - labelWidth) / 2;
+            LCD_DrawString(labelX, boxY, "mph", MX5_GRAY, COLOR_BG, 1);
+            mphLabelDrawn = true;
+        } else {
+            // Only clear value area (below label)
+            LCD_FillRect(mphBoxX, boxY + 12, boxW, boxH - 12, COLOR_BG);
+        }
         
         // Draw speed value centered below label
         int speedLen = strlen(speedStr);
@@ -1530,50 +1549,35 @@ void drawOverviewScreen() {
         int valueX = mphBoxX + (boxW - valueWidth) / 2;
         LCD_DrawString(valueX, boxY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
         
-        // Draw bottom border
-        int bottomY = boxY + boxH;
-        for (int i = 0; i < 2; i++) {
-            LCD_DrawLine(mphBoxX, bottomY + i, mphBoxX + boxW, bottomY + i, MX5_WHITE);
+        // Draw bottom border only when label was drawn (first time or full redraw)
+        if (drawLabelAndBorder) {
+            int bottomY = boxY + boxH;
+            for (int i = 0; i < 2; i++) {
+                LCD_DrawLine(mphBoxX, bottomY + i, mphBoxX + boxW, bottomY + i, MX5_WHITE);
+            }
         }
     }
     }  // End hideTopDuringBoot check
     
     // === LARGE GEAR INDICATOR (Center) === 
-    // Determine gear ring color based on rev-match quality
-    // Compare current RPM to expected RPM for the displayed gear at current speed
-    // This helps driver match revs during shifts and shows if in optimal gear
+    // Use gear color from Pi which calculates based on:
+    // - If in neutral: color based on RPM vs recommended gear for speed
+    // - If in gear: color based on RPM vs expected for that gear at speed
+    // Color codes: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
     uint16_t gearGlow = MX5_GREEN;
     
-    // Calculate expected RPM for current gear at current speed
-    int displayGear = telemetry.gear;
-    if (displayGear >= 1 && displayGear <= 6 && telemetry.speed > 0) {
-        // Convert speed from km/h to mph for calculation
-        float speedMph = telemetry.speed * 0.621371f;
-        float expectedRpm = (speedMph / MPH_PER_1000_RPM[displayGear]) * 1000.0f;
-        float rpmDiff = telemetry.rpm - expectedRpm;
-        float rpmDiffPercent = (expectedRpm > 0) ? (rpmDiff / expectedRpm) * 100.0f : 0;
-        
-        // Color based on RPM difference from expected:
-        // Green = matched (within 10%)
-        // Yellow/Orange = RPM too high (need to shift up or let off gas)
-        // Cyan/Blue = RPM too low (need to shift down or rev up)
-        if (abs(rpmDiffPercent) < 10) {
-            gearGlow = MX5_GREEN;      // Perfect rev match!
-        } else if (rpmDiffPercent > 30) {
-            gearGlow = MX5_RED;        // RPM way too high - shift up!
-        } else if (rpmDiffPercent > 20) {
-            gearGlow = MX5_ORANGE;     // RPM high - consider shifting up
-        } else if (rpmDiffPercent > 10) {
-            gearGlow = MX5_YELLOW;     // RPM slightly high
-        } else if (rpmDiffPercent < -30) {
-            gearGlow = MX5_BLUE;       // RPM way too low - shift down or rev up!
-        } else if (rpmDiffPercent < -20) {
-            gearGlow = MX5_CYAN;       // RPM low - consider shifting down
-        } else {
-            gearGlow = MX5_CYAN;       // RPM slightly low
+    // Use Pi-provided gear color if we have telemetry data
+    if (telemetry.hasReceivedTelemetry) {
+        switch (telemetry.gearColor) {
+            case 0: gearGlow = MX5_GREEN;  break;  // RPM is appropriate
+            case 1: gearGlow = MX5_RED;    break;  // RPM too high - shift up
+            case 2: gearGlow = MX5_BLUE;   break;  // RPM too low - shift down or more gas
+            case 3: gearGlow = MX5_YELLOW; break;  // RPM slightly high
+            case 4: gearGlow = MX5_CYAN;   break;  // RPM slightly low
+            default: gearGlow = MX5_GREEN; break;
         }
     } else {
-        // Neutral, reverse, or stationary - use RPM-based coloring
+        // Fallback: local RPM-based coloring when no Pi data
         if (telemetry.rpm > 6500) {
             gearGlow = MX5_RED;
         } else if (telemetry.rpm > 5500) {
@@ -1670,17 +1674,23 @@ void drawOverviewScreen() {
     // This ensures boxes don't appear after countdown ends but before Pi data arrives
     bool hideDuringBoot = !piDataReceived;
     
+    // Track if side boxes have been cleared during this boot cycle (static persists)
+    static bool sideBoxesCleared = false;
+    
     // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
-    // Hidden until Pi data is received - ALWAYS clear on every frame during boot
+    // Hidden until Pi data is received - clear ONCE on full redraw during boot
     if (hideDuringBoot) {
-        // Don't draw side indicators until Pi data received - they're hidden
-        // Clear the areas on EVERY frame during boot to ensure they stay hidden
-        // (background image may have box backgrounds baked in)
-        int sideBoxY = CENTER_Y - 36;
-        int sideBoxH = 72;
-        LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
-        LCD_FillRoundRect(SCREEN_WIDTH - 110, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
+        // Only clear side indicator areas once (on full redraw) to avoid redundant fills
+        if (needsFullRedraw && !sideBoxesCleared) {
+            int sideBoxY = CENTER_Y - 36;
+            int sideBoxH = 72;
+            LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
+            LCD_FillRoundRect(SCREEN_WIDTH - 110, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
+            sideBoxesCleared = true;
+        }
     } else {
+    // Reset the cleared flag when Pi data arrives (for next boot cycle)
+    sideBoxesCleared = false;
     // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
     // Both boxes aligned to same Y position and height for visual balance
     int sideBoxY = CENTER_Y - 36;  // Common Y for all side indicators
@@ -1689,26 +1699,40 @@ void drawOverviewScreen() {
     // COOLANT + OIL COMBINED (left side) - matches gas box height
     int leftBoxX = 50;
     int leftBoxW = 70;
-    if (needsFullRedraw || coolantChanged || oilChanged) {
-        // Use coolant color for main accent (more critical indicator)
-        uint16_t coolColor = MX5_CYAN;
-        if (telemetry.coolantTemp == 0) coolColor = MX5_RED;  // No data received
-        else if (telemetry.coolantTemp > 220) coolColor = MX5_RED;
-        else if (telemetry.coolantTemp > 200) coolColor = MX5_ORANGE;
-        
-        // Draw combined box background
+    
+    // Calculate coolant color (needed for both background and value)
+    uint16_t coolColor = MX5_CYAN;
+    if (telemetry.coolantTemp == 0) coolColor = MX5_RED;  // No data received
+    else if (telemetry.coolantTemp > 220) coolColor = MX5_RED;
+    else if (telemetry.coolantTemp > 200) coolColor = MX5_ORANGE;
+    
+    // Draw box background and static labels only on full redraw
+    if (needsFullRedraw) {
         LCD_FillRoundRect(leftBoxX, sideBoxY, leftBoxW, sideBoxH, 4, COLOR_BG_CARD);
         LCD_FillRect(leftBoxX, sideBoxY, 3, sideBoxH, coolColor);  // Left accent bar
-        
-        // COOLANT section (top)
+        // Static labels (only need to draw once)
         LCD_DrawString(leftBoxX + 6, sideBoxY + 3, "COOL", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_DrawString(leftBoxX + 6, sideBoxY + 42, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
+    }
+    
+    // Update coolant value when changed
+    if (needsFullRedraw || coolantChanged) {
+        // Update accent bar color if coolant changed
+        if (coolantChanged && !needsFullRedraw) {
+            LCD_FillRect(leftBoxX, sideBoxY, 3, sideBoxH, coolColor);
+        }
+        // Clear and redraw coolant value area only
+        LCD_FillRect(leftBoxX + 6, sideBoxY + 16, leftBoxW - 10, 16, COLOR_BG_CARD);
         char coolStr[8];
         snprintf(coolStr, sizeof(coolStr), "%dF", (int)telemetry.coolantTemp);
         LCD_DrawString(leftBoxX + 6, sideBoxY + 16, coolStr, coolColor, COLOR_BG_CARD, 2);
-        
-        // OIL section (bottom) - status text below label
+    }
+    
+    // Update oil status when changed
+    if (needsFullRedraw || oilChanged) {
         uint16_t oilColor = telemetry.oilWarning ? MX5_RED : MX5_GREEN;
-        LCD_DrawString(leftBoxX + 6, sideBoxY + 42, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
+        // Clear and redraw oil status area only
+        LCD_FillRect(leftBoxX + 6, sideBoxY + 56, leftBoxW - 10, 16, COLOR_BG_CARD);
         const char* oilStatus = telemetry.oilWarning ? "LOW" : "OK";
         LCD_DrawString(leftBoxX + 6, sideBoxY + 56, oilStatus, oilColor, COLOR_BG_CARD, 2);
     }
@@ -1848,6 +1872,7 @@ void drawOverviewScreen() {
     prevTelemetry.rpm = telemetry.rpm;
     prevTelemetry.speed = telemetry.speed;
     prevTelemetry.gear = telemetry.gear;
+    prevTelemetry.gearColor = telemetry.gearColor;
     prevTelemetry.coolantTemp = telemetry.coolantTemp;
     prevTelemetry.fuelLevel = telemetry.fuelLevel;
     prevTelemetry.ambientTemp = telemetry.ambientTemp;
@@ -1870,7 +1895,8 @@ void drawRPMScreen() {
     bool valuesChanged = !prevTelemetry.initialized ||
         (int)telemetry.rpm != (int)prevTelemetry.rpm ||
         (int)telemetry.speed != (int)prevTelemetry.speed ||
-        telemetry.gear != prevTelemetry.gear;
+        telemetry.gear != prevTelemetry.gear ||
+        telemetry.gearColor != prevTelemetry.gearColor;
     
     // Skip if nothing changed and not a full redraw
     if (!needsFullRedraw && !valuesChanged) return;
@@ -1883,11 +1909,23 @@ void drawRPMScreen() {
     // === LARGE GEAR INDICATOR (Top) ===
     int gearY = 55;
     
-    // Gear color based on RPM
+    // Gear color from Pi (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
     uint16_t gearColor = MX5_GREEN;
-    if (telemetry.rpm > 6500) gearColor = MX5_RED;
-    else if (telemetry.rpm > 5500) gearColor = MX5_ORANGE;
-    else if (telemetry.rpm > 4500) gearColor = MX5_YELLOW;
+    if (telemetry.hasReceivedTelemetry) {
+        switch (telemetry.gearColor) {
+            case 0: gearColor = MX5_GREEN;  break;
+            case 1: gearColor = MX5_RED;    break;
+            case 2: gearColor = MX5_BLUE;   break;
+            case 3: gearColor = MX5_YELLOW; break;
+            case 4: gearColor = MX5_CYAN;   break;
+            default: gearColor = MX5_GREEN; break;
+        }
+    } else {
+        // Fallback: RPM-based coloring
+        if (telemetry.rpm > 6500) gearColor = MX5_RED;
+        else if (telemetry.rpm > 5500) gearColor = MX5_ORANGE;
+        else if (telemetry.rpm > 4500) gearColor = MX5_YELLOW;
+    }
     
     // Large gear number
     char gearStr[4];
@@ -2013,6 +2051,7 @@ void drawRPMScreen() {
     prevTelemetry.rpm = telemetry.rpm;
     prevTelemetry.speed = telemetry.speed;
     prevTelemetry.gear = telemetry.gear;
+    prevTelemetry.gearColor = telemetry.gearColor;
     prevTelemetry.initialized = true;
 }
 
@@ -3337,13 +3376,14 @@ void parseCommand(String cmd) {
         telemetry.oilPressure = cmd.substring(7).toFloat();
         telemetry.connected = true;
     }
-    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles)
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color)
+    // gear_color: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
     else if (cmd.startsWith("TEL:")) {
         String data = cmd.substring(4);
         int idx = 0;
-        float values[12] = {0};  // 12 fields including MPG data
+        float values[13] = {0};  // 13 fields including gear_color
         int start = 0;
-        for (int i = 0; i <= data.length() && idx < 12; i++) {
+        for (int i = 0; i <= data.length() && idx < 13; i++) {
             if (i == data.length() || data[i] == ',') {
                 String field = data.substring(start, i);
                 values[idx] = field.toFloat();
@@ -3365,9 +3405,11 @@ void parseCommand(String cmd) {
             if (idx >= 8) telemetry.engineRunning = (values[7] > 0);
             if (idx >= 9) telemetry.gearEstimated = (values[8] > 0);
             if (idx >= 10) telemetry.clutchEngaged = (values[9] > 0);
-            // MPG data fields (new)
+            // MPG data fields
             if (idx >= 11) telemetry.averageMPG = values[10];
             if (idx >= 12) telemetry.rangeMiles = (int)values[11];
+            // Gear color from Pi (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
+            if (idx >= 13) telemetry.gearColor = (int)values[12];
             telemetry.connected = true;
             telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
