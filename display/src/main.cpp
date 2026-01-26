@@ -1324,10 +1324,10 @@ void drawOverviewScreen() {
     int arcThickness = 14;  // Thicker modern gauge
     
     // Segment-based approach: divide arc into discrete segments
-    // Total arc = 270 degrees, use 135 segments (2 degrees each) for faster updates
-    // Reduced from 270 segments to cut update time in half while maintaining visual quality
-    const int NUM_SEGMENTS = 135;
-    const float DEGREES_PER_SEGMENT = 2.0f;
+    // Total arc = 270 degrees, use 90 segments (3 degrees each) for faster updates
+    // Reduced from 135 segments to further cut update time while maintaining visual quality
+    const int NUM_SEGMENTS = 90;
+    const float DEGREES_PER_SEGMENT = 3.0f;
     
     // Calculate which segment the current RPM ends at (0 to NUM_SEGMENTS)
     // Reuse rpmPercent calculated earlier
@@ -1339,18 +1339,72 @@ void drawOverviewScreen() {
     if (prevRpmPercent > 1.0f) prevRpmPercent = 1.0f;
     int prevSegment = (int)(prevRpmPercent * NUM_SEGMENTS);
     
-    bool colorChanged = (rpmColor != prevTelemetry.arcColor);
+    // Helper lambda to get the color for a segment based on its POSITION (not current RPM)
+    // This eliminates color-change redraws - each segment has a fixed color based on what RPM it represents
+    // Uses the same smooth gradient as Arduino LEDs: Blue → Green → Yellow → Orange → Red
+    auto getSegmentColor = [](int segmentIndex) -> uint16_t {
+        // Calculate what RPM this segment represents (segment 0 = 0 RPM, segment 90 = 8000 RPM)
+        float segmentRpm = (segmentIndex / 90.0f) * 8000.0f;
+        
+        // Arduino RPM zones (matching arduino/src/main.cpp):
+        // 0-1999: Blue | 2000-2999: Blue→Green | 3000-4499: Green→Yellow
+        // 4500-5499: Yellow→Orange | 5500-6199: Orange→Red | 6200+: Red
+        
+        if (segmentRpm < 2000) {
+            // Pure Blue (0, 0, 255)
+            return RGB565(0, 0, 255);
+        }
+        else if (segmentRpm < 3000) {
+            // Blue → Green gradient
+            float pos = (segmentRpm - 2000) / 1000.0f;
+            uint8_t r = 0;
+            uint8_t g = (uint8_t)(255 * pos);
+            uint8_t b = (uint8_t)(255 * (1.0f - pos));
+            return RGB565(r, g, b);
+        }
+        else if (segmentRpm < 4500) {
+            // Green → Yellow gradient
+            float pos = (segmentRpm - 3000) / 1500.0f;
+            uint8_t r = (uint8_t)(255 * pos);
+            uint8_t g = 255;
+            uint8_t b = 0;
+            return RGB565(r, g, b);
+        }
+        else if (segmentRpm < 5500) {
+            // Yellow → Orange gradient
+            float pos = (segmentRpm - 4500) / 1000.0f;
+            uint8_t r = 255;
+            uint8_t g = (uint8_t)(255 - 127 * pos);  // 255 → 128
+            uint8_t b = 0;
+            return RGB565(r, g, b);
+        }
+        else if (segmentRpm < 6200) {
+            // Orange → Red gradient
+            float pos = (segmentRpm - 5500) / 700.0f;
+            uint8_t r = 255;
+            uint8_t g = (uint8_t)(128 * (1.0f - pos));  // 128 → 0
+            uint8_t b = 0;
+            return RGB565(r, g, b);
+        }
+        else {
+            // Pure Red (255, 0, 0) - redline
+            return RGB565(255, 0, 0);
+        }
+    };
     
-    // Helper lambda to draw a single segment (all pixels for one degree of arc)
-    auto drawSegment = [&](int segmentIndex, uint16_t color) {
+    // Helper lambda to draw a single segment with position-based color
+    auto drawSegment = [&](int segmentIndex, bool colored) {
         float segStartAngle = startAngle + (segmentIndex * DEGREES_PER_SEGMENT);
         float segEndAngle = segStartAngle + DEGREES_PER_SEGMENT;
         
-        // Draw all pixels in this segment with finer step to ensure full coverage
+        // Get color: either position-based color (if active) or gray (if inactive)
+        uint16_t color = colored ? getSegmentColor(segmentIndex) : MX5_DARKGRAY;
+        
+        // Draw all pixels in this segment with step to ensure coverage
         for (int t = 0; t < arcThickness; t++) {
             int r = arcRadius - t;
-            // Use 0.3 degree step within segment to ensure no gaps
-            for (float angle = segStartAngle; angle <= segEndAngle; angle += 0.3f) {
+            // Use 0.5 degree step within segment (faster, still good coverage)
+            for (float angle = segStartAngle; angle <= segEndAngle; angle += 0.5f) {
                 float rad = angle * 3.14159f / 180.0f;
                 int x = CENTER_X + (int)(r * cosf(rad));
                 int y = CENTER_Y + (int)(r * sinf(rad));
@@ -1360,43 +1414,24 @@ void drawOverviewScreen() {
     };
     
     if (needsFullRedraw || prevSegment < 0) {
-        // Full redraw: draw all gray segments first, then colored segments
+        // Full redraw: draw all segments with appropriate colors
         for (int seg = 0; seg < NUM_SEGMENTS; seg++) {
-            drawSegment(seg, MX5_DARKGRAY);
-        }
-        for (int seg = 0; seg < currentSegment; seg++) {
-            drawSegment(seg, rpmColor);
+            drawSegment(seg, seg < currentSegment);  // colored if below current RPM
         }
     } else if (currentSegment > prevSegment) {
-        // RPM increased - draw new colored segments
+        // RPM increased - ONLY draw the NEW segments (no color change redraw needed!)
         for (int seg = prevSegment; seg < currentSegment; seg++) {
-            drawSegment(seg, rpmColor);
-        }
-        // If color changed, also redraw existing colored portion
-        if (colorChanged) {
-            for (int seg = 0; seg < prevSegment; seg++) {
-                drawSegment(seg, rpmColor);
-            }
+            drawSegment(seg, true);  // Draw as colored
         }
     } else if (currentSegment < prevSegment) {
-        // RPM decreased - erase segments that are no longer colored (draw gray)
+        // RPM decreased - ONLY erase segments that are no longer active
         for (int seg = currentSegment; seg < prevSegment; seg++) {
-            drawSegment(seg, MX5_DARKGRAY);
-        }
-        // If color changed, also redraw remaining colored portion
-        if (colorChanged && currentSegment > 0) {
-            for (int seg = 0; seg < currentSegment; seg++) {
-                drawSegment(seg, rpmColor);
-            }
-        }
-    } else if (colorChanged && currentSegment > 0) {
-        // Same segment count but color changed - redraw colored portion
-        for (int seg = 0; seg < currentSegment; seg++) {
-            drawSegment(seg, rpmColor);
+            drawSegment(seg, false);  // Draw as gray
         }
     }
+    // No more colorChanged handling needed - each segment has fixed color!
     
-    // Cache current state for next frame
+    // Cache current state for next frame (arcColor no longer needed but kept for compatibility)
     prevTelemetry.arcEndAngle = startAngle + (currentSegment * DEGREES_PER_SEGMENT);
     prevTelemetry.arcColor = rpmColor;
     
@@ -1482,12 +1517,10 @@ void drawOverviewScreen() {
         mphLabelDrawn = false;
     }
     
-    // Track previous RPM color for border updates
-    static uint16_t prevRpmColor = 0;
-    bool rpmColorChanged = (rpmColor != prevRpmColor);
-    
     // RPM on left side - centered in box (80-180)
-    if (needsFullRedraw || rpmChanged || rpmColorChanged) {
+    // OPTIMIZATION: RPM value and border are now always white (like speed) to avoid color change redraws
+    // The RPM arc around the screen edge still shows color - that's the visual feedback for RPM zones
+    if (needsFullRedraw || rpmChanged) {
         char rpmStr[8];
         if (!telemetry.hasReceivedTelemetry) {
             snprintf(rpmStr, sizeof(rpmStr), "--");
@@ -1507,18 +1540,17 @@ void drawOverviewScreen() {
             LCD_FillRect(rpmBoxX, boxY + 12, boxW, boxH - 12, COLOR_BG);
         }
         
-        // Draw RPM value centered below label
+        // Draw RPM value centered below label (always white for consistency with speed)
         int rpmLen = strlen(rpmStr);
         int valueWidth = rpmLen * 18;  // Size 3 = ~18px per char
         int valueX = rpmBoxX + (boxW - valueWidth) / 2;
-        LCD_DrawString(valueX, boxY + 12, rpmStr, rpmColor, COLOR_BG, 3);
+        LCD_DrawString(valueX, boxY + 12, rpmStr, MX5_WHITE, COLOR_BG, 3);
         
-        // Draw bottom border (color changes with RPM)
+        // Draw bottom border (always white - matches speed, reduces redraws)
         int bottomY = boxY + boxH;
         for (int i = 0; i < 2; i++) {
-            LCD_DrawLine(rpmBoxX, bottomY + i, rpmBoxX + boxW, bottomY + i, rpmColor);
+            LCD_DrawLine(rpmBoxX, bottomY + i, rpmBoxX + boxW, bottomY + i, MX5_WHITE);
         }
-        prevRpmColor = rpmColor;
     }
     
     // MPH on right side - centered in box (180-280)
@@ -1564,10 +1596,16 @@ void drawOverviewScreen() {
     // - If in neutral: color based on RPM vs recommended gear for speed
     // - If in gear: color based on RPM vs expected for that gear at speed
     // Color codes: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
+    //
+    // OPTIMIZATION: Only apply color changes when gear is ESTIMATED (gearEstimated=true).
+    // When the gear ratio matches a known gear (gearEstimated=false), always show green.
+    // This reduces redraws since color won't change when driving normally in gear.
     uint16_t gearGlow = MX5_GREEN;
     
     // Use Pi-provided gear color if we have telemetry data
-    if (telemetry.hasReceivedTelemetry) {
+    // BUT only when gear is estimated (ratio doesn't match known gear)
+    if (telemetry.hasReceivedTelemetry && telemetry.gearEstimated) {
+        // Gear ratio doesn't match a known gear - show color feedback for RPM
         switch (telemetry.gearColor) {
             case 0: gearGlow = MX5_GREEN;  break;  // RPM is appropriate
             case 1: gearGlow = MX5_RED;    break;  // RPM too high - shift up
@@ -1576,6 +1614,9 @@ void drawOverviewScreen() {
             case 4: gearGlow = MX5_CYAN;   break;  // RPM slightly low
             default: gearGlow = MX5_GREEN; break;
         }
+    } else if (telemetry.hasReceivedTelemetry) {
+        // Gear ratio matches a known gear - always green (reduces redraws)
+        gearGlow = MX5_GREEN;
     } else {
         // Fallback: local RPM-based coloring when no Pi data
         if (telemetry.rpm > 6500) {
@@ -1628,17 +1669,21 @@ void drawOverviewScreen() {
             prevGearGlow = gearGlow;
         } else {
             // Not showing countdown - determine gear text to display
-        if (!telemetry.engineRunning) {
-            // When engine is off, show gear from Pi (neutral, reverse, or suggested gear)
+            
+        // Check for reverse first (negative speed OR gear == -1)
+        // Speed-based detection is primary since Pi calculates this from CAN
+        if (telemetry.speed < 0 || telemetry.gear == -1) {
+            snprintf(gearStr, sizeof(gearStr), "R");
+        } else if (!telemetry.engineRunning) {
+            // When engine is off, show gear from Pi (neutral or suggested gear)
             if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
-            else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);  // Show suggested gear
         } else if (telemetry.clutchEngaged) {
             // Clutch is engaged - show per user preference
+            // Note: Reverse already handled above by speed check
             switch (clutchDisplayMode) {
                 case 0:  // Gear# (colored) - show estimated gear for rev-matching
                     if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
-                    else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
                     else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
                     break;
                 case 1:  // 'C' for clutch
@@ -1656,8 +1701,8 @@ void drawOverviewScreen() {
             }
         } else {
             // Normal display - show detected/estimated gear
+            // Note: Reverse already handled above by speed check
             if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
-            else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
             else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
         }
         // Draw gear text centered in the gear circle using custom large font
@@ -1892,11 +1937,13 @@ void drawOverviewScreen() {
 
 void drawRPMScreen() {
     // Check if any displayed values have changed
+    // OPTIMIZATION: Only check gearColor change when gear is estimated
+    bool gearColorRelevant = telemetry.gearEstimated && (telemetry.gearColor != prevTelemetry.gearColor);
     bool valuesChanged = !prevTelemetry.initialized ||
         (int)telemetry.rpm != (int)prevTelemetry.rpm ||
         (int)telemetry.speed != (int)prevTelemetry.speed ||
         telemetry.gear != prevTelemetry.gear ||
-        telemetry.gearColor != prevTelemetry.gearColor;
+        gearColorRelevant;
     
     // Skip if nothing changed and not a full redraw
     if (!needsFullRedraw && !valuesChanged) return;
@@ -1910,8 +1957,11 @@ void drawRPMScreen() {
     int gearY = 55;
     
     // Gear color from Pi (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
+    // OPTIMIZATION: Only apply color when gear is estimated (ratio doesn't match known gear)
+    // When gear ratio matches a known gear, always show green to reduce redraws
     uint16_t gearColor = MX5_GREEN;
-    if (telemetry.hasReceivedTelemetry) {
+    if (telemetry.hasReceivedTelemetry && telemetry.gearEstimated) {
+        // Gear ratio doesn't match known gear - show color feedback for RPM
         switch (telemetry.gearColor) {
             case 0: gearColor = MX5_GREEN;  break;
             case 1: gearColor = MX5_RED;    break;
@@ -1920,17 +1970,19 @@ void drawRPMScreen() {
             case 4: gearColor = MX5_CYAN;   break;
             default: gearColor = MX5_GREEN; break;
         }
-    } else {
-        // Fallback: RPM-based coloring
+    } else if (!telemetry.hasReceivedTelemetry) {
+        // Fallback: RPM-based coloring when no Pi data
         if (telemetry.rpm > 6500) gearColor = MX5_RED;
         else if (telemetry.rpm > 5500) gearColor = MX5_ORANGE;
         else if (telemetry.rpm > 4500) gearColor = MX5_YELLOW;
     }
+    // else: hasReceivedTelemetry && !gearEstimated -> stays green (known gear)
     
     // Large gear number
     char gearStr[4];
-    if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
-    else if (telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+    // Check for reverse first (negative speed OR gear == -1)
+    if (telemetry.speed < 0 || telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+    else if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
     else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
     
     // Draw gear in large font (size 4 = 28px wide per char)
