@@ -109,10 +109,10 @@ class MPGCalculator:
     MIN_DRIVING_SPEED_MPH = 3.0
     
     # Minimum fuel change to register (filters sensor noise)
-    MIN_FUEL_CHANGE_PCT = 0.1
+    MIN_FUEL_CHANGE_PCT = 0.05  # Lowered from 0.1 to catch smaller fuel changes
     
     # How often to save persistent data (seconds)
-    SAVE_INTERVAL_SEC = 60.0
+    SAVE_INTERVAL_SEC = 30.0  # Save more frequently for debugging
     
     # Maximum reasonable MPG (sanity check)
     MAX_REASONABLE_MPG = 50.0
@@ -267,18 +267,20 @@ class MPGCalculator:
             self.trip.distance_miles += distance_increment
             self._instant_distance_buffer += distance_increment
             
+            # Always accumulate distance to lifetime when driving
+            self.lifetime.total_miles += distance_increment
+            
             # Calculate fuel consumption from smoothed fuel delta
             if self._prev_smoothed_fuel_pct is not None and self._smoothed_fuel_pct is not None:
                 fuel_delta_pct = self._prev_smoothed_fuel_pct - self._smoothed_fuel_pct
                 
                 # Only count positive fuel consumption (ignore refueling)
-                if fuel_delta_pct > 0:
+                if fuel_delta_pct > self.MIN_FUEL_CHANGE_PCT / 100.0:  # Use threshold
                     fuel_delta_gal = (fuel_delta_pct / 100.0) * self.TANK_CAPACITY_GAL
                     self.trip.fuel_used_gal += fuel_delta_gal
                     self._instant_fuel_buffer += fuel_delta_gal
                     
-                    # Also accumulate to lifetime (will be persisted)
-                    self.lifetime.total_miles += distance_increment
+                    # Accumulate fuel to lifetime (will be persisted)
                     self.lifetime.total_gallons += fuel_delta_gal
         
         # Store previous smoothed value for next delta calculation
@@ -292,8 +294,13 @@ class MPGCalculator:
         # Update output values (pass raw fuel for fallback range calculation)
         self._update_outputs(raw_fuel_pct)
         
-        # Periodic save
+        # Periodic save with debug output
         if current_time - self._last_save_time >= self.SAVE_INTERVAL_SEC:
+            # Debug output every save interval
+            if self._trip_active:
+                print(f"MPG: PERIODIC UPDATE - trip: {self.trip.distance_miles:.2f}mi, {self.trip.fuel_used_gal:.3f}gal | "
+                      f"lifetime: {self.lifetime.total_miles:.1f}mi, {self.lifetime.total_gallons:.2f}gal | "
+                      f"fuel: {self._smoothed_fuel_pct:.1f}% | avg: {self._average_mpg:.1f}mpg")
             self._save_data()
             self._last_save_time = current_time
     
@@ -363,7 +370,12 @@ class MPGCalculator:
     
     def _start_trip(self, initial_fuel_pct: float):
         """Start a new trip when engine starts"""
-        print(f"MPG: Starting new trip at {initial_fuel_pct:.1f}% fuel")
+        # Debug: log trip start with all relevant data
+        print(f"MPG: *** TRIP STARTED ***")
+        print(f"MPG:   Initial fuel: {initial_fuel_pct:.1f}%")
+        print(f"MPG:   Lifetime miles: {self.lifetime.total_miles:.1f}")
+        print(f"MPG:   Lifetime gallons: {self.lifetime.total_gallons:.2f}")
+        print(f"MPG:   Current avg MPG: {self.lifetime.average_mpg:.1f}")
         
         self.trip = TripData(
             start_time=time.time(),

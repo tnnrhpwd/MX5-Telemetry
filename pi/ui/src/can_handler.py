@@ -101,17 +101,23 @@ class CANParser:
         """Parse vehicle speed from engine message (ID 0x201)
         Typically bytes 4-5 or similar, in km/h, converted to mph
         
-        Note: As per international automotive standard, the ECU transmits speed
-        with a +100 km/h offset to avoid negative numbers when in reverse.
-        We subtract 100 to get the true speed value.
+        MX5 NC uses a 16-bit value in 0.01 km/h units with a 100 km/h offset.
+        This means:
+        - 0 km/h actual = 10000 raw (100.00 km/h in raw units)
+        - -5 km/h (reverse) = 9500 raw (95.00 km/h in raw units)
+        - +50 km/h forward = 15000 raw (150.00 km/h in raw units)
         """
         if len(data) >= 6:
             raw = (data[4] << 8) | data[5]
-            # Raw value is in 0.01 km/h units
-            kmh = raw // 100
-            # Subtract the 100 km/h offset used by the ECU
-            true_kmh = kmh - 100
-            # Convert to mph (handle negative values for reverse)
+            
+            # Raw value is in 0.01 km/h units with +100 km/h offset
+            # Subtract 10000 (100 km/h * 100) to get true value in 0.01 km/h
+            true_kmh_times_100 = raw - 10000
+            
+            # Convert to km/h (float for accuracy)
+            true_kmh = true_kmh_times_100 / 100.0
+            
+            # Convert to mph
             mph = int(true_kmh * 0.621371)
             return mph
         return 0
@@ -424,13 +430,13 @@ class GearEstimator:
         ratio_difference = abs(actual_ratio - expected_ratio) / expected_ratio
         confidence = max(0.0, 1.0 - ratio_difference * 2.0)
         
-        # Detect clutch engagement: ratio is way off (>30% difference)
-        clutch_engaged = ratio_difference > 0.30
+        # Detect clutch engagement: ratio is way off (>40% difference)
+        clutch_engaged = ratio_difference > 0.40
         
         # Determine which gear to display:
-        # - If ratio matches a gear well (>50% confidence), show that gear
+        # - If ratio matches a gear reasonably (>30% confidence), show that gear
         # - If ratio doesn't match (clutch in, shifting), show recommended gear
-        display_gear = best_gear if confidence > 0.50 else recommended_gear
+        display_gear = best_gear if confidence > 0.30 else recommended_gear
         
         # Calculate color based on RPM vs recommended gear
         color = self.get_gear_color(speed_mph, rpm, recommended_gear)
@@ -634,10 +640,16 @@ class CANHandler:
             # Trust CAN neutral signal and store it so gear estimation can use it
             if can_gear == 0:
                 self.telemetry.is_in_neutral = True
+                self.telemetry.is_in_reverse = False
+            elif can_gear == -1:
+                # Reverse gear detected from CAN
+                self.telemetry.is_in_neutral = False
+                self.telemetry.is_in_reverse = True
             else:
                 self.telemetry.is_in_neutral = False
+                self.telemetry.is_in_reverse = False
             # Don't set gear here - let _update_gear_estimation handle it
-            # The gear estimation will check is_in_neutral and show N or estimated gear
+            # The gear estimation will check is_in_neutral/is_in_reverse
             
         elif can_id == HSCanID.WHEEL_SPEEDS:
             speeds = CANParser.parse_wheel_speeds(data)
@@ -703,17 +715,27 @@ class CANHandler:
     def _update_gear_estimation(self):
         """Update gear estimation based on current speed and RPM
         
-        Called after receiving RPM/speed data. Uses CAN neutral signal and
+        Called after receiving RPM/speed data. Uses CAN neutral/reverse signals and
         speed/RPM ratio to determine:
-        1. If in neutral (CAN signal) - show N with recommended gear color
-        2. If ratio matches a gear - show that gear
-        3. If ratio doesn't match - show recommended gear for speed
+        1. If in reverse (CAN signal or negative speed) - show R
+        2. If in neutral (CAN signal) - show N with recommended gear color
+        3. If ratio matches a gear - show that gear
+        4. If ratio doesn't match - show recommended gear for speed
         
         Color coding shows if RPM is appropriate for the recommended gear:
         - Green: RPM is good for the speed
         - Red: RPM too high (shift up or let off gas)
         - Blue: RPM too low (shift down or more gas)
         """
+        # Check for reverse first - either from CAN gear position or negative speed
+        if self.telemetry.is_in_reverse or self.telemetry.speed_kmh < 0:
+            self.telemetry.gear = -1  # -1 = Reverse
+            self.telemetry.gear_estimated = False  # Direct detection, not estimated
+            self.telemetry.clutch_engaged = False
+            self.telemetry.recommended_gear = -1
+            self.telemetry.gear_color = 'green'
+            return
+        
         # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
         speed_mph = self.telemetry.speed_kmh
         

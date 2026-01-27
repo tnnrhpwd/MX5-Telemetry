@@ -167,6 +167,8 @@ class TelemetryData:
     gear: int = 0
     gear_estimated: bool = False  # True if gear was estimated from speed/RPM ratio
     clutch_engaged: bool = False  # True if clutch appears to be pressed
+    is_in_neutral: bool = False   # True if CAN neutral signal detected
+    is_in_reverse: bool = False   # True if CAN reverse gear detected
     throttle_percent: int = 0
     brake_percent: int = 0
     coolant_temp_f: int = 0
