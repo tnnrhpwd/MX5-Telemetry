@@ -620,13 +620,13 @@ class ESP32SerialHandler:
                 gear_color_val = color_map.get(self.telemetry.gear_color, 0)
                 msg += f"{gear_color_val}\n"
                 
-                # Debug: log MPG data periodically (every ~5 seconds)
+                # Debug: log fuel/MPG data periodically (every ~10 seconds)
                 if not hasattr(self, '_mpg_debug_counter'):
                     self._mpg_debug_counter = 0
                 self._mpg_debug_counter += 1
-                if self._mpg_debug_counter >= 150:  # ~5 sec at 30Hz
+                if self._mpg_debug_counter >= 300:  # ~10 sec at 30Hz
                     self._mpg_debug_counter = 0
-                    print(f"[MPG DEBUG] fuel={fuel_pct:.1f}%, avg_mpg={self.telemetry.average_mpg:.1f}, range={self.telemetry.range_miles}, sending: mpg={avg_mpg:.1f}, range={range_miles}")
+                    print(f"[ESP32 TX] fuel={fuel_pct:.1f}%, tel.avg_mpg={self.telemetry.average_mpg:.1f}, tel.range={self.telemetry.range_miles}, sending: mpg={avg_mpg:.1f}, range={range_miles}")
                 
                 self.serial_conn.write(msg.encode('utf-8'))
                 

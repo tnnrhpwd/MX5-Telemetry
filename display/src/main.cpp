@@ -1330,10 +1330,10 @@ void drawOverviewScreen() {
     int arcThickness = 14;  // Thicker modern gauge
     
     // Segment-based approach: divide arc into discrete segments
-    // Total arc = 270 degrees, use 90 segments (3 degrees each) for faster updates
-    // Reduced from 135 segments to further cut update time while maintaining visual quality
-    const int NUM_SEGMENTS = 90;
-    const float DEGREES_PER_SEGMENT = 3.0f;
+    // Total arc = 270 degrees, use 45 segments (6 degrees each) for fastest updates
+    // Reduced from 90 to 45 segments to minimize redraw time and latency
+    const int NUM_SEGMENTS = 45;
+    const float DEGREES_PER_SEGMENT = 6.0f;
     
     // Calculate which segment the current RPM ends at (0 to NUM_SEGMENTS)
     // Reuse rpmPercent calculated earlier
@@ -1349,8 +1349,8 @@ void drawOverviewScreen() {
     // This eliminates color-change redraws - each segment has a fixed color based on what RPM it represents
     // Uses the same smooth gradient as Arduino LEDs: Blue → Green → Yellow → Orange → Red
     auto getSegmentColor = [](int segmentIndex) -> uint16_t {
-        // Calculate what RPM this segment represents (segment 0 = 0 RPM, segment 90 = 8000 RPM)
-        float segmentRpm = (segmentIndex / 90.0f) * 8000.0f;
+        // Calculate what RPM this segment represents (segment 0 = 0 RPM, segment 45 = 8000 RPM)
+        float segmentRpm = (segmentIndex / 45.0f) * 8000.0f;
         
         // Arduino RPM zones (matching arduino/src/main.cpp):
         // 0-1999: Blue | 2000-2999: Blue→Green | 3000-4499: Green→Yellow
@@ -1407,10 +1407,10 @@ void drawOverviewScreen() {
         uint16_t color = colored ? getSegmentColor(segmentIndex) : MX5_DARKGRAY;
         
         // Draw all pixels in this segment with step to ensure coverage
+        // Use 1.0 degree step for 6-degree segments (faster, still good coverage)
         for (int t = 0; t < arcThickness; t++) {
             int r = arcRadius - t;
-            // Use 0.5 degree step within segment (faster, still good coverage)
-            for (float angle = segStartAngle; angle <= segEndAngle; angle += 0.5f) {
+            for (float angle = segStartAngle; angle <= segEndAngle; angle += 1.0f) {
                 float rad = angle * 3.14159f / 180.0f;
                 int x = CENTER_X + (int)(r * cosf(rad));
                 int y = CENTER_Y + (int)(r * sinf(rad));
@@ -1854,10 +1854,20 @@ void drawOverviewScreen() {
     else if (telemetry.fuelLevel < 25) tankColor = MX5_ORANGE;
     else if (telemetry.fuelLevel < 40) tankColor = MX5_YELLOW;
     
+    // Calculate range - prefer Pi-calculated range, else calculate locally
     int displayRange = telemetry.rangeMiles;
-    if (displayRange <= 0 && telemetry.fuelLevel > 0) {
-        float mpgForCalc = telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f;
-        displayRange = (int)(telemetry.fuelLevel * 12.7f * mpgForCalc / 100.0f);
+    if (displayRange <= 0) {
+        // Fallback: calculate from fuel level if we have it
+        if (telemetry.fuelLevel > 0) {
+            float mpgForCalc = telemetry.averageMPG > 0 ? telemetry.averageMPG : 26.0f;
+            // tank_capacity * (fuel_pct/100) * mpg = range
+            displayRange = (int)(12.7f * (telemetry.fuelLevel / 100.0f) * mpgForCalc);
+        }
+        // Extra fallback: if we still have no range but had a previous value, keep it
+        // This prevents display flickering during brief data gaps
+        if (displayRange <= 0 && prevTelemetry.rangeMiles > 0) {
+            displayRange = prevTelemetry.rangeMiles;
+        }
     }
     
     uint16_t rangeColor = MX5_GREEN;
