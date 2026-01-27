@@ -445,6 +445,10 @@ class GearEstimator:
 class CANHandler:
     """Manages CAN bus communication with MCP2515 modules"""
     
+    # Fuel level smoothing parameters
+    FUEL_EMA_ALPHA = 0.05  # EMA smoothing factor (lower = more smoothing, 0.05 = very smooth)
+    FUEL_HYSTERESIS = 1.5  # Only update displayed value if change > 1.5%
+    
     def __init__(self, telemetry_data, swc_handler=None):
         """
         Args:
@@ -467,6 +471,10 @@ class CANHandler:
         
         # Gear estimator for vehicles without gear position sensor
         self.gear_estimator = GearEstimator()
+        
+        # Fuel level smoothing state
+        self._fuel_ema = None  # EMA-smoothed raw fuel value
+        self._fuel_displayed = None  # Last displayed fuel value (with hysteresis)
         
     def start(self) -> bool:
         """Initialize and start CAN bus reading"""
@@ -549,6 +557,37 @@ class CANHandler:
         
         self.connected = False
     
+    def _smooth_fuel_level(self, raw_fuel: float) -> float:
+        """Apply EMA smoothing and hysteresis to fuel level to reduce display flicker.
+        
+        Uses two-stage filtering:
+        1. EMA (Exponential Moving Average) to smooth out sensor noise
+        2. Hysteresis to prevent oscillation at value boundaries (e.g., 56% <-> 57%)
+        
+        Args:
+            raw_fuel: Raw fuel percentage from CAN (0-100)
+            
+        Returns:
+            Smoothed fuel percentage that only changes when delta exceeds hysteresis threshold
+        """
+        # Initialize on first reading
+        if self._fuel_ema is None:
+            self._fuel_ema = raw_fuel
+            self._fuel_displayed = round(raw_fuel)
+            return self._fuel_displayed
+        
+        # Apply EMA: new_ema = alpha * raw + (1 - alpha) * old_ema
+        # With alpha=0.05, this heavily smooths the signal (95% old value, 5% new)
+        self._fuel_ema = self.FUEL_EMA_ALPHA * raw_fuel + (1 - self.FUEL_EMA_ALPHA) * self._fuel_ema
+        
+        # Apply hysteresis: only update displayed value if EMA has changed significantly
+        # This prevents flip-flopping between adjacent integer values
+        ema_rounded = round(self._fuel_ema)
+        if abs(self._fuel_ema - self._fuel_displayed) >= self.FUEL_HYSTERESIS:
+            self._fuel_displayed = ema_rounded
+        
+        return self._fuel_displayed
+
     def _read_hs_can(self):
         """Read HS-CAN messages in background thread"""
         while self._running and self.hs_can:
@@ -619,7 +658,10 @@ class CANHandler:
             self.telemetry.ambient_temp_f = CANParser.parse_ambient_temp(data)
             
         elif can_id == HSCanID.FUEL_LEVEL:
-            self.telemetry.fuel_level_percent = CANParser.parse_fuel_level(data)
+            # Apply EMA smoothing + hysteresis to reduce fluctuations
+            raw_fuel = CANParser.parse_fuel_level(data)
+            smoothed_fuel = self._smooth_fuel_level(raw_fuel)
+            self.telemetry.fuel_level_percent = smoothed_fuel
             
         elif can_id == HSCanID.BATTERY_VOLTAGE:
             self.telemetry.voltage = CANParser.parse_voltage(data)
