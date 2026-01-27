@@ -147,6 +147,11 @@ struct CachedTelemetry {
     float averageMPG;       // Cached MPG value
     int rangeMiles;         // Cached range value
     bool engineRunning;
+    // RPM/Speed digit optimization - only redraw changed digits
+    char rpmStr[8];          // Cached RPM string for per-digit comparison
+    char speedStr[8];        // Cached Speed string for per-digit comparison
+    int rpmDigitCount;       // Number of digits in cached RPM
+    int speedDigitCount;     // Number of digits in cached speed
     // RPM arc optimization - cache the arc state to enable incremental updates
     float arcEndAngle;       // Last drawn arc end angle (in degrees)
     uint16_t arcColor;       // Last arc color used
@@ -239,7 +244,8 @@ bool bleInitialized = false;
 bool bleScanRunning = false;  // Track if continuous scan is active
 unsigned long lastBLEScanStart = 0;  // Track when last scan started
 const unsigned long BLE_SCAN_COOLDOWN = 3000;  // Wait 3 seconds between scans
-const unsigned long TPMS_DATA_TIMEOUT = 30000; // Data valid for 30 seconds
+const unsigned long TPMS_DATA_TIMEOUT = 300000; // Data valid for 5 minutes (was 30 sec - too aggressive)
+const unsigned long TPMS_CACHE_PRESERVE_TIME = 86400000; // Keep cached values for 24 hours
 
 // TPMS persistence storage
 Preferences tpmsPrefs;
@@ -1515,10 +1521,15 @@ void drawOverviewScreen() {
     if (needsFullRedraw) {
         rpmLabelDrawn = false;
         mphLabelDrawn = false;
+        // Reset cached strings on full redraw
+        prevTelemetry.rpmStr[0] = '\0';
+        prevTelemetry.speedStr[0] = '\0';
+        prevTelemetry.rpmDigitCount = 0;
+        prevTelemetry.speedDigitCount = 0;
     }
     
     // RPM on left side - centered in box (80-180)
-    // OPTIMIZATION: RPM value and border are now always white (like speed) to avoid color change redraws
+    // OPTIMIZATION: Per-digit redraw - only redraw digits that actually changed
     // The RPM arc around the screen edge still shows color - that's the visual feedback for RPM zones
     if (needsFullRedraw || rpmChanged) {
         char rpmStr[8];
@@ -1527,6 +1538,7 @@ void drawOverviewScreen() {
         } else {
             snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
         }
+        int rpmLen = strlen(rpmStr);
         
         // Draw label only once (or on full redraw)
         if (!rpmLabelDrawn) {
@@ -1535,25 +1547,46 @@ void drawOverviewScreen() {
             int labelX = rpmBoxX + (boxW - labelWidth) / 2;
             LCD_DrawString(labelX, boxY, "rpm", MX5_GRAY, COLOR_BG, 1);
             rpmLabelDrawn = true;
-        } else {
-            // Only clear value area (below label)
-            LCD_FillRect(rpmBoxX, boxY + 12, boxW, boxH - 12, COLOR_BG);
+            // Draw bottom border once
+            int bottomY = boxY + boxH;
+            for (int i = 0; i < 2; i++) {
+                LCD_DrawLine(rpmBoxX, bottomY + i, rpmBoxX + boxW, bottomY + i, MX5_WHITE);
+            }
         }
         
-        // Draw RPM value centered below label (always white for consistency with speed)
-        int rpmLen = strlen(rpmStr);
+        // PER-DIGIT OPTIMIZATION: Only redraw digits that changed
+        int prevRpmLen = prevTelemetry.rpmDigitCount;
+        bool digitCountChanged = (rpmLen != prevRpmLen);
+        
+        // Calculate positions for current string (centered)
         int valueWidth = rpmLen * 18;  // Size 3 = ~18px per char
         int valueX = rpmBoxX + (boxW - valueWidth) / 2;
-        LCD_DrawString(valueX, boxY + 12, rpmStr, MX5_WHITE, COLOR_BG, 3);
+        int valueY = boxY + 12;
         
-        // Draw bottom border (always white - matches speed, reduces redraws)
-        int bottomY = boxY + boxH;
-        for (int i = 0; i < 2; i++) {
-            LCD_DrawLine(rpmBoxX, bottomY + i, rpmBoxX + boxW, bottomY + i, MX5_WHITE);
+        if (digitCountChanged || needsFullRedraw) {
+            // Digit count changed - must clear and redraw all
+            LCD_FillRect(rpmBoxX, valueY, boxW, boxH - 12, COLOR_BG);
+            LCD_DrawString(valueX, valueY, rpmStr, MX5_WHITE, COLOR_BG, 3);
+        } else {
+            // Same digit count - only redraw changed digits
+            for (int i = 0; i < rpmLen; i++) {
+                if (rpmStr[i] != prevTelemetry.rpmStr[i]) {
+                    // Clear this digit position and redraw
+                    int digitX = valueX + (i * 18);
+                    LCD_FillRect(digitX, valueY, 18, 24, COLOR_BG);  // Size 3 = 24px tall
+                    char digitStr[2] = {rpmStr[i], '\0'};
+                    LCD_DrawString(digitX, valueY, digitStr, MX5_WHITE, COLOR_BG, 3);
+                }
+            }
         }
+        
+        // Cache current string for next comparison
+        strncpy(prevTelemetry.rpmStr, rpmStr, sizeof(prevTelemetry.rpmStr));
+        prevTelemetry.rpmDigitCount = rpmLen;
     }
     
     // MPH on right side - centered in box (180-280)
+    // OPTIMIZATION: Per-digit redraw - only redraw digits that actually changed
     if (needsFullRedraw || speedChanged) {
         char speedStr[8];
         if (!telemetry.hasReceivedTelemetry) {
@@ -1561,33 +1594,51 @@ void drawOverviewScreen() {
         } else {
             snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
         }
+        int speedLen = strlen(speedStr);
         
         // Draw label and border only once (or on full redraw)
-        bool drawLabelAndBorder = !mphLabelDrawn;
         if (!mphLabelDrawn) {
             LCD_FillRect(mphBoxX, boxY, boxW, boxH, COLOR_BG);
             int labelWidth = 3 * 6;  // "mph" = 3 chars, size 1 = 6px/char
             int labelX = mphBoxX + (boxW - labelWidth) / 2;
             LCD_DrawString(labelX, boxY, "mph", MX5_GRAY, COLOR_BG, 1);
             mphLabelDrawn = true;
-        } else {
-            // Only clear value area (below label)
-            LCD_FillRect(mphBoxX, boxY + 12, boxW, boxH - 12, COLOR_BG);
-        }
-        
-        // Draw speed value centered below label
-        int speedLen = strlen(speedStr);
-        int valueWidth = speedLen * 18;  // Size 3 = ~18px per char
-        int valueX = mphBoxX + (boxW - valueWidth) / 2;
-        LCD_DrawString(valueX, boxY + 12, speedStr, MX5_WHITE, COLOR_BG, 3);
-        
-        // Draw bottom border only when label was drawn (first time or full redraw)
-        if (drawLabelAndBorder) {
+            // Draw bottom border once
             int bottomY = boxY + boxH;
             for (int i = 0; i < 2; i++) {
                 LCD_DrawLine(mphBoxX, bottomY + i, mphBoxX + boxW, bottomY + i, MX5_WHITE);
             }
         }
+        
+        // PER-DIGIT OPTIMIZATION: Only redraw digits that changed
+        int prevSpeedLen = prevTelemetry.speedDigitCount;
+        bool digitCountChanged = (speedLen != prevSpeedLen);
+        
+        // Calculate positions for current string (centered)
+        int valueWidth = speedLen * 18;  // Size 3 = ~18px per char
+        int valueX = mphBoxX + (boxW - valueWidth) / 2;
+        int valueY = boxY + 12;
+        
+        if (digitCountChanged || needsFullRedraw) {
+            // Digit count changed - must clear and redraw all
+            LCD_FillRect(mphBoxX, valueY, boxW, boxH - 12, COLOR_BG);
+            LCD_DrawString(valueX, valueY, speedStr, MX5_WHITE, COLOR_BG, 3);
+        } else {
+            // Same digit count - only redraw changed digits
+            for (int i = 0; i < speedLen; i++) {
+                if (speedStr[i] != prevTelemetry.speedStr[i]) {
+                    // Clear this digit position and redraw
+                    int digitX = valueX + (i * 18);
+                    LCD_FillRect(digitX, valueY, 18, 24, COLOR_BG);  // Size 3 = 24px tall
+                    char digitStr[2] = {speedStr[i], '\0'};
+                    LCD_DrawString(digitX, valueY, digitStr, MX5_WHITE, COLOR_BG, 3);
+                }
+            }
+        }
+        
+        // Cache current string for next comparison
+        strncpy(prevTelemetry.speedStr, speedStr, sizeof(prevTelemetry.speedStr));
+        prevTelemetry.speedDigitCount = speedLen;
     }
     }  // End hideTopDuringBoot check
     
@@ -3778,30 +3829,46 @@ void stopBLEScan() {
 void sendTPMSDataToPi() {
     // Sensor indices directly map to tire positions:
     // Index 0 = FL, Index 1 = FR, Index 2 = RL, Index 3 = RR
+    //
+    // IMPORTANT: Never send 0.0 for timed-out sensors - use cached telemetry values instead.
+    // This prevents Pi from losing good cached data when a sensor temporarily goes out of range.
     
-    bool anyValid = false;
+    bool anyFreshData = false;  // True if we have recent BLE data
+    bool anyCachedData = false; // True if we have any non-zero data to send
     float pressures[4] = {0, 0, 0, 0};
     float temps[4] = {0, 0, 0, 0};
     
     for (int tirePos = 0; tirePos < 4; tirePos++) {
         // Direct mapping: tirePos == sensorIndex
-        // Check if data is valid and not too old
-        if (tpmsSensors[tirePos].valid && 
-            (millis() - tpmsSensors[tirePos].lastUpdate) < TPMS_DATA_TIMEOUT) {
-            
+        unsigned long timeSinceUpdate = millis() - tpmsSensors[tirePos].lastUpdate;
+        
+        // Check if we have fresh BLE data (within 5 minute timeout)
+        if (tpmsSensors[tirePos].valid && timeSinceUpdate < TPMS_DATA_TIMEOUT) {
+            // Fresh data from BLE - use it
             pressures[tirePos] = tpmsSensors[tirePos].pressurePSI;
             temps[tirePos] = tpmsSensors[tirePos].temperatureF;
             
-            // Also update local telemetry for display
+            // Update local telemetry for display
             telemetry.tirePressure[tirePos] = pressures[tirePos];
             telemetry.tireTemp[tirePos] = temps[tirePos];
             
-            anyValid = true;
+            anyFreshData = true;
+            anyCachedData = true;
         }
+        // Otherwise, preserve existing cached telemetry value (don't zero it out!)
+        else if (telemetry.tirePressure[tirePos] > 0) {
+            // Use cached value from previous reads or NVS
+            pressures[tirePos] = telemetry.tirePressure[tirePos];
+            temps[tirePos] = telemetry.tireTemp[tirePos];
+            anyCachedData = true;
+            // Note: we don't set anyFreshData here, so NVS save won't overwrite timestamps
+        }
+        // If both BLE and cache are empty, leave as 0 (Pi will skip zeros)
     }
     
-    // Send to Pi if we have valid data
-    if (anyValid) {
+    // Always send if we have ANY non-zero data (fresh or cached)
+    // Pi-side code skips 0.0 values, so stale zeros won't overwrite good Pi cache
+    if (anyCachedData) {
         // Send tire pressures: TPMS_PSI:FL,FR,RL,RR
         Serial.printf("TPMS_PSI:%.1f,%.1f,%.1f,%.1f\n",
                       pressures[0], pressures[1], pressures[2], pressures[3]);
