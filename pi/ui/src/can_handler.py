@@ -134,20 +134,28 @@ class CANParser:
     @staticmethod
     def parse_gear(data: bytes) -> int:
         """Parse gear position (ID 0x231)
-        0=N, 1-6=gears, 7+=Reverse
+        
+        2008 MX5 NC GT does NOT have a gear position sensor for gears 1-6!
+        Only Neutral can be reliably detected via the neutral safety switch.
+        Gears 1-6 must be ESTIMATED from speed/RPM ratio.
+        
+        Returns:
+            0 = Neutral (detected from CAN)
+            None = Not in neutral (gear must be estimated from speed/RPM)
+        
+        Note: Reverse is detected separately via negative speed from CAN message 0x201
         """
         if len(data) >= 1:
             # Check byte 1 for neutral/park indicators
             if len(data) >= 2 and data[1] == 0x04:
-                return 0  # Neutral/Park
+                return 0  # Neutral/Park - reliable from CAN
             gear = data[0] & 0x0F
             if gear == 0:
-                return 0  # Neutral
-            elif gear <= 6:
-                return gear
-            else:
-                return -1  # Reverse
-        return 0
+                return 0  # Neutral - reliable from CAN
+            # For any other value, we cannot reliably determine the gear
+            # The MX5 NC doesn't report gears 1-6 accurately - must estimate from speed/RPM
+            return None  # Return None to indicate gear must be estimated
+        return None
     
     @staticmethod
     def parse_wheel_speeds(data: bytes) -> tuple:
@@ -638,18 +646,17 @@ class CANHandler:
             # Use CAN neutral signal directly - the neutral safety switch is reliable
             # 2008 MX5 NC GT reliably detects Neutral via the neutral safety switch
             # Trust CAN neutral signal and store it so gear estimation can use it
+            # Note: Gears 1-6 cannot be detected from CAN - must be estimated
+            # Note: Reverse is detected from negative speed (CAN ID 0x201), not gear position
             if can_gear == 0:
                 self.telemetry.is_in_neutral = True
                 self.telemetry.is_in_reverse = False
-            elif can_gear == -1:
-                # Reverse gear detected from CAN
-                self.telemetry.is_in_neutral = False
-                self.telemetry.is_in_reverse = True
             else:
+                # can_gear is None - not in neutral, need to estimate gear from speed/RPM
+                # is_in_reverse is set based on negative speed in _update_gear_estimation()
                 self.telemetry.is_in_neutral = False
-                self.telemetry.is_in_reverse = False
             # Don't set gear here - let _update_gear_estimation handle it
-            # The gear estimation will check is_in_neutral/is_in_reverse
+            # The gear estimation will check is_in_neutral and calculate from speed/RPM
             
         elif can_id == HSCanID.WHEEL_SPEEDS:
             speeds = CANParser.parse_wheel_speeds(data)
@@ -715,11 +722,11 @@ class CANHandler:
     def _update_gear_estimation(self):
         """Update gear estimation based on current speed and RPM
         
-        Called after receiving RPM/speed data. Uses CAN neutral/reverse signals and
+        Called after receiving RPM/speed data. Uses CAN neutral signal and
         speed/RPM ratio to determine:
-        1. If in reverse (CAN signal or negative speed) - show R
+        1. If speed is negative - show R (reverse)
         2. If in neutral (CAN signal) - show N with recommended gear color
-        3. If ratio matches a gear - show that gear
+        3. If ratio matches a gear - show that gear (1-6)
         4. If ratio doesn't match - show recommended gear for speed
         
         Color coding shows if RPM is appropriate for the recommended gear:
@@ -727,14 +734,19 @@ class CANHandler:
         - Red: RPM too high (shift up or let off gas)
         - Blue: RPM too low (shift down or more gas)
         """
-        # Check for reverse first - either from CAN gear position or negative speed
-        if self.telemetry.is_in_reverse or self.telemetry.speed_kmh < 0:
+        # Check for reverse first - negative speed from CAN indicates reverse
+        # Note: is_in_reverse flag is no longer set from gear position CAN message
+        # Reverse is detected solely from negative speed value
+        if self.telemetry.speed_kmh < 0:
             self.telemetry.gear = -1  # -1 = Reverse
+            self.telemetry.is_in_reverse = True  # Set for other code that might check this
             self.telemetry.gear_estimated = False  # Direct detection, not estimated
             self.telemetry.clutch_engaged = False
             self.telemetry.recommended_gear = -1
             self.telemetry.gear_color = 'green'
             return
+        else:
+            self.telemetry.is_in_reverse = False  # Not in reverse
         
         # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
         speed_mph = self.telemetry.speed_kmh
