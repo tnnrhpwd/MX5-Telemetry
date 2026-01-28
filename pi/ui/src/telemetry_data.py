@@ -34,7 +34,7 @@ class TelemetryData:
     recommended_gear: int = 1     # Suggested gear for current speed (1-6)
     gear_color: str = 'green'     # Color indicator: red/blue/green/yellow/cyan
     is_in_neutral: bool = False   # True if CAN neutral signal detected
-    is_in_reverse: bool = False   # True if CAN reverse gear detected
+    is_in_reverse: bool = False   # True if speed is negative (reverse detected)
     throttle_percent: int = 0
     brake_active: bool = False
     
