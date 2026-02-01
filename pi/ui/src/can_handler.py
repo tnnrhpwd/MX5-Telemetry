@@ -32,6 +32,7 @@ Load CAN modules:
     sudo modprobe mcp251x
 """
 
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -106,6 +107,11 @@ class CANParser:
         - 0 km/h actual = 10000 raw (100.00 km/h in raw units)
         - -5 km/h (reverse) = 9500 raw (95.00 km/h in raw units)
         - +50 km/h forward = 15000 raw (150.00 km/h in raw units)
+        
+        IMPORTANT: For negative speeds (reverse), we must ensure the sign is preserved
+        even for small values. Python's int() truncates toward zero, which would turn
+        -0.5 mph into 0, losing the reverse indicator. We use math.floor() for negative
+        values to ensure any reverse motion (even slow) is properly detected.
         """
         if len(data) >= 6:
             raw = (data[4] << 8) | data[5]
@@ -117,9 +123,17 @@ class CANParser:
             # Convert to km/h (float for accuracy)
             true_kmh = true_kmh_times_100 / 100.0
             
-            # Convert to mph
-            mph = int(true_kmh * 0.621371)
-            return mph
+            # Convert to mph (float first for proper sign handling)
+            mph_float = true_kmh * 0.621371
+            
+            # For negative speeds (reverse), use floor() to ensure any reverse motion
+            # is detected. For example: -0.5 mph should become -1, not 0.
+            # For positive speeds, int() works correctly.
+            if mph_float < 0:
+                # Floor for negative: -0.1 -> -1, ensuring reverse is detected
+                return int(math.floor(mph_float))
+            else:
+                return int(mph_float)
         return 0
     
     @staticmethod
