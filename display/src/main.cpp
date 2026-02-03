@@ -69,6 +69,14 @@
 #define MX5_DARKGRAY  RGB565(55, 55, 70)
 #define MX5_ACCENT    RGB565(100, 140, 255)
 
+// Arduino LED strip matching colors (pure RGB values)
+// These MUST match arduino/src/main.cpp getRPMColor() for visual consistency
+#define LED_BLUE      RGB565(0, 0, 255)       // 0-1999 RPM
+#define LED_GREEN     RGB565(0, 255, 0)       // 2000-2999 RPM
+#define LED_YELLOW    RGB565(255, 255, 0)     // 3000-4499 RPM
+#define LED_ORANGE    RGB565(255, 128, 0)     // 4500-5499 RPM
+#define LED_RED       RGB565(255, 0, 0)       // 5500+ RPM
+
 // Standard corner radius for UI elements
 #define CARD_RADIUS 8
 #define BAR_RADIUS 4
@@ -1307,12 +1315,13 @@ void drawOverviewScreen() {
     // Show indicators once Pi data is received OR countdown has finished
     bool hideTopDuringBoot = !piDataReceived && currentBootCountdown > 0;
     
-    // Calculate RPM color for both arc and text display
-    uint16_t rpmColor = MX5_BLUE;
-    if (telemetry.rpm >= 5500) rpmColor = MX5_RED;
-    else if (telemetry.rpm >= 4500) rpmColor = MX5_ORANGE;
-    else if (telemetry.rpm >= 3000) rpmColor = MX5_YELLOW;
-    else if (telemetry.rpm >= 2000) rpmColor = MX5_GREEN;
+    // Calculate RPM color matching Arduino LED strip exactly
+    // Uses LED_* constants for perfect color match with physical LEDs
+    uint16_t rpmColor = LED_BLUE;  // 0-1999 RPM
+    if (telemetry.rpm >= 5500) rpmColor = LED_RED;        // 5500+ RPM
+    else if (telemetry.rpm >= 4500) rpmColor = LED_ORANGE; // 4500-5499 RPM
+    else if (telemetry.rpm >= 3000) rpmColor = LED_YELLOW; // 3000-4499 RPM
+    else if (telemetry.rpm >= 2000) rpmColor = LED_GREEN;  // 2000-2999 RPM
     
     // === RPM ARC GAUGE (Screen border) - SEGMENT-BASED INCREMENTAL UPDATE ===
     // Hidden during boot countdown
@@ -1348,20 +1357,22 @@ void drawOverviewScreen() {
     // Helper lambda to get the color for a segment based on its POSITION (not current RPM)
     // This eliminates color-change redraws - each segment has a fixed color based on what RPM it represents
     // Uses the same smooth gradient as Arduino LEDs: Blue → Green → Yellow → Orange → Red
+    // Colors MUST match arduino/src/main.cpp getRPMColor() exactly!
     auto getSegmentColor = [](int segmentIndex) -> uint16_t {
         // Calculate what RPM this segment represents (segment 0 = 0 RPM, segment 45 = 8000 RPM)
         float segmentRpm = (segmentIndex / 45.0f) * 8000.0f;
         
-        // Arduino RPM zones (matching arduino/src/main.cpp):
-        // 0-1999: Blue | 2000-2999: Blue→Green | 3000-4499: Green→Yellow
-        // 4500-5499: Yellow→Orange | 5500-6199: Orange→Red | 6200+: Red
+        // Arduino RPM zones (matching arduino/src/main.cpp getRPMColor()):
+        // RPM_ZONE_BLUE=2000, RPM_ZONE_GREEN=3000, RPM_ZONE_YELLOW=4500, 
+        // RPM_ZONE_ORANGE=5500, RPM_MAX=6200
+        // Colors: Blue(0,0,255) → Green(0,255,0) → Yellow(255,255,0) → Orange(255,128,0) → Red(255,0,0)
         
         if (segmentRpm < 2000) {
-            // Pure Blue (0, 0, 255)
-            return RGB565(0, 0, 255);
+            // Pure Blue - matches Arduino LED_BLUE
+            return LED_BLUE;
         }
         else if (segmentRpm < 3000) {
-            // Blue → Green gradient
+            // Blue → Green gradient (matching Arduino interpolation)
             float pos = (segmentRpm - 2000) / 1000.0f;
             uint8_t r = 0;
             uint8_t g = (uint8_t)(255 * pos);
@@ -1369,7 +1380,7 @@ void drawOverviewScreen() {
             return RGB565(r, g, b);
         }
         else if (segmentRpm < 4500) {
-            // Green → Yellow gradient
+            // Green → Yellow gradient (matching Arduino interpolation)
             float pos = (segmentRpm - 3000) / 1500.0f;
             uint8_t r = (uint8_t)(255 * pos);
             uint8_t g = 255;
@@ -1377,7 +1388,7 @@ void drawOverviewScreen() {
             return RGB565(r, g, b);
         }
         else if (segmentRpm < 5500) {
-            // Yellow → Orange gradient
+            // Yellow → Orange gradient (matching Arduino interpolation)
             float pos = (segmentRpm - 4500) / 1000.0f;
             uint8_t r = 255;
             uint8_t g = (uint8_t)(255 - 127 * pos);  // 255 → 128
@@ -1385,7 +1396,7 @@ void drawOverviewScreen() {
             return RGB565(r, g, b);
         }
         else if (segmentRpm < 6200) {
-            // Orange → Red gradient
+            // Orange → Red gradient (matching Arduino interpolation)
             float pos = (segmentRpm - 5500) / 700.0f;
             uint8_t r = 255;
             uint8_t g = (uint8_t)(128 * (1.0f - pos));  // 128 → 0
@@ -1393,8 +1404,8 @@ void drawOverviewScreen() {
             return RGB565(r, g, b);
         }
         else {
-            // Pure Red (255, 0, 0) - redline
-            return RGB565(255, 0, 0);
+            // Pure Red - matches Arduino LED_RED (redline)
+            return LED_RED;
         }
     };
     
@@ -2012,14 +2023,17 @@ void drawRPMScreen() {
         
         float segStart = i / (float)numSegments;
         
-        // Determine segment color - inactive segments get dark gray
+        // Determine segment color matching Arduino LED strip exactly
+        // Uses LED_* constants for perfect color match with physical LEDs
         uint16_t segColor;
         if (isActive) {
             float rpmAt = segStart * 8000;
-            if (rpmAt >= 6400) segColor = MX5_RED;
-            else if (rpmAt >= 5600) segColor = MX5_ORANGE;
-            else if (rpmAt >= 4000) segColor = MX5_YELLOW;
-            else segColor = MX5_GREEN;
+            // Arduino zones: Blue<2000, Green<3000, Yellow<4500, Orange<5500, Red>=5500
+            if (rpmAt >= 5500) segColor = LED_RED;
+            else if (rpmAt >= 4500) segColor = LED_ORANGE;
+            else if (rpmAt >= 3000) segColor = LED_YELLOW;
+            else if (rpmAt >= 2000) segColor = LED_GREEN;
+            else segColor = LED_BLUE;
         } else {
             segColor = MX5_DARKGRAY;
         }
