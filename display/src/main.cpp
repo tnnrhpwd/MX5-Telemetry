@@ -1643,47 +1643,8 @@ void drawOverviewScreen() {
     }  // End hideTopDuringBoot check
     
     // === LARGE GEAR INDICATOR (Center) === 
-    // Use gear color from Pi which calculates based on:
-    // - If in neutral: color based on RPM vs recommended gear for speed
-    // - If in gear: color based on RPM vs expected for that gear at speed
-    // Color codes: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
-    //
-    // OPTIMIZATION: Only apply color changes when gear is ESTIMATED (gearEstimated=true).
-    // When the gear ratio matches a known gear (gearEstimated=false), always show green.
-    // This reduces redraws since color won't change when driving normally in gear.
-    uint16_t gearGlow = MX5_GREEN;
-    
-    // Use Pi-provided gear color if we have telemetry data
-    // BUT only when gear is estimated (ratio doesn't match known gear)
-    if (telemetry.hasReceivedTelemetry && telemetry.gearEstimated) {
-        // Gear ratio doesn't match a known gear - show color feedback for RPM
-        switch (telemetry.gearColor) {
-            case 0: gearGlow = MX5_GREEN;  break;  // RPM is appropriate
-            case 1: gearGlow = MX5_RED;    break;  // RPM too high - shift up
-            case 2: gearGlow = MX5_BLUE;   break;  // RPM too low - shift down or more gas
-            case 3: gearGlow = MX5_YELLOW; break;  // RPM slightly high
-            case 4: gearGlow = MX5_CYAN;   break;  // RPM slightly low
-            default: gearGlow = MX5_GREEN; break;
-        }
-    } else if (telemetry.hasReceivedTelemetry) {
-        // Gear ratio matches a known gear - always green (reduces redraws)
-        gearGlow = MX5_GREEN;
-    } else {
-        // Fallback: local RPM-based coloring when no Pi data
-        if (telemetry.rpm > 6500) {
-            gearGlow = MX5_RED;
-        } else if (telemetry.rpm > 5500) {
-            gearGlow = MX5_ORANGE;
-        } else if (telemetry.rpm > 4500) {
-            gearGlow = MX5_YELLOW;
-        } else if (telemetry.rpm > 3000) {
-            gearGlow = MX5_GREEN;
-        } else if (telemetry.rpm > 2000) {
-            gearGlow = MX5_CYAN;
-        } else {
-            gearGlow = MX5_BLUE;
-        }
-    }
+    // Always use white for clean, consistent look - no color changes based on RPM
+    uint16_t gearGlow = MX5_WHITE;
     
     // Cache previous gear glow to detect color threshold crossings
     static uint16_t prevGearGlow = 0;
@@ -1998,13 +1959,11 @@ void drawOverviewScreen() {
 
 void drawRPMScreen() {
     // Check if any displayed values have changed
-    // OPTIMIZATION: Only check gearColor change when gear is estimated
-    bool gearColorRelevant = telemetry.gearEstimated && (telemetry.gearColor != prevTelemetry.gearColor);
+    // Gear color is now always white, so no color change detection needed
     bool valuesChanged = !prevTelemetry.initialized ||
         (int)telemetry.rpm != (int)prevTelemetry.rpm ||
         (int)telemetry.speed != (int)prevTelemetry.speed ||
-        telemetry.gear != prevTelemetry.gear ||
-        gearColorRelevant;
+        telemetry.gear != prevTelemetry.gear;
     
     // Skip if nothing changed and not a full redraw
     if (!needsFullRedraw && !valuesChanged) return;
@@ -2017,27 +1976,8 @@ void drawRPMScreen() {
     // === LARGE GEAR INDICATOR (Top) ===
     int gearY = 55;
     
-    // Gear color from Pi (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
-    // OPTIMIZATION: Only apply color when gear is estimated (ratio doesn't match known gear)
-    // When gear ratio matches a known gear, always show green to reduce redraws
-    uint16_t gearColor = MX5_GREEN;
-    if (telemetry.hasReceivedTelemetry && telemetry.gearEstimated) {
-        // Gear ratio doesn't match known gear - show color feedback for RPM
-        switch (telemetry.gearColor) {
-            case 0: gearColor = MX5_GREEN;  break;
-            case 1: gearColor = MX5_RED;    break;
-            case 2: gearColor = MX5_BLUE;   break;
-            case 3: gearColor = MX5_YELLOW; break;
-            case 4: gearColor = MX5_CYAN;   break;
-            default: gearColor = MX5_GREEN; break;
-        }
-    } else if (!telemetry.hasReceivedTelemetry) {
-        // Fallback: RPM-based coloring when no Pi data
-        if (telemetry.rpm > 6500) gearColor = MX5_RED;
-        else if (telemetry.rpm > 5500) gearColor = MX5_ORANGE;
-        else if (telemetry.rpm > 4500) gearColor = MX5_YELLOW;
-    }
-    // else: hasReceivedTelemetry && !gearEstimated -> stays green (known gear)
+    // Always use white for clean, consistent look - no color changes based on RPM
+    uint16_t gearColor = MX5_WHITE;
     
     // Large gear number
     char gearStr[4];

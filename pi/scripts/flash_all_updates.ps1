@@ -64,8 +64,8 @@ Write-Host ""
 # Check if Pi is reachable
 Write-Host "Checking Pi connection..." -ForegroundColor Cyan
 
-# Try home network first (192.168.1.23 or mx5pi.local), then hotspot (10.62.26.67)
-$piHosts = @("pi@mx5pi.local", "pi@192.168.1.23", "pi@10.62.26.67")
+# Try home network first (192.168.1.23 or mx5pi.local), then hotspot (10.84.86.67)
+$piHosts = @("pi@mx5pi.local", "pi@192.168.1.23", "pi@10.84.86.67")
 $piHost = $null
 
 # Try multiple times with increasing timeouts (Pi may be slow to respond after flash)
@@ -94,7 +94,7 @@ for ($retry = 1; $retry -le $maxRetries; $retry++) {
 
 if (-not $piHost) {
     Write-Host "ERROR: Cannot connect to Pi" -ForegroundColor Red
-    Write-Host "Tried: mx5pi.local (home), 192.168.1.23 (home), 10.62.26.67 (hotspot)" -ForegroundColor Yellow
+    Write-Host "Tried: mx5pi.local (home), 192.168.1.23 (home), 10.84.86.67 (hotspot)" -ForegroundColor Yellow
     Write-Host "Make sure the Pi is powered on and connected to the network." -ForegroundColor Yellow
     exit 1
 }
