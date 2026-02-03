@@ -2,123 +2,75 @@
 MPG Calculator for MX5 Telemetry System
 
 Calculates fuel efficiency (MPG) and estimated range from CAN bus data.
-Implements fuel smoothing to handle sensor noise and tank sloshing.
 
-Design Principles:
-- Exponential Moving Average (EMA) for fuel level smoothing
-- Trip-based tracking with persistent lifetime statistics
-- Integration-based distance calculation from speed
-- JSON persistence for data survival across restarts
+SIMPLIFIED APPROACH:
+- Track distance traveled and fuel consumed per trip
+- Use simple milestone-based fuel tracking (record when fuel drops by 1%)
+- Calculate rolling MPG from recent fuel consumption events
+- Persist data for long-term accuracy
+
+Key insight: Fuel sensors have low resolution (~1% steps). Trying to track
+tiny per-frame fuel changes with EMA smoothing doesn't work well. Instead,
+we track distance between fuel level drops and calculate MPG from that.
 
 Industry Standard Formulas:
 - MPG = Distance (miles) / Fuel Used (gallons)
 - Range = Remaining Fuel (gallons) × Average MPG
-- EMA: smoothed = α × current + (1-α) × previous
 """
 
 import json
-import os
 import time
 import threading
-from dataclasses import dataclass, asdict
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, List
 from pathlib import Path
 
 
 @dataclass
-class TripData:
-    """Data for current driving trip (resets on engine start)"""
-    start_time: float = 0.0
-    start_fuel_pct: float = 0.0
-    distance_miles: float = 0.0
-    fuel_used_gal: float = 0.0
-    
-    @property
-    def mpg(self) -> float:
-        """Calculate trip MPG"""
-        if self.fuel_used_gal > 0.001:  # Lowered threshold for faster display
-            return self.distance_miles / self.fuel_used_gal
-        return 0.0
-
-
-@dataclass
-class LifetimeData:
-    """Persistent lifetime statistics"""
-    total_miles: float = 0.0
-    total_gallons: float = 0.0
-    last_fuel_pct: float = 0.0
-    last_odometer: float = 0.0
-    samples_count: int = 0
-    
-    # Rolling average buffer (last N trip MPGs for weighted average)
-    recent_trip_mpgs: list = None
-    recent_trip_distances: list = None
-    
-    def __post_init__(self):
-        if self.recent_trip_mpgs is None:
-            self.recent_trip_mpgs = []
-        if self.recent_trip_distances is None:
-            self.recent_trip_distances = []
-    
-    @property
-    def average_mpg(self) -> float:
-        """Calculate lifetime average MPG"""
-        if self.total_gallons > 0.01:  # Lowered from 0.1 for faster display
-            return self.total_miles / self.total_gallons
-        # Fall back to recent trips weighted average
-        if self.recent_trip_distances and sum(self.recent_trip_distances) > 0:
-            total_dist = sum(self.recent_trip_distances)
-            weighted_sum = sum(mpg * dist for mpg, dist in 
-                             zip(self.recent_trip_mpgs, self.recent_trip_distances))
-            return weighted_sum / total_dist
-        return 26.0  # Return EPA default instead of 0 so display shows something
+class FuelMilestone:
+    """Records a fuel consumption milestone"""
+    fuel_pct: float          # Fuel level when recorded (0-100)
+    total_distance: float    # Cumulative distance at this point
+    timestamp: float         # Unix timestamp
 
 
 class MPGCalculator:
     """
-    Calculates MPG and estimated range from CAN data.
+    Simplified MPG calculator using milestone-based tracking.
     
     Strategy:
-    1. Smooth fuel level with EMA to filter sensor noise
-    2. Track distance traveled (integrated from speed)
-    3. Track fuel consumed (delta from smoothed readings)
-    4. Persist statistics to JSON for long-term accuracy
-    5. Calculate range from remaining fuel × average MPG
-    
-    Usage:
-        calculator = MPGCalculator()
-        calculator.start()
-        
-        # In main loop:
-        calculator.update(speed_mph, raw_fuel_pct, engine_running, dt)
-        
-        # Read outputs:
-        print(f"Average MPG: {calculator.average_mpg}")
-        print(f"Range: {calculator.range_miles} miles")
+    1. Track cumulative distance traveled
+    2. Record fuel level milestones when fuel drops by >= 1%
+    3. Calculate MPG from distance between milestones
+    4. Use rolling window of recent calculations for display
+    5. Persist data to survive restarts
     """
     
     # MX5 NC (2006-2015) tank capacity
     TANK_CAPACITY_GAL = 12.7
     
-    # Fuel EMA smoothing factor
-    # Lower = smoother but slower response
-    # 0.05 means ~20 samples (0.7 sec at 30Hz) to reach 63% of step change
-    FUEL_EMA_ALPHA = 0.05  # Increased from 0.02 for faster response
+    # Minimum fuel drop to register a milestone (percentage points)
+    # Fuel sensors typically have 1-2% resolution, so 1% is reasonable
+    FUEL_MILESTONE_THRESHOLD = 1.0
     
-    # Minimum speed to consider "driving" (avoids noise at idle)
+    # Minimum distance between milestones (prevents noise at low speeds/idle)
+    MIN_DISTANCE_FOR_MILESTONE = 0.5  # miles
+    
+    # Minimum speed to count as driving (filters idle time)
     MIN_DRIVING_SPEED_MPH = 3.0
     
-    # Minimum fuel change to register (filters sensor noise)
-    MIN_FUEL_CHANGE_PCT = 0.05  # Lowered from 0.1 to catch smaller fuel changes
-    
     # How often to save persistent data (seconds)
-    SAVE_INTERVAL_SEC = 30.0  # Save more frequently for debugging
+    SAVE_INTERVAL_SEC = 60.0
     
     # Maximum reasonable MPG (sanity check)
     MAX_REASONABLE_MPG = 50.0
+    MIN_REASONABLE_MPG = 10.0
     
-    # Number of recent trips to keep for rolling average
-    MAX_RECENT_TRIPS = 20
+    # Number of recent MPG calculations to keep for rolling average
+    MAX_RECENT_CALCULATIONS = 20
+    
+    # EPA default for MX5 NC (used when no data available)
+    EPA_DEFAULT_MPG = 26.0
     
     def __init__(self, data_dir: str = "/home/pi/MX5-Telemetry/data"):
         """
@@ -130,69 +82,62 @@ class MPGCalculator:
         self.data_dir = Path(data_dir)
         self.data_file = self.data_dir / "mpg_data.json"
         
-        # Current trip data
-        self.trip = TripData()
+        # Cumulative tracking
+        self._total_distance = 0.0        # Lifetime distance
+        self._session_distance = 0.0      # Distance this session (since last fuel milestone)
         
-        # Lifetime persistent data
-        self.lifetime = LifetimeData()
+        # Fuel tracking
+        self._last_fuel_pct = None        # Last recorded fuel percentage
+        self._fuel_at_milestone = None    # Fuel % at last milestone
+        self._distance_at_milestone = 0.0 # Total distance at last milestone
         
-        # Smoothed fuel level (EMA filtered)
-        self._smoothed_fuel_pct: Optional[float] = None
-        self._prev_smoothed_fuel_pct: Optional[float] = None
+        # Recent MPG calculations for rolling average
+        self._recent_mpg_values: List[float] = []
+        self._recent_distances: List[float] = []  # Distance for each MPG calculation
+        
+        # Lifetime totals (for persistence)
+        self._lifetime_miles = 0.0
+        self._lifetime_gallons = 0.0
         
         # State tracking
         self._engine_was_running = False
         self._last_update_time = 0.0
         self._last_save_time = 0.0
-        self._trip_active = False
         
         # Output values (thread-safe reads)
         self._lock = threading.Lock()
-        self._instant_mpg = 0.0
-        self._average_mpg = 0.0
+        self._average_mpg = self.EPA_DEFAULT_MPG
         self._range_miles = 0
-        self._smoothed_fuel_display = 0.0
-        
-        # Instant MPG calculation buffer
-        self._instant_distance_buffer = 0.0
-        self._instant_fuel_buffer = 0.0
-        self._instant_calc_interval = 5.0  # Calculate instant MPG every 5 seconds
-        self._last_instant_calc_time = 0.0
+        self._current_fuel_pct = 0.0
         
         # Running flag
         self._running = False
+        
+        # Debug tracking
+        self._debug_counter = 0
     
     def start(self):
         """Start the calculator and load persistent data"""
         self._running = True
         self._load_data()
-        
-        # Initialize outputs to reasonable defaults immediately
-        # This ensures MPG/range display something before engine starts
-        with self._lock:
-            self._average_mpg = self.lifetime.average_mpg
-            if self._average_mpg <= 0:
-                self._average_mpg = 26.0  # EPA default
-        
-        print(f"MPG Calculator started. Lifetime: {self.lifetime.total_miles:.1f} mi, "
-              f"{self.lifetime.total_gallons:.2f} gal, avg {self.lifetime.average_mpg:.1f} MPG")
+        print(f"MPG Calculator started. Lifetime: {self._lifetime_miles:.1f} mi, "
+              f"{self._lifetime_gallons:.2f} gal, avg MPG: {self._average_mpg:.1f}")
     
     def stop(self):
         """Stop the calculator and save data"""
         self._running = False
-        self._end_trip()
         self._save_data()
         print("MPG Calculator stopped and data saved.")
     
     @property
     def instant_mpg(self) -> float:
-        """Get instantaneous MPG (short-term calculation)"""
+        """Get instantaneous MPG (same as average for now)"""
         with self._lock:
-            return self._instant_mpg
+            return self._average_mpg
     
     @property
     def average_mpg(self) -> float:
-        """Get average MPG (lifetime or recent trips)"""
+        """Get average MPG"""
         with self._lock:
             return self._average_mpg
     
@@ -204,26 +149,24 @@ class MPGCalculator:
     
     @property
     def smoothed_fuel_pct(self) -> float:
-        """Get smoothed fuel percentage"""
+        """Get current fuel percentage"""
         with self._lock:
-            return self._smoothed_fuel_display
+            return self._current_fuel_pct
     
     @property
     def trip_mpg(self) -> float:
-        """Get current trip MPG"""
-        return self.trip.mpg
+        """Get trip MPG (same as average for simplicity)"""
+        return self.average_mpg
     
     @property
     def trip_distance(self) -> float:
-        """Get current trip distance in miles"""
-        return self.trip.distance_miles
+        """Get current session distance since last milestone"""
+        return self._session_distance
     
     def update(self, speed_mph: float, raw_fuel_pct: float, 
                engine_running: bool, dt_seconds: float = None):
         """
         Update MPG calculations with latest CAN data.
-        
-        Should be called at regular intervals (e.g., 30Hz from main loop).
         
         Args:
             speed_mph: Current vehicle speed in MPH
@@ -245,180 +188,116 @@ class MPGCalculator:
         
         # Clamp dt to reasonable range (handles pauses/delays)
         dt_seconds = min(dt_seconds, 1.0)
-        
         self._last_update_time = current_time
         
-        # Detect engine start/stop
-        if engine_running and not self._engine_was_running:
-            self._start_trip(raw_fuel_pct)
-        elif not engine_running and self._engine_was_running:
-            self._end_trip()
-        
-        self._engine_was_running = engine_running
-        
-        # Always update smoothed fuel and outputs (even when engine off)
-        # This ensures the fuel gauge and range display work while parked
-        self._update_fuel_ema(raw_fuel_pct)
-        
-        # Only process distance/fuel consumption if engine is running
-        if engine_running and speed_mph >= self.MIN_DRIVING_SPEED_MPH and self._trip_active:
-            # Accumulate distance
-            distance_increment = (speed_mph / 3600.0) * dt_seconds  # miles
-            self.trip.distance_miles += distance_increment
-            self._instant_distance_buffer += distance_increment
-            
-            # Always accumulate distance to lifetime when driving
-            self.lifetime.total_miles += distance_increment
-            
-            # Calculate fuel consumption from smoothed fuel delta
-            if self._prev_smoothed_fuel_pct is not None and self._smoothed_fuel_pct is not None:
-                fuel_delta_pct = self._prev_smoothed_fuel_pct - self._smoothed_fuel_pct
-                
-                # Only count positive fuel consumption (ignore refueling)
-                if fuel_delta_pct > self.MIN_FUEL_CHANGE_PCT / 100.0:  # Use threshold
-                    fuel_delta_gal = (fuel_delta_pct / 100.0) * self.TANK_CAPACITY_GAL
-                    self.trip.fuel_used_gal += fuel_delta_gal
-                    self._instant_fuel_buffer += fuel_delta_gal
-                    
-                    # Accumulate fuel to lifetime (will be persisted)
-                    self.lifetime.total_gallons += fuel_delta_gal
-        
-        # Store previous smoothed value for next delta calculation
-        self._prev_smoothed_fuel_pct = self._smoothed_fuel_pct
-        
-        # Calculate instant MPG periodically (only when engine running)
-        if engine_running and current_time - self._last_instant_calc_time >= self._instant_calc_interval:
-            self._calculate_instant_mpg()
-            self._last_instant_calc_time = current_time
-        
-        # Update output values (pass raw fuel for fallback range calculation)
-        self._update_outputs(raw_fuel_pct)
-        
-        # Periodic save with debug output
-        if current_time - self._last_save_time >= self.SAVE_INTERVAL_SEC:
-            # Debug output every save interval
-            if self._trip_active:
-                print(f"MPG: PERIODIC UPDATE - trip: {self.trip.distance_miles:.2f}mi, {self.trip.fuel_used_gal:.3f}gal | "
-                      f"lifetime: {self.lifetime.total_miles:.1f}mi, {self.lifetime.total_gallons:.2f}gal | "
-                      f"fuel: {self._smoothed_fuel_pct:.1f}% | avg: {self._average_mpg:.1f}mpg")
-            self._save_data()
-            self._last_save_time = current_time
-    
-    def _update_fuel_ema(self, raw_fuel_pct: float):
-        """Apply Exponential Moving Average to fuel level"""
+        # Validate fuel reading
         if raw_fuel_pct < 0 or raw_fuel_pct > 100:
-            return  # Invalid reading
+            raw_fuel_pct = self._current_fuel_pct  # Use last known good value
         
-        if self._smoothed_fuel_pct is None:
-            # Initialize on first reading
-            self._smoothed_fuel_pct = raw_fuel_pct
-        else:
-            # EMA formula: new = α * current + (1-α) * previous
-            self._smoothed_fuel_pct = (
-                self.FUEL_EMA_ALPHA * raw_fuel_pct + 
-                (1 - self.FUEL_EMA_ALPHA) * self._smoothed_fuel_pct
-            )
-    
-    def _calculate_instant_mpg(self):
-        """Calculate instantaneous MPG from recent buffer"""
-        if self._instant_fuel_buffer > 0.001:  # Minimum fuel to calculate
-            instant = self._instant_distance_buffer / self._instant_fuel_buffer
-            # Sanity check
-            if 0 < instant <= self.MAX_REASONABLE_MPG:
-                with self._lock:
-                    self._instant_mpg = instant
-        
-        # Reset buffers
-        self._instant_distance_buffer = 0.0
-        self._instant_fuel_buffer = 0.0
-    
-    def _update_outputs(self, raw_fuel_pct: float = None):
-        """Update thread-safe output values
-        
-        Args:
-            raw_fuel_pct: Optional raw fuel percentage for fallback calculation
-        """
+        # Store current fuel for display
         with self._lock:
-            # Average MPG from lifetime data
-            self._average_mpg = self.lifetime.average_mpg
-            
-            # If no lifetime data yet, use trip MPG
-            if self._average_mpg <= 0 and self.trip.mpg > 0:
-                self._average_mpg = self.trip.mpg
-            
-            # Default to reasonable MX5 average if no data
-            if self._average_mpg <= 0:
-                self._average_mpg = 26.0  # EPA combined for MX5 NC
-            
-            # Clamp to reasonable range
-            self._average_mpg = min(self._average_mpg, self.MAX_REASONABLE_MPG)
-            
-            # Calculate range - prefer smoothed fuel, fallback to raw fuel
-            fuel_pct = self._smoothed_fuel_pct
-            if fuel_pct is None and raw_fuel_pct is not None and raw_fuel_pct > 0:
-                fuel_pct = raw_fuel_pct
-            
-            if fuel_pct is not None and fuel_pct > 0:
-                remaining_gal = (fuel_pct / 100.0) * self.TANK_CAPACITY_GAL
-                self._range_miles = int(remaining_gal * self._average_mpg)
-            
-            # Update smoothed fuel for display
-            if self._smoothed_fuel_pct is not None:
-                self._smoothed_fuel_display = self._smoothed_fuel_pct
-            elif raw_fuel_pct is not None:
-                self._smoothed_fuel_display = raw_fuel_pct
-    
-    def _start_trip(self, initial_fuel_pct: float):
-        """Start a new trip when engine starts"""
-        # Debug: log trip start with all relevant data
-        print(f"MPG: *** TRIP STARTED ***")
-        print(f"MPG:   Initial fuel: {initial_fuel_pct:.1f}%")
-        print(f"MPG:   Lifetime miles: {self.lifetime.total_miles:.1f}")
-        print(f"MPG:   Lifetime gallons: {self.lifetime.total_gallons:.2f}")
-        print(f"MPG:   Current avg MPG: {self.lifetime.average_mpg:.1f}")
+            self._current_fuel_pct = raw_fuel_pct
         
-        self.trip = TripData(
-            start_time=time.time(),
-            start_fuel_pct=initial_fuel_pct,
-            distance_miles=0.0,
-            fuel_used_gal=0.0
-        )
+        # Initialize fuel tracking if needed
+        if self._last_fuel_pct is None:
+            self._last_fuel_pct = raw_fuel_pct
+            self._fuel_at_milestone = raw_fuel_pct
+            print(f"MPG: Initialized fuel tracking at {raw_fuel_pct:.1f}%")
         
-        # Initialize smoothed fuel
-        self._smoothed_fuel_pct = initial_fuel_pct
-        self._prev_smoothed_fuel_pct = initial_fuel_pct
+        # Accumulate distance if driving
+        if engine_running and speed_mph >= self.MIN_DRIVING_SPEED_MPH:
+            distance_increment = (speed_mph / 3600.0) * dt_seconds  # miles
+            self._session_distance += distance_increment
+            self._total_distance += distance_increment
+            self._lifetime_miles += distance_increment
         
-        self._trip_active = True
-        self._instant_distance_buffer = 0.0
-        self._instant_fuel_buffer = 0.0
-    
-    def _end_trip(self):
-        """End current trip and record statistics"""
-        if not self._trip_active:
-            return
+        # Check for fuel milestone (fuel dropped by threshold)
+        fuel_drop = self._fuel_at_milestone - raw_fuel_pct if self._fuel_at_milestone else 0
         
-        self._trip_active = False
-        
-        # Only record meaningful trips (> 0.5 miles, > 0.01 gallons)
-        if self.trip.distance_miles > 0.5 and self.trip.fuel_used_gal > 0.01:
-            trip_mpg = self.trip.mpg
+        if (fuel_drop >= self.FUEL_MILESTONE_THRESHOLD and 
+            self._session_distance >= self.MIN_DISTANCE_FOR_MILESTONE):
+            
+            # Calculate MPG for this segment
+            gallons_used = (fuel_drop / 100.0) * self.TANK_CAPACITY_GAL
+            segment_mpg = self._session_distance / gallons_used if gallons_used > 0 else 0
             
             # Sanity check
-            if 5.0 <= trip_mpg <= self.MAX_REASONABLE_MPG:
-                # Add to recent trips for rolling average
-                self.lifetime.recent_trip_mpgs.append(trip_mpg)
-                self.lifetime.recent_trip_distances.append(self.trip.distance_miles)
+            if self.MIN_REASONABLE_MPG <= segment_mpg <= self.MAX_REASONABLE_MPG:
+                # Record this calculation
+                self._recent_mpg_values.append(segment_mpg)
+                self._recent_distances.append(self._session_distance)
                 
                 # Trim to max size
-                while len(self.lifetime.recent_trip_mpgs) > self.MAX_RECENT_TRIPS:
-                    self.lifetime.recent_trip_mpgs.pop(0)
-                    self.lifetime.recent_trip_distances.pop(0)
+                while len(self._recent_mpg_values) > self.MAX_RECENT_CALCULATIONS:
+                    self._recent_mpg_values.pop(0)
+                    self._recent_distances.pop(0)
                 
-                print(f"MPG: Trip ended - {self.trip.distance_miles:.1f} mi, "
-                      f"{self.trip.fuel_used_gal:.2f} gal, {trip_mpg:.1f} MPG")
+                # Accumulate to lifetime
+                self._lifetime_gallons += gallons_used
                 
-                # Save immediately after trip ends
-                self._save_data()
+                print(f"MPG: Milestone! Fuel {self._fuel_at_milestone:.1f}% -> {raw_fuel_pct:.1f}% "
+                      f"({fuel_drop:.1f}% drop = {gallons_used:.2f}gal), "
+                      f"distance: {self._session_distance:.1f}mi, MPG: {segment_mpg:.1f}")
+            else:
+                print(f"MPG: Skipping unreasonable MPG: {segment_mpg:.1f} "
+                      f"(fuel drop {fuel_drop:.1f}%, distance {self._session_distance:.1f}mi)")
+            
+            # Reset for next segment
+            self._fuel_at_milestone = raw_fuel_pct
+            self._session_distance = 0.0
+        
+        # Detect refueling (fuel increased significantly)
+        if raw_fuel_pct > self._last_fuel_pct + 5.0:  # 5% increase = likely refueled
+            print(f"MPG: Refuel detected! {self._last_fuel_pct:.1f}% -> {raw_fuel_pct:.1f}%")
+            self._fuel_at_milestone = raw_fuel_pct
+            self._session_distance = 0.0
+        
+        self._last_fuel_pct = raw_fuel_pct
+        
+        # Update output values
+        self._update_outputs(raw_fuel_pct)
+        
+        # Periodic save
+        if current_time - self._last_save_time >= self.SAVE_INTERVAL_SEC:
+            self._save_data()
+            self._last_save_time = current_time
+        
+        # Debug output periodically
+        self._debug_counter += 1
+        if self._debug_counter >= 300:  # Every ~10 seconds at 30Hz
+            self._debug_counter = 0
+            if engine_running:
+                print(f"MPG DEBUG: fuel={raw_fuel_pct:.1f}%, session_dist={self._session_distance:.2f}mi, "
+                      f"avg={self._average_mpg:.1f}, range={self._range_miles}mi, "
+                      f"milestone_fuel={self._fuel_at_milestone:.1f}%")
+    
+    def _update_outputs(self, raw_fuel_pct: float):
+        """Update thread-safe output values"""
+        with self._lock:
+            # Calculate average MPG from recent values (distance-weighted)
+            if self._recent_mpg_values and self._recent_distances:
+                total_dist = sum(self._recent_distances)
+                if total_dist > 0:
+                    weighted_sum = sum(mpg * dist for mpg, dist in 
+                                     zip(self._recent_mpg_values, self._recent_distances))
+                    self._average_mpg = weighted_sum / total_dist
+            elif self._lifetime_gallons > 0.1:
+                # Fall back to lifetime average
+                self._average_mpg = self._lifetime_miles / self._lifetime_gallons
+            else:
+                # No data yet - use EPA default
+                self._average_mpg = self.EPA_DEFAULT_MPG
+            
+            # Clamp to reasonable range
+            self._average_mpg = max(self.MIN_REASONABLE_MPG, 
+                                   min(self._average_mpg, self.MAX_REASONABLE_MPG))
+            
+            # Calculate range
+            if raw_fuel_pct > 0:
+                remaining_gal = (raw_fuel_pct / 100.0) * self.TANK_CAPACITY_GAL
+                self._range_miles = int(remaining_gal * self._average_mpg)
+            else:
+                self._range_miles = 0
     
     def _load_data(self):
         """Load persistent data from JSON file"""
@@ -427,33 +306,33 @@ class MPGCalculator:
                 with open(self.data_file, 'r') as f:
                     data = json.load(f)
                 
-                # Restore lifetime data
-                self.lifetime.total_miles = data.get('total_miles', 0.0)
-                self.lifetime.total_gallons = data.get('total_gallons', 0.0)
-                self.lifetime.last_fuel_pct = data.get('last_fuel_pct', 0.0)
-                self.lifetime.samples_count = data.get('samples_count', 0)
-                self.lifetime.recent_trip_mpgs = data.get('recent_trip_mpgs', [])
-                self.lifetime.recent_trip_distances = data.get('recent_trip_distances', [])
+                # Restore data
+                self._lifetime_miles = max(0, data.get('total_miles', 0.0))
+                self._lifetime_gallons = max(0, data.get('total_gallons', 0.0))
+                self._recent_mpg_values = data.get('recent_mpg_values', [])
+                self._recent_distances = data.get('recent_distances', [])
+                self._fuel_at_milestone = data.get('fuel_at_milestone', None)
                 
-                # Validate and fix corrupted data
-                if self.lifetime.total_miles < 0:
-                    print(f"MPG: Fixing negative total_miles: {self.lifetime.total_miles}")
-                    self.lifetime.total_miles = 0.0
-                if self.lifetime.total_gallons < 0:
-                    print(f"MPG: Fixing negative total_gallons: {self.lifetime.total_gallons}")
-                    self.lifetime.total_gallons = 0.0
+                # Validate loaded MPG values
+                valid_mpgs = []
+                valid_dists = []
+                for mpg, dist in zip(self._recent_mpg_values, self._recent_distances):
+                    if self.MIN_REASONABLE_MPG <= mpg <= self.MAX_REASONABLE_MPG and dist > 0:
+                        valid_mpgs.append(mpg)
+                        valid_dists.append(dist)
+                self._recent_mpg_values = valid_mpgs
+                self._recent_distances = valid_dists
                 
-                # Check for unreasonable MPG (would indicate bad data)
-                if self.lifetime.total_gallons > 0:
-                    calculated_mpg = self.lifetime.total_miles / self.lifetime.total_gallons
-                    if calculated_mpg > 100 or calculated_mpg < 5:
-                        print(f"MPG: Data appears corrupted (calculated MPG: {calculated_mpg:.1f})")
-                        print(f"  total_miles={self.lifetime.total_miles}, total_gallons={self.lifetime.total_gallons}")
-                        # Keep the data but it will fall back to recent trips or EPA default
+                # Calculate initial average
+                if self._recent_distances and sum(self._recent_distances) > 0:
+                    total_dist = sum(self._recent_distances)
+                    weighted_sum = sum(m * d for m, d in zip(self._recent_mpg_values, self._recent_distances))
+                    self._average_mpg = weighted_sum / total_dist
+                elif self._lifetime_gallons > 0.1:
+                    self._average_mpg = self._lifetime_miles / self._lifetime_gallons
                 
-                print(f"MPG: Loaded data - {self.lifetime.total_miles:.1f} mi total, "
-                      f"{len(self.lifetime.recent_trip_mpgs)} recent trips, "
-                      f"avg {self.lifetime.average_mpg:.1f} MPG")
+                print(f"MPG: Loaded {len(self._recent_mpg_values)} recent calculations, "
+                      f"lifetime: {self._lifetime_miles:.1f}mi / {self._lifetime_gallons:.2f}gal")
             else:
                 print("MPG: No existing data file, starting fresh")
                 
@@ -467,14 +346,14 @@ class MPGCalculator:
             self.data_dir.mkdir(parents=True, exist_ok=True)
             
             data = {
-                'total_miles': self.lifetime.total_miles,
-                'total_gallons': self.lifetime.total_gallons,
-                'last_fuel_pct': self._smoothed_fuel_pct or 0.0,
-                'samples_count': self.lifetime.samples_count,
-                'recent_trip_mpgs': self.lifetime.recent_trip_mpgs,
-                'recent_trip_distances': self.lifetime.recent_trip_distances,
+                'total_miles': self._lifetime_miles,
+                'total_gallons': self._lifetime_gallons,
+                'recent_mpg_values': self._recent_mpg_values,
+                'recent_distances': self._recent_distances,
+                'fuel_at_milestone': self._fuel_at_milestone,
                 'last_save_time': time.time(),
-                'average_mpg': self.lifetime.average_mpg
+                'calculated_avg_mpg': self._average_mpg,
+                '_comment': 'MPG data for MX5 Telemetry. Uses milestone-based tracking.'
             }
             
             with open(self.data_file, 'w') as f:
@@ -485,14 +364,21 @@ class MPGCalculator:
     
     def reset_lifetime_data(self):
         """Reset all lifetime statistics (use with caution)"""
-        print("MPG: Resetting lifetime data")
-        self.lifetime = LifetimeData()
+        print("MPG: Resetting all data")
+        self._lifetime_miles = 0.0
+        self._lifetime_gallons = 0.0
+        self._recent_mpg_values = []
+        self._recent_distances = []
+        self._fuel_at_milestone = None
+        self._session_distance = 0.0
+        self._average_mpg = self.EPA_DEFAULT_MPG
         self._save_data()
     
     def reset_trip(self):
-        """Reset current trip data"""
-        if self._smoothed_fuel_pct is not None:
-            self._start_trip(self._smoothed_fuel_pct)
+        """Reset current session data"""
+        self._session_distance = 0.0
+        if self._last_fuel_pct is not None:
+            self._fuel_at_milestone = self._last_fuel_pct
 
 
 # Singleton instance for easy import
