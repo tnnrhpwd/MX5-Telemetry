@@ -9,9 +9,17 @@ User=pi
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/pi/.Xauthority
 WorkingDirectory=/home/pi/MX5-Telemetry/pi/ui/src
-ExecStart=/usr/bin/python3 /home/pi/MX5-Telemetry/pi/ui/src/main.py --fullscreen
+# Kill any orphaned instances before starting (- prefix means ignore failures)
+ExecStartPre=-/usr/bin/pkill -f 'python.*main.py'
+# Wait for display/CAN to be ready
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/python3 -u /home/pi/MX5-Telemetry/pi/ui/src/main.py --fullscreen
 Restart=on-failure
-RestartSec=5
+RestartSec=10
+# Ensure ALL child processes are killed on stop/restart
+KillMode=control-group
+# Timeout before SIGKILL
+TimeoutStopSec=10
 
 [Install]
 WantedBy=graphical.target
