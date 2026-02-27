@@ -274,16 +274,29 @@ class MPGCalculator:
     def _update_outputs(self, raw_fuel_pct: float):
         """Update thread-safe output values"""
         with self._lock:
-            # Calculate average MPG from recent values (distance-weighted)
-            if self._recent_mpg_values and self._recent_distances:
+            # Calculate average MPG primarily from lifetime totals (most accurate)
+            # Milestone-based recent values can lose distance across restarts,
+            # so lifetime totals (which accumulate correctly) are preferred.
+            if self._lifetime_gallons > 0.1:
+                lifetime_mpg = self._lifetime_miles / self._lifetime_gallons
+                if self._recent_mpg_values and self._recent_distances:
+                    # Blend: 70% lifetime (reliable), 30% recent milestones (responsive)
+                    total_dist = sum(self._recent_distances)
+                    if total_dist > 0:
+                        weighted_sum = sum(mpg * dist for mpg, dist in 
+                                         zip(self._recent_mpg_values, self._recent_distances))
+                        recent_mpg = weighted_sum / total_dist
+                        self._average_mpg = 0.7 * lifetime_mpg + 0.3 * recent_mpg
+                    else:
+                        self._average_mpg = lifetime_mpg
+                else:
+                    self._average_mpg = lifetime_mpg
+            elif self._recent_mpg_values and self._recent_distances:
                 total_dist = sum(self._recent_distances)
                 if total_dist > 0:
                     weighted_sum = sum(mpg * dist for mpg, dist in 
                                      zip(self._recent_mpg_values, self._recent_distances))
                     self._average_mpg = weighted_sum / total_dist
-            elif self._lifetime_gallons > 0.1:
-                # Fall back to lifetime average
-                self._average_mpg = self._lifetime_miles / self._lifetime_gallons
             else:
                 # No data yet - use EPA default
                 self._average_mpg = self.EPA_DEFAULT_MPG
@@ -312,6 +325,8 @@ class MPGCalculator:
                 self._recent_mpg_values = data.get('recent_mpg_values', [])
                 self._recent_distances = data.get('recent_distances', [])
                 self._fuel_at_milestone = data.get('fuel_at_milestone', None)
+                self._session_distance = max(0, data.get('session_distance', 0.0))
+                self._last_fuel_pct = data.get('last_fuel_pct', None)
                 
                 # Validate loaded MPG values
                 valid_mpgs = []
@@ -323,16 +338,18 @@ class MPGCalculator:
                 self._recent_mpg_values = valid_mpgs
                 self._recent_distances = valid_dists
                 
-                # Calculate initial average
-                if self._recent_distances and sum(self._recent_distances) > 0:
+                # Calculate initial average - prefer lifetime data
+                if self._lifetime_gallons > 0.1:
+                    self._average_mpg = self._lifetime_miles / self._lifetime_gallons
+                elif self._recent_distances and sum(self._recent_distances) > 0:
                     total_dist = sum(self._recent_distances)
                     weighted_sum = sum(m * d for m, d in zip(self._recent_mpg_values, self._recent_distances))
                     self._average_mpg = weighted_sum / total_dist
-                elif self._lifetime_gallons > 0.1:
-                    self._average_mpg = self._lifetime_miles / self._lifetime_gallons
                 
                 print(f"MPG: Loaded {len(self._recent_mpg_values)} recent calculations, "
-                      f"lifetime: {self._lifetime_miles:.1f}mi / {self._lifetime_gallons:.2f}gal")
+                      f"lifetime: {self._lifetime_miles:.1f}mi / {self._lifetime_gallons:.2f}gal, "
+                      f"session_dist: {self._session_distance:.2f}mi, "
+                      f"fuel_at_milestone: {self._fuel_at_milestone}")
             else:
                 print("MPG: No existing data file, starting fresh")
                 
@@ -351,6 +368,8 @@ class MPGCalculator:
                 'recent_mpg_values': self._recent_mpg_values,
                 'recent_distances': self._recent_distances,
                 'fuel_at_milestone': self._fuel_at_milestone,
+                'session_distance': self._session_distance,
+                'last_fuel_pct': self._last_fuel_pct,
                 'last_save_time': time.time(),
                 'calculated_avg_mpg': self._average_mpg,
                 '_comment': 'MPG data for MX5 Telemetry. Uses milestone-based tracking.'
