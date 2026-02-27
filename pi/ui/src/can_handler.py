@@ -500,6 +500,11 @@ class CANHandler:
         # Gear estimator for vehicles without gear position sensor
         self.gear_estimator = GearEstimator()
         
+        # Reverse detection hysteresis - once reverse is detected, hold it for a short
+        # time to prevent flickering when CAN speed oscillates around zero offset
+        self._reverse_hold_until = 0  # time.time() until which to keep showing reverse
+        self._REVERSE_HOLD_SECONDS = 0.5  # Hold reverse for 500ms after speed goes to 0
+        
         # Fuel level smoothing state
         self._fuel_ema = None  # EMA-smoothed raw fuel value
         self._fuel_displayed = None  # Last displayed fuel value (with hysteresis)
@@ -751,7 +756,15 @@ class CANHandler:
         # Check for reverse first - negative speed from CAN indicates reverse
         # Note: is_in_reverse flag is no longer set from gear position CAN message
         # Reverse is detected solely from negative speed value
+        #
+        # Hysteresis: At low reverse speeds, CAN speed oscillates between -1 and 0
+        # (raw value bounces around the 10000 zero-offset). Without hysteresis, gear
+        # flickers between R and 1. We hold reverse state for 500ms after speed
+        # returns to 0 to prevent this.
+        now = time.time()
         if self.telemetry.speed_kmh < 0:
+            # Actively in reverse - extend hold timer
+            self._reverse_hold_until = now + self._REVERSE_HOLD_SECONDS
             self.telemetry.gear = -1  # -1 = Reverse
             self.telemetry.is_in_reverse = True  # Set for other code that might check this
             self.telemetry.gear_estimated = False  # Direct detection, not estimated
@@ -759,8 +772,19 @@ class CANHandler:
             self.telemetry.recommended_gear = -1
             self.telemetry.gear_color = 'green'
             return
+        elif now < self._reverse_hold_until and self.telemetry.speed_kmh == 0:
+            # Speed returned to 0 but we were just in reverse - hold reverse state
+            # Only hold if speed is exactly 0 (not positive/moving forward)
+            self.telemetry.gear = -1  # -1 = Reverse
+            self.telemetry.is_in_reverse = True
+            self.telemetry.gear_estimated = False
+            self.telemetry.clutch_engaged = False
+            self.telemetry.recommended_gear = -1
+            self.telemetry.gear_color = 'green'
+            return
         else:
             self.telemetry.is_in_reverse = False  # Not in reverse
+            self._reverse_hold_until = 0  # Clear hold timer
         
         # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
         speed_mph = self.telemetry.speed_kmh
