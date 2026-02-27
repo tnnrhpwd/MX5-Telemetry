@@ -1776,7 +1776,12 @@ class PiDisplayApp:
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (left_panel_x, TOP, left_panel_w, 150))
         
         rpm_color = self._get_rpm_color(self.telemetry.rpm)
-        gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
+        if self.telemetry.gear == -1:
+            gear = "R"
+        elif self.telemetry.gear == 0:
+            gear = "N"
+        else:
+            gear = str(self.telemetry.gear)
         
         # Gear glow effect
         glow = pygame.Surface((90, 90), pygame.SRCALPHA)
@@ -1917,7 +1922,12 @@ class PiDisplayApp:
         # Gear
         pygame.draw.circle(self.screen, COLOR_BG_CARD, (gauge_cx, gauge_cy), 70)
         
-        gear = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
+        if self.telemetry.gear == -1:
+            gear = "R"
+        elif self.telemetry.gear == 0:
+            gear = "N"
+        else:
+            gear = str(self.telemetry.gear)
         glow = pygame.Surface((80, 80), pygame.SRCALPHA)
         pygame.draw.circle(glow, (*rpm_color[:3], 40), (40, 40), 35)
         self.screen.blit(glow, (gauge_cx - 40, gauge_cy - 50))
