@@ -258,6 +258,8 @@ When locked:
 ### Pin Assignments Summary
 
 **Raspberry Pi 4B:**
+- GPIO 2 (SDA) - I2C data (ADS1115 ADC — 12V sense + SWC input) *(planned)*
+- GPIO 3 (SCL) - I2C clock (shared I2C bus) *(planned)*
 - GPIO 8 (CE0) - MCP2515 #1 CS (HS-CAN)
 - GPIO 7 (CE1) - MCP2515 #2 CS (MS-CAN)
 - GPIO 14/15 - Serial to ESP32-S3
