@@ -4,82 +4,120 @@
 
 ---
 
-## 1. Dedicated 12V Power Circuit
+## 1. Live 12V Automotive Voltage Monitoring
 
-**Current issue:** OBD-II Pin 16 → single LM2596 → breadboard. No ignition switching, no graceful shutdown, single point of failure, vibration-prone breadboard.
+**Goal:** Read the live 12V+ source voltage (before the LM2596 buck converter) and display it on the Pi UI. This lets you monitor battery health, alternator charging, detect cranking dips, and know exactly what's feeding the 5V circuit.
 
-### Option A: Automotive USB-C Power Supply (Simplest)
+### Why Monitor Source Voltage?
+
+- **Battery health:** Resting voltage indicates state of charge (~12.6V = full, ~12.0V = 50%, <11.8V = low)
+- **Alternator output:** Should read 13.5-14.5V with engine running; outside this range = problem
+- **Cranking dips:** Voltage drops to 9-10V during crank — useful for detecting engine start events
+- **Brownout warning:** Alert if voltage drops below safe buck converter input range
+
+### Voltage Divider → ADC
+
+The Pi has no built-in ADC, and its GPIOs are 3.3V max. A resistor voltage divider scales 0-16V down to 0-3.3V for safe ADC reading.
+
+**Divider design (10kΩ + 39kΩ):**
+
+$$V_{out} = V_{in} \times \frac{R_2}{R_1 + R_2} = 16V \times \frac{10k}{39k + 10k} = 3.27V$$
+
+| Input Voltage | ADC Voltage | Meaning |
+|---------------|-------------|---------|
+| 9.0V (cranking) | 1.84V | Engine cranking dip |
+| 12.0V (low battery) | 2.45V | Battery needs charge |
+| 12.6V (full battery) | 2.57V | Battery at rest, healthy |
+| 13.8V (charging) | 2.82V | Alternator charging normally |
+| 14.5V (max charge) | 2.96V | Alternator at full output |
+| 16.0V (overvolt) | 3.27V | Fault — overvoltage |
+
+### Option A: ADS1115 on Pi I2C (Recommended)
+
+16-bit resolution = ~0.005V accuracy over 0-16V range. Reads directly on the Pi over I2C — no serial dependency, no Arduino involvement. Shares I2C bus with other sensors (BH1750, etc.). If Section 2 (SWC ADC) is also implemented, one ADS1115 handles both — use A0 for 12V sense, A1 for SWC.
+
+> **Why not use the Arduino?** The Arduino's serial link to the Pi is already busy with LED commands and telemetry data. Adding voltage readings would increase traffic and risk corruption/dropped packets. Reading directly on the Pi via I2C is more reliable and independent.
 
 | Part | Spec | Price | Source |
 |------|------|-------|--------|
-| DFRobot DFR0756 | 9-36V→5V/5A USB-C | $12-15 | DFRobot, Amazon |
-| Tobsun EA15-5 | 12V→5V/3A encapsulated | $8-12 | Amazon, eBay |
-| DROK 12V→5V/5A | USB-C output | $8-10 | Amazon |
-
-Handles 9-36V automotive range. Still needs separate peripheral power.
-
-### Option B: Dual Buck Converters (Recommended)
-
-Isolates Pi power from LED/CAN noise.
-
-| Part | Spec | Price | Source |
-|------|------|-------|--------|
-| Pololu D36V6F5 | 5V/600mA step-down | $5 | Pololu |
-| Pololu D36V28F5 | 5V/2.8A, 4.5-50V input | $10 | Pololu |
-| Pololu D36V50F5 | 5V/5A step-down | $15 | Pololu |
-| BINZET 12V→5V/10A | 50W, screw terminals | $10 | Amazon |
+| **ADS1115** | 16-bit I2C ADC, 4-ch | $3-8 | Amazon, Adafruit (#1085) |
+| 39kΩ resistor (1/4W, 1%) | Voltage divider high-side | $0.10 | Amazon, DigiKey |
+| 10kΩ resistor (1/4W, 1%) | Voltage divider low-side | $0.10 | Amazon, DigiKey |
+| 100nF ceramic capacitor | Filter noise on ADC input | $0.10 | Amazon, DigiKey |
+| 3.3V Zener diode (1N4728A) | Overvoltage protection | $0.10 | Amazon, DigiKey |
 
 ```
-Car 12V (ACC) ──[5A fuse]──┬──► Buck #1 (5V 3A) ──► Pi USB-C
-                            └──► Buck #2 (5V 2A) ──► Peripherals (3×MCP2515, Arduino, LEDs, ESP32)
+Car 12V+ (before buck) ──[39kΩ]──┬──► ADS1115 A0
+                                  ├──[10kΩ]──► GND
+                                  ├──[100nF]──► GND  (noise filter)
+                                  └──[3.3V Zener]──► GND  (clamp protection)
+
+ADS1115:  VCC → Pi 3.3V (Pin 1) | GND → Pi GND (Pin 9)
+          SDA → GPIO 2 (Pin 3)  | SCL → GPIO 3 (Pin 5) | ADDR → GND (0x48)
 ```
 
-### Option C: UPS HAT (Best Reliability)
+### Option B: INA219 Current/Voltage Sensor (Most Data)
 
-Battery backup for graceful shutdown + clean power during cranking dips.
+Measures both voltage AND current draw of the entire system. I2C, same bus as ADS1115.
 
 | Part | Spec | Price | Source |
 |------|------|-------|--------|
-| Geekworm X728 | 18650 UPS HAT, 5V/6A | $30-40 | Amazon, Geekworm |
-| PiSugar S Plus | 5000mAh compact UPS | $35-45 | Amazon |
-| Geekworm X1202 | USB-C PD in, auto shutdown | $25-35 | Amazon |
-| 52Pi EP-0136 | UPS HAT + RTC + shutdown GPIO | $25-35 | Amazon, AliExpress |
+| **INA219** breakout | 0-26V, ±3.2A, 12-bit, I2C | $3-6 | Amazon, Adafruit (#904) |
+| INA226 breakout | 0-36V, ±20A, 16-bit, I2C | $4-8 | Amazon, AliExpress |
 
-Flow: Car 12V → buck → UPS (charges battery) → Pi (clean 5V). On ignition off, UPS signals GPIO → Pi shuts down gracefully (10-30s window).
+Wire inline on the 12V+ supply. Reports bus voltage + current + power. **Pro:** Also monitors total current draw. **Con:** Inline wiring slightly more complex.
+
+```
+Car 12V+ ──► INA219 VIN+ ──► INA219 VIN- ──► LM2596 input
+             │
+             I2C → Pi (SDA/SCL, addr 0x40)
+```
+
+### Software (ADS1115 — Option A)
 
 ```python
-# /home/pi/MX5-Telemetry/pi/scripts/safe_shutdown.py
-import RPi.GPIO as GPIO
-import subprocess, time
+# pi/ui/src/voltage_monitor.py
+import board, busio, time
+import adafruit_ads1x15.ads1115 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
 
-SHUTDOWN_PIN = 4  # GPIO pin from UPS "power loss" signal
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(SHUTDOWN_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+DIVIDER_RATIO = (39_000 + 10_000) / 10_000  # 4.9x
 
-def shutdown_callback(channel):
-    time.sleep(5)
-    subprocess.call(['sudo', 'shutdown', '-h', 'now'])
+class VoltageMonitor:
+    def __init__(self):
+        i2c = busio.I2C(board.SCL, board.SDA)
+        ads = ADS.ADS1115(i2c, address=0x48)
+        ads.gain = 1  # ±4.096V range
+        self.channel = AnalogIn(ads, ADS.P0)
 
-GPIO.add_event_detect(SHUTDOWN_PIN, GPIO.FALLING, callback=shutdown_callback, bouncetime=2000)
+    def read_voltage(self) -> float:
+        """Returns the automotive 12V+ source voltage."""
+        v_adc = self.channel.voltage
+        return v_adc * DIVIDER_RATIO
+
+    def get_status(self, voltage: float) -> str:
+        if voltage < 11.0:
+            return "CRITICAL"
+        elif voltage < 12.0:
+            return "LOW"
+        elif voltage < 13.0:
+            return "BATTERY"
+        elif voltage < 14.8:
+            return "CHARGING"
+        else:
+            return "OVERVOLT"
 ```
 
-### Ignition-Switched 12V Sources (MX5 NC)
+### UI Display Ideas
 
-| Source | Location | Notes |
-|--------|----------|-------|
-| ACC fuse | Fuse box slot 15 (15A) | On with ACC/RUN |
-| Ignition fuse | Fuse box slot 20 (10A) | On with RUN only |
-| Radio ACC wire | Behind Pioneer harness | Already switched |
-| Add-a-fuse tap | Any switched slot | **Recommended** — no splice needed |
-
-| Part | Spec | Price | Source |
-|------|------|-------|--------|
-| Nilight Fuse Tap (5-pack) | Mini blade add-a-fuse | $7-10 | Amazon (B077YCQ342) |
-| Chanzon Add-a-Fuse (10-pack) | Mini/standard mix | $6-8 | Amazon |
+- **Numeric readout:** `12V: 13.82V ▲` (with charge arrow)
+- **Bar gauge:** Color-coded (red <11V, yellow 11-12.4V, green 12.4-14.8V, red >14.8V)
+- **History sparkline:** Last 60s of voltage readings to catch transient dips
+- **Alert:** Flash warning if voltage drops below 11.5V or exceeds 15.0V
 
 ### Recommendation
 
-**Option C (UPS HAT) + add-a-fuse** — battery-buffered Pi power, graceful shutdown, survives cranking dips, isolated peripherals. **~$40-60 total.**
+**Option A (ADS1115 + voltage divider on Pi I2C)** — best accuracy, reads directly on the Pi with no serial dependency, and shares the ADC with SWC input (Section 2). **Option B (INA219)** if you also want current monitoring. **~$3-8 total.**
 
 ---
 
@@ -349,40 +387,37 @@ OBD-II Y-splitter cable (1M→2F, all pins): $8-15, Amazon. Keeps one port free 
 
 | # | Improvement | Impact | Effort | Cost |
 |---|------------|--------|--------|------|
-| 1 | JST-SM connectors | High | Low | $15-25 |
-| 2 | Eliminate breadboard (solder PCB) | High | Medium | $5-15 |
-| 3 | Fuse tap for switched 12V | Medium | Low | $7-10 |
-| 4 | UPS HAT for Pi | High | Medium | $30-40 |
-| 5 | SWC wire + ADS1115 | High | Medium | $3-8 |
-| 6 | Dual buck converters | Medium | Low | $10-20 |
-| 7 | Ferrite cores / EMI filtering | Medium | Low | $5-8 |
-| 8 | Strain relief + wire loom | Medium | Low | $10-15 |
-| 9 | OBD-II Y-splitter | Low | Low | $8-15 |
-| 10 | Enclosure | Medium | Medium | $10-20 |
-| 11 | GPS module | Low | Medium | $15-35 |
-| 12 | Ambient light sensor | Low | Low | $2-6 |
+| 1 | 12V voltage monitoring (ADS1115) | High | Low | $3-8 |
+| 2 | JST-SM connectors | High | Low | $15-25 |
+| 3 | Eliminate breadboard (solder PCB) | High | Medium | $5-15 |
+| 4 | SWC wire + ADS1115 (shared ADC) | High | Medium | $0-8 |
+| 5 | Ferrite cores / EMI filtering | Medium | Low | $5-8 |
+| 6 | Strain relief + wire loom | Medium | Low | $10-15 |
+| 7 | OBD-II Y-splitter | Low | Low | $8-15 |
+| 8 | Enclosure | Medium | Medium | $10-20 |
+| 9 | GPS module | Low | Medium | $15-35 |
+| 10 | Ambient light sensor | Low | Low | $2-6 |
 
 ---
 
 ## Shopping Lists
 
-### Minimum (Priorities 1-4): ~$65-95
+### Minimum (Priorities 1-3): ~$35-50
 
 | Item | Qty | Price | Source |
 |------|-----|-------|--------|
+| ADS1115 16-bit ADC | 1 | $3-8 | Amazon, Adafruit |
+| Resistor kit (39kΩ + 10kΩ, 1%) | 1 | $1 | Amazon, DigiKey |
+| 100nF ceramic cap + 3.3V Zener | 1 | $0.50 | Amazon, DigiKey |
 | JST-SM 2/3/4-pin connector kit | 1 | $12-18 | Amazon |
 | JST-SM pre-crimped pigtails (or crimper) | 1 | $8-15 | Amazon |
 | PCB terminal block board | 1 | $5-8 | Amazon |
-| Nilight add-a-fuse (mini blade) | 1 pk | $7-10 | Amazon |
-| Geekworm X728 UPS HAT | 1 | $30-40 | Amazon |
 
-### Full (Priorities 1-8): ~$110-160
+### Full (Priorities 1-6): ~$70-110
 
 | Item | Qty | Price | Source |
 |------|-----|-------|--------|
-| *(All above)* | - | $65-95 | - |
-| ADS1115 16-bit ADC | 1 | $3-8 | Amazon, Adafruit |
-| Pololu D36V28F5 (5V/2.8A buck) | 2 | $20 | Pololu |
+| *(All above)* | - | $35-50 | - |
 | Ferrite snap-on cores (5-pack) | 1 | $5-8 | Amazon |
 | Split wire loom (1/4"+3/8", 10ft ea) | 2 | $10-14 | Amazon |
 | Adhesive cable tie mounts (50pcs) | 1 | $5 | Amazon |
@@ -390,4 +425,4 @@ OBD-II Y-splitter cable (1M→2F, all pins): $8-15, Amazon. Keeps one port free 
 
 ---
 
-**Last Updated:** March 1, 2026
+**Last Updated:** March 2, 2026
