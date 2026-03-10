@@ -27,8 +27,9 @@ Complete hardware documentation: parts list, wiring diagrams, TPMS setup, and st
 | MCP2515 Modules (x3 total) | $9-21 |
 | LED Strip + Power | $15-25 |
 | BLE TPMS Sensors (x4) | $25-40 |
+| 12V Voltage Monitor (ADS1115) | $3-8 |
 | Wiring & Connectors | $15-25 |
-| **Total** | **$165-255** |
+| **Total** | **$168-263** |
 
 ---
 
@@ -49,6 +50,7 @@ Complete hardware documentation: parts list, wiring diagrams, TPMS setup, and st
 - **MCP2515 #2 CS**: GPIO 7 (CE1) - MS-CAN
 - **Interrupts**: GPIO 25 (HS), GPIO 24 (MS)
 - **Serial to Arduino**: GPIO 14/15 (TX/RX)
+- **I2C Bus**: GPIO 2 (SDA), GPIO 3 (SCL) — ADS1115 voltage monitor
 - **USB**: ESP32-S3 display connection
 
 ---
@@ -103,7 +105,21 @@ Complete hardware documentation: parts list, wiring diagrams, TPMS setup, and st
 
 ---
 
-### 🔌 CAN Bus & Power
+### � 12V Voltage Monitor (ADS1115)
+
+| Item | Specifications | Qty | Price | Notes |
+|------|---------------|-----|-------|-------|
+| ADS1115 Breakout | 16-bit I2C ADC, 4-ch | 1 | $3-8 | Adafruit #1085 or Amazon |
+| 10kΩ Resistors | 1/4W (Freenove kit) | 2 | — | Voltage divider high-side (2×10kΩ = 20kΩ in series) |
+| 4.7kΩ Resistor | 0.5W | 1 | $0.10 | Voltage divider low-side |
+| 100nF Ceramic Capacitor | Noise filter | 1 | $0.10 | On ADC input to GND |
+| 3.3V Zener Diode | 1N4728A, overvoltage clamp | 1 | $0.10 | Protects ADC input |
+
+**Purpose:** Reads live 12V+ source voltage (before the LM2596 buck converter) via Pi I2C. Monitors battery health, alternator charging, cranking dips, and brownout conditions.
+
+---
+
+### �🔌 CAN Bus & Power
 
 | Item | Specifications | Qty | Price | Notes |
 |------|---------------|-----|-------|-------|
@@ -225,20 +241,26 @@ Pi (Central Hub)
 
 **Pi GPIO Connections:**
 
-| Pin | GPIO | Connects To | Purpose |
-|-----|------|-------------|---------|
-| 6 | GND | Breadboard GND | Common ground |
-| 8 | BCM14 (TXD) | Arduino D3 | Serial to Arduino |
-| 10 | BCM15 (RXD) | Arduino D4 | Serial from Arduino |
-| 18 | BCM24 | MCP2515 (MS-CAN Pi) INT | Interrupt (125k) → **can0** |
-| 19 | BCM10 (MOSI) | Both MCP2515 MOSI | SPI data out |
-| 21 | BCM9 (MISO) | Both MCP2515 MISO | SPI data in |
-| 22 | BCM25 | MCP2515 (HS-CAN Pi) INT | Interrupt (500k) → **can1** |
-| 23 | BCM11 (SCLK) | Both MCP2515 SCK | SPI clock |
-| 24 | BCM8 (CE0) | MCP2515 (HS-CAN Pi) CS | Chip select → **can1** |
-| 26 | BCM7 (CE1) | MCP2515 (MS-CAN Pi) CS | Chip select → **can0** |
+| Pin | GPIO | Connects To | Purpose | Wire Color |
+|-----|------|-------------|---------|------------|
+| 1 | 3.3V | ADS1115 VCC | I2C ADC power | Red |
+| 2 | 5V | Breadboard 5V rail | Pi power in | Red |
+| 3 | BCM2 (SDA) | ADS1115 SDA | I2C data | Yellow |
+| 4 | 5V | Pi cooling fan | Fan power | Red |
+| 5 | BCM3 (SCL) | ADS1115 SCL | I2C clock | White |
+| 6 | GND | Pi cooling fan | Fan ground | Black |
+| 8 | BCM14 (TXD) | Arduino D3 | Serial to Arduino | Blue |
+| 9 | GND | Breadboard GND | Common ground | Black |
+| 10 | BCM15 (RXD) | Arduino D4 | Serial from Arduino | Green |
+| 18 | BCM24 | MCP2515 (MS-CAN Pi) INT | Interrupt (125k) → **can0** | Purple |
+| 19 | BCM10 (MOSI) | Both MCP2515 MOSI | SPI data out | Green |
+| 21 | BCM9 (MISO) | Both MCP2515 MISO | SPI data in | White |
+| 22 | BCM25 | MCP2515 (HS-CAN Pi) INT | Interrupt (500k) → **can1** | Purple |
+| 23 | BCM11 (SCLK) | Both MCP2515 SCK | SPI clock | Blue |
+| 24 | BCM8 (CE0) | MCP2515 (HS-CAN Pi) CS | Chip select → **can1** | Orange |
+| 26 | BCM7 (CE1) | MCP2515 (MS-CAN Pi) CS | Chip select → **can0** | Orange |
 
-**Total: 10 wires from Pi** (1×GND, 2×Serial, 3×SPI shared, 2×INT, 2×CS)
+**Total: 16 pins used** (2×5V, 1×3.3V, 2×GND, 2×I2C, 2×Serial, 3×SPI shared, 2×INT, 2×CS)
 
 **MCP2515 → Pi Connections:**
 
@@ -265,19 +287,64 @@ Pi (Central Hub)
 
 ---
 
+### 🔋 ADS1115 12V Voltage Monitor Wiring
+
+Reads the live 12V+ source voltage before the buck converter using a resistor voltage divider scaled to 0–3.3V for the ADS1115 ADC on Pi I2C.
+
+**Voltage Divider Design (2×10kΩ + 4.7kΩ):**
+
+$$V_{out} = V_{in} \times \frac{R_2}{R_1 + R_2} = 16V \times \frac{4.7k}{20k + 4.7k} = 3.04V$$
+
+| Input Voltage | ADC Voltage | Meaning |
+|---------------|-------------|---------||
+| 9.0V (cranking) | 1.71V | Engine cranking dip |
+| 12.0V (low battery) | 2.28V | Battery needs charge |
+| 12.6V (full battery) | 2.40V | Battery at rest, healthy |
+| 13.8V (charging) | 2.63V | Alternator charging normally |
+| 14.5V (max charge) | 2.76V | Alternator at full output |
+| 16.0V (overvolt) | 3.04V | Fault — overvoltage |
+
+**Wiring Diagram:**
+
+```
+Car 12V+ (before buck) ──[10kΩ]──[10kΩ]──┬──► ADS1115 A0
+                                          ├──[4.7kΩ]──► GND
+                                          ├──[100nF]──► GND  (noise filter)
+                                          └──[3.3V Zener]──► GND  (clamp protection)
+```
+
+**ADS1115 → Pi Connections:**
+
+| ADS1115 Pin | Connects To | Notes | Wire Color |
+|-------------|-------------|-------|------------|
+| VDD | Pi 3.3V (Pin 1) | **NOT 5V** — ADS1115 runs on 3.3V | Red |
+| GND | Pi GND (Pin 9) | Common ground | Black |
+| SCL | Pi GPIO 3 (Pin 5) | I2C clock | White |
+| SDA | Pi GPIO 2 (Pin 3) | I2C data | Yellow |
+| ADDR | GND | Sets I2C address to 0x48 | Black |
+| ALRT | (unused) | Alert/ready interrupt — not needed | — |
+| A0 | Voltage divider output | 12V sense input | — |
+| A1–A3 | (unused) | Available for future sensors (e.g., SWC) | — |
+
+> **Why I2C on Pi?** Reading voltage directly on the Pi over I2C avoids adding traffic to the Arduino serial link (already busy with LED commands). The ADS1115 shares the I2C bus, so future sensors (BH1750 ambient light, etc.) can use the same two wires.
+
+**Tap point:** Solder/splice to the 12V+ wire **between** the OBD Pin 16 output and the LM2596 input — before the buck converter, after the fuse.
+
+---
+
 ### 🔵 Arduino Nano Wiring
 
 **MCP2515 (HS-CAN Arduino) Connections:**
 
 | MCP2515 Pin | Arduino Pin | Notes |
 |-------------|-------------|-------|
-| VCC | Breadboard 5V | NOT from Arduino |
-| GND | Breadboard GND | Common ground |
-| CS | D10 | |
-| MOSI | D11 | |
-| MISO | D12 | |
-| SCK | D13 | |
-| **INT** | **D2** | ⚠️ REQUIRED for interrupts |
+| VCC | Breadboard 5V | NOT from Arduino | red
+| GND | Breadboard GND | Common ground | black
+| CS | D10 | |orange
+| MOSI | D11 | | green
+| MISO | D12 | | white
+| SCK | D13 | | blue
+| **INT** | **D2** | ⚠️ REQUIRED for interrupts | purple
 | CANH | OBD Pin 6 | Parallel with Pi |
 | CANL | OBD Pin 14 | Parallel with Pi |
 
@@ -309,16 +376,17 @@ Single USB-C cable to Pi USB-A provides both power and serial (`/dev/ttyACM0`).
 ### ⚡ Power Distribution (Centralized Breadboard)
 
 ```
-OBD Pin 16 (12V) ──[2A Fuse]──► LM2596 ──► BREADBOARD 5V RAIL
-                                                  │
-                  ┌───────────────┬───────────────┼───────────────┬───────────────┐
-                  ▼               ▼               ▼               ▼               ▼
-             Raspberry Pi    MCP2515         MCP2515         MCP2515          WS2812B
-               (5V pin)     (HS-CAN Pi)     (MS-CAN Pi)    (HS-CAN Ard)      LED Strip
-                  │               │               │               │               │
-                  ▼               ▼               ▼               ▼               ▼
-             Arduino Nano
-               (5V pin)
+OBD Pin 16 (12V) ──[2A Fuse]──┬──► LM2596 ──► BREADBOARD 5V RAIL
+                               │                      │
+                               │    ┌─────────────────┼─────────────────┬─────────────────┐
+                               │    ▼                 ▼                 ▼                 ▼
+                               │  Raspberry Pi    MCP2515×3       Arduino Nano       WS2812B
+                               │    (5V pin)     (HS/MS/Ard)       (5V pin)         LED Strip
+                               │
+                               └──[10kΩ]──[10kΩ]──┬──► ADS1115 A0 (12V voltage sense)
+                                                    ├──[4.7kΩ]──► GND
+                                           ├──[100nF]──► GND
+                                           └──[Zener]──► GND
 
 OBD Pin 5 (GND) ──────────────► BREADBOARD GND RAIL ──► All devices
 ```
@@ -348,6 +416,14 @@ OBD Pin 5 (GND) ──────────────► BREADBOARD GND RAI
 - [ ] Arduino 5V from breadboard
 - [ ] MCP2515 INT → D2 (critical!)
 - [ ] LED strip from breadboard 5V
+
+**ADS1115 (12V Voltage Monitor):**
+- [ ] ADS1115 VCC → Pi 3.3V (NOT 5V)
+- [ ] ADS1115 SDA/SCL → Pi GPIO 2/3
+- [ ] ADS1115 ADDR → GND (address 0x48)
+- [ ] Voltage divider tap point on 12V+ line (after fuse, before buck)
+- [ ] 2×10kΩ (series) + 4.7kΩ divider, 100nF cap, 3.3V Zener all to GND
+- [ ] Verify ADC reads ~2.4V with 12.6V input (multimeter check)
 
 **CAN Bus:**
 - [ ] HS-CAN (pins 6/14) spliced to both HS-CAN modules
@@ -384,6 +460,25 @@ ls /dev/ttyACM*  # Should show device
 **Arduino Serial:**
 ```bash
 echo "SEQ:1" > /dev/serial0
+```
+
+**ADS1115 (12V Voltage Monitor):**
+```bash
+# Check I2C device is detected at address 0x48
+i2cdetect -y 1
+
+# Quick Python test
+python3 -c "
+import board, busio
+import adafruit_ads1x15.ads1115 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
+i2c = busio.I2C(board.SCL, board.SDA)
+ads = ADS.ADS1115(i2c, address=0x48)
+ads.gain = 1
+chan = AnalogIn(ads, ADS.P0)
+v_source = chan.voltage * (20000 + 4700) / 4700
+print(f'ADC: {chan.voltage:.3f}V → Source: {v_source:.2f}V')
+"
 ```
 
 ---
