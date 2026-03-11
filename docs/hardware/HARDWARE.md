@@ -318,12 +318,12 @@ Car 12V+ (before buck) ──[10kΩ]──[10kΩ]──┬──► ADS1115 A0
 | ADS1115 Pin | Connects To | Notes | Wire Color |
 |-------------|-------------|-------|------------|
 | VDD | Pi 3.3V (Pin 1) | **NOT 5V** — ADS1115 runs on 3.3V | Red |
-| GND | Pi GND (Pin 9) | Common ground | Black |
-| SCL | Pi GPIO 3 (Pin 5) | I2C clock | White |
+| GND | GND | Common ground | Black |
 | SDA | Pi GPIO 2 (Pin 3) | I2C data | Yellow |
+| SCL | Pi GPIO 3 (Pin 5) | I2C clock | White |
 | ADDR | GND | Sets I2C address to 0x48 | Black |
 | ALRT | (unused) | Alert/ready interrupt — not needed | — |
-| A0 | Voltage divider output | 12V sense input | — |
+| A0 | Voltage divider output | 12V sense input | Red |
 | A1–A3 | (unused) | Available for future sensors (e.g., SWC) | — |
 
 > **Why I2C on Pi?** Reading voltage directly on the Pi over I2C avoids adding traffic to the Arduino serial link (already busy with LED commands). The ADS1115 shares the I2C bus, so future sensors (BH1750 ambient light, etc.) can use the same two wires.

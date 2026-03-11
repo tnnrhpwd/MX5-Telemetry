@@ -26,8 +26,8 @@ Protocol (ESP32 -> Pi):
     OK:SCREEN_X\n            - Confirmation of screen change
 
 Protocol (Pi -> ESP32):
-    TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles
-        Example: TEL:3500,65,3,45,185,1,72,1,0,0,28.5,156
+    TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage
+        Example: TEL:3500,65,3,45,185,1,72,1,0,0,28.5,156,0,13.8
         Fields: RPM, speed(km/h), gear, throttle%, coolant°F, oil_ok(0/1), 
                 fuel%, engine_on(0/1), gear_estimated(0/1), clutch(0/1),
                 average_mpg, estimated_range_miles
@@ -592,7 +592,7 @@ class ESP32SerialHandler:
             # Use lock to prevent collision with screen commands
             with self._write_lock:
                 # Combine all telemetry into fewer messages to reduce serial traffic
-                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color
+                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage
                 # gear_color: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
                 msg = f"TEL:{self.telemetry.rpm:.0f},{self.telemetry.speed_kmh:.0f},{self.telemetry.gear},"
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
@@ -618,7 +618,7 @@ class ESP32SerialHandler:
                 # Add gear color indicator (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
                 color_map = {'green': 0, 'red': 1, 'blue': 2, 'yellow': 3, 'cyan': 4}
                 gear_color_val = color_map.get(self.telemetry.gear_color, 0)
-                msg += f"{gear_color_val}\n"
+                msg += f"{gear_color_val},{self.telemetry.voltage:.1f}\n"
                 
                 # Debug: log fuel/MPG data periodically (every ~10 seconds)
                 if not hasattr(self, '_mpg_debug_counter'):

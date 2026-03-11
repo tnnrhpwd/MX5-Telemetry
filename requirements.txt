@@ -18,6 +18,9 @@ watchdog>=6.0.0
 # CAN Bus Communication (optional - for real vehicle data)
 # python-can>=3.3.0
 
+# ADS1115 12V Voltage Monitor (optional - Pi only, requires I2C)
+# adafruit-circuitpython-ads1x15>=2.2.0
+
 # LED Simulator v2.1 - Engine Sound Support (optional)
 # Install for realistic engine audio: pip install pyaudio
 # pyaudio>=0.2.11

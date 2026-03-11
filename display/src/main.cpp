@@ -119,6 +119,8 @@ struct TelemetryData {
     // Headlight indicators
     bool headlightsOn;       // Low beams active
     bool highBeamsOn;        // High beams active
+    // 12V source voltage from ADS1115 (via Pi)
+    float batteryVoltage;    // 12V source voltage (0 = no data)
 };
 
 TelemetryData telemetry = {0};
@@ -167,6 +169,7 @@ struct CachedTelemetry {
     bool oilWarning;
     bool headlightsOn;
     bool highBeamsOn;
+    float batteryVoltage;    // Cached 12V source voltage
     bool initialized;  // Set to true after first full draw
 };
 CachedTelemetry prevTelemetry = {0};
@@ -632,6 +635,7 @@ void setup() {
     telemetry.oilTemp = 0;
     telemetry.oilPressure = 0;
     telemetry.oilWarning = true;  // Default: no oil pressure
+    telemetry.batteryVoltage = 0;  // No voltage data yet
     telemetry.fuelLevel = 0;
     telemetry.ambientTemp = 0;
     
@@ -1244,6 +1248,9 @@ void drawOverviewScreen() {
     bool fuelChanged = !prevTelemetry.initialized || (int)telemetry.fuelLevel != (int)prevTelemetry.fuelLevel;
     bool ambientChanged = !prevTelemetry.initialized || (int)telemetry.ambientTemp != (int)prevTelemetry.ambientTemp;
     bool oilChanged = !prevTelemetry.initialized || telemetry.oilWarning != prevTelemetry.oilWarning;
+    // Voltage change detection (0.1V threshold)
+    bool voltageChanged = !prevTelemetry.initialized ||
+                          fabsf(telemetry.batteryVoltage - prevTelemetry.batteryVoltage) >= 0.1f;
     // MPG and range change detection
     bool mpgChanged = !prevTelemetry.initialized || 
                       fabsf(telemetry.averageMPG - prevTelemetry.averageMPG) >= 0.1f;
@@ -1296,7 +1303,7 @@ void drawOverviewScreen() {
     // Check if anything at all changed
     bool anyChange = needsFullRedraw || rpmChanged || speedChanged || gearChanged || 
         coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged || 
-        arcChanged || mpgChanged || rangeChanged || bootCountdownChanged || justReceivedPiData || countdownJustEnded;
+        arcChanged || mpgChanged || rangeChanged || voltageChanged || bootCountdownChanged || justReceivedPiData || countdownJustEnded;
     
     // Skip if nothing changed
     if (!anyChange) return;
@@ -1745,13 +1752,13 @@ void drawOverviewScreen() {
     // Track if side boxes have been cleared during this boot cycle (static persists)
     static bool sideBoxesCleared = false;
     
-    // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
+    // === SIDE INDICATORS: Coolant/Oil/Volt (left), Gas (right) ===
     // Hidden until Pi data is received - clear ONCE on full redraw during boot
     if (hideDuringBoot) {
         // Only clear side indicator areas once (on full redraw) to avoid redundant fills
         if (needsFullRedraw && !sideBoxesCleared) {
             int sideBoxY = CENTER_Y - 36;
-            int sideBoxH = 72;
+            int sideBoxH = 106;
             LCD_FillRoundRect(50, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Left side
             LCD_FillRoundRect(SCREEN_WIDTH - 110, sideBoxY, 70, sideBoxH, 4, COLOR_BG);  // Right side
             sideBoxesCleared = true;
@@ -1759,12 +1766,12 @@ void drawOverviewScreen() {
     } else {
     // Reset the cleared flag when Pi data arrives (for next boot cycle)
     sideBoxesCleared = false;
-    // === SIDE INDICATORS: Coolant/Oil (left), Gas (right) ===
+    // === SIDE INDICATORS: Coolant/Oil/Volt (left), Gas (right) ===
     // Both boxes aligned to same Y position and height for visual balance
     int sideBoxY = CENTER_Y - 36;  // Common Y for all side indicators
-    int sideBoxH = 72;  // Common height for all side indicators
+    int sideBoxH = 106;  // Height for 3 rows: Cool + Oil + Volt
     
-    // COOLANT + OIL COMBINED (left side) - matches gas box height
+    // COOLANT + OIL + VOLT COMBINED (left side)
     int leftBoxX = 50;
     int leftBoxW = 70;
     
@@ -1781,6 +1788,7 @@ void drawOverviewScreen() {
         // Static labels (only need to draw once)
         LCD_DrawString(leftBoxX + 6, sideBoxY + 3, "COOL", MX5_GRAY, COLOR_BG_CARD, 1);
         LCD_DrawString(leftBoxX + 6, sideBoxY + 42, "OIL", MX5_GRAY, COLOR_BG_CARD, 1);
+        LCD_DrawString(leftBoxX + 6, sideBoxY + 76, "VOLT", MX5_GRAY, COLOR_BG_CARD, 1);
     }
     
     // Update coolant value when changed
@@ -1803,6 +1811,23 @@ void drawOverviewScreen() {
         LCD_FillRect(leftBoxX + 6, sideBoxY + 56, leftBoxW - 10, 16, COLOR_BG_CARD);
         const char* oilStatus = telemetry.oilWarning ? "LOW" : "OK";
         LCD_DrawString(leftBoxX + 6, sideBoxY + 56, oilStatus, oilColor, COLOR_BG_CARD, 2);
+    }
+    
+    // Update voltage when changed
+    if (needsFullRedraw || voltageChanged) {
+        uint16_t voltColor = MX5_GREEN;
+        if (telemetry.batteryVoltage < 0.1f) voltColor = MX5_GRAY;  // No data
+        else if (telemetry.batteryVoltage < 12.0f) voltColor = MX5_RED;
+        else if (telemetry.batteryVoltage < 13.0f) voltColor = MX5_YELLOW;
+        // Clear and redraw voltage area only
+        LCD_FillRect(leftBoxX + 6, sideBoxY + 88, leftBoxW - 10, 16, COLOR_BG_CARD);
+        char voltStr[8];
+        if (telemetry.batteryVoltage >= 0.1f) {
+            snprintf(voltStr, sizeof(voltStr), "%.1fV", telemetry.batteryVoltage);
+        } else {
+            snprintf(voltStr, sizeof(voltStr), "--.-V");
+        }
+        LCD_DrawString(leftBoxX + 6, sideBoxY + 88, voltStr, voltColor, COLOR_BG_CARD, 2);
     }
     
     // GAS (right side) - shows MPG, tank %, and estimated range
@@ -1961,6 +1986,7 @@ void drawOverviewScreen() {
     prevTelemetry.oilWarning = telemetry.oilWarning;
     prevTelemetry.headlightsOn = telemetry.headlightsOn;
     prevTelemetry.highBeamsOn = telemetry.highBeamsOn;
+    prevTelemetry.batteryVoltage = telemetry.batteryVoltage;
     for (int i = 0; i < 4; i++) {
         prevTelemetry.tirePressure[i] = telemetry.tirePressure[i];
     }
@@ -3443,14 +3469,14 @@ void parseCommand(String cmd) {
         telemetry.oilPressure = cmd.substring(7).toFloat();
         telemetry.connected = true;
     }
-    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color)
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage)
     // gear_color: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
     else if (cmd.startsWith("TEL:")) {
         String data = cmd.substring(4);
         int idx = 0;
-        float values[13] = {0};  // 13 fields including gear_color
+        float values[14] = {0};  // 14 fields including voltage
         int start = 0;
-        for (int i = 0; i <= data.length() && idx < 13; i++) {
+        for (int i = 0; i <= data.length() && idx < 14; i++) {
             if (i == data.length() || data[i] == ',') {
                 String field = data.substring(start, i);
                 values[idx] = field.toFloat();
@@ -3477,6 +3503,8 @@ void parseCommand(String cmd) {
             if (idx >= 12) telemetry.rangeMiles = (int)values[11];
             // Gear color from Pi (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
             if (idx >= 13) telemetry.gearColor = (int)values[12];
+            // 12V source voltage from ADS1115
+            if (idx >= 14) telemetry.batteryVoltage = values[13];
             telemetry.connected = true;
             telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
