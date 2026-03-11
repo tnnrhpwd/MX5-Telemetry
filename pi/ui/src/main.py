@@ -95,6 +95,13 @@ except ImportError:
     MPGCalculator = None
     print("Warning: mpg_calculator not found. MPG features disabled.")
 
+# Try to import ADS1115 voltage monitor (optional on non-Pi systems)
+try:
+    from voltage_monitor import VoltageMonitor, ADS1115_AVAILABLE
+except ImportError:
+    ADS1115_AVAILABLE = False
+    VoltageMonitor = None
+
 # =============================================================================
 # CONSTANTS
 # =============================================================================
@@ -507,6 +514,9 @@ class PiDisplayApp:
         
         # MPG calculator for fuel efficiency tracking
         self.mpg_calculator = None
+
+        # ADS1115 voltage monitor (12V source voltage)
+        self.voltage_monitor = None
         
         # Screen names for web interface
         self.screen_names = [s.name for s in Screen]
@@ -529,6 +539,9 @@ class PiDisplayApp:
         if self.mpg_calculator:
             self.mpg_calculator.stop()
             self.mpg_calculator = None
+        if self.voltage_monitor:
+            self.voltage_monitor.stop()
+            self.voltage_monitor = None
         
         # Initialize MPG calculator (works in both demo and real mode)
         if MPG_CALCULATOR_AVAILABLE and MPGCalculator:
@@ -574,6 +587,16 @@ class PiDisplayApp:
         
         # ESP32 serial handler
         self._init_esp32_handler()
+
+        # ADS1115 voltage monitor (12V source voltage via I2C)
+        if ADS1115_AVAILABLE and VoltageMonitor:
+            print("  Initializing ADS1115 voltage monitor...")
+            self.voltage_monitor = VoltageMonitor(self.telemetry)
+            if self.voltage_monitor.start():
+                print("  \u2713 ADS1115 voltage monitor started")
+            else:
+                print("  \u2717 ADS1115 voltage monitor failed")
+                self.voltage_monitor = None
     
     def _init_arduino_serial(self):
         """Initialize serial connection to Arduino for LED sequence commands (optional)"""
@@ -967,6 +990,8 @@ class PiDisplayApp:
             self.can_handler.stop()
         if self.esp32_handler:
             self.esp32_handler.stop()
+        if self.voltage_monitor:
+            self.voltage_monitor.stop()
         pygame.quit()
     
     def _on_swc_button(self, button: ButtonEvent):
