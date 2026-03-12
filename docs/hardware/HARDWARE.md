@@ -262,6 +262,33 @@ Pi (Central Hub)
 
 **Total: 16 pins used** (2×5V, 1×3.3V, 2×GND, 2×I2C, 2×Serial, 3×SPI shared, 2×INT, 2×CS)
 
+**Physical Header Pinout (Pi oriented with USB ports facing down):**
+
+```
+        ADS1115 VCC [Red] 3.3V ┃① ②┃ 5V [Red] Breadboard 5V
+       ADS1115 SDA [Yellow] SDA┃③ ④┃ 5V [Red] Pi fan
+        ADS1115 SCL [White] SCL┃⑤ ⑥┃ GND [Black] Pi fan
+                         GPCLK0┃⑦ ⑧┃ TXD [Blue] → Arduino D3
+           Breadboard [Black] G┃⑨ ⑩┃ RXD [Green] ← Arduino D4
+                         GPIO17┃⑪ ⑫┃ GPIO18
+                         GPIO27┃⑬ ⑭┃ GND
+                         GPIO22┃⑮ ⑯┃ GPIO23
+                           3.3V┃⑰ ⑱┃ GPIO24 [Purple] MS-CAN INT
+   MCP2515s MOSI [Green]  MOSI┃⑲ ⑳┃ GND
+   MCP2515s MISO [White]  MISO┃㉑ ㉒┃ GPIO25 [Purple] HS-CAN INT
+    MCP2515s SCK [Blue]   SCLK┃㉓ ㉔┃ CE0 [Orange] HS-CAN CS
+                            GND┃㉕ ㉖┃ CE1 [Orange] MS-CAN CS
+                       ID EEPROM┃㉗ ㉘┃ ID EEPROM
+                          GPIO5┃㉙ ㉚┃ GND
+                          GPIO6┃㉛ ㉜┃ GPIO12
+                         GPIO13┃㉝ ㉞┃ GND
+                         GPIO19┃㉟ ㊱┃ GPIO16
+                         GPIO26┃㊲ ㊳┃ GPIO20
+                            GND┃㊴ ㊵┃ GPIO21
+```
+
+> Pins with `[Color]` are wired. Unlabeled pins are unused/available.
+
 **MCP2515 → Pi Connections:**
 
 | MCP2515 Pin | HS-CAN Pi | MS-CAN Pi |
