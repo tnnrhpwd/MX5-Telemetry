@@ -62,7 +62,8 @@ class ESP32SerialHandler:
     """Handles serial communication with ESP32-S3 display"""
     
     # Serial port options (tried in order)
-    USB_PORTS = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']
+    # Only ACM ports — ttyUSB is the Arduino Nano (CH340), not the ESP32
+    USB_PORTS = ['/dev/ttyACM0', '/dev/ttyACM1']
     GPIO_PORT = '/dev/serial0'  # Pi GPIO UART (14/15)
     BAUD_RATE = 115200
     
