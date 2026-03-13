@@ -14,6 +14,7 @@ Hardware:
     ADS1115 A0   → Voltage divider midpoint
 """
 
+import struct
 import threading
 import time
 
@@ -22,12 +23,20 @@ R_HIGH = 20000  # 2x10kΩ in series
 R_LOW = 4700    # 4.7kΩ
 DIVIDER_RATIO = (R_HIGH + R_LOW) / R_LOW  # ~5.255
 
-# Try to import I2C / ADS1115 libraries
+# ADS1115 I2C registers
+_ADS1115_CONVERSION = 0x00
+_ADS1115_CONFIG = 0x01
+
+# Config: single-shot, AIN0 vs GND, gain ±4.096V, 128SPS, single-shot mode
+# Bits: OS=1 | MUX=100 | PGA=001 | MODE=1 | DR=100 | COMP_MODE=0 | COMP_POL=0 | COMP_LAT=0 | COMP_QUE=11
+_ADS1115_CONFIG_SINGLE_A0 = 0xC383
+
+# Gain ±4.096V → LSB = 0.125 mV
+_ADS1115_VOLTS_PER_BIT = 4.096 / 32768.0
+
+# Try to import smbus (standard on Raspberry Pi OS)
 try:
-    import board
-    import busio
-    import adafruit_ads1x15.ads1115 as ADS
-    from adafruit_ads1x15.analog_in import AnalogIn
+    import smbus
     ADS1115_AVAILABLE = True
 except ImportError:
     ADS1115_AVAILABLE = False
@@ -36,32 +45,34 @@ except ImportError:
 class VoltageMonitor:
     """Reads 12V source voltage from ADS1115 ADC and updates telemetry."""
 
-    def __init__(self, telemetry_data, read_interval=1.0):
+    def __init__(self, telemetry_data, read_interval=1.0, i2c_bus=1, address=0x48):
         """
         Args:
             telemetry_data: TelemetryData object — sets .voltage
             read_interval: Seconds between ADC reads (default 1s)
+            i2c_bus: I2C bus number (1 on Pi 4)
+            address: ADS1115 I2C address (0x48 with ADDR→GND)
         """
         self.telemetry = telemetry_data
         self.read_interval = read_interval
+        self._i2c_bus = i2c_bus
+        self._address = address
         self._running = False
         self._thread = None
-        self._ads = None
-        self._channel = None
+        self._bus = None
 
     def start(self) -> bool:
         """Start background voltage reading thread. Returns True if ADC initialized."""
         if not ADS1115_AVAILABLE:
-            print("VoltageMonitor: adafruit_ads1x15 library not installed")
+            print("VoltageMonitor: smbus library not installed")
             return False
 
         try:
-            i2c = busio.I2C(board.SCL, board.SDA)
-            self._ads = ADS.ADS1115(i2c, address=0x48)
-            self._ads.gain = 1  # ±4.096V range
-            self._channel = AnalogIn(self._ads, ADS.P0)
-            # Verify we can read
-            _ = self._channel.voltage
+            self._bus = smbus.SMBus(self._i2c_bus)
+            # Verify the device responds by reading the config register
+            self._bus.read_word_data(self._address, _ADS1115_CONFIG)
+            # Do a test read
+            self._read_adc_voltage()
         except Exception as e:
             print(f"VoltageMonitor: Failed to initialize ADS1115: {e}")
             return False
@@ -79,11 +90,23 @@ class VoltageMonitor:
             self._thread.join(timeout=2.0)
             self._thread = None
 
+    def _read_adc_voltage(self):
+        """Trigger a single-shot read on AIN0 and return voltage."""
+        # Write config to start single-shot conversion
+        config_bytes = struct.pack('>H', _ADS1115_CONFIG_SINGLE_A0)
+        self._bus.write_i2c_block_data(self._address, _ADS1115_CONFIG, list(config_bytes))
+        # Wait for conversion (~8ms at 128SPS)
+        time.sleep(0.01)
+        # Read 2-byte result (big-endian signed 16-bit)
+        raw = self._bus.read_i2c_block_data(self._address, _ADS1115_CONVERSION, 2)
+        value = struct.unpack('>h', bytes(raw))[0]
+        return value * _ADS1115_VOLTS_PER_BIT
+
     def _read_loop(self):
         """Background loop: read ADC and update telemetry.voltage."""
         while self._running:
             try:
-                adc_voltage = self._channel.voltage
+                adc_voltage = self._read_adc_voltage()
                 source_voltage = adc_voltage * DIVIDER_RATIO
                 # Clamp to reasonable range
                 source_voltage = max(0.0, min(source_voltage, 20.0))
