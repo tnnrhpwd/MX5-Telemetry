@@ -18,10 +18,9 @@ import struct
 import threading
 import time
 
-# Resistor values for voltage divider
-R_HIGH = 24700  # 2x10kΩ + 4.7kΩ in series
-R_LOW = 4700    # 4.7kΩ to GND
-DIVIDER_RATIO = (R_HIGH + R_LOW) / R_LOW  # ~6.255
+# Voltage divider: 2x10kΩ + 4.7kΩ series (high) / 4.7kΩ to GND (low)
+# Calibrated from measured 11.93V input / 1.8438V ADC reading
+DIVIDER_RATIO = 6.472
 
 # ADS1115 I2C registers
 _ADS1115_CONVERSION = 0x00

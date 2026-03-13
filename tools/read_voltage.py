@@ -7,7 +7,7 @@ time.sleep(0.01)
 raw = bus.read_i2c_block_data(0x48, 0x00, 2)
 val = struct.unpack(">h", bytes(raw))[0]
 adc_v = val * 4.096 / 32768
-src_v = adc_v * (24700 / 4700)
+src_v = adc_v * 6.472  # calibrated: 11.93V actual / 1.8438V ADC
 print("ADC raw: %d" % val)
 print("ADC voltage: %.4f V" % adc_v)
 print("Source voltage: %.2f V" % src_v)
