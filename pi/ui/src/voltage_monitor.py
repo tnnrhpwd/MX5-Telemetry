@@ -19,9 +19,9 @@ import threading
 import time
 
 # Resistor values for voltage divider
-R_HIGH = 10000  # 1x10kΩ (single resistor — add second 10kΩ in series for more headroom)
-R_LOW = 4700    # 4.7kΩ
-DIVIDER_RATIO = (R_HIGH + R_LOW) / R_LOW  # ~3.128
+R_HIGH = 24700  # 2x10kΩ + 4.7kΩ in series
+R_LOW = 4700    # 4.7kΩ to GND
+DIVIDER_RATIO = (R_HIGH + R_LOW) / R_LOW  # ~6.255
 
 # ADS1115 I2C registers
 _ADS1115_CONVERSION = 0x00
