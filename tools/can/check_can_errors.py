@@ -147,7 +147,7 @@ try:
             print("  • Check the Python code that interprets CAN messages")
             print("  • Verify CAN ID mappings for coolant/oil/fuel")
             print("\nNext step: Check which CAN IDs contain sensor data")
-            print("  Run: python tools/monitor_can_data.py")
+            print("  Run: python tools/can/monitor_can_data.py")
     
     print("\n" + "=" * 70 + "\n")
     

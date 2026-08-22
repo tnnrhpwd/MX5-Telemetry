@@ -9,7 +9,7 @@ root = r"c:\Users\tanne\Documents\Github\MX5-Telemetry"
 
 # Files to update
 patterns = [
-    "tools/*.py",
+    "tools/**/*.py",
     "docs/**/*.md"
 ]
 

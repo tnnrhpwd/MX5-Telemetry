@@ -13,7 +13,7 @@ Checks performed:
 5. Button event processing in swc_handler
 
 Usage:
-    python3 tools/diagnose_swc_buttons.py
+    python3 tools/can/diagnose_swc_buttons.py
     
 Then press cruise control buttons on steering wheel and observe output.
 """
@@ -283,7 +283,7 @@ def print_troubleshooting_tips():
     print()
     print(f"{Color.BOLD}Quick Test:{Color.END}")
     print("1. candump can1  (should see 0x250 messages when pressing buttons)")
-    print("2. python3 tools/test_swc.py  (test button parsing)")
+    print("2. python3 tools/can/test_swc.py  (test button parsing)")
     print("3. Check navigation lock: press and hold ON/OFF for 3 seconds")
     print()
 

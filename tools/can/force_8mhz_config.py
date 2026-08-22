@@ -75,7 +75,7 @@ enable_uart=1
         ssh.exec_command("sudo reboot")
         print("✓ Reboot initiated")
         print("\nWait 40 seconds then run:")
-        print("  python tools\\diagnose_can0_live.py")
+        print("  python tools\\can\\diagnose_can0_live.py")
         print("\nShould show: clock 8000000 and receiving packets!")
     else:
         print("\nSkipped reboot - manual reboot required:")

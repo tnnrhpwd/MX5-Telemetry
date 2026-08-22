@@ -84,11 +84,11 @@ dtoverlay=vc4-fkms-v3d,audio=on
 #### Step 3: Test HDMI Output Live
 ```bash
 # Run the diagnostic script
-cd ~/MX5-Telemetry/tools
-python3 hdmi_diag.py
+cd ~/MX5-Telemetry
+python3 tools/display/hdmi_diag.py
 
 # If diagnostic shows issues, try force config
-python3 fix_hdmi1_config.py
+python3 tools/display/fix_hdmi1_config.py
 ```
 
 #### Step 4: Manual HDMI Force (if scripts fail)
@@ -160,19 +160,19 @@ hdmi_ignore_cec_init=1
 
 #### Solution D: Use Legacy Framebuffer (last resort)
 ```bash
-cd ~/MX5-Telemetry/tools
-python3 use_legacy_framebuffer.py
+cd ~/MX5-Telemetry
+python3 tools/display/use_legacy_framebuffer.py
 sudo reboot
 ```
 
 ### Testing Tools Available
 Your repo already has these tools (use them!):
-- `tools/hdmi_diag.py` - Full diagnostic
-- `tools/fix_hdmi1_config.py` - Auto-fix config
-- `tools/check_hdmi.py` - Quick status check
-- `tools/deep_hdmi_diag.py` - Detailed analysis
-- `tools/fix_hdmi_signal_loss.py` - Signal stability fix
-- `tools/force_hdmi_active.py` - Force active output
+- `tools/display/hdmi_diag.py` - Full diagnostic
+- `tools/display/fix_hdmi1_config.py` - Auto-fix config
+- `tools/display/check_hdmi.py` - Quick status check
+- `tools/display/deep_hdmi_diag.py` - Detailed analysis
+- `tools/display/fix_hdmi_signal_loss.py` - Signal stability fix
+- `tools/display/force_hdmi_active.py` - Force active output
 
 ### Hardware Checks
 - [ ] Try different HDMI cable (not all cables support ARC/CEC)
@@ -274,25 +274,24 @@ cat /dev/ttyACM0
 **USB Issues:**
 - Check ESP32 connection: `ls -la /dev/ttyACM0`
 - Verify ESP32 device ID: `lsusb | grep 303a`
-- Test serial: `python3 tools/test_esp32_sync.py`
+- Test serial: `python3 tools/hardware/test_esp32_sync.py`
 
 **CAN Bus Issues:**
 - Verify interfaces: `ip link show can0 can1`
 - Check dmesg: `dmesg | grep mcp251`
-- Test loopback: `python3 tools/test_mcp2515_loopback_active.py`
-- Verify listen-only: `python3 tools/verify_listen_only.py`
+- Test loopback: `python3 tools/can/test_mcp2515_loopback_active.py`
+- Verify listen-only: `python3 tools/can/verify_listen_only.py`
 
 **HDMI Issues:**
 - Check status: `tvservice -s`
-- Run diagnostic: `python3 tools/hdmi_diag.py`
-- Auto-fix: `python3 tools/fix_hdmi1_config.py`
+- Run diagnostic: `python3 tools/display/hdmi_diag.py`
+- Auto-fix: `python3 tools/display/fix_hdmi1_config.py`
 
 ### Available Scripts in Your Repo
-Located in `tools/`:
-- **HDMI Diagnostics:** `hdmi_diag.py`, `deep_hdmi_diag.py`
-- **HDMI Fixes:** `fix_hdmi1_config.py`, `force_hdmi_active.py`
-- **CAN Testing:** `test_mcp2515_loopback_active.py`, `verify_listen_only.py`
-- **ESP32 Testing:** `test_esp32_sync.py`
+Located under `tools/`:
+- **Display tools (`tools/display/`):** `hdmi_diag.py`, `deep_hdmi_diag.py`, `fix_hdmi1_config.py`, `force_hdmi_active.py`
+- **CAN tools (`tools/can/`):** `test_mcp2515_loopback_active.py`, `verify_listen_only.py`
+- **Hardware tools (`tools/hardware/`):** `test_esp32_sync.py`
 
 ### VS Code Tasks
 Use `Ctrl+Shift+P` → "Tasks: Run Task":
@@ -307,11 +306,11 @@ Use `Ctrl+Shift+P` → "Tasks: Run Task":
 ssh pi@192.168.1.23 'sudo reboot'
 
 # Or use tool
-cd ~/MX5-Telemetry/tools
-python3 reboot_pi.py
+cd ~/MX5-Telemetry
+python3 tools/recovery/reboot_pi.py
 
 # Factory reset config (if all else fails)
-python3 emergency_recovery.py
+python3 tools/recovery/emergency_recovery.py
 ```
 
 ---
@@ -338,7 +337,7 @@ python3 emergency_recovery.py
 
 #### Session 3: HDMI Fix - IN PROGRESS
 1. ⬜ SSH into Pi and check current HDMI status
-2. ⬜ Run `hdmi_diag.py` to identify specific issue
+2. ⬜ Run `tools/display/hdmi_diag.py` to identify specific issue
 3. ⬜ Apply appropriate fix from Solution A/B/C/D
 4. ⬜ Test with Pioneer head unit
 5. ⬜ Verify stability over 30 minutes
@@ -376,13 +375,13 @@ python3 emergency_recovery.py
 - Both modules now operational in listen-only mode
 - Verified with loopback test: 10/10 messages bidirectional
 - Ready for production use
-- Test script: `tools/test_mcp2515_loopback_active.py`
+- Test script: `tools/can/test_mcp2515_loopback_active.py`
 
 ### ✅ USB-C Connection Pi → ESP32 (Fixed Dec 31, 2024)
 - Replaced faulty cable with quality cable
 - Serial communication stable
 - `/dev/ttyACM0` detected reliably
-- Test script: `tools/test_esp32_sync.py`
+- Test script: `tools/hardware/test_esp32_sync.py`
 
 ---
 
