@@ -163,3 +163,9 @@ display/output-onlinepngtools.*
 # User data files (persistent storage)
 data/mpg_data.json
 data/tpms_cache.json
+
+# ============================================================================
+# Real secrets (never commit - see pi/wpa_supplicant.conf.example and
+# docs/guides/ENV_BACKUP_GUIDE.md for the encrypted backup/restore workflow)
+# ============================================================================
+pi/wpa_supplicant.conf

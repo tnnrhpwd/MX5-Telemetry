@@ -4,21 +4,21 @@ country=US
 
 # Phone hotspot - highest priority for testing/mobile use
 network={
-    ssid="Tanner's Galaxy S25"
-    psk="REDACTED_WIFI_PASSWORD"
+    ssid="YourPhoneHotspotName"
+    psk="YourPhoneHotspotPassword"
     priority=15
 }
 
 # Home network 5GHz - high priority
 network={
-    ssid="ChattaWi-Fi-5G"
-    psk="REDACTED_WIFI_PASSWORD"
+    ssid="YourHomeWiFi-5G"
+    psk="YourHomeWiFiPassword"
     priority=10
 }
 
 # Home network 2.4GHz - fallback
 network={
-    ssid="ChattaWi-Fi"
-    psk="REDACTED_WIFI_PASSWORD"
+    ssid="YourHomeWiFi"
+    psk="YourHomeWiFiPassword"
     priority=9
 }
