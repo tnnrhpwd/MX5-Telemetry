@@ -5,8 +5,11 @@
 // ============================================================================
 
 #include <unity.h>
+#ifndef NATIVE_SIM
 #include <Arduino.h>
+#endif
 #include <stdio.h>
+#include <stdint.h>
 
 // Mock Arduino functions for native testing
 #ifdef NATIVE_SIM
