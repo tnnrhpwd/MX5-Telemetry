@@ -254,6 +254,25 @@ The Pi caches all user settings and syncs them to ESP32 and Arduino on startup:
 
 Settings are stored in: `~/MX5-Telemetry/pi/config/settings.json`
 
+### Boot Config Reference (`/boot/config.txt`)
+
+Key settings required in `/boot/firmware/config.txt` (or `/boot/config.txt` on older
+Raspberry Pi OS) for HDMI output to the Pioneer head unit and the dual MCP2515 CAN
+controllers:
+
+```ini
+# HDMI (720p for Pioneer head unit)
+hdmi_group=1
+hdmi_mode=4
+hdmi_drive=2          # Force HDMI mode (vs DVI)
+dtoverlay=vc4-fkms-v3d,audio=on
+
+# CAN bus (dual MCP2515 - HS-CAN + MS-CAN)
+dtparam=spi=on
+dtoverlay=mcp2515-can0,oscillator=8000000,interrupt=25
+dtoverlay=mcp2515-can1,oscillator=8000000,interrupt=24
+```
+
 ---
 
 ## Verification & Testing

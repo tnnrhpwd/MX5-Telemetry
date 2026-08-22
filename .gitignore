@@ -169,3 +169,9 @@ data/tpms_cache.json
 # docs/guides/ENV_BACKUP_GUIDE.md for the encrypted backup/restore workflow)
 # ============================================================================
 pi/wpa_supplicant.conf
+
+# ============================================================================
+# Local system backups/snapshots (installed packages, network dumps, etc.)
+# Keep these on your own machine/drive, not in version control.
+# ============================================================================
+backups/
