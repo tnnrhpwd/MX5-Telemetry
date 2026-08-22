@@ -1,0 +1,54 @@
+# Firmware Build & Test Workflow
+# Builds the Arduino (Nano) and ESP32-S3 display firmware, and runs the
+# native unit tests, on every push/PR so build breakage is caught early.
+
+name: Firmware Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  arduino-build-and-test:
+    name: Arduino (Nano) build + native unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Build Nano firmware
+        working-directory: ./arduino
+        run: pio run -e nano
+
+      - name: Run native unit tests
+        working-directory: ./arduino
+        run: pio test -e native_sim
+
+  display-build:
+    name: ESP32-S3 display build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Build display firmware
+        working-directory: ./display
+        run: pio run -e esp32s3_display
