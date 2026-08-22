@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Maps local secret files (relative to repo root) to their encrypted filenames in the MX5-Telemetry-secrets backup repo. Add an entry here whenever a new secret file needs to be backed up.",
+  "files": [
+    { "source": "pi/wpa_supplicant.conf", "encrypted": "wpa_supplicant.conf.age" }
+  ]
+}
