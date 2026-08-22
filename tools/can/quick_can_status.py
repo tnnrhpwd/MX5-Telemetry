@@ -71,7 +71,7 @@ print("\n" + "=" * 70)
 
 if "BUS-OFF" in output:
     print("\n⚠️  ACTION REQUIRED: Run fix script")
-    print("  python tools/force_recover_busoff.py")
+    print("  python tools/can/force_recover_busoff.py")
 elif not messages:
     print("\n⚠️  Interfaces OK but no CAN traffic")
     print("  • Check car ignition is in ACC/ON")

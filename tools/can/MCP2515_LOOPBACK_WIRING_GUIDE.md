@@ -119,7 +119,7 @@ CAN bus requires 120Ω termination at **both ends** of the bus. Since you're con
 
 ```bash
 # From your PC, copy the test script to the Pi
-scp tools/test_mcp2515_loopback.py pi@192.168.1.23:~/
+scp tools/can/test_mcp2515_loopback.py pi@192.168.1.23:~/
 
 # Or if already on Pi, clone the repo
 cd ~
@@ -143,7 +143,7 @@ pip3 install python-can
 
 ```bash
 cd ~/MX5-Telemetry
-python3 tools/test_mcp2515_loopback.py
+python3 tools/can/test_mcp2515_loopback.py
 ```
 
 ### Expected Output (Success)

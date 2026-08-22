@@ -102,15 +102,15 @@ try:
         print("   • Check for loose wires or poor connections")
         print("   • Ensure 3.3V power supply (NOT 5V!)")
         print("\n2. SOFTWARE FIX:")
-        print("   • Run: python tools/quick_reset_mcp.py")
-        print("   • Or reboot Pi: python tools/reboot_pi.py")
+        print("   • Run: python tools/can/quick_reset_mcp.py")
+        print("   • Or reboot Pi: python tools/recovery/reboot_pi.py")
         print("\n3. IF PERSISTENT:")
         print("   • Re-run setup: sudo bash pi/setup_can_bus.sh")
         print("   • Check oscillator frequency (should be 8MHz)")
     else:
         print("\n✓ No errors found in logs!")
         print("\nIf CAN still not working:")
-        print("  • Run: python tools/quick_reset_mcp.py")
+        print("  • Run: python tools/can/quick_reset_mcp.py")
         print("  • Ensure car ignition is in ACC or ON")
         print("  • Check CAN-H and CAN-L wiring to OBD-II port")
     

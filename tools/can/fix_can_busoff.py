@@ -98,7 +98,7 @@ try:
         print("\nTry:")
         print("  1. Turn off car, wait 10 seconds, turn to ACC")
         print("  2. Check CAN wiring connections")
-        print("  3. Run full diagnostic: python tools/reset_mcp_modules.py")
+        print("  3. Run full diagnostic: python tools/can/reset_mcp_modules.py")
     
     print("=" * 70 + "\n")
     

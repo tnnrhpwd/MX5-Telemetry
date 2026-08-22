@@ -80,7 +80,7 @@ try:
         print("  • Car ignition not in ACC/ON position")
         print("  • MCP2515 wiring issue")
         print("  • Need to check dmesg logs for errors")
-        print("\nTry running: python tools/reset_mcp_modules.py")
+        print("\nTry running: python tools/can/reset_mcp_modules.py")
         print("            for detailed diagnostics")
     print("=" * 60 + "\n")
     

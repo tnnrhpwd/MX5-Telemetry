@@ -152,7 +152,7 @@ try:
         print("\n⚠️  NO SENSOR DATA RECEIVED")
         print("  • Verify car is in ACC or ON (not just accessory)")
         print("  • Check if engine needs to be running for these messages")
-        print("  • Try: python tools/monitor_can_data.py to see all IDs")
+        print("  • Try: python tools/can/monitor_can_data.py to see all IDs")
     else:
         print("\nIf values look wrong:")
         print("  1. Check CAN ID mappings (may vary by year/model)")

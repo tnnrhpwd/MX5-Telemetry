@@ -14,7 +14,7 @@ set /p choice="Select option (1-4): "
 if "%choice%"=="1" (
     echo.
     echo Running quick reset...
-    python tools\quick_reset_mcp.py
+    python tools\can\quick_reset_mcp.py
     pause
     goto end
 )
@@ -22,7 +22,7 @@ if "%choice%"=="1" (
 if "%choice%"=="2" (
     echo.
     echo Running full diagnostic...
-    python tools\reset_mcp_modules.py
+    python tools\can\reset_mcp_modules.py
     pause
     goto end
 )
@@ -30,7 +30,7 @@ if "%choice%"=="2" (
 if "%choice%"=="3" (
     echo.
     echo Checking startup errors...
-    python tools\check_mcp_startup_errors.py
+    python tools\can\check_mcp_startup_errors.py
     pause
     goto end
 )
