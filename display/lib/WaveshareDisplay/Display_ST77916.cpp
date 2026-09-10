@@ -803,47 +803,111 @@ static const uint8_t font_5x7[96][5] = {
     {0x00,0x00,0x00,0x00,0x00}  // DEL
 };
 
+// ============================================================================
+// Anti-aliased font rendering
+// ============================================================================
+// The bitmap fonts are 1-bit, which produces hard, pixelated edges. We keep
+// the same three fonts but precompute a 4-bit coverage value for every glyph
+// pixel by bilinearly supersampling the 1-bit glyph (identical shapes, smooth
+// edges). The tables are built lazily on first use of each font size.
+// ============================================================================
+
+static uint8_t alpha_5x7[96 * 5 * 7];
+static uint8_t alpha_10x14[96 * 10 * 14];
+static uint8_t alpha_15x21[96 * 15 * 21];
+static bool alpha_5x7_ready = false;
+static bool alpha_10x14_ready = false;
+static bool alpha_15x21_ready = false;
+
+static inline int font5x7_bit(int g, int x, int y) {
+    if (x < 0 || x >= 5 || y < 0 || y >= 7) return 0;
+    return (font_5x7[g][x] >> y) & 1;
+}
+
+static inline int font10x14_bit(int g, int x, int y) {
+    if (x < 0 || x >= 10 || y < 0 || y >= 14) return 0;
+    return (font_10x14[g][y] >> (9 - x)) & 1;
+}
+
+static inline int font15x21_bit(int g, int x, int y) {
+    if (x < 0 || x >= 15 || y < 0 || y >= 21) return 0;
+    return (font_15x21[g][y] >> (14 - x)) & 1;
+}
+
+typedef int (*FontBitFn)(int g, int x, int y);
+
+static float bilinearCoverage(FontBitFn glyphBit, int g, float fx, float fy) {
+    int x0 = (int)floorf(fx);
+    int y0 = (int)floorf(fy);
+    float tx = fx - (float)x0;
+    float ty = fy - (float)y0;
+    float v00 = (float)glyphBit(g, x0, y0);
+    float v10 = (float)glyphBit(g, x0 + 1, y0);
+    float v01 = (float)glyphBit(g, x0, y0 + 1);
+    float v11 = (float)glyphBit(g, x0 + 1, y0 + 1);
+    return v00 * (1.0f - tx) * (1.0f - ty) + v10 * tx * (1.0f - ty)
+         + v01 * (1.0f - tx) * ty + v11 * tx * ty;
+}
+
+static void computeAlphaTable(FontBitFn bit, int W, int H, uint8_t* out) {
+    for (int g = 0; g < 96; g++) {
+        for (int y = 0; y < H; y++) {
+            for (int x = 0; x < W; x++) {
+                float sum = bilinearCoverage(bit, g, x - 0.25f, y - 0.25f)
+                          + bilinearCoverage(bit, g, x + 0.25f, y - 0.25f)
+                          + bilinearCoverage(bit, g, x - 0.25f, y + 0.25f)
+                          + bilinearCoverage(bit, g, x + 0.25f, y + 0.25f);
+                int cov = (int)(sum * 15.0f / 4.0f + 0.5f);  // 0..15 coverage
+                if (cov > 15) cov = 15;
+                out[g * W * H + y * W + x] = (uint8_t)cov;
+            }
+        }
+    }
+}
+
+static inline uint16_t rgb565Blend(uint16_t bg, uint16_t fg, uint8_t cov) {
+    if (cov == 0) return bg;
+    if (cov == 15) return fg;
+    int br = (bg >> 11) & 0x1F, bg_ = (bg >> 5) & 0x3F, bb = bg & 0x1F;
+    int fr = (fg >> 11) & 0x1F, fg_ = (fg >> 5) & 0x3F, fb = fg & 0x1F;
+    int r = br + ((fr - br) * (int)cov) / 15;
+    int g = bg_ + ((fg_ - bg_) * (int)cov) / 15;
+    int b = bb + ((fb - bb) * (int)cov) / 15;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+void LCD_DrawPixelBlend(uint16_t x, uint16_t y, uint16_t color, uint16_t bg, uint8_t coverage) {
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    if (coverage == 0) return;
+    if (coverage >= 15) { LCD_DrawPixel(x, y, color); return; }
+    LCD_DrawPixel(x, y, rgb565Blend(bg, color, coverage));
+}
+
 void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     if (c < 32 || c > 127) c = '?';
-    
+
+    uint8_t* alpha;
+    int W, H;
     if (size == 2) {
-        // Use high-res 10x14 font for size 2
-        const uint16_t* fontData = font_10x14[c - 32];
-        for (uint8_t row = 0; row < 14; row++) {
-            uint16_t rowData = fontData[row];
-            for (uint8_t col = 0; col < 10; col++) {
-                if (rowData & (1 << (9 - col))) {
-                    LCD_DrawPixel(x + col, y + row, color);
-                } else if (bg != color) {
-                    LCD_DrawPixel(x + col, y + row, bg);
-                }
-            }
-        }
+        if (!alpha_10x14_ready) { computeAlphaTable(font10x14_bit, 10, 14, alpha_10x14); alpha_10x14_ready = true; }
+        alpha = alpha_10x14; W = 10; H = 14;
     } else if (size >= 3) {
-        // Use high-res 15x21 font for size 3 and 4
-        const uint16_t* fontData = font_15x21[c - 32];
-        for (uint8_t row = 0; row < 21; row++) {
-            uint16_t rowData = fontData[row];
-            for (uint8_t col = 0; col < 15; col++) {
-                if (rowData & (1 << (14 - col))) {
-                    LCD_DrawPixel(x + col, y + row, color);
-                } else if (bg != color) {
-                    LCD_DrawPixel(x + col, y + row, bg);
-                }
-            }
-        }
+        if (!alpha_15x21_ready) { computeAlphaTable(font15x21_bit, 15, 21, alpha_15x21); alpha_15x21_ready = true; }
+        alpha = alpha_15x21; W = 15; H = 21;
     } else {
-        // Size 1: Use original 5x7 font
-        for (uint8_t i = 0; i < 5; i++) {
-            uint8_t line = font_5x7[c - 32][i];
-            for (uint8_t j = 0; j < 7; j++) {
-                if (line & 0x01) {
-                    LCD_DrawPixel(x + i, y + j, color);
-                } else if (bg != color) {
-                    LCD_DrawPixel(x + i, y + j, bg);
-                }
-                line >>= 1;
+        if (!alpha_5x7_ready) { computeAlphaTable(font5x7_bit, 5, 7, alpha_5x7); alpha_5x7_ready = true; }
+        alpha = alpha_5x7; W = 5; H = 7;
+    }
+
+    int g = c - 32;
+    for (int row = 0; row < H; row++) {
+        for (int col = 0; col < W; col++) {
+            uint8_t cov = alpha[g * W * H + row * W + col];
+            if (cov == 0) {
+                if (bg != color) LCD_DrawPixel(x + col, y + row, bg);
+            } else {
+                LCD_DrawPixel(x + col, y + row, (cov == 15) ? color : rgb565Blend(bg, color, cov));
             }
         }
     }

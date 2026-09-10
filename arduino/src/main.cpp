@@ -145,9 +145,13 @@ uint8_t currentBrightness = 255;
 bool errorMode = false;
 bool canInitialized = false;
 
-// RPM smoothing configuration
-#define RPM_FILTER_ALPHA 0.35f  // EMA smoothing factor (0.0=no filter, 1.0=no smoothing)
-                                  // 0.35 provides good balance: responsive yet smooth
+// RPM smoothing configuration - asymmetric + snap for maximum responsiveness.
+// - Rising revs track fast (instant shift-point / redline feedback)
+// - Falling revs settle smoothly (looks natural, no trailing flicker)
+// - Large deltas (gear changes) snap instantly with zero filter lag
+#define RPM_SNAP_DELTA     800     // RPM jump that bypasses the filter entirely
+#define RPM_ALPHA_RISING   0.70f   // Throttle-on: fast tracking
+#define RPM_ALPHA_FALLING  0.40f   // Lift-off: smooth settle
 
 // LED sequence setting (persisted in EEPROM)
 uint8_t ledSequence = SEQ_CENTER_OUT;  // Default: center-out (mirrored)
@@ -359,12 +363,24 @@ inline void readCANMessages() {
                 uint16_t rawRPM = ((uint16_t)rxBuf[0] << 8) | rxBuf[1];
                 uint16_t instantRPM = rawRPM >> 2;  // Divide by 4 using bit shift
                 
-                // Apply exponential moving average (EMA) filter to reduce jitter
-                // Formula: smoothed = alpha * new + (1-alpha) * previous
+                // Asymmetric adaptive smoothing: track rising RPM fast (so the
+                // tach sweeps up instantly when you open the throttle), settle
+                // falling RPM smoothly, and snap straight to the reading on big
+                // deltas (gear changes). Equivalent to an EMA but the alpha is
+                // chosen per-sample based on direction and magnitude.
                 if (smoothedRPM == 0.0f) {
                     smoothedRPM = instantRPM;  // Initialize on first reading
                 } else {
-                    smoothedRPM = RPM_FILTER_ALPHA * instantRPM + (1.0f - RPM_FILTER_ALPHA) * smoothedRPM;
+                    float delta = (float)instantRPM - smoothedRPM;
+                    float absDelta = delta < 0.0f ? -delta : delta;
+
+                    if (absDelta >= RPM_SNAP_DELTA) {
+                        // Gear change / hard throttle stab - zero lag
+                        smoothedRPM = instantRPM;
+                    } else {
+                        float alpha = (delta >= 0.0f) ? RPM_ALPHA_RISING : RPM_ALPHA_FALLING;
+                        smoothedRPM += alpha * delta;
+                    }
                 }
                 
                 currentRPM = (uint16_t)(smoothedRPM + 0.5f);  // Round to nearest integer

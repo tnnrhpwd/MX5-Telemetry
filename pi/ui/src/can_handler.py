@@ -80,6 +80,16 @@ class MSCanID:
 
 
 # =============================================================================
+# OBD-II (Mode 01) request/response IDs - used for MAF air flow
+# =============================================================================
+class OBD2:
+    REQUEST_ID = 0x7DF   # Functional request (broadcast to all ECUs)
+    RESPONSE_ID = 0x7E8  # Engine ECU response
+    MODE_CURRENT_DATA = 0x01
+    PID_MAF = 0x10       # Mass Air Flow rate (g/s)
+
+
+# =============================================================================
 # CAN Data Parser
 # =============================================================================
 
@@ -144,6 +154,17 @@ class CANParser:
         if len(data) >= 5:
             return int(data[4] * 100 / 255)
         return 0
+
+    @staticmethod
+    def parse_maf(data: bytes) -> float:
+        """Parse MAF from an OBD-II Mode 01 PID 0x10 response.
+
+        Response layout: [len=4, mode=0x41, pid=0x10, A, B, ...]
+        MAF (g/s) = (256 * A + B) / 100
+        """
+        if len(data) >= 5 and data[1] == 0x41 and data[2] == OBD2.PID_MAF:
+            return ((data[3] << 8) | data[4]) / 100.0
+        return 0.0
     
     @staticmethod
     def parse_gear(data: bytes) -> int:
@@ -508,6 +529,10 @@ class CANHandler:
         # Fuel level smoothing state
         self._fuel_ema = None  # EMA-smoothed raw fuel value
         self._fuel_displayed = None  # Last displayed fuel value (with hysteresis)
+
+        # OBD-II MAF polling state
+        self._last_maf_request = 0.0
+        self.maf_request_interval = 0.25  # Request MAF 4x per second
         
     def start(self) -> bool:
         """Initialize and start CAN bus reading"""
@@ -621,10 +646,30 @@ class CANHandler:
         
         return self._fuel_displayed
 
+    def _maybe_request_maf(self):
+        """Periodically request MAF (OBD-II PID 0x10) from the engine ECU."""
+        if not self.hs_can:
+            return
+        now = time.time()
+        if now - self._last_maf_request < self.maf_request_interval:
+            return
+        self._last_maf_request = now
+        try:
+            msg = can.Message(
+                arbitration_id=OBD2.REQUEST_ID,
+                data=[0x02, OBD2.MODE_CURRENT_DATA, OBD2.PID_MAF, 0, 0, 0, 0, 0],
+                is_extended_id=False,
+            )
+            self.hs_can.send(msg)
+        except Exception as e:
+            # Don't spam on transient send errors (bus off, listen-only, etc.)
+            print(f"MAF request error: {e}")
+
     def _read_hs_can(self):
         """Read HS-CAN messages in background thread"""
         while self._running and self.hs_can:
             try:
+                self._maybe_request_maf()
                 msg = self.hs_can.recv(timeout=0.1)
                 if msg:
                     self.last_hs_msg_time = time.time()
@@ -649,7 +694,20 @@ class CANHandler:
         """Process high-speed CAN message"""
         can_id = msg.arbitration_id
         data = msg.data
-        
+
+        if can_id == OBD2.RESPONSE_ID:
+            maf = CANParser.parse_maf(data)
+            if maf > 0:
+                # EMA-smooth MAF (polled at 4 Hz) to reduce instant-MPG flicker.
+                prev = self.telemetry.maf
+                self.telemetry.maf = (0.5 * maf + 0.5 * prev) if prev > 0 else maf
+                self.telemetry.maf_timestamp = time.time()
+                now = time.time()
+                if now - getattr(self, '_last_maf_log', 0.0) >= 5.0:
+                    self._last_maf_log = now
+                    print(f"MAF: {maf:.1f} g/s (smoothed {self.telemetry.maf:.1f})")
+            return
+
         if can_id == HSCanID.ENGINE_RPM:
             self.telemetry.rpm = CANParser.parse_rpm(data)
             self.telemetry.speed_kmh = CANParser.parse_speed(data)

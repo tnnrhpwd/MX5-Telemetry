@@ -1,0 +1,6 @@
+# Native simulator build artifacts
+*.exe
+*.obj
+*.pdb
+*.bmp
+*.png

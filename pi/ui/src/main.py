@@ -183,6 +183,8 @@ class TelemetryData:
     coolant_temp_f: int = 0
     intake_temp_f: int = 0
     ambient_temp_f: int = 0
+    maf: float = 0.0  # Mass air flow (g/s) via OBD-II PID 0x10
+    maf_timestamp: float = 0.0  # time.time() of last valid MAF sample (staleness guard)
     fuel_level_percent: float = 0.0
     voltage: float = 0.0
     tire_pressure: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
@@ -951,9 +953,23 @@ class PiDisplayApp:
                 )
                 
                 # Copy calculated values back to telemetry for display/transmission
-                self.telemetry.instant_mpg = self.mpg_calculator.instant_mpg
                 self.telemetry.average_mpg = self.mpg_calculator.average_mpg
                 self.telemetry.range_miles = self.mpg_calculator.range_miles
+
+                # Instantaneous MPG from mass air flow (OBD-II PID 0x10):
+                #   fuel flow (gal/hr) = MAF(g/s) * 3600 / (AFR * lb/gal * g/lb)
+                #                       = MAF * 3600 / (14.7 * 6.17 * 454)
+                #                       = MAF / 11.438
+                #   MPG = speed_mph / GPH = 11.438 * speed_mph / MAF
+                maf = self.telemetry.maf
+                maf_age = time.time() - self.telemetry.maf_timestamp
+                if speed_mph > 1.0 and maf > 0.5 and maf_age < 2.0:
+                    inst = 11.438 * speed_mph / maf
+                    if inst > 99.0:
+                        inst = 99.0  # clamp fuel-cut / coasting spikes
+                    self.telemetry.instant_mpg = inst
+                else:
+                    self.telemetry.instant_mpg = 0.0
             
             # Update lap timer if running (independent of demo mode)
             if self.lap_timer_running:
@@ -2070,8 +2086,10 @@ class PiDisplayApp:
             temp = self.telemetry.tire_temp[idx]
             last_update = self.telemetry.tpms_last_update_str[idx]
             
-            # Determine color
-            if psi < self.settings.tire_low_psi:
+            # Determine color (neutral when no valid data)
+            if psi <= 0:
+                color = COLOR_DARK_GRAY
+            elif psi < self.settings.tire_low_psi:
                 color = COLOR_RED
             elif psi > self.settings.tire_high_psi:
                 color = COLOR_YELLOW
@@ -2100,8 +2118,9 @@ class PiDisplayApp:
             time_txt = self.font_tiny.render(last_update, True, timestamp_color)
             self.screen.blit(time_txt, (x + box_w//2 - time_txt.get_width() - 8, y - box_h//2 + 8))
             
-            # PSI value (large)
-            txt = self.font_large.render(f"{psi:.1f}", True, color)
+            # PSI value (large) - show "--" when no valid reading
+            psi_text = "--" if psi <= 0 else f"{psi:.1f}"
+            txt = self.font_large.render(psi_text, True, color)
             self.screen.blit(txt, txt.get_rect(center=(x + 5, y - 5)))
             
             # Unit label

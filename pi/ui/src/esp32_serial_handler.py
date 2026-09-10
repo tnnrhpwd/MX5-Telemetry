@@ -57,6 +57,10 @@ except ImportError:
 # TPMS data persistence file
 TPMS_CACHE_FILE = "/home/pi/MX5-Telemetry/data/tpms_cache.json"
 
+# TPMS readings are considered stale after this long without a successful update.
+# Beyond this, cached values are discarded and shown as "--" instead of the last value.
+TPMS_STALE_SECONDS = 3 * 24 * 3600  # 3 days
+
 
 class ESP32SerialHandler:
     """Handles serial communication with ESP32-S3 display"""
@@ -123,58 +127,87 @@ class ESP32SerialHandler:
         self._load_tpms_cache()
     
     def _load_tpms_cache(self):
-        """Load cached TPMS data from disk to persist through reloads"""
+        """Load cached TPMS data from disk to persist through reloads.
+
+        Cached values are restored only if they are recent (<= TPMS_STALE_SECONDS).
+        Older data is discarded so the display shows "--" instead of stale readings.
+        """
         try:
-            if os.path.exists(TPMS_CACHE_FILE):
-                with open(TPMS_CACHE_FILE, 'r') as f:
-                    data = json.load(f)
-                    
-                # Restore cached values - update in-place to preserve list references
-                if 'pressure' in data and len(data['pressure']) == 4:
-                    self.tpms_pressure = list(data['pressure'])
-                    for i in range(4):
-                        self.telemetry.tire_pressure[i] = data['pressure'][i]
-                    
-                if 'temp' in data and len(data['temp']) == 4:
-                    self.tpms_temp = list(data['temp'])  # Stored as Celsius
-                    for i in range(4):
-                        # Convert Celsius to Fahrenheit for telemetry display
-                        self.telemetry.tire_temp[i] = data['temp'][i] * 9.0 / 5.0 + 32
-                    
-                if 'battery' in data and len(data['battery']) == 4:
-                    self.tpms_battery = list(data['battery'])
-                    
-                if 'timestamp' in data:
-                    self.tpms_last_update = data['timestamp']
-                    
-                # Restore per-tire HH:MM:SS timestamp strings
-                if 'last_update_str' in data:
-                    cached_timestamps = data['last_update_str']
-                    # Handle both old single-string format and new list format
-                    if isinstance(cached_timestamps, list) and len(cached_timestamps) == 4:
-                        self.tpms_last_update_str = list(cached_timestamps)
-                        for i in range(4):
-                            self.telemetry.tpms_last_update_str[i] = cached_timestamps[i]
-                    elif isinstance(cached_timestamps, str):
-                        # Old format - apply same timestamp to all tires
-                        self.tpms_last_update_str = [cached_timestamps] * 4
-                        for i in range(4):
-                            self.telemetry.tpms_last_update_str[i] = cached_timestamps
-                    
-                # Mark as connected if we have recent cached data (within 24 hours)
-                age_hours = (time.time() - self.tpms_last_update) / 3600
-                if age_hours < 24 and any(p > 0 for p in self.tpms_pressure):
-                    self.telemetry.tpms_connected = True
-                    print(f"TPMS: Loaded cached data (age: {age_hours:.1f} hours)")
-                    print(f"  Last updates: FL={self.tpms_last_update_str[0]}, FR={self.tpms_last_update_str[1]}, RL={self.tpms_last_update_str[2]}, RR={self.tpms_last_update_str[3]}")
-                    print(f"  Pressures: FL={self.tpms_pressure[0]:.1f}, FR={self.tpms_pressure[1]:.1f}, RL={self.tpms_pressure[2]:.1f}, RR={self.tpms_pressure[3]:.1f} PSI")
-                    print(f"  Temps: FL={self.tpms_temp[0]:.1f}, FR={self.tpms_temp[1]:.1f}, RL={self.tpms_temp[2]:.1f}, RR={self.tpms_temp[3]:.1f} °C")
-                else:
-                    print(f"TPMS: Cache expired or empty (age: {age_hours:.1f} hours)")
-            else:
+            if not os.path.exists(TPMS_CACHE_FILE):
                 print(f"TPMS: No cache file found at {TPMS_CACHE_FILE}")
+                return
+
+            with open(TPMS_CACHE_FILE, 'r') as f:
+                data = json.load(f)
+
+            stored_ts = data.get('timestamp', 0)
+            age_hours = (time.time() - stored_ts) / 3600 if stored_ts else float('inf')
+
+            # Discard stale cache so the display shows "--" instead of old values
+            if stored_ts and (time.time() - stored_ts) > TPMS_STALE_SECONDS:
+                print(f"TPMS: Cache is stale ({age_hours:.0f} hours old) - discarding, showing '--'")
+                return
+
+            # Restore cached values - update in-place to preserve list references
+            if 'pressure' in data and len(data['pressure']) == 4:
+                self.tpms_pressure = list(data['pressure'])
+                for i in range(4):
+                    self.telemetry.tire_pressure[i] = data['pressure'][i]
+
+            if 'temp' in data and len(data['temp']) == 4:
+                self.tpms_temp = list(data['temp'])  # Stored as Celsius
+                for i in range(4):
+                    # Convert Celsius to Fahrenheit for telemetry display
+                    self.telemetry.tire_temp[i] = data['temp'][i] * 9.0 / 5.0 + 32
+
+            if 'battery' in data and len(data['battery']) == 4:
+                self.tpms_battery = list(data['battery'])
+
+            self.tpms_last_update = stored_ts
+
+            # Restore per-tire HH:MM:SS timestamp strings
+            if 'last_update_str' in data:
+                cached_timestamps = data['last_update_str']
+                # Handle both old single-string format and new list format
+                if isinstance(cached_timestamps, list) and len(cached_timestamps) == 4:
+                    self.tpms_last_update_str = list(cached_timestamps)
+                    for i in range(4):
+                        self.telemetry.tpms_last_update_str[i] = cached_timestamps[i]
+                elif isinstance(cached_timestamps, str):
+                    # Old format - apply same timestamp to all tires
+                    self.tpms_last_update_str = [cached_timestamps] * 4
+                    for i in range(4):
+                        self.telemetry.tpms_last_update_str[i] = cached_timestamps
+
+            # Mark as connected if we have recent cached data (within 24 hours)
+            if age_hours < 24 and any(p > 0 for p in self.tpms_pressure):
+                self.telemetry.tpms_connected = True
+                print(f"TPMS: Loaded cached data (age: {age_hours:.1f} hours)")
+                print(f"  Last updates: FL={self.tpms_last_update_str[0]}, FR={self.tpms_last_update_str[1]}, RL={self.tpms_last_update_str[2]}, RR={self.tpms_last_update_str[3]}")
+                print(f"  Pressures: FL={self.tpms_pressure[0]:.1f}, FR={self.tpms_pressure[1]:.1f}, RL={self.tpms_pressure[2]:.1f}, RR={self.tpms_pressure[3]:.1f} PSI")
+                print(f"  Temps: FL={self.tpms_temp[0]:.1f}, FR={self.tpms_temp[1]:.1f}, RL={self.tpms_temp[2]:.1f}, RR={self.tpms_temp[3]:.1f} °C")
+            else:
+                print(f"TPMS: Cache expired or empty (age: {age_hours:.1f} hours)")
         except Exception as e:
             print(f"TPMS: Failed to load cache: {e}")
+
+    def _tpms_is_stale(self):
+        """True if TPMS data has not refreshed within TPMS_STALE_SECONDS."""
+        return self.tpms_last_update > 0 and (time.time() - self.tpms_last_update) > TPMS_STALE_SECONDS
+
+    def _apply_tpms_staleness(self):
+        """Zero out TPMS values once stale, so they display as '--' not stale values."""
+        if not self._tpms_is_stale():
+            return
+        for i in range(4):
+            self.tpms_pressure[i] = 0.0
+            self.tpms_temp[i] = 0.0
+            self.tpms_battery[i] = 0
+            self.telemetry.tire_pressure[i] = 0.0
+            self.telemetry.tire_temp[i] = 0.0
+            self.tpms_last_update_str[i] = "--:--:--"
+            self.telemetry.tpms_last_update_str[i] = "--:--:--"
+        self.telemetry.tpms_connected = False
     
     def _save_tpms_cache(self, updated_tires=None):
         """Save TPMS data to disk for persistence
@@ -576,6 +609,9 @@ class ESP32SerialHandler:
         """Send current telemetry data to ESP32"""
         if not self.serial_conn or not self._running or not self.connected:
             return
+
+        # Discard stale TPMS values before sending, so the display shows "--"
+        self._apply_tpms_staleness()
         
         # Priority: If there's a pending screen change, send it first and skip telemetry
         if hasattr(self, '_pending_screen_index') and self._pending_screen_index is not None:
@@ -593,7 +629,7 @@ class ESP32SerialHandler:
             # Use lock to prevent collision with screen commands
             with self._write_lock:
                 # Combine all telemetry into fewer messages to reduce serial traffic
-                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage
+                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage,inst_mpg
                 # gear_color: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
                 msg = f"TEL:{self.telemetry.rpm:.0f},{self.telemetry.speed_kmh:.0f},{self.telemetry.gear},"
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
@@ -619,7 +655,7 @@ class ESP32SerialHandler:
                 # Add gear color indicator (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
                 color_map = {'green': 0, 'red': 1, 'blue': 2, 'yellow': 3, 'cyan': 4}
                 gear_color_val = color_map.get(self.telemetry.gear_color, 0)
-                msg += f"{gear_color_val},{self.telemetry.voltage:.1f}\n"
+                msg += f"{gear_color_val},{self.telemetry.voltage:.1f},{self.telemetry.instant_mpg:.1f}\n"
                 
                 # Debug: log fuel/MPG data periodically (every ~10 seconds)
                 if not hasattr(self, '_mpg_debug_counter'):
@@ -631,28 +667,37 @@ class ESP32SerialHandler:
                 
                 self.serial_conn.write(msg.encode('utf-8'))
                 
-                # Send diagnostics (less frequently important)
-                diag_msg = f"DIAG:{int(self.telemetry.check_engine_light)},{int(self.telemetry.abs_warning)},"
-                # Oil warning is the INVERSE of oil_status (True = OK, False = WARNING)
-                oil_warning = not self.telemetry.oil_status
-                diag_msg += f"{int(oil_warning)},{int(self.telemetry.battery_warning)},"
-                diag_msg += f"{int(self.telemetry.headlights_on)},{int(self.telemetry.high_beams_on)}\n"
-                self.serial_conn.write(diag_msg.encode('utf-8'))
-                
-                # Send tire pressure data from cache (FL, FR, RL, RR)
-                tire_msg = f"TIRE:{self.telemetry.tire_pressure[0]:.1f},{self.telemetry.tire_pressure[1]:.1f},"
-                tire_msg += f"{self.telemetry.tire_pressure[2]:.1f},{self.telemetry.tire_pressure[3]:.1f}\n"
-                self.serial_conn.write(tire_msg.encode('utf-8'))
-                
-                # Send tire temperature data from cache (FL, FR, RL, RR in Fahrenheit)
-                tire_temp_msg = f"TIRE_TEMP:{self.telemetry.tire_temp[0]:.1f},{self.telemetry.tire_temp[1]:.1f},"
-                tire_temp_msg += f"{self.telemetry.tire_temp[2]:.1f},{self.telemetry.tire_temp[3]:.1f}\n"
-                self.serial_conn.write(tire_temp_msg.encode('utf-8'))
-                
-                # Send tire timestamps (HH:MM:SS per tire)
-                tire_time_msg = f"TIRE_TIME:{self.tpms_last_update_str[0]},{self.tpms_last_update_str[1]},"
-                tire_time_msg += f"{self.tpms_last_update_str[2]},{self.tpms_last_update_str[3]}\n"
-                self.serial_conn.write(tire_time_msg.encode('utf-8'))
+                # Slow-changing data (diagnostics + TPMS) only needs ~1 Hz updates:
+                # TPMS readings change at most every 5 s and diagnostics are status
+                # lights, so sending them at 30 Hz just wastes serial bandwidth.
+                now = time.time()
+                if not hasattr(self, '_last_slow_telemetry_time'):
+                    self._last_slow_telemetry_time = 0.0
+                if now - self._last_slow_telemetry_time >= 1.0:
+                    self._last_slow_telemetry_time = now
+                    
+                    # Send diagnostics
+                    diag_msg = f"DIAG:{int(self.telemetry.check_engine_light)},{int(self.telemetry.abs_warning)},"
+                    # Oil warning is the INVERSE of oil_status (True = OK, False = WARNING)
+                    oil_warning = not self.telemetry.oil_status
+                    diag_msg += f"{int(oil_warning)},{int(self.telemetry.battery_warning)},"
+                    diag_msg += f"{int(self.telemetry.headlights_on)},{int(self.telemetry.high_beams_on)}\n"
+                    self.serial_conn.write(diag_msg.encode('utf-8'))
+                    
+                    # Send tire pressure data from cache (FL, FR, RL, RR)
+                    tire_msg = f"TIRE:{self.telemetry.tire_pressure[0]:.1f},{self.telemetry.tire_pressure[1]:.1f},"
+                    tire_msg += f"{self.telemetry.tire_pressure[2]:.1f},{self.telemetry.tire_pressure[3]:.1f}\n"
+                    self.serial_conn.write(tire_msg.encode('utf-8'))
+                    
+                    # Send tire temperature data from cache (FL, FR, RL, RR in Fahrenheit)
+                    tire_temp_msg = f"TIRE_TEMP:{self.telemetry.tire_temp[0]:.1f},{self.telemetry.tire_temp[1]:.1f},"
+                    tire_temp_msg += f"{self.telemetry.tire_temp[2]:.1f},{self.telemetry.tire_temp[3]:.1f}\n"
+                    self.serial_conn.write(tire_temp_msg.encode('utf-8'))
+                    
+                    # Send tire timestamps (HH:MM:SS per tire)
+                    tire_time_msg = f"TIRE_TIME:{self.tpms_last_update_str[0]},{self.tpms_last_update_str[1]},"
+                    tire_time_msg += f"{self.tpms_last_update_str[2]},{self.tpms_last_update_str[3]}\n"
+                    self.serial_conn.write(tire_time_msg.encode('utf-8'))
                 
                 # Flush all at once
                 self.serial_conn.flush()
