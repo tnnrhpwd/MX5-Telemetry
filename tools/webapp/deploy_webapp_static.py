@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Deploy webapp static files to Pi"""
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import os
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "REDACTED_WIFI_PASSWORD"
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect(PI_IP, username=PI_USER, password=PI_PASSWORD, timeout=10)
-
+ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
 # Create static directory
 print("Creating static directory on Pi...")
 stdin, stdout, stderr = ssh.exec_command("mkdir -p /home/pi/MX5-Telemetry/pi/ui/static")

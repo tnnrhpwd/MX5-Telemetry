@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Trigger setting change and immediately check logs"""
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import requests
 import time
 
@@ -19,10 +25,8 @@ except Exception as e:
 time.sleep(1)
 
 # Check logs
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect("192.168.1.23", username="pi", password="REDACTED_WIFI_PASSWORD", timeout=10)
 
+ssh = pi_connect(host="192.168.1.23", user="pi", timeout=10)
 print("\nChecking logs...")
 stdin, stdout, stderr = ssh.exec_command("journalctl -u mx5-display.service --since '10 seconds ago' --no-pager | tail -30")
 print(stdout.read().decode())

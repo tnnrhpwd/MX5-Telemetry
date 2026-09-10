@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Check what process has Arduino serial port open"""
-import paramiko
+import os
+import sys
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect("192.168.1.23", username="pi", password="REDACTED_WIFI_PASSWORD", timeout=10)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
 
+
+ssh = pi_connect(host="192.168.1.23", user="pi", timeout=10)
 print("Checking what has /dev/ttyUSB0 open...")
 stdin, stdout, stderr = ssh.exec_command("sudo lsof /dev/ttyUSB0 2>/dev/null")
 result = stdout.read().decode()

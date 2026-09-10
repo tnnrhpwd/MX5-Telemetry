@@ -2,13 +2,17 @@
 """
 Fix CAN0 clock speed issue - force 8MHz oscillator setting
 """
+import os
+import sys
 
-import paramiko
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASS = "REDACTED_WIFI_PASSWORD"
 
 def run_command(ssh, command):
     """Execute command and print output"""
@@ -26,12 +30,9 @@ print("=" * 70)
 print("Fixing CAN0 Clock Speed (4MHz -> 8MHz)")
 print("=" * 70)
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
 try:
     print(f"\nConnecting to {PI_IP}...")
-    ssh.connect(PI_IP, username=PI_USER, password=PI_PASS, timeout=10)
+    ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
     print("✓ Connected\n")
     
     print("[1/4] Current can0 status:")

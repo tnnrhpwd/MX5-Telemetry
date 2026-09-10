@@ -2,7 +2,13 @@
 """
 Deploy Arduino code to Pi and flash it to the connected Arduino
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import os
 import time
 import sys
@@ -10,7 +16,7 @@ import sys
 # Configuration
 PI_HOST = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "***REMOVED***"
+
 ARDUINO_SRC = r"C:\Users\tanne\Documents\Github\MX5-Telemetry\arduino\src\main.cpp"
 PI_ARDUINO_SRC = "/home/pi/MX5-Telemetry/arduino/src/main.cpp"
 PI_ARDUINO_DIR = "/home/pi/MX5-Telemetry/arduino"
@@ -31,10 +37,9 @@ def main():
     
     # Connect to Pi
     print("\n[1/5] Connecting to Pi...")
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
     try:
-        ssh.connect(PI_HOST, username=PI_USER, password=PI_PASSWORD, timeout=10)
+        ssh = pi_connect(host=PI_HOST, user=PI_USER, timeout=10)
         print("  ✓ Connected")
     except Exception as e:
         print(f"  ✗ Connection failed: {e}")

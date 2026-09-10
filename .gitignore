@@ -163,12 +163,19 @@ display/output-onlinepngtools.*
 # User data files (persistent storage)
 data/mpg_data.json
 data/tpms_cache.json
+# Auto-generated Flask signing key (web remote) - never commit
+data/web_secret_key
 
 # ============================================================================
 # Real secrets (never commit - see pi/wpa_supplicant.conf.example and
 # docs/guides/ENV_BACKUP_GUIDE.md for the encrypted backup/restore workflow)
 # ============================================================================
 pi/wpa_supplicant.conf
+pi/.web-env
+tools/lib/pi_config.json
+
+# Local git filter-repo secret patterns (used to purge leaked credentials)
+secrets-patterns.txt
 
 # ============================================================================
 # Local system backups/snapshots (installed packages, network dumps, etc.)

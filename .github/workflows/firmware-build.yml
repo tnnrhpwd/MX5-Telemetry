@@ -1,6 +1,6 @@
 # Firmware Build & Test Workflow
-# Builds the Arduino (Nano) and ESP32-S3 display firmware, and runs the
-# native unit tests, on every push/PR so build breakage is caught early.
+# Builds the Arduino (Nano) and ESP32-S3 display firmware, runs the native unit
+# tests, and lints/audits the Python components on every push/PR.
 
 name: Firmware Build & Test
 
@@ -10,21 +10,24 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   arduino-build-and-test:
     name: Arduino (Nano) build + native unit tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install PlatformIO
-        run: pip install -U platformio
+        run: pip install "platformio~=6.1"
 
       - name: Build Nano firmware
         working-directory: ./arduino
@@ -39,16 +42,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install PlatformIO
-        run: pip install -U platformio
+        run: pip install "platformio~=6.1"
 
       - name: Build display firmware
         working-directory: ./display
         run: pio run -e esp32s3_display
+
+  python-lint-audit:
+    name: Python lint + dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+
+      - name: Install tooling
+        run: pip install ruff pip-audit
+
+      - name: Ruff (fatal issues only)
+        run: ruff check --select E9,F63,F7,F82 pi/ tools/
+
+      - name: Dependency audit
+        run: pip-audit -r requirements.txt

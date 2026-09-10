@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Clear Python cache and restart"""
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect("192.168.1.23", username="pi", password="REDACTED_WIFI_PASSWORD", timeout=10)
-
+ssh = pi_connect(host="192.168.1.23", user="pi", timeout=10)
 print("Clearing Python cache...")
 stdin, stdout, stderr = ssh.exec_command("find /home/pi/MX5-Telemetry/pi/ui -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null; echo 'Done'")
 print(stdout.read().decode())

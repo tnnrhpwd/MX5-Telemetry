@@ -1,5 +1,15 @@
 // MX5 Remote Control - Client-side JavaScript
 
+// Access token - read from URL (?token=...) or persisted in localStorage.
+const TOKEN = new URLSearchParams(window.location.search).get('token') || localStorage.getItem('mx5_token') || '';
+if (TOKEN) {
+    localStorage.setItem('mx5_token', TOKEN);
+}
+const AUTH_HEADERS = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + TOKEN
+};
+
 let socket;
 let currentScreen = 0;
 const screenNames = [
@@ -9,7 +19,7 @@ const screenNames = [
 
 // Initialize WebSocket connection
 function initSocket() {
-    socket = io();
+    socket = io({ auth: { token: TOKEN } });
     
     socket.on('connect', () => {
         console.log('Connected to MX5 display');
@@ -137,7 +147,7 @@ function updateCurrentScreen(screen) {
 
 // Navigation functions
 function changeScreen(screen) {
-    fetch(`/api/screen/${screen}`, { method: 'POST' })
+    fetch(`/api/screen/${screen}`, { method: 'POST', headers: AUTH_HEADERS })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
@@ -149,7 +159,7 @@ function changeScreen(screen) {
 }
 
 function nextScreen() {
-    fetch('/api/screen/next', { method: 'POST' })
+    fetch('/api/screen/next', { method: 'POST', headers: AUTH_HEADERS })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
@@ -161,7 +171,7 @@ function nextScreen() {
 }
 
 function prevScreen() {
-    fetch('/api/screen/prev', { method: 'POST' })
+    fetch('/api/screen/prev', { method: 'POST', headers: AUTH_HEADERS })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
@@ -224,7 +234,7 @@ function sendSettingUpdate(setting, value) {
     
     fetch('/api/settings/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: AUTH_HEADERS,
         body: JSON.stringify({ 
             name: apiSetting,
             value: value 
@@ -252,7 +262,7 @@ function toggleSetting(settingName) {
     
     fetch('/api/settings/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: AUTH_HEADERS,
         body: JSON.stringify({ 
             name: settingName,
             value: enabled ? '1' : '0'
@@ -272,7 +282,7 @@ function toggleSetting(settingName) {
 function calibrateIMU() {
     fetch('/api/calibrate_imu', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: AUTH_HEADERS
     })
         .then(response => response.json())
         .then(data => {

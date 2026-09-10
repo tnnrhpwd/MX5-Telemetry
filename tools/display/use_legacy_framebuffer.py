@@ -3,16 +3,19 @@
 Switch to legacy framebuffer mode (no KMS)
 This keeps firmware in control of HDMI throughout - no handoff issues
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
 print("Connecting to Pi...")
 time.sleep(2)
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=10)
-
+ssh = pi_connect(host='192.168.1.23', user='pi', timeout=10)
 print("\n" + "="*70)
 print("SWITCHING TO LEGACY FRAMEBUFFER MODE")
 print("="*70)

@@ -2,17 +2,20 @@
 """
 Emergency recovery - disable the keepalive service and restore VNC access
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
 print("Attempting to connect to Pi...")
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
 for attempt in range(10):
     try:
-        ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=15)
+        ssh = pi_connect(host='192.168.1.23', user='pi', timeout=15)
         print(f"✓ Connected on attempt {attempt+1}")
         break
     except Exception as e:
@@ -67,7 +70,7 @@ print("\n" + "="*70)
 print("RECOVERY COMPLETE")
 print("="*70)
 print("\nProblematic service has been removed.")
-print("Try connecting to VNC now at: 192.168.1.28")
+print("Try connecting to VNC now at: 192.168.1.23")
 print("\nIf VNC still doesn't work, the Pi may need a reboot:")
 
 response = input("\nReboot Pi now? (y/n): ").strip().lower()

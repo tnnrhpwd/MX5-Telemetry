@@ -90,10 +90,10 @@ Old/superseded documentation kept for historical reference in `archive/dual-ardu
 ```powershell
 # Flash ESP32 via Pi (ESP32 is plugged into Pi USB)
 git push
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 
 # Update Pi application
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
 
 # Or use VS Code tasks: "Pi: Flash ESP32 (Remote)" / "Pi: Git Pull & Restart UI"
 ```

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Verify web_server.py is updated and restart service"""
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect("192.168.1.23", username="pi", password="REDACTED_WIFI_PASSWORD", timeout=10)
-
+ssh = pi_connect(host="192.168.1.23", user="pi", timeout=10)
 print("Checking if web_server.py has the fix...")
 stdin, stdout, stderr = ssh.exec_command("grep -A 2 '_send_led_sequence_to_arduino' /home/pi/MX5-Telemetry/pi/ui/src/web_server.py")
 result = stdout.read().decode()

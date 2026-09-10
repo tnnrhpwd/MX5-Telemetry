@@ -3,18 +3,21 @@
 Emergency revert - boot text disappeared, need to fix quickly
 Let's revert to a simpler working config
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
 print("Waiting for Pi to be accessible...")
 time.sleep(5)
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
 for attempt in range(5):
     try:
-        ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=10)
+        ssh = pi_connect(host='192.168.1.23', user='pi', timeout=10)
         print("✓ Connected to Pi")
         break
     except Exception as e:

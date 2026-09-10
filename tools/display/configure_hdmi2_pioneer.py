@@ -5,15 +5,19 @@ This is HDMI:1 in config.txt terms (ports are zero-indexed)
 
 The Pioneer AVH-W4500NEX has native resolution of 800x480
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import re
 
 # SSH connection
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-print("Connecting to Pi...")
-ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=10)
 
+print("Connecting to Pi...")
+ssh = pi_connect(host='192.168.1.23', user='pi', timeout=10)
 # Step 1: Read current config
 print("\n=== Reading current config ===")
 stdin, stdout, stderr = ssh.exec_command('cat /boot/config.txt')
@@ -85,7 +89,7 @@ print("Configuration updated successfully!")
 print("=" * 70)
 print("\nNext steps:")
 print("1. Reboot the Pi for changes to take effect:")
-print("   ssh pi@192.168.1.28")
+print("   ssh pi@192.168.1.23")
 print("   sudo reboot")
 print("\n2. After reboot, verify HDMI output with:")
 print("   tvservice -l")

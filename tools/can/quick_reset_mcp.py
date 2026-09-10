@@ -2,13 +2,17 @@
 """
 Quick MCP2515 Reset - Simple reset and check
 """
+import os
+import sys
 
-import paramiko
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "REDACTED_WIFI_PASSWORD"
 
 print("=" * 60)
 print("QUICK MCP2515 RESET")
@@ -16,9 +20,8 @@ print("=" * 60)
 
 try:
     print(f"\nConnecting to {PI_IP}...")
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(PI_IP, username=PI_USER, password=PI_PASSWORD, timeout=10)
+
+    ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
     print("✓ Connected\n")
     
     # Step 1: Check interfaces
@@ -90,5 +93,5 @@ except Exception as e:
     print(f"\n✗ Error: {e}")
     print("\nMake sure:")
     print("  • Pi is powered on and connected to network")
-    print("  • IP address is correct (192.168.1.28)")
+    print("  • IP address is correct (192.168.1.23)")
     print("  • SSH is enabled on Pi")

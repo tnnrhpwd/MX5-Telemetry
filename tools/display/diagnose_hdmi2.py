@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Diagnose HDMI 2 (second port) issues with Pioneer"""
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 print("Connecting to Pi...")
-ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=10)
-
+ssh = pi_connect(host='192.168.1.23', user='pi', timeout=10)
 print("\n" + "="*70)
 print("HDMI DIAGNOSTICS")
 print("="*70)

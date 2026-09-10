@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Deploy fixed web_server.py"""
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect("192.168.1.23", username="pi", password="REDACTED_WIFI_PASSWORD", timeout=10)
-
+ssh = pi_connect(host="192.168.1.23", user="pi", timeout=10)
 print("Uploading fixed web_server.py...")
 with open(r"c:\Users\tanne\Documents\Github\MX5-Telemetry\pi\ui\src\web_server.py", 'r', encoding='utf-8') as f:
     content = f.read()

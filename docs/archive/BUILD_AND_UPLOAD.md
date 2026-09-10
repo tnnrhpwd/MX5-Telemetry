@@ -9,13 +9,13 @@
 | Device | Upload Method | Connection | Command |
 |--------|---------------|------------|----------|
 | **Arduino Nano** | **Local** (plug into PC) | USB-C to PC | `pio run -d arduino --target upload` |
-| **ESP32-S3** | **Remote** (via Pi SSH) | USB-C to Pi | `ssh pi@192.168.1.28 '... pio run -d display --target upload'` |
-| **Pi App** | **Remote** (SSH) | Network | `ssh pi@192.168.1.28 '... systemctl restart mx5-display'` |
+| **ESP32-S3** | **Remote** (via Pi SSH) | USB-C to Pi | `ssh pi@192.168.1.23 '... pio run -d display --target upload'` |
+| **Pi App** | **Remote** (SSH) | Network | `ssh pi@192.168.1.23 '... systemctl restart mx5-display'` |
 
 ### Physical Setup
 - **Arduino Nano**: Disconnected from vehicle, plug into PC for upload
 - **ESP32-S3**: Permanently connected to Pi USB (`/dev/ttyACM0`) - upload remotely
-- **Pi (192.168.1.28)**: Always on network, git pull + restart service
+- **Pi (192.168.1.23)**: Always on network, git pull + restart service
 
 ---
 
@@ -71,7 +71,7 @@ The ESP32 is permanently connected to the Pi. Upload remotely:
 git add -A && git commit -m "Your message" && git push
 
 # Then SSH to Pi and flash
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'
 ```
 
 ### Pi Application (Remote Update)
@@ -79,14 +79,14 @@ ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d d
 ```powershell
 # Push changes, then update and restart
 git push
-ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
+ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'
 ```
 
 ### Full Deploy (All in One)
 
 ```powershell
 # Build locally, push, flash ESP32, restart Pi
-pio run -d display; git add -A; git commit -m 'Deploy update' --allow-empty; git push; ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload && sudo systemctl restart mx5-display'
+pio run -d display; git add -A; git commit -m 'Deploy update' --allow-empty; git push; ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload && sudo systemctl restart mx5-display'
 ```
 
 ---

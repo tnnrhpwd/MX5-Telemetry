@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Remove oil_warn_f and restart service"""
+import os
+import sys
 
-import paramiko
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "REDACTED_WIFI_PASSWORD"
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect(PI_IP, username=PI_USER, password=PI_PASSWORD, timeout=10)
-
+ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
 print("Removing oil_warn_f from telemetry_data.py...")
 stdin, stdout, stderr = ssh.exec_command("sed -i '/oil_warn_f.*=.*250/d' /home/pi/MX5-Telemetry/pi/ui/src/telemetry_data.py")
 stdout.read()

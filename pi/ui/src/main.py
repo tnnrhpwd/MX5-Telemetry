@@ -679,8 +679,8 @@ class PiDisplayApp:
         if WEB_SERVER_AVAILABLE and WebRemoteServer:
             print("  Initializing web remote server...")
             self.web_server = WebRemoteServer(self)
-            self.web_server.start(host='0.0.0.0', port=5000)
-            print("  ✓ Web remote available at http://192.168.1.28:5000")
+            self.web_server.start(port=5000)
+            print("  ✓ Web remote server initialized (see logs for bind address)")
         else:
             print("  ✗ Web server not available - install flask and flask-socketio")
     

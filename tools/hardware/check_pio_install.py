@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Check PlatformIO installation on Pi"""
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
 
 PI_HOST = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "***REMOVED***"
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect(PI_HOST, username=PI_USER, password=PI_PASSWORD)
-
+ssh = pi_connect(host=PI_HOST, user=PI_USER)
 commands = [
     "which pio",
     "which platformio", 

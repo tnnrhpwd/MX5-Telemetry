@@ -2,17 +2,17 @@
 """
 Check boot script and diagnose why MCP keeps entering BUS-OFF on boot
 """
+import os
+import sys
 
-import paramiko
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "REDACTED_WIFI_PASSWORD"
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect(PI_IP, username=PI_USER, password=PI_PASSWORD, timeout=10)
-
+ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
 print("=" * 70)
 print("DIAGNOSE MCP BUS-OFF ON BOOT ISSUE")
 print("=" * 70)

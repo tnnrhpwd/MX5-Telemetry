@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-import paramiko
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('192.168.1.23', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=10)
+import os
+import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+ssh = pi_connect(host='192.168.1.23', user='pi', timeout=10)
 print("=" * 60)
 print("MCP2515 ERROR CHECK")
 print("=" * 60)

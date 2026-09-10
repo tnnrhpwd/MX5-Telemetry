@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """Show current webapp URL based on active network"""
-import paramiko
+import os
+import sys
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
 
 try:
     # Try home WiFi IP first
-    ssh.connect("192.168.1.23", username="pi", password="REDACTED_WIFI_PASSWORD", timeout=5)
+    ssh = pi_connect(host="192.168.1.23", user="pi", timeout=5)
     connected_via = "192.168.1.23"
 except:
     # Try common hotspot IP ranges
     for ip in ["192.168.43.1", "192.168.42.1", "192.168.4.1"]:
         try:
-            ssh.connect(ip, username="pi", password="REDACTED_WIFI_PASSWORD", timeout=3)
+            ssh = pi_connect(host=ip, user="pi", timeout=3)
             connected_via = ip
             break
         except:

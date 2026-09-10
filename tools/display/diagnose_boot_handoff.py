@@ -3,15 +3,19 @@
 Diagnose why HDMI signal is lost after boot text appears
 This is typically a KMS/framebuffer handoff issue
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 print("Connecting to Pi...")
 time.sleep(3)  # Give it a moment after reboot
 try:
-    ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=15)
+    ssh = pi_connect(host='192.168.1.23', user='pi', timeout=15)
 except Exception as e:
     print(f"Connection failed: {e}")
     print("Pi might still be booting. Wait a moment and try again.")

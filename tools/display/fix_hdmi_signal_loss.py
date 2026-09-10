@@ -9,19 +9,22 @@ Solutions to try:
 3. Ensure proper KMS handoff
 4. Keep HDMI signal hot throughout boot
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 import re
 
 print("Waiting for Pi to be ready...")
 time.sleep(5)
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
 for attempt in range(3):
     try:
-        ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=15)
+        ssh = pi_connect(host='192.168.1.23', user='pi', timeout=15)
         print("✓ Connected to Pi")
         break
     except Exception as e:
@@ -181,7 +184,7 @@ if response == 'y':
     print("2. Rainbow splash (if enabled)")
     print("3. Desktop/display content (THIS should now stay visible)")
 else:
-    print("\nReboot with: ssh pi@192.168.1.28 'sudo reboot'")
+    print("\nReboot with: ssh pi@192.168.1.23 'sudo reboot'")
 
 ssh.close()
 print("\nDone!")

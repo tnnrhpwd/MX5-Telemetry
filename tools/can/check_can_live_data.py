@@ -2,16 +2,17 @@
 """
 Check live CAN data on both buses to see which has HS-CAN data
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "REDACTED_WIFI_PASSWORD"
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect(PI_IP, username=PI_USER, password=PI_PASSWORD, timeout=10)
-
+ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
 print("Checking which CAN interface has OEM HS-CAN data...")
 print("=" * 70)
 

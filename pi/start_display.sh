@@ -5,6 +5,8 @@
 
 cd ~/MX5-Telemetry/pi/ui/src
 export DISPLAY=:0
+# Web remote: export a token to allow phone access (defaults to localhost-only).
+# export MX5_WEB_TOKEN="change-me"
 
 if [ "$1" == "--windowed" ] || [ "$1" == "-w" ]; then
     echo "Starting MX5 Telemetry Display (Windowed)..."

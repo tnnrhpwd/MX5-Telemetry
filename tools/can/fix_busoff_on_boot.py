@@ -3,13 +3,17 @@
 Update MCP CAN startup script on Pi to include restart-ms parameter
 This fixes BUS-OFF state issues on boot
 """
+import os
+import sys
 
-import paramiko
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import sys
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "REDACTED_WIFI_PASSWORD"
 
 NEW_SCRIPT = '''#!/bin/bash
 # MX5 Telemetry - Bring up CAN interfaces
@@ -45,9 +49,8 @@ print("=" * 70)
 
 try:
     print(f"\nConnecting to {PI_IP}...")
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(PI_IP, username=PI_USER, password=PI_PASSWORD, timeout=10)
+
+    ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
     print("✓ Connected\n")
     
     print("[1/4] Backing up current script...")

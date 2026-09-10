@@ -3,15 +3,20 @@
 RESTORE SIMPLE WORKING CONFIG FOR HDMI PORT 2
 Back to basics - minimal config that outputs to the correct physical port
 """
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
 print("Connecting to Pi...")
 for attempt in range(5):
     try:
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=10)
+
+        ssh = pi_connect(host='192.168.1.23', user='pi', timeout=10)
         print("✓ Connected")
         break
     except Exception as e:

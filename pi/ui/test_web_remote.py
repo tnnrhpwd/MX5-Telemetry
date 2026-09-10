@@ -12,6 +12,7 @@ Usage:
 
 import sys
 import os
+import secrets
 
 # Add parent directory to path to import web_server
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -57,8 +58,8 @@ class MockSWCHandler:
 app = Flask(__name__,
            static_folder='static',
            template_folder='templates')
-app.config['SECRET_KEY'] = 'mx5-telemetry-test-2026'
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = secrets.token_hex(16)
+socketio = SocketIO(app, cors_allowed_origins=[])
 
 # Create mock display app
 display_app = MockDisplayApp()

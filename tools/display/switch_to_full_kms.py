@@ -3,12 +3,14 @@
 Switch from vc4-fkms-v3d to vc4-kms-v3d for proper dual HDMI support.
 Full KMS exposes both HDMI ports correctly.
 """
-import paramiko
+import os
+import sys
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('192.168.1.28', username='pi', password='REDACTED_WIFI_PASSWORD', timeout=10)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
 
+
+ssh = pi_connect(host='192.168.1.23', user='pi', timeout=10)
 # Read current config
 stdin, stdout, stderr = ssh.exec_command('cat /boot/config.txt')
 config = stdout.read().decode()

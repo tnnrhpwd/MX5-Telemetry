@@ -205,7 +205,7 @@ SPI requires single-master operation. Each controller (Pi, Arduino) needs its ow
 
 > **Remote Flashing**: With USB connected to Pi, flash Arduino via SSH:
 > ```bash
-> ssh pi@192.168.1.28 'cd ~/MX5-Telemetry && pio run -d arduino --target upload'
+> ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && pio run -d arduino --target upload'
 > ```
 
 ### WS2812B LED Strip

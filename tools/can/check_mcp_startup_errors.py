@@ -2,13 +2,17 @@
 """
 Check MCP2515 and CAN service startup logs for errors
 """
+import os
+import sys
 
-import paramiko
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import sys
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "REDACTED_WIFI_PASSWORD"
 
 print("=" * 70)
 print("MCP2515 STARTUP ERROR CHECKER")
@@ -16,9 +20,8 @@ print("=" * 70)
 
 try:
     print(f"\nConnecting to {PI_IP}...")
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(PI_IP, username=PI_USER, password=PI_PASSWORD, timeout=10)
+
+    ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
     print("✓ Connected\n")
     
     # Check mx5-can.service status

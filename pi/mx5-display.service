@@ -8,6 +8,9 @@ Type=simple
 User=pi
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/pi/.Xauthority
+# Web remote auth token. Put MX5_WEB_TOKEN in /home/pi/MX5-Telemetry/pi/.web-env
+# (gitignored) and uncomment the next line to enable phone access.
+# EnvironmentFile=/home/pi/MX5-Telemetry/pi/.web-env
 WorkingDirectory=/home/pi/MX5-Telemetry/pi/ui/src
 # Kill any orphaned instances before starting (- prefix means ignore failures)
 ExecStartPre=-/usr/bin/pkill -f 'python.*main.py'

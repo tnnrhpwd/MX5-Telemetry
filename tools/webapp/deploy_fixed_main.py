@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """Deploy fixed main.py to Pi"""
-import paramiko
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from tools.lib.pi_ssh import connect as pi_connect
+
+
 import time
 
 PI_IP = "192.168.1.23"
 PI_USER = "pi"
-PI_PASSWORD = "REDACTED_WIFI_PASSWORD"
 
 # Read local file
 with open(r"c:\Users\tanne\Documents\Github\MX5-Telemetry\pi\ui\src\main.py", 'r', encoding='utf-8') as f:
     local_content = f.read()
 
 # Connect and upload
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect(PI_IP, username=PI_USER, password=PI_PASSWORD, timeout=10)
 
+ssh = pi_connect(host=PI_IP, user=PI_USER, timeout=10)
 sftp = ssh.open_sftp()
 print("Uploading main.py with fixed TelemetryData...")
 with sftp.open('/home/pi/MX5-Telemetry/pi/ui/src/main.py', 'w') as f:
