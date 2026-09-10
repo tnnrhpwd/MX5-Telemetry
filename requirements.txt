@@ -4,16 +4,16 @@
 # Note: tkinter is included with Python standard library
 
 # Web Remote Control (for Pi display control from phone)
-flask>=2.0.0
-flask-socketio>=5.0.0
-python-socketio>=5.0.0
+flask>=2.0.0,<4
+flask-socketio>=5.0.0,<6
+python-socketio>=5.0.0,<6
 
 # Raspberry Pi Display Dependencies
-pygame>=2.0.0
-pyserial>=3.5
+pygame>=2.0.0,<3
+pyserial>=3.5,<4
 
 # ESP32 Display Simulator (Hot-reload support)
-watchdog>=6.0.0
+watchdog>=6.0.0,<7
 
 # CAN Bus Communication (optional - for real vehicle data)
 # python-can>=3.3.0
