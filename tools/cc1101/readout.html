@@ -142,6 +142,8 @@
   .icon-btn:focus-visible { outline: 2px solid var(--fg-blue); outline-offset: 2px; }
   .icon-btn.paused { border-color: var(--fg-orange); color: var(--fg-orange); }
   .icon-btn.tx-on { border-color: var(--fg-red); color: var(--fg-red); }
+  .icon-btn.scan-on { border-color: var(--fg-red); color: var(--fg-red); }
+  .icon-btn.rec-on { border-color: var(--fg-red); color: var(--fg-red); background: rgba(255, 60, 60, 0.14); }
   .icon-btn.sweeping { border-color: var(--fg-mint); color: var(--fg-mint); }
 
   /* Two-panel grid: readout card + chart card */
@@ -251,8 +253,11 @@
     </div>
     <div class="topbar-right">
       <span class="pill pill-live" id="status">live</span>
-      <button class="icon-btn" id="sweepBtn" type="button">Sweep</button>
       <button class="icon-btn" id="txBtn" type="button">TX Off</button>
+      <button class="icon-btn" id="fobBtn" type="button">Fob Burst</button>
+      <button class="icon-btn" id="scanBtn" type="button">Scan</button>
+      <button class="icon-btn" id="lockBtn" type="button">Lock On</button>
+      <button class="icon-btn" id="recBtn" type="button">Record</button>
       <button class="icon-btn" id="pauseBtn" type="button">Pause</button>
       <button class="icon-btn" id="clearBtn" type="button">Clear</button>
       <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle light and dark theme">Light</button>
@@ -284,7 +289,7 @@
         <span class="meta-label">Band</span>
         <div class="segmented" id="freqSeg">
           <button class="seg-btn active" data-mhz="315" type="button">315 MHz</button>
-          <button class="seg-btn" data-mhz="434" type="button">434 MHz</button>
+          <button class="seg-btn" data-mhz="433.92" type="button">433.92 MHz</button>
         </div>
         <span class="meta-label">Modulation</span>
         <div class="segmented" id="modSeg">
@@ -330,7 +335,7 @@
         <p class="filter-hint">Signal = a real, sustained transmission (fob, tire, or other device). Noise = a brief blip. Telling a tire from a fob needs the raw capture decode.</p>
         <table class="events-table">
           <thead>
-            <tr><th>Time</th><th>Type</th><th>Peak</th><th>Duration</th><th>Frequency</th></tr>
+            <tr><th>Time</th><th>ID</th><th>Code</th><th>Peak</th><th>Duration</th><th>Frequency</th></tr>
           </thead>
           <tbody id="eventsBody"></tbody>
         </table>
@@ -342,13 +347,13 @@
     <div class="card-head">
       <p class="eyebrow">Spectrum</p>
       <div class="legend">
-        <span><i class="dot dot-strong"></i>strong</span>
-        <span><i class="dot dot-elev"></i>elevated</span>
+        <span><i class="dot dot-strong"></i>fob burst</span>
+        <span><i class="dot dot-elev"></i>activity</span>
         <span><i class="dot dot-quiet"></i>quiet</span>
       </div>
     </div>
     <div class="spectrum-box" id="spectrum-box"><canvas id="spec"></canvas></div>
-    <p class="filter-hint">RSSI vs frequency while sweeping. Peaks show where energy lives; press a fob and watch for a new peak.</p>
+    <p class="filter-hint">dBm vs frequency (continuous sweep). Hold a fob and its frequency spikes on this wave; the signal-over-time chart above plots every frequency as its own colour-coded line (blue = 300 MHz, red = 470 MHz).</p>
   </section>
 
   <footer class="foot">Press a 315 MHz key fob or garage remote near the antenna to test.</footer>
@@ -384,6 +389,7 @@ function resize() {
 }
 
 function draw() {
+  if (scanActive) { drawSweep(); return; }
   var dpr = window.devicePixelRatio || 1;
   var w = canvas.width / dpr, h = canvas.height / dpr;
   if (!w || !h) return;
@@ -493,6 +499,74 @@ function draw() {
 
 var filters = { band: 'all', type: 'all' };
 
+// Signal-over-time view while the sweep is active: one line per frequency,
+// all drawn at once. Each line's COLOUR encodes its FREQUENCY (blue=300 MHz,
+// red=470 MHz) and its HEIGHT is the dBm at that frequency. When a fob
+// transmits, its frequency's line spikes above the rest.
+function drawSweep() {
+  var dpr = window.devicePixelRatio || 1;
+  var w = canvas.width / dpr, h = canvas.height / dpr;
+  if (!w || !h) return;
+  ctx.clearRect(0, 0, w, h);
+  if (!scanHistory.length) return;
+
+  var gridColor = cssVar('--chart-grid');
+  var labelColor = cssVar('--chart-label');
+  ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+
+  var tmax = scanHistory[scanHistory.length - 1][0];
+  var tmin = tmax - WINDOW;
+  var YMAX = -20, YMIN = -110;
+
+  function sx(t) { return ((t - tmin) / WINDOW) * w; }
+  function sy(dbm) { return h - ((dbm - YMIN) / (YMAX - YMIN)) * h; }
+
+  // Y grid in dBm.
+  for (var gy = YMIN; gy <= YMAX; gy += 15) {
+    var py = sy(gy);
+    ctx.strokeStyle = gridColor;
+    ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
+    ctx.fillStyle = labelColor;
+    ctx.fillText(String(gy), 8, py - 4);
+  }
+
+  // Group the sweep history by frequency so each frequency gets its own line.
+  var byFreq = {};
+  for (var i = 0; i < scanHistory.length; i++) {
+    var p = scanHistory[i];
+    if (p[0] < tmin) continue;
+    var key = String(p[1]);
+    if (!byFreq[key]) byFreq[key] = [];
+    byFreq[key].push([p[0], edgeToDbm(p[2])]);
+  }
+
+  // Draw each frequency's line, coloured by frequency.
+  var freqs = Object.keys(byFreq).map(Number).sort(function (a, b) { return a - b; });
+  for (var i = 0; i < freqs.length; i++) {
+    var arr = byFreq[String(freqs[i])];
+    if (arr.length < 2) continue;
+    ctx.strokeStyle = freqColor(freqs[i]);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (var j = 0; j < arr.length; j++) {
+      var x = sx(arr[j][0]), y = sy(arr[j][1]);
+      if (j === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Y-axis caption.
+  ctx.fillStyle = labelColor;
+  ctx.save();
+  ctx.translate(14, h / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.fillText('dBm', 0, 0);
+  ctx.restore();
+  ctx.textAlign = 'left';
+}
+
 function eventMatches(e) {
   if (filters.band === '315' && !(e.freq !== null && e.freq !== undefined && Math.abs(e.freq - 315) <= 2)) return false;
   if (filters.band === '434' && !(e.freq !== null && e.freq !== undefined && Math.abs(e.freq - 434) <= 2)) return false;
@@ -506,7 +580,7 @@ function renderEvents() {
   if (!tb) return;
   var countEl = document.getElementById('eventCount');
   if (!events.length) {
-    tb.innerHTML = '<tr><td colspan="5" class="empty">No transmissions detected yet. Press a key fob near the antenna.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6" class="empty">No transmissions detected yet. Press a key fob near the antenna.</td></tr>';
     if (countEl) countEl.textContent = '';
     return;
   }
@@ -518,17 +592,20 @@ function renderEvents() {
     shown++;
     var dur = (e.duration !== null && e.duration !== undefined) ? e.duration.toFixed(2) + ' s' : '--';
     var fr = (e.freq !== null && e.freq !== undefined) ? e.freq.toFixed(1) + ' MHz' : '--';
-    var t = e.type || 'noise';
+    var pk = (e.peak !== null && e.peak !== undefined) ? e.peak + ' dBm' : '--';
+    var id = e.label || e.type || 'noise';
+    var code = e.code || '--';
     rows += '<tr>' +
       '<td>' + (e.clock || '--') + '</td>' +
-      '<td class="type-' + t + '">' + t + '</td>' +
-      '<td class="peak">' + e.peak + ' dBm</td>' +
+      '<td class="type-' + (e.type || 'noise') + '">' + id + '</td>' +
+      '<td class="mono">' + code + '</td>' +
+      '<td class="peak">' + pk + '</td>' +
       '<td>' + dur + '</td>' +
       '<td>' + fr + '</td>' +
       '</tr>';
   }
   if (!shown) {
-    tb.innerHTML = '<tr><td colspan="5" class="empty">No transmissions match the current filters.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6" class="empty">No transmissions match the current filters.</td></tr>';
   } else {
     tb.innerHTML = rows;
   }
@@ -537,6 +614,23 @@ function renderEvents() {
 
 function render() {
   var num = document.getElementById('rssi');
+  // While scanning, the raw RSSI register is unreliable, so show the sweep's
+  // live peak (the strongest frequency) instead of the broken -12 readout.
+  if (scanActive) {
+    var peak = -110, peakF = 0;
+    for (var k in scanData) {
+      var dbm = edgeToDbm(scanData[k]);
+      if (dbm > peak) { peak = dbm; peakF = Number(k); }
+    }
+    num.textContent = String(peak);
+    num.className = 'readout-num ' + levelClass(peak);
+    var freqEl = document.getElementById('freq');
+    freqEl.textContent = peakF ? peakF.toFixed(1) + ' MHz' : '--';
+    document.getElementById('count').textContent = String(points.length);
+    renderEvents();
+    draw();
+    return;
+  }
   if (points.length) {
     var last = points[points.length - 1];
     var r = last[1], f = last[2];
@@ -560,11 +654,14 @@ function poll() {
       var rc = document.getElementById('rawCount');
       if (rc) rc.textContent = String(d.raw_captures || 0);
       if (d.tx_on !== null && d.tx_on !== undefined) syncTxBtn(d.tx_on);
-      if (d.sweep_mode !== null && d.sweep_mode !== undefined) {
-        syncSweepBtn(d.sweep_mode);
-        var sc = document.getElementById('spectrumCard');
-        if (d.sweep_mode) { sc.style.display = ''; resizeSpec(); renderSpectrum(); }
-        else { sc.style.display = 'none'; }
+      if (d.scan) { scanData = d.scan; }
+      if (d.scan_history) { scanHistory = d.scan_history; }
+      syncScanBtn(!!d.scan_active);
+      if (d.record_active !== null && d.record_active !== undefined) syncRecBtn(!!d.record_active);
+      if (d.scan_active) {
+        document.getElementById('spectrumCard').style.display = '';
+        resizeSpec();
+        renderSpectrum();
       }
       if (paused) return;
       points = d.points;
@@ -582,10 +679,17 @@ function poll() {
 }
 
 function setActiveFreq(mhz) {
+  var key = String(Math.round(mhz * 100) / 100);   // "315" or "433.92"
   var btns = document.querySelectorAll('#freqSeg .seg-btn');
+  var matched = false;
   for (var i = 0; i < btns.length; i++) {
-    if (btns[i].dataset.mhz === String(mhz)) btns[i].classList.add('active');
+    if (btns[i].dataset.mhz === key) { btns[i].classList.add('active'); matched = true; }
     else btns[i].classList.remove('active');
+  }
+  if (!matched) {
+    for (var j = 0; j < btns.length; j++) {
+      if (btns[j].dataset.mhz === '315') btns[j].classList.add('active');
+    }
   }
 }
 
@@ -658,20 +762,59 @@ txBtn.addEventListener('click', function () {
     .catch(function () {});
 });
 
-var sweepBtn = document.getElementById('sweepBtn');
-var sweepOn = false;
-function syncSweepBtn(on) {
-  sweepOn = !!on;
-  sweepBtn.textContent = sweepOn ? 'Sweeping' : 'Sweep';
-  sweepBtn.classList.toggle('sweeping', sweepOn);
+var fobBtn = document.getElementById('fobBtn');
+fobBtn.addEventListener('click', function () {
+  fobBtn.disabled = true;
+  fetch('/fobburst', { method: 'POST' })
+    .then(function () {})
+    .catch(function () {})
+    .then(function () { setTimeout(function () { fobBtn.disabled = false; }, 1000); });
+});
+
+var scanBtn = document.getElementById('scanBtn');
+var scanData = {};
+var scanHistory = [];
+var scanActive = false;
+function syncScanBtn(on) {
+  scanActive = !!on;
+  scanBtn.textContent = scanActive ? 'Stop Scan' : 'Scan';
+  scanBtn.classList.toggle('scan-on', scanActive);
 }
-sweepBtn.addEventListener('click', function () {
-  fetch('/sweep', {
+scanBtn.addEventListener('click', function () {
+  fetch('/scan', { method: 'POST' })
+    .then(function () {})
+    .catch(function () {});
+});
+
+var lockBtn = document.getElementById('lockBtn');
+lockBtn.addEventListener('click', function () {
+  // Lock onto the strongest frequency currently in the spectrum (or the
+  // selected band frequency if there is no sweep data yet).
+  var peakF = null, peakE = -1;
+  for (var k in scanData) {
+    if (scanData[k] > peakE) { peakE = scanData[k]; peakF = Number(k); }
+  }
+  if (peakF === null) {
+    var act = document.querySelector('#freqSeg .seg-btn.active');
+    peakF = act && act.dataset.mhz ? Number(act.dataset.mhz) : 315;
+  }
+  fetch('/lock', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ on: !sweepOn })
-  }).then(function (r) { return r.json(); })
-    .then(function (d) { if (d && d.sweep_mode !== undefined) syncSweepBtn(d.sweep_mode); })
+    body: JSON.stringify({ mhz: peakF })
+  }).catch(function () {});
+});
+
+var recBtn = document.getElementById('recBtn');
+var recording = false;
+function syncRecBtn(on) {
+  recording = !!on;
+  recBtn.textContent = recording ? 'Recording' : 'Record';
+  recBtn.classList.toggle('rec-on', recording);
+}
+recBtn.addEventListener('click', function () {
+  fetch('/record', { method: 'POST' })
+    .then(function () {})
     .catch(function () {});
 });
 
@@ -684,43 +827,77 @@ function resizeSpec() {
   specCanvas.height = box.clientHeight * dpr;
   specCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
+function freqColor(f) {
+  // 300 MHz -> blue (220), 470 MHz -> red (0).
+  var hue = 220 - ((f - 300) / (470 - 300)) * 220;
+  if (hue < 0) hue = 0;
+  if (hue > 220) hue = 220;
+  return 'hsl(' + hue + ', 85%, 60%)';
+}
+// Map the GDO0 edge count to a dBm-like scale (0 edges = quiet -110 dBm,
+// 250+ edges = strong -30 dBm) so the spectrum/time axes read in dBm.
+function edgeToDbm(e) {
+  if (e === null || e === undefined) return -110;
+  var x = Math.min(Math.max(e, 0), 250);
+  return Math.round(-110 + (80 * x / 250));
+}
 function renderSpectrum() {
   var dpr = window.devicePixelRatio || 1;
   var w = specCanvas.width / dpr, h = specCanvas.height / dpr;
   if (!w || !h) return;
   specCtx.clearRect(0, 0, w, h);
-  var bins = {};
-  var i;
-  for (i = 0; i < points.length; i++) {
-    var f = points[i][2], r = points[i][1];
-    if (f === null || f === undefined) continue;
-    var key = Math.round(f * 2) / 2;
-    if (!(key in bins) || r > bins[key]) bins[key] = r;
+  var freqs = Object.keys(scanData).map(Number).sort(function (a, b) { return a - b; });
+  if (!freqs.length) return;
+  var FMIN = freqs[0], FMAX = freqs[freqs.length - 1];
+  var maxD = -110, peakF = 0;
+  for (var i = 0; i < freqs.length; i++) {
+    var dbm = edgeToDbm(scanData[freqs[i]]);
+    if (dbm > maxD) { maxD = dbm; peakF = freqs[i]; }
   }
-  var FMIN = 305, FMAX = 468;
-  var RMAX = -10, RMIN = -130;
-  var gridColor = cssVar('--chart-grid');
-  var labelColor = cssVar('--chart-label');
-  specCtx.font = '11px Segoe UI';
-  for (var gy = RMIN; gy <= RMAX; gy += 20) {
-    var py = ((RMAX - gy) / (RMAX - RMIN)) * h;
+  var YMAX = -20, YMIN = -110;
+
+  var gridColor = cssVar('--chart-grid'), labelColor = cssVar('--chart-label');
+  var lineColor = cssVar('--chart-line');
+  specCtx.font = '11px ui-sans-serif, system-ui, sans-serif';
+
+  // Y grid in dBm.
+  for (var gy = YMIN; gy <= YMAX; gy += 15) {
+    var py = h - ((gy - YMIN) / (YMAX - YMIN)) * h;
     specCtx.strokeStyle = gridColor;
     specCtx.beginPath(); specCtx.moveTo(0, py); specCtx.lineTo(w, py); specCtx.stroke();
     specCtx.fillStyle = labelColor;
     specCtx.fillText(String(gy), 4, py - 3);
   }
-  var nBars = Math.round((FMAX - FMIN) / 0.5);
-  var bw = w / nBars;
-  var keys = Object.keys(bins).map(Number);
-  for (i = 0; i < keys.length; i++) {
-    var f2 = keys[i], r2 = bins[f2];
-    if (f2 < FMIN || f2 > FMAX) continue;
-    var x = ((f2 - FMIN) / (FMAX - FMIN)) * w;
-    var rh = ((r2 - RMIN) / (RMAX - RMIN)) * h;
-    if (rh < 0) rh = 0;
-    if (rh > h) rh = h;
-    specCtx.fillStyle = (r2 > -60) ? cssVar('--fg-red') : (r2 > -85) ? cssVar('--fg-orange') : cssVar('--fg-mint');
-    specCtx.fillRect(x, h - rh, Math.max(bw - 1, 1), rh);
+
+  // The spectrum wave: X = frequency, Y = dBm. Break at the 348-420 gap.
+  specCtx.strokeStyle = lineColor;
+  specCtx.lineWidth = 2;
+  specCtx.beginPath();
+  var started = false;
+  for (var i = 0; i < freqs.length; i++) {
+    var f = freqs[i];
+    var x = ((f - FMIN) / (FMAX - FMIN)) * w;
+    var y = h - ((edgeToDbm(scanData[f]) - YMIN) / (YMAX - YMIN)) * h;
+    if (!started) { specCtx.moveTo(x, y); started = true; }
+    else if (f - freqs[i - 1] > 1.0) { specCtx.stroke(); specCtx.beginPath(); specCtx.moveTo(x, y); }
+    else specCtx.lineTo(x, y);
+  }
+  specCtx.stroke();
+
+  // Peak marker + label.
+  var px = ((peakF - FMIN) / (FMAX - FMIN)) * w;
+  var py2 = h - ((maxD - YMIN) / (YMAX - YMIN)) * h;
+  specCtx.fillStyle = cssVar('--fg-red');
+  specCtx.beginPath(); specCtx.arc(px, py2, 3.5, 0, 6.283); specCtx.fill();
+  specCtx.fillText(peakF.toFixed(1) + ' MHz · ' + maxD + ' dBm', Math.min(px + 6, w - 110), Math.max(py2 - 6, 12));
+
+  // Frequency axis labels (skip the 348-420 gap band).
+  specCtx.fillStyle = labelColor;
+  var fstep = 25;
+  for (var fx = 300; fx <= 470; fx += fstep) {
+    if (fx > 348 && fx < 420) continue;
+    var lx = ((fx - FMIN) / (FMAX - FMIN)) * w;
+    specCtx.fillText(String(fx), lx, h - 3);
   }
 }
 

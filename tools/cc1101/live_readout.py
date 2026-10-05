@@ -38,11 +38,18 @@ samples = deque(maxlen=600)          # (t, rssi, freq)
 latest = {"rssi": None, "freq": None, "t": None}
 port_error = None
 selected_freq = 315.0
-selected_mod = 0          # 0 = 2-FSK (TPMS), 2 = ASK/OOK (key fobs)
+selected_mod = 2          # 0 = 2-FSK (TPMS), 2 = ASK/OOK (key fobs) — fobs are OOK
 tx_on = False             # second-module test carrier state
 sweep_mode = False        # continuous frequency sweep (spectrum view)
+scan_data = {}            # spectrum: {freq_mhz: gdo0_edge_count}
+scan_history = deque(maxlen=1200)   # [(t, freq, edges), ...] for the time chart
+scan_active = False
+record_active = False
+RECORD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "record_log.csv")
 ser_handle = None
 raw_captures = 0
+last_decode = None        # latest decoded transmission: {"hex": ..., "bit_us": ...}
+fobburst_at = 0.0         # time.time() when the last Fob Burst was triggered
 CAPTURE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capture_live.txt")
 START_TIME = time.time()
 
@@ -59,8 +66,8 @@ _ev_peak = -200
 _ev_freq = None
 _below_count = 0
 _ev_above = 0
-EVENT_RISE_DB = 12.0
-EVENT_HYST_DB = 6.0
+EVENT_RISE_DB = 8.0
+EVENT_HYST_DB = 4.0
 EVENT_MIN_S = 0.1
 EVENT_MIN_ABOVE = 3
 
@@ -73,7 +80,10 @@ def _update_events(rssi, freq, t):
         _floor = _floor * 0.98 + rssi * 0.02
 
     if not _in_event:
-        if rssi > _floor + EVENT_RISE_DB:
+        # Trigger on a large deviation EITHER way: depending on the CC1101's
+        # AGC reference (PATABLE[0]) a strong signal can read as a spike OR a
+        # dip. Both are a real transmission.
+        if abs(rssi - _floor) > EVENT_RISE_DB:
             _in_event = True
             _ev_start = t
             _ev_peak = rssi
@@ -81,11 +91,11 @@ def _update_events(rssi, freq, t):
             _below_count = 0
             _ev_above = 1
     else:
-        if rssi > _ev_peak:
+        if abs(rssi - _floor) > abs(_ev_peak - _floor):
             _ev_peak = rssi
-        if rssi > _floor + EVENT_RISE_DB:
+        if abs(rssi - _floor) > EVENT_RISE_DB:
             _ev_above += 1
-        if rssi < _floor + EVENT_HYST_DB:
+        if abs(rssi - _floor) < EVENT_HYST_DB:
             _below_count += 1
             if _below_count >= 3:
                 duration = t - _ev_start
@@ -93,6 +103,16 @@ def _update_events(rssi, freq, t):
                     clock = time.strftime(
                         "%H:%M:%S", time.localtime(START_TIME + _ev_start))
                     etype = "signal" if duration >= 0.25 else "noise"
+                    # Identify the transmission: label the TX fob-burst, and
+                    # attach the decoded bitstream code for anything else.
+                    label = None
+                    code = None
+                    if fobburst_at and 0 < (START_TIME + _ev_start) - fobburst_at < 3.0:
+                        label = "fob (TX test)"
+                    if last_decode and last_decode.get("hex"):
+                        code = last_decode["hex"]
+                        if label is None:
+                            label = "fob" if "AA" in code else "signal"
                     events.append({
                         "t": round(_ev_start, 2),
                         "clock": clock,
@@ -100,22 +120,178 @@ def _update_events(rssi, freq, t):
                         "duration": round(duration, 2),
                         "freq": _ev_freq,
                         "type": etype,
+                        "label": label,
+                        "code": code,
                     })
                 _in_event = False
         else:
             _below_count = 0
 
 
+def decode_cap(hexstr, sample_us=48.0):
+    """Decode a raw GDO0 capture (hex nibbles, MSB-first samples) into bytes.
+
+    The CC1101 async-serial GDO0 output is the demodulated OOK bitstream.
+    Returns (hexstr, bit_period_samples) or None.
+    """
+    samples = []
+    for ch in hexstr:
+        if ch not in "0123456789abcdefABCDEF":
+            continue
+        v = int(ch, 16)
+        for k in range(7, -1, -1):
+            samples.append((v >> k) & 1)
+    if len(samples) < 16:
+        return None
+
+    # Run lengths of identical samples. The fob preamble alternates 1/0, so
+    # the most common run length is one bit period.
+    runs = []
+    prev = samples[0]
+    run = 1
+    for s in samples[1:]:
+        if s == prev:
+            run += 1
+        else:
+            runs.append(run)
+            prev = s
+            run = 1
+    runs.append(run)
+    if not runs:
+        return None
+    runs_sorted = sorted(runs)
+    bit = runs_sorted[len(runs_sorted) // 2]   # median run = 1 bit
+    if bit < 5 or bit > 200:
+        return None
+    # Reject noise: in a real OOK preamble every run is ~one bit period, so the
+    # runs cluster tightly around the median. Noise runs scatter widely.
+    near = sum(1 for r in runs if 0.55 * bit <= r <= 1.55 * bit)
+    if near < 0.45 * len(runs):
+        return None
+
+    # Sample bits starting just after the first transition.
+    start = 0
+    while start < len(samples) - 1 and samples[start] == samples[start + 1]:
+        start += 1
+    bits = []
+    i = start + bit // 2
+    while i < len(samples):
+        bits.append(samples[i])
+        i += bit
+
+    hexout = ""
+    for j in range(0, len(bits) - 7, 8):
+        byte = 0
+        for k in range(8):
+            byte = (byte << 1) | bits[j + k]
+        hexout += "%02X" % byte
+    # A real key fob starts with an alternating-bit preamble, which decodes to
+    # a run of 0xAA or 0x55 regardless of bit alignment. Require at least 3
+    # consecutive identical preamble bytes so scattered noise rejects.
+    if "AAAAAA" not in hexout and "555555" not in hexout:
+        return None
+    return hexout, bit
+
+
 def handle_line(line):
-    global port_error, raw_captures
+    global port_error, raw_captures, scan_active, last_decode, events
     line = line.decode("utf-8", "ignore").strip()
+    if line.startswith("SCAN_START"):
+        scan_data.clear()
+        scan_history.clear()
+        scan_active = True
+        return
+    if line.startswith("SCAN_END"):
+        scan_active = False
+        return
+    if line.startswith("LOCKED "):
+        global selected_freq
+        scan_active = False
+        try:
+            selected_freq = float(line.split()[1])
+        except (ValueError, IndexError):
+            pass
+        now = time.time() - START_TIME
+        events.append({
+            "t": round(now, 2),
+            "clock": time.strftime("%H:%M:%S", time.localtime(START_TIME + now)),
+            "peak": None,
+            "duration": None,
+            "freq": selected_freq,
+            "type": "signal",
+            "label": "locked",
+            "code": None,
+        })
+        return
+    if line.startswith("SCAN "):
+        parts = line.split()
+        if len(parts) >= 3:
+            try:
+                f = float(parts[1])
+                r = int(parts[2])
+                scan_data[round(f, 1)] = r
+                scan_history.append((time.time() - START_TIME, round(f, 1), r))
+                if record_active:
+                    with open(RECORD_PATH, "a", encoding="utf-8") as rf:
+                        rf.write("SCAN,%.2f,%.1f,%d\n" % (time.time() - START_TIME, round(f, 1), r))
+            except (ValueError, OSError):
+                pass
+        return
     if line.startswith("CAP "):
         try:
             with open(CAPTURE_PATH, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
             raw_captures += 1
+            parts = line.split()
+            if len(parts) >= 4:
+                # Actual sample period from the CAP line's own timing.
+                sample_us = 48.0
+                try:
+                    sample_us = float(parts[2]) / float(parts[1])
+                except (ValueError, ZeroDivisionError):
+                    sample_us = 48.0
+                d = decode_cap(parts[3], sample_us)
+                if d:
+                    last_decode = {"hex": d[0], "bit_us": round(d[1] * sample_us)}
+                    # The RSSI path is unreliable on this two-module bus, so a
+                    # successfully decoded capture is itself the event. Dedupe
+                    # consecutive identical codes (a single fob press can
+                    # trigger more than one capture window).
+                    if (not events or events[-1].get("code") != d[0]
+                            or (time.time() - START_TIME) - events[-1]["t"] > 2.0):
+                        now = time.time() - START_TIME
+                        events.append({
+                            "t": round(now, 2),
+                            "clock": time.strftime(
+                                "%H:%M:%S", time.localtime(START_TIME + now)),
+                            "peak": None,
+                            "duration": round(len(d[0]) / 2 * d[1] * 48e-6, 2),
+                            "freq": selected_freq,
+                            "type": "signal",
+                            "label": "fob",
+                            "code": d[0],
+                        })
         except OSError:
             pass
+        return
+    if line.startswith("TXCODE "):
+        parts = line.split()
+        if len(parts) >= 2:
+            last_decode = {"hex": parts[1], "bit_us": 480}
+            # The TX burst blocks the Arduino while it transmits, so the RSSI
+            # deviation it causes never reaches this reader. Log the event
+            # directly from the firmware's own confirmation.
+            now = time.time() - START_TIME
+            events.append({
+                "t": round(now, 2),
+                "clock": time.strftime("%H:%M:%S", time.localtime(START_TIME + now)),
+                "peak": None,
+                "duration": 0.78,
+                "freq": selected_freq,
+                "type": "signal",
+                "label": "fob (TX test)",
+                "code": parts[1],
+            })
         return
     if "F=" in line:
         # Skip the boot frequency sweep lines; only keep the 315 MHz monitor.
@@ -136,6 +312,12 @@ def handle_line(line):
         samples.append((t, rssi, freq))
         latest.update({"rssi": rssi, "freq": freq, "t": t})
         _update_events(rssi, freq, t)
+        if record_active:
+            try:
+                with open(RECORD_PATH, "a", encoding="utf-8") as rf:
+                    rf.write("RSSI,%.2f,%s,%d\n" % (t, ("%.1f" % freq) if freq is not None else "", rssi))
+            except OSError:
+                pass
 
 
 def set_frequency(mhz):
@@ -213,6 +395,47 @@ def set_sweep(on):
     return False
 
 
+def set_fobburst():
+    """Tell the Arduino to transmit a fob-like OOK burst from the TX module."""
+    global fobburst_at
+    fobburst_at = time.time()
+    with lock:
+        s = ser_handle
+    if s is not None:
+        try:
+            s.write(b"FOBBURST\n")
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def set_scan():
+    """Toggle the continuous frequency sweep on the Arduino (SCAN command)."""
+    with lock:
+        s = ser_handle
+    if s is not None:
+        try:
+            s.write(b"SCAN\n")
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def set_lock(mhz):
+    """Lock the receiver onto a specific frequency (LOCK command)."""
+    with lock:
+        s = ser_handle
+    if s is not None:
+        try:
+            s.write(("LOCK %.1f\n" % mhz).encode("utf-8"))
+            return True
+        except Exception:
+            return False
+    return False
+
+
 def reader():
     global port_error, ser_handle
     ser = None
@@ -222,12 +445,21 @@ def reader():
             port_error = None
             with lock:
                 ser_handle = ser
-            # Let the Arduino finish its boot sweep, then assert band and modulation.
-            time.sleep(1.5)
+            # Let the Arduino finish its boot, then give the CC1101 a full
+            # FSK RX soak (~5 s) before switching to OOK. Switching to OOK
+            # too early leaves the RSSI register pinned at its floor (-138);
+            # after a 5 s soak + 3 s OOK settle the 315 MHz OOK floor reads a
+            # clean -99..-101 dBm (fobs are OOK).
+            time.sleep(5.0)
             set_frequency(selected_freq)
             set_modulation(selected_mod)
             set_tx(tx_on)
             set_sweep(sweep_mode)
+            # The boot floor takes a moment to settle (the CC1101 AGC warms up
+            # from a saturated -12 to its quiet -108 floor). Re-baseline here so
+            # that warm-up transition isn't logged as a false "signal" event.
+            time.sleep(2.0)
+            clear_history()
             while True:
                 line = ser.readline()
                 if line:
@@ -422,12 +654,20 @@ class Handler(BaseHTTPRequestHandler):
                 pts = [list(p) for p in samples]
                 cur = dict(latest)
                 evs = [dict(e) for e in events]
+                scan = dict(scan_data)
+                shist = [list(h) for h in scan_history]
+                scan_on = scan_active
             body = json.dumps({"points": pts, "latest": cur, "events": evs,
                                "selected_freq": selected_freq,
                                "selected_mod": selected_mod,
                                "tx_on": tx_on,
                                "sweep_mode": sweep_mode,
+                               "scan": scan,
+                               "scan_history": shist,
+                               "scan_active": scan_on,
+                               "record_active": record_active,
                                "raw_captures": raw_captures,
+                               "last_decode": dict(last_decode) if last_decode else None,
                                "port_error": port_error}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -497,6 +737,61 @@ class Handler(BaseHTTPRequestHandler):
             ok = set_sweep(on)
             body = json.dumps({"ok": ok, "sweep_mode": sweep_mode}).encode("utf-8")
             self.send_response(200 if ok else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/fobburst":
+            ok = set_fobburst()
+            body = json.dumps({"ok": ok}).encode("utf-8")
+            self.send_response(200 if ok else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/scan":
+            ok = set_scan()
+            body = json.dumps({"ok": ok}).encode("utf-8")
+            self.send_response(200 if ok else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/lock":
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                data = json.loads(self.rfile.read(length).decode("utf-8", "ignore"))
+                mhz = float(data.get("mhz"))
+            except Exception:
+                self.send_response(400)
+                self.end_headers()
+                return
+            ok = set_lock(mhz)
+            body = json.dumps({"ok": ok}).encode("utf-8")
+            self.send_response(200 if ok else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/record":
+            global record_active
+            record_active = not record_active
+            if record_active:
+                try:
+                    with open(RECORD_PATH, "w", encoding="utf-8") as f:
+                        f.write("kind,t,freq,value\n")
+                except OSError:
+                    pass
+            body = json.dumps({"ok": True, "record_active": record_active}).encode("utf-8")
+            self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
