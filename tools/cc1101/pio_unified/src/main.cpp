@@ -458,9 +458,9 @@ void sweepStop() {
 
 // Non-blocking: called every loop() while the sweep is active. One PIND sample
 // per call (4 us apart), so the loop stays responsive and a "SCAN" toggle is
-// honoured within one 24 ms step. The sweep runs continuously (no auto-lock):
-// it just emits "SCAN <freq> <edges>" for every step so the webapp can plot
-// and record the whole band.
+// honoured within one 24 ms step. When a step's edge count exceeds the lock
+// threshold, the sweep stops and stays tuned to that frequency so the burst
+// probe can capture the fob's demodulated code.
 void sweepTick() {
   if (!sweepActive) return;
   if (sweepStage == 0) {
@@ -566,20 +566,6 @@ void handleCommands() {
       // Toggle the continuous sweep: on -> off, off -> on.
       if (sweepActive) sweepStop();
       else sweepStart();
-    } else if (cmd.startsWith("LOCK ")) {
-      // Manually lock onto a frequency (e.g. the sweep's detected peak) so
-      // the monitor loop's burst probe captures the fob's code there.
-      float f = cmd.substring(5).toFloat();
-      if (f >= 200.0f && f <= 930.0f) {
-        sweepActive = false;
-        currentMHz = f;
-        configRadioOok(f);
-        radio.SetRx();
-        delay(200);
-        radio.SetRx();
-        Serial.print(F("LOCKED "));
-        Serial.println(f, 1);
-      }
     }
   }
 }

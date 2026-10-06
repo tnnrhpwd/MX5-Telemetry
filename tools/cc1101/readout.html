@@ -256,7 +256,6 @@
       <button class="icon-btn" id="txBtn" type="button">TX Off</button>
       <button class="icon-btn" id="fobBtn" type="button">Fob Burst</button>
       <button class="icon-btn" id="scanBtn" type="button">Scan</button>
-      <button class="icon-btn" id="lockBtn" type="button">Lock On</button>
       <button class="icon-btn" id="recBtn" type="button">Record</button>
       <button class="icon-btn" id="pauseBtn" type="button">Pause</button>
       <button class="icon-btn" id="clearBtn" type="button">Clear</button>
@@ -784,25 +783,6 @@ scanBtn.addEventListener('click', function () {
   fetch('/scan', { method: 'POST' })
     .then(function () {})
     .catch(function () {});
-});
-
-var lockBtn = document.getElementById('lockBtn');
-lockBtn.addEventListener('click', function () {
-  // Lock onto the strongest frequency currently in the spectrum (or the
-  // selected band frequency if there is no sweep data yet).
-  var peakF = null, peakE = -1;
-  for (var k in scanData) {
-    if (scanData[k] > peakE) { peakE = scanData[k]; peakF = Number(k); }
-  }
-  if (peakF === null) {
-    var act = document.querySelector('#freqSeg .seg-btn.active');
-    peakF = act && act.dataset.mhz ? Number(act.dataset.mhz) : 315;
-  }
-  fetch('/lock', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mhz: peakF })
-  }).catch(function () {});
 });
 
 var recBtn = document.getElementById('recBtn');
