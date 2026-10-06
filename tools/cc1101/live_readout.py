@@ -11,6 +11,7 @@ Usage:
 Defaults to COM3 on Windows. Open http://127.0.0.1:8765/ (opened automatically).
 """
 import json
+import math
 import os
 import re
 import sys
@@ -39,19 +40,103 @@ latest = {"rssi": None, "freq": None, "t": None}
 port_error = None
 selected_freq = 315.0
 selected_mod = 2          # 0 = 2-FSK (TPMS), 2 = ASK/OOK (key fobs) — fobs are OOK
+# RX data rate in bits/s. This gates the SHORTEST pulse the slicer can
+# reproduce: this fob's pulses run down to ~26-56 us, but 10 kbps means one bit
+# is 100 us, so they come out smeared. Raise this when captures look mangled;
+# 38400 is the highest sensible value inside the ~101 kHz channel bandwidth.
+selected_drate = 10000
 tx_on = False             # second-module test carrier state
 sweep_mode = False        # continuous frequency sweep (spectrum view)
 scan_data = {}            # spectrum: {freq_mhz: gdo0_edge_count}
 scan_history = deque(maxlen=1200)   # [(t, freq, edges), ...] for the time chart
 scan_active = False
 record_active = False
-RECORD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "record_log.csv")
+HERE = os.path.dirname(os.path.abspath(__file__))
+CAPTURES_DIR = os.path.join(HERE, "captures")      # runtime output lives here
+try:
+    os.makedirs(CAPTURES_DIR, exist_ok=True)
+except OSError:
+    pass
+RECORD_PATH = os.path.join(CAPTURES_DIR, "record_log.csv")
 ser_handle = None
 raw_captures = 0
 last_decode = None        # latest decoded transmission: {"hex": ..., "bit_us": ...}
 fobburst_at = 0.0         # time.time() when the last Fob Burst was triggered
-CAPTURE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capture_live.txt")
+CAPTURE_PATH = os.path.join(CAPTURES_DIR, "capture_live.txt")
 START_TIME = time.time()
+IDLE_RUN = 60             # GDO0 runs longer than this are idle gaps between repeats
+
+# --- recording ------------------------------------------------------------
+# The record file is kept OPEN and written WITHOUT holding `lock`. It used to
+# do an open/write/close per reading while holding the lock, so every reading
+# blocked /data on disk I/O: the browser polls /data every 100 ms, so the whole
+# UI stalled for as long as the recording was on. Rows are flushed every few
+# lines, and Clear (not the Record button) is what truncates the file.
+_record_fh = None
+_record_pending = 0
+RECORD_FLUSH_ROWS = 8
+# Worst /data latency seen. If the page ever appears frozen, this says whether
+# the server was the slow part or the browser was; 0 is normal (a few ms).
+_max_data_ms = 0.0
+
+
+def _record_close():
+    global _record_fh
+    if _record_fh is not None:
+        try:
+            _record_fh.flush()
+            _record_fh.close()
+        except OSError:
+            pass
+        _record_fh = None
+
+
+def _record_append(text):
+    """Append one CSV row. No-op when not recording. Never under `lock`."""
+    global _record_pending
+    if _record_fh is None:
+        return
+    try:
+        _record_fh.write(text)
+        _record_pending += 1
+        if _record_pending >= RECORD_FLUSH_ROWS:
+            _record_fh.flush()
+            _record_pending = 0
+    except (OSError, ValueError):
+        pass
+
+
+def _record_open():
+    """Start recording. APPENDS, so a stray Record press cannot wipe a log."""
+    global _record_fh, _record_pending
+    _record_close()
+    fresh = True
+    try:
+        fresh = not os.path.exists(RECORD_PATH) or os.path.getsize(RECORD_PATH) == 0
+        _record_fh = open(RECORD_PATH, "a", encoding="utf-8")
+        if fresh:
+            _record_fh.write("kind,t,freq,value\n")
+    except OSError:
+        _record_fh = None
+        return
+    _record_pending = 0
+    log_setting("session_start", time.strftime("%Y-%m-%d %H:%M:%S"))
+    log_current_settings()
+
+
+def _record_truncate():
+    """Drop everything recorded so far. Called by Clear."""
+    _record_close()
+    try:
+        open(RECORD_PATH, "w", encoding="utf-8").close()
+    except OSError:
+        pass
+    if record_active:
+        _record_open()
+
+FRAME_GAP = 500           # ~5 ms of silence = a real gap BETWEEN frames, not the
+                          # sub-millisecond dropouts the marginal demodulator makes
+                          # inside one; used to count how often a device retransmits
 
 # --- signal-event detection ----------------------------------------------
 # Detects bursts of RSSI well above the (slowly adapting) noise floor and
@@ -66,6 +151,9 @@ _ev_peak = -200
 _ev_freq = None
 _below_count = 0
 _ev_above = 0
+_ev_codes = {}     # code -> count, tallied while the current event is open
+_ev_bursts = 0     # most bursts seen in one capture during this event
+_ev_unit_us = None  # shortest pulse measured during this event, in us
 EVENT_RISE_DB = 8.0
 EVENT_HYST_DB = 4.0
 EVENT_MIN_S = 0.1
@@ -74,6 +162,7 @@ EVENT_MIN_ABOVE = 3
 
 def _update_events(rssi, freq, t):
     global _floor, _in_event, _ev_start, _ev_peak, _ev_freq, _below_count, _ev_above
+    global _ev_bursts, _ev_unit_us
     if _floor is None:
         _floor = float(rssi)
     else:
@@ -90,6 +179,9 @@ def _update_events(rssi, freq, t):
             _ev_freq = freq
             _below_count = 0
             _ev_above = 1
+            _ev_codes.clear()
+            _ev_bursts = 0
+            _ev_unit_us = None
     else:
         if abs(rssi - _floor) > abs(_ev_peak - _floor):
             _ev_peak = rssi
@@ -103,16 +195,29 @@ def _update_events(rssi, freq, t):
                     clock = time.strftime(
                         "%H:%M:%S", time.localtime(START_TIME + _ev_start))
                     etype = "signal" if duration >= 0.25 else "noise"
-                    # Identify the transmission: label the TX fob-burst, and
-                    # attach the decoded bitstream code for anything else.
+                    # Identify the transmission. One press fires several capture
+                    # windows, so report the code seen MOST during this event
+                    # rather than whatever decode happened to land last.
                     label = None
                     code = None
+                    if _ev_codes:
+                        code = sorted(_ev_codes.items(),
+                                      key=lambda kv: (kv[1], len(kv[0])),
+                                      reverse=True)[0][0]
+                    elif last_decode and last_decode.get("hex"):
+                        code = last_decode["hex"]
                     if fobburst_at and 0 < (START_TIME + _ev_start) - fobburst_at < 3.0:
                         label = "fob (TX test)"
-                    if last_decode and last_decode.get("hex"):
-                        code = last_decode["hex"]
-                        if label is None:
-                            label = "fob" if "AA" in code else "signal"
+                    # Interval since the previous transmission on this frequency.
+                    # A tyre sensor repeats metronomically (typically ~60 s); a
+                    # fob press is sporadic. Far more useful than raw strength
+                    # for telling your own gear from a city full of other people's.
+                    repeat_s = None
+                    for prev in reversed(events):
+                        pf = prev.get("freq")
+                        if pf is not None and _ev_freq is not None and abs(pf - _ev_freq) <= 1.0:
+                            repeat_s = round(_ev_start - prev["t"], 1)
+                            break
                     events.append({
                         "t": round(_ev_start, 2),
                         "clock": clock,
@@ -122,30 +227,61 @@ def _update_events(rssi, freq, t):
                         "type": etype,
                         "label": label,
                         "code": code,
+                        "unit_us": round(_ev_unit_us) if _ev_unit_us else None,
+                        "repeat_s": repeat_s,
+                        "bursts": _ev_bursts or None,
                     })
                 _in_event = False
         else:
             _below_count = 0
 
 
-def decode_cap(hexstr, sample_us=48.0):
-    """Decode a raw GDO0 capture (hex nibbles, MSB-first samples) into bytes.
+def _kmeans2(vals):
+    """Split a list of numbers into two clusters; return the two centres."""
+    a, b = float(min(vals)), float(max(vals))
+    for _ in range(50):
+        g1 = [v for v in vals if abs(v - a) <= abs(v - b)]
+        g2 = [v for v in vals if abs(v - a) > abs(v - b)]
+        if not g1 or not g2:
+            break
+        na, nb = sum(g1) / len(g1), sum(g2) / len(g2)
+        if abs(na - a) < 1e-9 and abs(nb - b) < 1e-9:
+            break
+        a, b = na, nb
+    return a, b
 
-    The CC1101 async-serial GDO0 output is the demodulated OOK bitstream.
-    Returns (hexstr, bit_period_samples) or None.
+
+def decode_cap(hexstr, sample_us=48.0):
+    """Decode a raw GDO0 capture into a code.
+
+    Returns (hexstr, unit_samples, bursts) or None. `unit_samples` is the
+    shorter pulse cluster (one unit of the PWM encoding, so 1/unit is a rough
+    symbol rate); `bursts` is how many separate bursts the capture held.
+
+    Two things matter here:
+
+    1. The firmware prints each captured BYTE as TWO hex characters, so every
+       hex character is a 4-BIT NIBBLE = 4 samples, MSB first. Expanding a
+       nibble into 8 bits (as this function used to) inserts four bogus zeros
+       per nibble, which fabricates a "4 samples on / 4 off" square wave out of
+       ANY capture — that phantom pattern is why nothing ever decoded.
+
+    2. This 315 MHz fob is a PWM/PPM OOK remote: its pulses are two widths
+       (short and long) and the width carries the bit, opening with an
+       alternating long/short preamble. So classify the runs into two clusters
+       instead of assuming one fixed bit period.
     """
     samples = []
     for ch in hexstr:
         if ch not in "0123456789abcdefABCDEF":
             continue
         v = int(ch, 16)
-        for k in range(7, -1, -1):
+        for k in (3, 2, 1, 0):
             samples.append((v >> k) & 1)
-    if len(samples) < 16:
+    if len(samples) < 64:
         return None
 
-    # Run lengths of identical samples. The fob preamble alternates 1/0, so
-    # the most common run length is one bit period.
+    # Run lengths of identical samples.
     runs = []
     prev = samples[0]
     run = 1
@@ -157,40 +293,79 @@ def decode_cap(hexstr, sample_us=48.0):
             prev = s
             run = 1
     runs.append(run)
-    if not runs:
+
+    # Count frames: activity separated by a real inter-frame gap. A fixed-code
+    # fob held down retransmits the same frame several times, so this is a
+    # "how many times did it repeat" number rather than a fragmentation count.
+    frames = 0
+    in_frame = False
+    for r in runs:
+        if r >= FRAME_GAP:
+            in_frame = False
+        elif not in_frame:
+            frames += 1
+            in_frame = True
+
+    # Split at the idle gaps between repeats and keep the longest burst.
+    bursts, cur = [], []
+    for r in runs:
+        if r > IDLE_RUN:
+            if cur:
+                bursts.append(cur)
+            cur = []
+        else:
+            cur.append(r)
+    if cur:
+        bursts.append(cur)
+    if not bursts:
         return None
-    runs_sorted = sorted(runs)
-    bit = runs_sorted[len(runs_sorted) // 2]   # median run = 1 bit
-    if bit < 5 or bit > 200:
-        return None
-    # Reject noise: in a real OOK preamble every run is ~one bit period, so the
-    # runs cluster tightly around the median. Noise runs scatter widely.
-    near = sum(1 for r in runs if 0.55 * bit <= r <= 1.55 * bit)
-    if near < 0.45 * len(runs):
+    burst = max(bursts, key=len)
+    if len(burst) < 12:
         return None
 
-    # Sample bits starting just after the first transition.
-    start = 0
-    while start < len(samples) - 1 and samples[start] == samples[start + 1]:
-        start += 1
-    bits = []
-    i = start + bit // 2
-    while i < len(samples):
-        bits.append(samples[i])
-        i += bit
+    # Classify the pulse widths into short/long; split at their geometric mean
+    # so the boundary sits between the two clusters, not inside one.
+    short, long_ = _kmeans2(burst)
+    if short <= 0 or long_ < short * 1.3:
+        return None                       # no clear two-level structure
+    thr = math.sqrt(short * long_)
+    sym = "".join("1" if r >= thr else "0" for r in burst)
+
+    # A real remote frame opens with an alternating preamble; require one.
+    if "101010" not in sym and "010101" not in sym:
+        return None
+
+    # Trim to the start of the first sustained alternating preamble so the code
+    # begins at the same place every time the same fob is pressed.
+    for i in range(len(sym) - 12):
+        seg = sym[i:i + 12]
+        if seg in ("101010101010", "010101010101"):
+            sym = sym[i:]
+            break
+    # Skip the preamble itself. An uninterrupted alternating run is the
+    # carrier/clock preamble, not data: including it makes the code start with a
+    # constant 0xAA/0x55 prefix that varies with where the capture happened to
+    # cut. Report only the payload, and reject a capture that never got past the
+    # preamble (that is how a lone "55" used to be reported as a code).
+    j = 1
+    while j < len(sym) and sym[j] != sym[j - 1]:
+        j += 1
+    sym = sym[j:].rstrip("0")
+    if len(sym) < 16:
+        return None
 
     hexout = ""
-    for j in range(0, len(bits) - 7, 8):
+    for j in range(0, len(sym) - 7, 8):
         byte = 0
         for k in range(8):
-            byte = (byte << 1) | bits[j + k]
+            byte = (byte << 1) | (1 if sym[j + k] == "1" else 0)
         hexout += "%02X" % byte
-    # A real key fob starts with an alternating-bit preamble, which decodes to
-    # a run of 0xAA or 0x55 regardless of bit alignment. Require at least 3
-    # consecutive identical preamble bytes so scattered noise rejects.
-    if "AAAAAA" not in hexout and "555555" not in hexout:
+    if len(hexout) < 2:
         return None
-    return hexout, bit
+    # unit = the shorter pulse cluster (1 unit of the PWM encoding, so 1/unit is
+    # a rough symbol rate); frames = how many times the device retransmitted
+    # within this capture window.
+    return hexout, max(short, 1.0), frames
 
 
 def handle_line(line):
@@ -212,16 +387,19 @@ def handle_line(line):
                 r = int(parts[2])
                 scan_data[round(f, 1)] = r
                 scan_history.append((time.time() - START_TIME, round(f, 1), r))
-                if record_active:
-                    with open(RECORD_PATH, "a", encoding="utf-8") as rf:
-                        rf.write("SCAN,%.2f,%.1f,%d\n" % (time.time() - START_TIME, round(f, 1), r))
+                _record_append("SCAN,%.2f,%.1f,%d\n"
+                               % (time.time() - START_TIME, round(f, 1), r))
             except (ValueError, OSError):
                 pass
         return
     if line.startswith("CAP "):
         try:
+            # Tag each logged capture with the settings it was taken under, so a
+            # session spanning modulation / data-rate changes stays analysable
+            # (the raw hex alone cannot tell you which mode produced it).
             with open(CAPTURE_PATH, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+                f.write("%s MOD=%d DRATE=%d\n"
+                        % (line, selected_mod, selected_drate))
             raw_captures += 1
             parts = line.split()
             if len(parts) >= 4:
@@ -233,24 +411,35 @@ def handle_line(line):
                     sample_us = 48.0
                 d = decode_cap(parts[3], sample_us)
                 if d:
-                    last_decode = {"hex": d[0], "bit_us": round(d[1] * sample_us)}
-                    # The RSSI path is unreliable on this two-module bus, so a
-                    # successfully decoded capture is itself the event. Dedupe
-                    # consecutive identical codes (a single fob press can
-                    # trigger more than one capture window).
-                    if (not events or events[-1].get("code") != d[0]
-                            or (time.time() - START_TIME) - events[-1]["t"] > 2.0):
+                    code, bit_samples, nbursts = d
+                    unit_us = bit_samples * sample_us
+                    last_decode = {"hex": code, "bit_us": round(unit_us)}
+                    # While a transmission is in progress, tally the code against
+                    # it - the event reports the most common one when it closes.
+                    # Creating a row per capture is what used to fill the table
+                    # with duplicates: one 4 s "signal" row surrounded by several
+                    # 0.00 s "fob" rows that were just fragments of the same press.
+                    if _in_event:
+                        _ev_codes[code] = _ev_codes.get(code, 0) + 1
+                        if nbursts > _ev_bursts:
+                            _ev_bursts = nbursts
+                        if _ev_unit_us is None or unit_us < _ev_unit_us:
+                            _ev_unit_us = unit_us
+                    elif not events or (time.time() - START_TIME) - events[-1]["t"] > 2.0:
                         now = time.time() - START_TIME
                         events.append({
                             "t": round(now, 2),
                             "clock": time.strftime(
                                 "%H:%M:%S", time.localtime(START_TIME + now)),
                             "peak": None,
-                            "duration": round(len(d[0]) / 2 * d[1] * 48e-6, 2),
+                            "duration": None,
                             "freq": selected_freq,
                             "type": "signal",
-                            "label": "fob",
-                            "code": d[0],
+                            "label": None,
+                            "code": code,
+                            "unit_us": round(unit_us),
+                            "repeat_s": None,
+                            "bursts": nbursts,
                         })
         except OSError:
             pass
@@ -293,18 +482,34 @@ def handle_line(line):
         samples.append((t, rssi, freq))
         latest.update({"rssi": rssi, "freq": freq, "t": t})
         _update_events(rssi, freq, t)
-        if record_active:
-            try:
-                with open(RECORD_PATH, "a", encoding="utf-8") as rf:
-                    rf.write("RSSI,%.2f,%s,%d\n" % (t, ("%.1f" % freq) if freq is not None else "", rssi))
-            except OSError:
-                pass
+    # Written outside the lock - see the note on _record_fh above.
+    _record_append("RSSI,%.2f,%s,%d\n"
+                   % (t, ("%.1f" % freq) if freq is not None else "", rssi))
+
+
+def log_setting(name, value):
+    """Append a settings-change marker to the current recording.
+
+    A recording is meant to survive band / modulation / data-rate changes, so
+    without a marker there is no way to tell which settings a given row was
+    taken under (frequency alone does not identify the modulation or rate).
+    """
+    _record_append("SETTING,%.2f,%s,%s\n"
+                   % (time.time() - START_TIME, name, value))
+
+
+def log_current_settings():
+    """Write the active settings so a fresh recording starts self-describing."""
+    log_setting("band_mhz", "%g" % selected_freq)
+    log_setting("modulation", "FSK" if selected_mod == 0 else "ASK/OOK")
+    log_setting("drate_bps", selected_drate)
 
 
 def set_frequency(mhz):
     """Tell the Arduino to retune, and remember the selection."""
     global selected_freq
     selected_freq = float(mhz)
+    log_setting("band_mhz", "%g" % selected_freq)
     with lock:
         s = ser_handle
     if s is not None:
@@ -329,17 +534,43 @@ def clear_history():
         open(CAPTURE_PATH, "w", encoding="utf-8").close()
     except OSError:
         pass
+    # The Record button appends rather than truncating (so a stray press cannot
+    # wipe a log), so Clear is what starts a fresh recording.
+    _record_truncate()
 
 
 def set_modulation(mod):
     """Tell the Arduino to switch modulation (0 = FSK, 2 = ASK/OOK)."""
     global selected_mod
     selected_mod = int(mod)
+    log_setting("modulation", "FSK" if selected_mod == 0 else "ASK/OOK")
     with lock:
         s = ser_handle
     if s is not None:
         try:
             s.write(("MOD %d\n" % selected_mod).encode("ascii"))
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def set_drate(bps):
+    """Tell the Arduino to change the RX data rate (bits/s)."""
+    global selected_drate
+    try:
+        bps = int(bps)
+    except (TypeError, ValueError):
+        return False
+    if not 600 <= bps <= 500000:
+        return False
+    selected_drate = bps
+    log_setting("drate_bps", selected_drate)
+    with lock:
+        s = ser_handle
+    if s is not None:
+        try:
+            s.write(("DRATE %d\n" % selected_drate).encode("ascii"))
             return True
         except Exception:
             return False
@@ -421,6 +652,7 @@ def reader():
             time.sleep(5.0)
             set_frequency(selected_freq)
             set_modulation(selected_mod)
+            set_drate(selected_drate)
             set_tx(tx_on)
             set_sweep(sweep_mode)
             # The boot floor takes a moment to settle (the CC1101 AGC warms up
@@ -596,7 +828,7 @@ poll();
 </html>
 """
 
-HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "readout.html")
+HTML_PATH = os.path.join(HERE, "readout.html")
 
 
 def load_html():
@@ -610,6 +842,10 @@ def load_html():
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        # `global` is required: this method assigns to it below, and without
+        # this line the assignment makes it function-local, so reading it here
+        # raises UnboundLocalError on every request.
+        global _max_data_ms
         if self.path == "/":
             body = load_html().encode("utf-8")
             self.send_response(200)
@@ -618,6 +854,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif self.path == "/data":
+            _t0 = time.perf_counter()
             with lock:
                 pts = [list(p) for p in samples]
                 cur = dict(latest)
@@ -625,9 +862,16 @@ class Handler(BaseHTTPRequestHandler):
                 scan = dict(scan_data)
                 shist = [list(h) for h in scan_history]
                 scan_on = scan_active
+            # How stale the newest reading is. If the serial reader stalls, the
+            # chart simply stops moving, which looks identical to a frozen UI;
+            # this lets the page say which of the two it is.
+            age = None
+            if cur.get("t") is not None:
+                age = round((time.time() - START_TIME) - cur["t"], 1)
             body = json.dumps({"points": pts, "latest": cur, "events": evs,
                                "selected_freq": selected_freq,
                                "selected_mod": selected_mod,
+                               "selected_drate": selected_drate,
                                "tx_on": tx_on,
                                "sweep_mode": sweep_mode,
                                "scan": scan,
@@ -636,7 +880,12 @@ class Handler(BaseHTTPRequestHandler):
                                "record_active": record_active,
                                "raw_captures": raw_captures,
                                "last_decode": dict(last_decode) if last_decode else None,
+                               "sample_age": age,
+                               "max_data_ms": round(_max_data_ms, 1),
                                "port_error": port_error}).encode("utf-8")
+            _elapsed = (time.perf_counter() - _t0) * 1000
+            if _elapsed > _max_data_ms:
+                _max_data_ms = _elapsed
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -668,6 +917,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ok = set_modulation(mod)
             body = json.dumps({"ok": ok, "mod": selected_mod}).encode("utf-8")
+            self.send_response(200 if ok else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/drate":
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                data = json.loads(self.rfile.read(length).decode("utf-8", "ignore"))
+                bps = int(data.get("bps"))
+            except Exception:
+                self.send_response(400)
+                self.end_headers()
+                return
+            ok = set_drate(bps)
+            body = json.dumps({"ok": ok, "bps": selected_drate}).encode("utf-8")
             self.send_response(200 if ok else 503)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -735,11 +1002,9 @@ class Handler(BaseHTTPRequestHandler):
             global record_active
             record_active = not record_active
             if record_active:
-                try:
-                    with open(RECORD_PATH, "w", encoding="utf-8") as f:
-                        f.write("kind,t,freq,value\n")
-                except OSError:
-                    pass
+                _record_open()
+            else:
+                _record_close()
             body = json.dumps({"ok": True, "record_active": record_active}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

@@ -1,0 +1,5 @@
+# Live output of live_readout.py, rewritten continuously during a bench session.
+# Nothing here is worth committing: it is regenerated every time you run the
+# webapp, and it used to make the working tree dirty on every session.
+capture_live.txt
+record_log.csv

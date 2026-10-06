@@ -105,7 +105,13 @@
   }
 
   /* Top bar: eyebrow -> heading -> subtitle, status + theme toggle on the right */
-  .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .topbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;          /* the 7 buttons drop below the title on a phone */
+  }
   .eyebrow {
     font-size: 12px;
     font-weight: 600;
@@ -116,7 +122,7 @@
   }
   h1 { font-size: clamp(24px, 4vw, 42px); font-weight: 700; letter-spacing: -0.01em; line-height: 1.08; }
   .subtitle { color: var(--text-color-accent); font-size: 15px; margin-top: 10px; }
-  .topbar-right { display: flex; align-items: center; gap: 10px; }
+  .topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .pill {
     font-size: 11px;
     font-weight: 600;
@@ -153,7 +159,14 @@
     gap: clamp(16px, 2.5vw, 24px);
     align-items: stretch;
   }
-  @media (max-width: 760px) {
+  /* Grid items default to min-width:auto, so the 9-column events table's
+     min-content width would stretch the chart column past the viewport
+     instead of letting .events-scroll scroll. This is what pushed the page
+     to 921px wide on a 768px screen. */
+  .grid > * { min-width: 0; }
+  /* Stack while the chart card would otherwise be too narrow for the table
+     (~670px of table); below this the two-column split forces it to scroll. */
+  @media (max-width: 900px) {
     .grid { grid-template-columns: 1fr; }
   }
 
@@ -205,6 +218,7 @@
 
   .events { margin-top: 16px; }
   .events .eyebrow { margin-bottom: 8px; }
+  .events-scroll { overflow-x: auto; }
   .events-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .events-table th {
     text-align: left; font-weight: 600; color: var(--text-color-accent);
@@ -244,6 +258,21 @@
   .seg-btn:focus-visible { outline: 2px solid var(--fg-blue); outline-offset: 2px; }
 
   .foot { color: var(--text-color-accent); font-size: 13px; }
+
+  /* Narrow screens: shrink the controls a little so the top bar wraps to two
+     rows rather than four. */
+  @media (max-width: 560px) {
+    .icon-btn { padding: 6px 10px; font-size: 12px; }
+    .topbar-right { gap: 8px; }
+    .shell { gap: 14px; }
+    .readout-num { font-size: clamp(52px, 16vw, 72px); }
+    .events-table { font-size: 12px; }
+    .events-table th, .events-table td { padding: 6px 6px; }
+    /* NB: do NOT let the code cell wrap. `overflow-wrap: anywhere` makes its
+       min-content one character wide, and the auto table layout then collapses
+       the column to ~4 characters per line. A 9-column table is allowed to
+       scroll horizontally on a phone instead. */
+  }
 </style>
 </head>
 <body>
@@ -258,13 +287,13 @@
     </div>
     <div class="topbar-right">
       <span class="pill pill-live" id="status">live</span>
-      <button class="icon-btn" id="txBtn" type="button">TX Off</button>
-      <button class="icon-btn" id="fobBtn" type="button">Fob Burst</button>
-      <button class="icon-btn" id="scanBtn" type="button">Scan</button>
-      <button class="icon-btn" id="recBtn" type="button">Record</button>
-      <button class="icon-btn" id="pauseBtn" type="button">Pause</button>
-      <button class="icon-btn" id="clearBtn" type="button">Clear</button>
-      <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle light and dark theme">Light</button>
+      <button class="icon-btn" id="txBtn" type="button" title="Transmit a continuous carrier from the second module. Use it to prove the receiver hears something: the level should jump, then switch it straight back off. Leave OFF while trying to receive a fob.">TX Off</button>
+      <button class="icon-btn" id="fobBtn" type="button" title="Transmit a synthetic OOK key-fob burst, so you can test the receiver and the decode path without a real key in your hand.">Fob Burst</button>
+      <button class="icon-btn" id="scanBtn" type="button" title="Sweep 300-470 MHz and plot signal strength against frequency, to find which band a device is transmitting on. Pauses the live monitor while it runs; press again to stop.">Scan</button>
+      <button class="icon-btn" id="recBtn" type="button" title="Log every reading to record_log.csv for offline analysis. Stays on while you change band, modulation or data rate, so one file can cover a whole tuning session.">Record</button>
+      <button class="icon-btn" id="pauseBtn" type="button" title="Freeze the chart so you can read it. Data keeps streaming and being logged underneath; press again to resume.">Pause</button>
+      <button class="icon-btn" id="clearBtn" type="button" title="Reset the chart, the event table and the raw-capture counter. Does not change any radio setting.">Clear</button>
+      <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle light and dark theme" title="Switch between the light and dark theme.">Light</button>
     </div>
   </header>
 
@@ -292,13 +321,20 @@
       <div class="freq-select">
         <span class="meta-label">Band</span>
         <div class="segmented" id="freqSeg">
-          <button class="seg-btn active" data-mhz="315" type="button">315 MHz</button>
-          <button class="seg-btn" data-mhz="433.92" type="button">433.92 MHz</button>
+          <button class="seg-btn active" data-mhz="315" type="button" title="315 MHz - most North-American car key fobs, TPMS tyre sensors, and many gate/garage remotes.">315 MHz</button>
+          <button class="seg-btn" data-mhz="433.92" type="button" title="433.92 MHz - European and Asian key fobs, gate and garage remotes, weather stations, and TPMS in some regions.">433.92 MHz</button>
         </div>
         <span class="meta-label">Modulation</span>
         <div class="segmented" id="modSeg">
-          <button class="seg-btn active" data-mod="0" type="button">FSK</button>
-          <button class="seg-btn" data-mod="2" type="button">ASK/OOK</button>
+          <button class="seg-btn active" data-mod="0" type="button" title="2-FSK (frequency shift keying). Use for TPMS tyre sensors and FSK car fobs - Nissan, Mazda, Honda and Toyota tyre sensors are commonly FSK at 315 MHz. Best paired with the 10k data rate.">FSK</button>
+          <button class="seg-btn" data-mod="2" type="button" title="ASK/OOK (amplitude keying). Use for nearly every simple key fob, gate/garage remote and fixed-code remote. Start at the 10k data rate.">ASK/OOK</button>
+        </div>
+        <span class="meta-label">Data rate</span>
+        <div class="segmented" id="drateSeg">
+          <button class="seg-btn" data-bps="2000" type="button" title="2 kbps - older fixed-code remotes (PT2262/EV1527 style) and some gate openers.">2k</button>
+          <button class="seg-btn active" data-bps="10000" type="button" title="10 kbps - the default and the best starting point. Most key fobs and most TPMS sensors run around 9.6-10.5 kbps.">10k</button>
+          <button class="seg-btn" data-bps="19200" type="button" title="19.2 kbps - some TPMS sensors and faster fobs. Try this if captures come back smeared or cut short.">19.2k</button>
+          <button class="seg-btn" data-bps="38400" type="button" title="38.4 kbps - the fastest rate this ~101 kHz channel filter supports. Try it when the demodulated pulses are coming out shorter than one bit at 10k.">38.4k</button>
         </div>
       </div>
     </section>
@@ -322,27 +358,47 @@
           <div class="filter-group">
             <span class="filter-label">Band</span>
             <div class="segmented segmented-sm" id="bandFilter">
-              <button class="seg-btn active" data-v="all" type="button">All</button>
-              <button class="seg-btn" data-v="315" type="button">315</button>
-              <button class="seg-btn" data-v="434" type="button">434</button>
+              <button class="seg-btn active" data-v="all" type="button" title="Show detected transmissions from both bands.">All</button>
+              <button class="seg-btn" data-v="315" type="button" title="Show only 315 MHz transmissions.">315</button>
+              <button class="seg-btn" data-v="434" type="button" title="Show only 433.92 MHz transmissions.">434</button>
             </div>
           </div>
           <div class="filter-group">
             <span class="filter-label">Type</span>
             <div class="segmented segmented-sm" id="typeFilter">
-              <button class="seg-btn active" data-v="all" type="button">All</button>
-              <button class="seg-btn" data-v="signal" type="button">Signal</button>
-              <button class="seg-btn" data-v="noise" type="button">Noise</button>
+              <button class="seg-btn active" data-v="all" type="button" title="Show both sustained transmissions and brief blips.">All</button>
+              <button class="seg-btn" data-v="signal" type="button" title="Show only sustained transmissions - a device that keeps transmitting, like a fob held down or a tyre sensor.">Signal</button>
+              <button class="seg-btn" data-v="noise" type="button" title="Show only brief blips - handy for seeing what the Signal filter is throwing away.">Noise</button>
+            </div>
+          </div>
+          <div class="filter-group">
+            <span class="filter-label">Level</span>
+            <div class="segmented segmented-sm" id="levelFilter">
+              <button class="seg-btn active" data-v="all" type="button" title="Show every detected transmission, near or far.">All</button>
+              <button class="seg-btn" data-v="near" type="button" title="Show only strong signals (-85 dBm and above). A fob held at the antenna reads about -77 to -84, so this keeps nearby devices and drops the weak distant ones.">Near</button>
+              <button class="seg-btn" data-v="far" type="button" title="Show only weak signals (below -85 dBm) - distant or heavily obstructed transmitters.">Far</button>
             </div>
           </div>
         </div>
         <p class="filter-hint">Signal = a real, sustained transmission (fob, tire, or other device). Noise = a brief blip. Telling a tire from a fob needs the raw capture decode.</p>
+        <div class="events-scroll">
         <table class="events-table">
           <thead>
-            <tr><th>Time</th><th>ID</th><th>Code</th><th>Peak</th><th>Duration</th><th>Frequency</th></tr>
+            <tr>
+              <th>Time</th>
+              <th>ID</th>
+              <th>Code</th>
+              <th title="Shortest pulse measured in the capture, in microseconds. One over this is a rough symbol rate: a slow fixed-code remote comes out at hundreds of us, a fast tyre sensor at tens.">Pulse</th>
+              <th title="Time since the previous transmission on this frequency. A tyre sensor repeats metronomically (around 60 s); a fob press is sporadic. This separates your own gear from a city full of other people's far better than signal strength does.">Repeat</th>
+              <th title="How many times the device retransmitted inside the capture (frames separated by a real ~5 ms gap). A fixed-code fob held down repeats the same frame over and over; a one-shot device or a passing car sends a single burst.">Bursts</th>
+              <th>Peak</th>
+              <th>Duration</th>
+              <th>Frequency</th>
+            </tr>
           </thead>
           <tbody id="eventsBody"></tbody>
         </table>
+        </div>
       </div>
     </section>
   </main>
@@ -450,9 +506,7 @@ function draw() {
   }
 
   function eventTypeOf(e) { return e.type || 'noise'; }
-  function eventVisible(e) {
-    return filters.type === 'all' || eventTypeOf(e) === filters.type;
-  }
+  function eventVisible(e) { return eventMatches(e); }
 
   // Shade the transmissions that match the current Type filter.
   if (events.length) {
@@ -501,7 +555,7 @@ function draw() {
   }
 }
 
-var filters = { band: 'all', type: 'all' };
+var filters = { band: 'all', type: 'all', level: 'all' };
 
 // Signal-over-time view while the sweep is active: one line per frequency,
 // all drawn at once. Each line's COLOUR encodes its FREQUENCY (blue=300 MHz,
@@ -572,6 +626,12 @@ function eventMatches(e) {
   if (filters.band === '434' && !(e.freq !== null && e.freq !== undefined && Math.abs(e.freq - 434) <= 2)) return false;
   var t = e.type || 'noise';
   if (filters.type !== 'all' && t !== filters.type) return false;
+  // Level separates "on my desk" from "somewhere down the street". The split
+  // sits at -85 dBm because a fob held at the antenna reads about -77 to -84;
+  // anything weaker than that is further away or more obstructed.
+  var pk = e.peak;
+  if (filters.level === 'near' && !(pk !== null && pk !== undefined && pk >= -85)) return false;
+  if (filters.level === 'far' && !(pk === null || pk === undefined || pk < -85)) return false;
   return true;
 }
 
@@ -580,7 +640,7 @@ function renderEvents() {
   if (!tb) return;
   var countEl = document.getElementById('eventCount');
   if (!events.length) {
-    tb.innerHTML = '<tr><td colspan="6" class="empty">No transmissions detected yet. Press a key fob near the antenna.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="9" class="empty">No transmissions detected yet. Press a key fob near the antenna.</td></tr>';
     if (countEl) countEl.textContent = '';
     return;
   }
@@ -595,17 +655,23 @@ function renderEvents() {
     var pk = (e.peak !== null && e.peak !== undefined) ? e.peak + ' dBm' : '--';
     var id = e.label || e.type || 'noise';
     var code = e.code || '--';
+    var pulse = (e.unit_us !== null && e.unit_us !== undefined) ? e.unit_us + ' us' : '--';
+    var rep = (e.repeat_s !== null && e.repeat_s !== undefined) ? e.repeat_s.toFixed(1) + ' s' : 'first';
+    var bursts = (e.bursts !== null && e.bursts !== undefined) ? e.bursts : '--';
     rows += '<tr>' +
       '<td>' + (e.clock || '--') + '</td>' +
       '<td class="type-' + (e.type || 'noise') + '">' + id + '</td>' +
       '<td class="mono">' + code + '</td>' +
+      '<td>' + pulse + '</td>' +
+      '<td>' + rep + '</td>' +
+      '<td>' + bursts + '</td>' +
       '<td class="peak">' + pk + '</td>' +
       '<td>' + dur + '</td>' +
       '<td>' + fr + '</td>' +
       '</tr>';
   }
   if (!shown) {
-    tb.innerHTML = '<tr><td colspan="6" class="empty">No transmissions match the current filters.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="9" class="empty">No transmissions match the current filters.</td></tr>';
   } else {
     tb.innerHTML = rows;
   }
@@ -649,8 +715,16 @@ function poll() {
     .then(function (res) { return res.json(); })
     .then(function (d) {
       var st = document.getElementById('status');
-      if (d.port_error) { st.textContent = 'port error'; st.className = 'pill pill-err'; }
-      else { st.textContent = 'live'; st.className = 'pill pill-live'; }
+      var age = d.sample_age;
+      if (d.port_error) {
+        st.textContent = 'port error'; st.className = 'pill pill-err';
+      } else if (age !== null && age !== undefined && age > 2.5) {
+        // The reader has stopped feeding us. The chart looks frozen either way,
+        // so say which it is instead of leaving it ambiguous.
+        st.textContent = 'stalled ' + age.toFixed(1) + 's'; st.className = 'pill pill-err';
+      } else {
+        st.textContent = 'live'; st.className = 'pill pill-live';
+      }
       var rc = document.getElementById('rawCount');
       if (rc) rc.textContent = String(d.raw_captures || 0);
       if (d.tx_on !== null && d.tx_on !== undefined) syncTxBtn(d.tx_on);
@@ -668,6 +742,7 @@ function poll() {
       events = d.events || [];
       if (d.selected_freq !== null && d.selected_freq !== undefined) setActiveFreq(d.selected_freq);
       if (d.selected_mod !== null && d.selected_mod !== undefined) setActiveMod(d.selected_mod);
+      if (d.selected_drate !== null && d.selected_drate !== undefined) setActiveDrate(d.selected_drate);
       render();
     })
     .catch(function () {
@@ -726,6 +801,7 @@ function bindFilterGroup(id, key) {
 }
 bindFilterGroup('bandFilter', 'band');
 bindFilterGroup('typeFilter', 'type');
+bindFilterGroup('levelFilter', 'level');
 
 function setActiveMod(mod) {
   var btns = document.querySelectorAll('#modSeg .seg-btn');
@@ -742,6 +818,27 @@ if (modSeg) {
     var mod = btn.dataset.mod;
     setActiveMod(mod);
     fetch('/mod', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mod: Number(mod) }) }).catch(function () {});
+  });
+}
+
+// RX data rate. The fob's pulses are shorter than one bit at 10 kbps, so the
+// slicer smears them; a higher rate reproduces them faithfully. If the CODE
+// column keeps coming back different each press, try the next rate up.
+function setActiveDrate(bps) {
+  var btns = document.querySelectorAll('#drateSeg .seg-btn');
+  for (var i = 0; i < btns.length; i++) {
+    if (btns[i].dataset.bps === String(bps)) btns[i].classList.add('active');
+    else btns[i].classList.remove('active');
+  }
+}
+var drateSeg = document.getElementById('drateSeg');
+if (drateSeg) {
+  drateSeg.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('.seg-btn') : null;
+    if (!btn || !btn.dataset.bps) return;
+    var bps = btn.dataset.bps;
+    setActiveDrate(bps);
+    fetch('/drate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bps: Number(bps) }) }).catch(function () {});
   });
 }
 

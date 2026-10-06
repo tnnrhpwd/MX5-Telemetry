@@ -101,7 +101,7 @@ straight into the Nano's 5 V inputs.
 
 ## 3. Flash the scan sketch
 
-Sketch: `tools/cc1101/cc1101_scan/cc1101_scan.ino`
+Sketch: `tools/cc1101/firmware/cc1101_scan/cc1101_scan.ino`
 
 1. **Install the library** — Arduino IDE → *Tools → Manage Libraries* →
    search **`SmartRC CC1101`** → install **SmartRC-CC1101-Driver-Lib** (V3.x).
@@ -160,7 +160,7 @@ a GDO handshake.
 
 ### Firmware
 
-Sketch: `tools/cc1101/pio_loopback/` (PlatformIO project, board
+Sketch: `tools/cc1101/firmware/pio_loopback/` (PlatformIO project, board
 `nanoatmega328`). Its `main.cpp` drives **two** `SmartRC_CC1101` objects over
 one shared SPI bus: the receiver on `CSN D10`, the transmitter on `CSN D9`.
 
@@ -175,7 +175,7 @@ Serial commands (115200):
 
 1. Stop anything else holding COM3 (e.g. the live-readout webapp).
 2. Build & upload:
-   `pio run -d tools/cc1101/pio_loopback --target upload`
+   `pio run -d tools/cc1101/firmware/pio_loopback --target upload`
 3. Open a monitor at 115200. Expect `RX FOUND`, `TX FOUND`, `READY`, then a
    stream of `433.920 MHz   RSSI=xx dBm` lines.
 

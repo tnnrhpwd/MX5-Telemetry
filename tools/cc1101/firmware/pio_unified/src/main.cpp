@@ -12,6 +12,7 @@
  * Serial commands (from the webapp):
  *   "FREQ 434.0" -> retune
  *   "MOD 0"      -> 2-FSK (TPMS)     "MOD 2" -> ASK/OOK (key fobs)
+ *   "DRATE 10000" -> RX data rate in bits/s (must match the target signal)
  *
  * The CC1101 runs in asynchronous serial mode: the raw demodulated data comes
  * out on GDO0, while the RSSI register stays valid for the live feed.
@@ -33,9 +34,11 @@ SmartRC_CC1101 tx;       // second module as a test transmitter (CSN D9)
 #define CC1101_TX_CSN 9
 
 #define CAP_BYTES       600    // 600 bytes = 4800 samples per window
-#define SAMPLE_DELAY_US 45     // ~48 us/sample -> ~21 kHz. At a 2 kbps fob
-                               // rate (~480 us/bit) that's ~10 samples/bit and
-                               // a ~230 ms window — enough for a full frame.
+#define SAMPLE_DELAY_US 10     // ~11 us/sample -> a ~48 ms window. This fob is
+                               // ~10 kbps, so a bit is ~100 us: at 10 us/sample
+                               // that is ~10 samples/bit, which is decodable.
+                               // The earlier 45 us/sample gave only ~2 samples
+                               // per bit, so no fob frame could ever decode.
 #define PROBE_SAMPLES   2000   // raw GDO0 samples for the burst detector
 #define PROBE_MIN_EDGES 6      // edges above this => a real signal
 
@@ -43,6 +46,12 @@ float currentMHz = 315.0;
 byte currentMod = 2;      // 0 = 2-FSK, 2 = ASK/OOK. The library's Init()
                           // already defaults to OOK (modulation=2) + async
                           // serial mode; the fobs are OOK, so stay on 2.
+// RX data rate in bits/s. 10 kbps is what this 315 MHz OOK fob transmits at:
+// it is why the fob used to put ~120 GDO0 edges into a 24 ms window (~-72 dBm
+// on the edge-rate proxy) while a 2 kbps setting left it at ~-102 dBm, i.e.
+// almost invisible. The live level is an EDGE RATE, so it scales with this
+// value — the RX rate must match the signal being hunted.
+uint32_t currentDRate = 10000;
 bool txOn = false;
 static byte buf[CAP_BYTES];
 
@@ -56,7 +65,7 @@ int sweepEdges = 0;
 uint8_t sweepPrev = 0;
 unsigned long sweepStepStart = 0;
 
-void configRadioOok(float mhz);   // forward decl (defined below rawWriteReg)
+void configRadio(float mhz);   // forward decl (defined below rawWriteReg)
 void applyAsyncConfig();
 void rawRxStrobe(byte cmd);
 void rawWriteBurst(byte addr, const byte* buf, byte n);
@@ -81,14 +90,14 @@ bool probeSignal() {
 }
 
 
-void captureAndDump() {
+void captureAndDump(uint8_t delayUs) {
   unsigned long t0 = micros();
   for (int i = 0; i < CAP_BYTES; i++) {
     byte b = 0;
     for (int k = 0; k < 8; k++) {
       b <<= 1;
       if (PIND & 0x04) b |= 1;   // GDO0 on D2 = PD2
-      delayMicroseconds(SAMPLE_DELAY_US);
+      if (delayUs) delayMicroseconds(delayUs);
     }
     buf[i] = b;
   }
@@ -111,7 +120,7 @@ void applyAsyncConfig() {
   // Re-assert the full OOK config raw (no WaitMiso skipping), then enter RX
   // TWICE with a settle matching the boot: the first SRX reads flat, the
   // second completes the AGC/RSSI calibration to the quiet floor.
-  configRadioOok(currentMHz);
+  configRadio(currentMHz);
   radio.SetRx();
   delay(300);
   radio.SetRx();
@@ -119,9 +128,9 @@ void applyAsyncConfig() {
 }
 
 
-// RX configuration after a retune: full raw OOK config at the new frequency.
+// RX configuration after a retune: full raw config at the new frequency.
 void tuneRx(float f, float bwKHz) {
-  configRadioOok(f);
+  configRadio(f);
   radio.SetRx();
   delay(300);
   radio.SetRx();
@@ -353,10 +362,28 @@ void txLoopback() {
 }
 
 
-// Full explicit OOK RX config for 315 MHz (TI SmartRF values). Written raw
-// because the library's WaitMiso()-gated writes skip on this setup. This is
-// the config that reads a live 315 MHz OOK noise floor.
-void configRadioOok(float mhz) {
+// Program the RX data rate from bits/s. rate = ((256 + DRATE_M) * 2^DRATE_E *
+// F_OSC) / 2^28, so (256 + DRATE_M) * 2^DRATE_E = bps * 2^28 / F_OSC. The
+// channel-bandwidth bits (MDMCFG4 high nibble) stay at 0xC0 (~101 kHz), which
+// suits any rate in this range.
+static void writeDRate(uint32_t bps) {
+  if (bps < 600) bps = 600;
+  if (bps > 500000) bps = 500000;
+  uint32_t target = (uint32_t)(((uint64_t)bps << 28) / 26000000ULL);
+  int e = 0;
+  while (e < 15 && (target >> (e + 1)) >= 256) e++;
+  uint32_t m = (target + (1UL << e) / 2) >> e;   // round to nearest
+  if (m < 256) m = 256;
+  if (m > 511) m = 511;
+  rawWriteReg(CC1101_MDMCFG4, (byte)(0xC0 | (e & 0x0F)));
+  rawWriteReg(CC1101_MDMCFG3, (byte)(m - 256));
+}
+
+
+// Full explicit RX config for 315 MHz (TI SmartRF values), for whichever
+// modulation currentMod selects. Written raw because the library's
+// WaitMiso()-gated writes skip on this two-module setup.
+void configRadio(float mhz) {
   // Enter IDLE before touching the FREQ registers. The CC1101 only runs its
   // frequency/AGC calibration (FS_AUTOCAL, MCSM0=0x18) on an IDLE->RX
   // transition, so retuning while still in RX leaves the VCO on the old
@@ -385,19 +412,27 @@ void configRadioOok(float mhz) {
   rawWriteReg(CC1101_FSCTRL1, 0x06);
   rawWriteReg(CC1101_FSCTRL0, fst);
 
-  // ASK/OOK, no manchester, no sync
-  rawWriteReg(CC1101_MDMCFG2, 0x30);
+  // Modulation. MDMCFG2[6:4]: 000 = 2-FSK, 011 = ASK/OOK; no manchester and no
+  // sync either way. FREND0 bit 0 selects the OOK PA/LNA path.
+  // This block used to be hardcoded to OOK, so "MOD 0" (FSK) from the webapp
+  // only set currentMod and left the radio configured as OOK — the FSK button
+  // did nothing, which made an FSK/ASK comparison impossible.
+  if (currentMod == 0) {
+    rawWriteReg(CC1101_MDMCFG2, 0x00);   // 2-FSK
+    rawWriteReg(CC1101_FREND0, 0x10);
+    rawWriteReg(CC1101_DEVIATN, 0x43);   // ~35 kHz deviation
+  } else {
+    rawWriteReg(CC1101_MDMCFG2, 0x30);   // ASK/OOK
+    rawWriteReg(CC1101_FREND0, 0x11);    // OOK PA/LNA path
+    rawWriteReg(CC1101_DEVIATN, 0x47);   // unused when OOK
+  }
   rawWriteReg(CC1101_MDMCFG1, 0x22);
   rawWriteReg(CC1101_MDMCFG0, 0xF8);
 
-  // Channel BW ~101 kHz, data rate ~4.8 kbps
-  rawWriteReg(CC1101_MDMCFG4, 0xC8);
-  rawWriteReg(CC1101_MDMCFG3, 0x93);
-  rawWriteReg(CC1101_DEVIATN, 0x47);
+  // Channel BW ~101 kHz (MDMCFG4 high nibble 0xC0) at the current data rate.
+  writeDRate(currentDRate);
 
-  // OOK front-end (bit 0 of FREND0 = OOK LNA path)
   rawWriteReg(CC1101_FREND1, 0x56);
-  rawWriteReg(CC1101_FREND0, 0x11);
 
   // AGC: AGC_FREEZE=1 (AGCCTRL0=0xB2) quiets the OOK slicer at idle, while
   // MAX_DVGA_GAIN=0 keeps the digital gain from railing the RSSI to a constant.
@@ -463,7 +498,7 @@ void sweepStop() {
 void sweepTick() {
   if (!sweepActive) return;
   if (sweepStage == 0) {
-    configRadioOok(sweepFreq);
+    configRadio(sweepFreq);
     radio.SetRx();
     sweepEdges = 0;
     sweepPrev = (PIND & 0x04) ? 1 : 0;
@@ -516,6 +551,16 @@ void handleCommands() {
         Serial.print(F("MOD_OK "));
         Serial.println(m);
       }
+    } else if (cmd.startsWith("DRATE ")) {
+      uint32_t bps = (uint32_t)cmd.substring(6).toInt();
+      if (bps >= 600 && bps <= 500000) {
+        currentDRate = bps;
+        applyAsyncConfig();   // raw config + double SetRx at the new rate
+        Serial.print(F("DRATE_OK "));
+        Serial.println(bps);
+      } else {
+        Serial.println(F("DRATE_BAD"));
+      }
     } else if (cmd == "TXON") {
       tx.Init();
       tx.setMHZ(currentMHz);
@@ -561,6 +606,10 @@ void handleCommands() {
       rawTxStrobe(CC1101_SRES);   // full software reset — guaranteed off
       txOn = false;
       Serial.println(F("TX_OFF"));
+    } else if (cmd == "FASTCAP") {
+      // Diagnostic: capture with NO inter-sample delay (tight loop, ~1-2 MHz)
+      // so the true GDO0 waveform is visible instead of an alias of it.
+      captureAndDump(0);
     } else if (cmd == "SCAN") {
       // Toggle the continuous sweep: on -> off, off -> on.
       if (sweepActive) sweepStop();
@@ -610,10 +659,10 @@ void setup() {
   // the burst probe/capture reads garbage.
   pinMode(CC1101_GDO0, INPUT);
 
-  // Write the full OOK config ourselves (raw SPI, no WaitMiso skipping), then
+  // Write the full RX config ourselves (raw SPI, no WaitMiso skipping), then
   // enter RX twice — the first SRX after power-on reads flat, the second one
   // completes the AGC/RSSI calibration and the floor reads live.
-  configRadioOok(currentMHz);
+  configRadio(currentMHz);
   radio.SetRx();
   delay(500);
   radio.SetRx();
@@ -683,6 +732,6 @@ void loop() {
   static unsigned long lastCap = 0;
   if (probeSignal() && millis() - lastCap > 350) {
     lastCap = millis();
-    captureAndDump();
+    captureAndDump(SAMPLE_DELAY_US);
   }
 }
