@@ -458,8 +458,9 @@ void sweepStop() {
 
 // Non-blocking: called every loop() while the sweep is active. One PIND sample
 // per call (4 us apart), so the loop stays responsive and a "SCAN" toggle is
-// honoured within one 24 ms step. The sweep only reports; it never locks, so a
-// recording runs uninterrupted for as long as it is left on.
+// honoured within one 24 ms step. The sweep runs continuously (no auto-lock):
+// it just emits "SCAN <freq> <edges>" for every step so the webapp can plot
+// and record the whole band.
 void sweepTick() {
   if (!sweepActive) return;
   if (sweepStage == 0) {

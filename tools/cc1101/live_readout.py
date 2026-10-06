@@ -232,8 +232,12 @@ def handle_line(line):
                 scan_data[round(f, 1)] = r
                 scan_history.append((time.time() - START_TIME, round(f, 1), r))
                 if record_active:
+                    # Record the exact values the signal-over-time chart plots:
+                    # time, frequency, and the dBm-mapped edge count.
+                    x = min(max(r, 0), 250)
+                    dbm = int(round(-110 + (80 * x / 250.0)))
                     with open(RECORD_PATH, "a", encoding="utf-8") as rf:
-                        rf.write("SCAN,%.2f,%.1f,%d\n" % (time.time() - START_TIME, round(f, 1), r))
+                        rf.write("SCAN,%.2f,%.1f,%d,%d\n" % (time.time() - START_TIME, round(f, 1), r, dbm))
             except (ValueError, OSError):
                 pass
         return
@@ -312,12 +316,6 @@ def handle_line(line):
         samples.append((t, rssi, freq))
         latest.update({"rssi": rssi, "freq": freq, "t": t})
         _update_events(rssi, freq, t)
-        if record_active:
-            try:
-                with open(RECORD_PATH, "a", encoding="utf-8") as rf:
-                    rf.write("RSSI,%.2f,%s,%d\n" % (t, ("%.1f" % freq) if freq is not None else "", rssi))
-            except OSError:
-                pass
 
 
 def set_frequency(mhz):
@@ -787,7 +785,7 @@ class Handler(BaseHTTPRequestHandler):
             if record_active:
                 try:
                     with open(RECORD_PATH, "w", encoding="utf-8") as f:
-                        f.write("kind,t,freq,value\n")
+                        f.write("kind,t,freq,edges,dbm\n")
                 except OSError:
                     pass
             body = json.dumps({"ok": True, "record_active": record_active}).encode("utf-8")
