@@ -189,6 +189,11 @@
   .card-head .eyebrow { margin-bottom: 0; }
   .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-color-accent); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .freq-legend { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; }
+  .freq-bar {
+    width: 90px; height: 8px; border-radius: 2px; display: inline-block;
+    background: linear-gradient(90deg, hsl(220,85%,60%), hsl(165,85%,60%), hsl(110,85%,60%), hsl(55,85%,60%), hsl(0,85%,60%));
+  }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .dot-quiet { background: var(--fg-mint); }
   .dot-elev { background: var(--fg-orange); }
@@ -302,9 +307,9 @@
       <div class="card-head">
         <p class="eyebrow">Signal over time</p>
         <div class="legend">
-          <span><i class="dot dot-strong"></i>strong</span>
-          <span><i class="dot dot-elev"></i>elevated</span>
-          <span><i class="dot dot-quiet"></i>quiet</span>
+          <span class="freq-legend">
+            <span>300</span><i class="freq-bar"></i><span>470 MHz</span>
+          </span>
         </div>
       </div>
       <div class="chart-box" id="chart-box"><canvas id="c"></canvas></div>
@@ -352,7 +357,7 @@
       </div>
     </div>
     <div class="spectrum-box" id="spectrum-box"><canvas id="spec"></canvas></div>
-    <p class="filter-hint">dBm vs frequency (continuous sweep). Hold a fob and its frequency spikes on this wave; the signal-over-time chart above plots every frequency as its own colour-coded line (blue = 300 MHz, red = 470 MHz).</p>
+    <p class="filter-hint">dBm vs frequency (continuous sweep). Hold a fob and its frequency spikes on this wave. The signal-over-time chart above is a waterfall: time on X, frequency on Y, brightness = strength — a held fob paints a bright band at its frequency.</p>
   </section>
 
   <footer class="foot">Press a 315 MHz key fob or garage remote near the antenna to test.</footer>
@@ -517,42 +522,38 @@ function drawSweep() {
   var tmin = tmax - WINDOW;
   var YMAX = -20, YMIN = -110;
 
-  function sx(t) { return ((t - tmin) / WINDOW) * w; }
-  function sy(dbm) { return h - ((dbm - YMIN) / (YMAX - YMIN)) * h; }
+  function xOf(t) { return ((t - tmin) / WINDOW) * w; }
+  function yOf(dbm) { return h - ((dbm - YMIN) / (YMAX - YMIN)) * h; }
 
   // Y grid in dBm.
   for (var gy = YMIN; gy <= YMAX; gy += 15) {
-    var py = sy(gy);
+    var py = yOf(gy);
     ctx.strokeStyle = gridColor;
     ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
     ctx.fillStyle = labelColor;
     ctx.fillText(String(gy), 8, py - 4);
   }
 
-  // Group the sweep history by frequency so each frequency gets its own line.
-  var byFreq = {};
+  // The scan_history is in sweep order (300 -> 470 MHz every ~24 ms), so
+  // connecting consecutive samples in time gives a continuous trace. Each
+  // short segment is coloured by the frequency it was measured at; the line
+  // breaks when the sweep folds back (470 -> 300) so each pass is its own line.
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  var prev = null;
   for (var i = 0; i < scanHistory.length; i++) {
     var p = scanHistory[i];
-    if (p[0] < tmin) continue;
-    var key = String(p[1]);
-    if (!byFreq[key]) byFreq[key] = [];
-    byFreq[key].push([p[0], edgeToDbm(p[2])]);
-  }
-
-  // Draw each frequency's line, coloured by frequency.
-  var freqs = Object.keys(byFreq).map(Number).sort(function (a, b) { return a - b; });
-  for (var i = 0; i < freqs.length; i++) {
-    var arr = byFreq[String(freqs[i])];
-    if (arr.length < 2) continue;
-    ctx.strokeStyle = freqColor(freqs[i]);
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    for (var j = 0; j < arr.length; j++) {
-      var x = sx(arr[j][0]), y = sy(arr[j][1]);
-      if (j === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    if (p[0] < tmin) { prev = null; continue; }
+    var x = xOf(p[0]);
+    var y = yOf(edgeToDbm(p[2]));
+    if (prev && !(p[1] < prev[2] - 50)) {   // not a wrap
+      ctx.strokeStyle = freqColor(p[1]);
+      ctx.beginPath();
+      ctx.moveTo(prev[0], prev[1]);
+      ctx.lineTo(x, y);
+      ctx.stroke();
     }
-    ctx.stroke();
+    prev = [x, y, p[1]];
   }
 
   // Y-axis caption.

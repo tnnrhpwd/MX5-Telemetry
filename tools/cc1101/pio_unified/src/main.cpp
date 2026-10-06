@@ -458,9 +458,8 @@ void sweepStop() {
 
 // Non-blocking: called every loop() while the sweep is active. One PIND sample
 // per call (4 us apart), so the loop stays responsive and a "SCAN" toggle is
-// honoured within one 24 ms step. When a step's edge count exceeds the lock
-// threshold, the sweep stops and stays tuned to that frequency so the burst
-// probe can capture the fob's demodulated code.
+// honoured within one 24 ms step. The sweep cycles 300->348 and 420->470 MHz
+// continuously; the webapp records the per-step edge rate as a signal proxy.
 void sweepTick() {
   if (!sweepActive) return;
   if (sweepStage == 0) {
@@ -481,8 +480,8 @@ void sweepTick() {
       Serial.print(' ');
       Serial.println(sweepEdges);
       sweepFreq += 0.5f;
-      if (sweepFreq > 348.05f) sweepFreq = 420.0f;
-      if (sweepFreq > 470.05f) sweepFreq = 300.0f;
+      if (sweepFreq > 348.05f && sweepFreq < 420.0f) sweepFreq = 420.0f;   // 348 band -> 420 band
+      else if (sweepFreq > 470.05f) sweepFreq = 300.0f;                     // wrap back to start
       sweepStage = 0;
     }
   }
@@ -652,26 +651,27 @@ void loop() {
     return;
   }
 
-  // Live RSSI line every ~50 ms (4-read average for a steadier chart).
+  // Live level line every ~50 ms. The RSSI register read is unreliable on this
+  // two-module bus, so measure the GDO0 edge rate over a short window and map
+  // it to a dBm-like scale (same one the sweep uses): a quiet channel reads
+  // ~-107 dBm, and a fob burst spikes it upward.
   static unsigned long lastRssi = 0;
   if (millis() - lastRssi >= 50) {
     lastRssi = millis();
-    long sum = 0;
-    for (int i = 0; i < 4; i++) {
-      sum += radio.getRssi();
-      delay(1);
+    int edges = 0;
+    uint8_t prev = (PIND & 0x04) ? 1 : 0;
+    unsigned long t0 = millis();
+    while (millis() - t0 < 24) {
+      uint8_t cur = (PIND & 0x04) ? 1 : 0;
+      if (cur != prev) edges++;
+      prev = cur;
+      delayMicroseconds(4);
     }
-    int rssi = (int)(sum / 4);
+    int rssi = -110 + (80 * (edges > 250 ? 250 : edges)) / 250;
     Serial.print(currentMHz, 3);
     Serial.print(F(" MHz   RSSI="));
     Serial.print(rssi);
     Serial.println(F(" dBm"));
-
-    // NOTE: the old auto-recovery (re-apply config when RSSI > -30) is gone.
-    // On this two-module bus the RSSI register reads an unreliable value, so
-    // that recovery loop re-configured the RX every 3 s for no reason and
-    // glitched the GDO0 capture path. Transmission detection now keys off the
-    // decoded GDO0 captures, not RSSI.
   }
 
   // Raw burst capture, triggered by GDO0 activity. Debounced just enough to
