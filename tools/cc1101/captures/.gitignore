@@ -3,3 +3,10 @@
 # webapp, and it used to make the working tree dirty on every session.
 capture_live.txt
 record_log.csv
+
+# devices.json is the OPPOSITE case and is deliberately tracked: it holds the
+# enrolled device signatures shown by the indicator, which can only be recreated
+# by physically pressing each fob again. The negation below is redundant while
+# no broader pattern exists, and is here so that adding one later cannot quietly
+# start ignoring the user's enrolments.
+!devices.json

@@ -1,0 +1,24 @@
+{
+  "Nissan Fob": {
+    "color": "#4f9de0",
+    "sig": {
+      "long_us": 809,
+      "n_runs": 70,
+      "period_match": 0.0,
+      "period_syms": null,
+      "ratio": 7.18,
+      "short_us": 113
+    }
+  },
+  "Nissan Fob 2": {
+    "color": "#4fd0c0",
+    "sig": {
+      "long_us": 344,
+      "n_runs": 55,
+      "period_match": 0.0,
+      "period_syms": null,
+      "ratio": 4.5,
+      "short_us": 76
+    }
+  }
+}
