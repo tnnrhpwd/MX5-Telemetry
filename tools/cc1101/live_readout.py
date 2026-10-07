@@ -38,6 +38,11 @@ lock = threading.Lock()
 samples = deque(maxlen=600)          # (t, rssi, freq)
 latest = {"rssi": None, "freq": None, "t": None}
 port_error = None
+# Sticky reader diagnostics. A crash in handle_line used to be invisible: the
+# reconnect clears port_error moments later, so all the user saw was ~9 s of
+# frozen UI with no explanation.
+last_reader_error = None
+reconnects = 0
 selected_freq = 315.0
 selected_mod = 2          # 0 = 2-FSK (TPMS), 2 = ASK/OOK (key fobs) — fobs are OOK
 # RX data rate in bits/s. This gates the SHORTEST pulse the slicer can
@@ -163,10 +168,16 @@ EVENT_MIN_ABOVE = 3
 def _update_events(rssi, freq, t):
     global _floor, _in_event, _ev_start, _ev_peak, _ev_freq, _below_count, _ev_above
     global _ev_bursts, _ev_unit_us
-    if _floor is None:
-        _floor = float(rssi)
-    else:
-        _floor = _floor * 0.98 + rssi * 0.02
+    # Track the quiet baseline ONLY while idle. Adapting it during a
+    # transmission let it climb towards the signal's own level, so when the
+    # press ended the return to -110 looked like another large deviation and
+    # was not recognised as the end of the event - three separate presses were
+    # reported as one long transmission.
+    if not _in_event:
+        if _floor is None:
+            _floor = float(rssi)
+        else:
+            _floor = _floor * 0.98 + rssi * 0.02
 
     if not _in_event:
         # Trigger on a large deviation EITHER way: depending on the CC1101's
@@ -191,10 +202,21 @@ def _update_events(rssi, freq, t):
             _below_count += 1
             if _below_count >= 3:
                 duration = t - _ev_start
-                if duration >= EVENT_MIN_S and _ev_above >= EVENT_MIN_ABOVE:
+                # A brief transmission can only ever land in ONE RSSI sample.
+                # A 2008 MX-5 fob pulses for a few ms about once a second, and
+                # the probe watches a 24 ms window every ~50 ms - so the pulse
+                # is usually missed outright and can never produce the three
+                # above-threshold samples EVENT_MIN_ABOVE demanded. That made
+                # the fob invisible in the table even though its spikes are
+                # obvious in the chart. Accept a single sample when the
+                # deviation is unambiguous; keep the count rule for marginal
+                # ones so ordinary noise still cannot open an event.
+                strong = abs(_ev_peak - _floor) >= EVENT_RISE_DB * 1.5
+                if duration >= EVENT_MIN_S and (_ev_above >= EVENT_MIN_ABOVE
+                                                or (strong and _ev_above >= 1)):
                     clock = time.strftime(
                         "%H:%M:%S", time.localtime(START_TIME + _ev_start))
-                    etype = "signal" if duration >= 0.25 else "noise"
+                    etype = "signal" if (duration >= 0.25 or strong) else "noise"
                     # Identify the transmission. One press fires several capture
                     # windows, so report the code seen MOST during this event
                     # rather than whatever decode happened to land last.
@@ -249,6 +271,203 @@ def _kmeans2(vals):
             break
         a, b = na, nb
     return a, b
+
+
+# --- device signatures ----------------------------------------------------
+# A signature identifies a DEVICE FAMILY, not a payload - deliberately. It is
+# built from timing and structure only, so it still works for a rolling-code
+# remote where the payload carries no identity at all. Pulse widths also survive
+# a marginal demodulator far better than payload bits do: the fob whose code
+# will not decode still has a perfectly recognisable short/long structure.
+#
+# The honest limit, and the reason this is not a payload comparison: it tells a
+# Mazda fob from a Nissan one, NOT one Mazda fob from another.
+DEVICES_PATH = os.path.join(CAPTURES_DIR, "devices.json")
+_devices = {}
+last_signature = None
+last_device = None
+_DEVICE_COLORS = ["#e06c4f", "#4f9de0", "#7fd06a", "#d6b23c",
+                  "#b07fd6", "#4fd0c0"]
+# The indicator is MOMENTARY, not latching. A match lights the chip when the
+# device is detected and the light goes out this many seconds later, so the page
+# answers "is it transmitting now?" rather than leaving the last device lit for
+# ever. A device that keeps transmitting (the MX-5 fob pulses about once a
+# second) re-arms this on every capture, so it stays lit while the button is
+# held and fades out ~3 s after the last pulse.
+DEVICE_HOLD_S = 3.0
+
+
+def _pick_color(name):
+    return _DEVICE_COLORS[sum(ord(c) for c in name) % len(_DEVICE_COLORS)]
+
+
+def _load_devices():
+    global _devices
+    try:
+        with open(DEVICES_PATH, encoding="utf-8") as f:
+            loaded = json.load(f)
+        _devices = loaded if isinstance(loaded, dict) else {}
+    except (OSError, ValueError):
+        _devices = {}
+
+
+def _save_devices():
+    try:
+        with open(DEVICES_PATH, "w", encoding="utf-8") as f:
+            json.dump(_devices, f, indent=2, sort_keys=True)
+    except OSError:
+        pass
+
+
+def _cap_runs(hexstr):
+    """Run lengths of a CAP hex string.
+
+    Deliberately a separate expansion rather than a new return value from
+    decode_cap(): the signature has to be computable for captures that do NOT
+    decode, which is most of them.
+    """
+    samples = []
+    for ch in hexstr:
+        if ch not in "0123456789abcdefABCDEF":
+            continue
+        v = int(ch, 16)
+        for k in (3, 2, 1, 0):
+            samples.append((v >> k) & 1)
+    if len(samples) < 64:
+        return []
+    runs, prev, run = [], samples[0], 1
+    for s in samples[1:]:
+        if s == prev:
+            run += 1
+        else:
+            runs.append(run)
+            prev, run = s, 1
+    runs.append(run)
+    return runs
+
+
+def _period_of(sym, lo=40, hi=400):
+    """Best repeating unit in the symbol stream: (length, match fraction).
+
+    A fixed-code remote repeats its whole frame INSIDE one capture, so this is
+    its frame length. A rolling one repeats only the preamble, giving a short
+    period. Either way the length is a device trait worth recording.
+    """
+    best, blen = 0.0, None
+    for L in range(lo, hi + 1):
+        n = len(sym) - L
+        if n < 40:
+            break
+        m = sum(1 for i in range(n) if sym[i] == sym[i + L]) / float(n)
+        if m > best:
+            best, blen = m, L
+    if blen is None or best < 0.85:
+        return None, 0.0
+    return blen, best
+
+
+def _signature(runs, sample_us):
+    # Keep only the longest gap-free stretch FIRST. A run of 24 ms is silence
+    # between repeats, not a pulse, and clustering it in with the pulses made a
+    # capture that was mostly idle look like a device with a 109x ratio - a
+    # signature with no meaning that would happily enrol and then match nothing.
+    best, cur = [], []
+    for r in runs:
+        if r > FRAME_GAP:
+            if len(cur) > len(best):
+                best = cur
+            cur = []
+        else:
+            cur.append(r)
+    if len(cur) > len(best):
+        best = cur
+    runs = best
+    if len(runs) < 16:
+        return None
+    short, long_ = _kmeans2(runs)
+    if short <= 0 or long_ < short * 1.5:
+        return None                      # not a clean two-level symbol stream
+    if long_ * sample_us > 2000:
+        return None                      # a 2 ms "symbol" is not a data pulse
+    thr = math.sqrt(short * long_)
+    sym = "".join("1" if r >= thr else "0" for r in runs)
+    plen, pmatch = _period_of(sym)
+    return {
+        "short_us": round(short * sample_us),
+        "long_us": round(long_ * sample_us),
+        "ratio": round(long_ / short, 2),
+        "period_syms": plen,
+        "period_match": round(pmatch, 3),
+        "n_runs": len(runs),
+    }
+
+
+def _sig_score(a, b):
+    """Fraction of comparable timing fields that agree; None if too few."""
+    compared = matched = 0
+    for key, tol in (("short_us", 0.30), ("long_us", 0.30),
+                     ("ratio", 0.25), ("period_syms", 0.20)):
+        x, y = a.get(key), b.get(key)
+        if x is None or y is None:
+            continue
+        compared += 1
+        denom = max(abs(x), abs(y)) or 1
+        if abs(x - y) / float(denom) <= tol:
+            matched += 1
+    if compared < 3:
+        return None
+    return matched / float(compared)
+
+
+def _match_device(sig):
+    """Best enrolled device for this signature, or None."""
+    best, bname = 0.0, None
+    for name, dev in _devices.items():
+        s = _sig_score(sig, (dev or {}).get("sig") or {})
+        if s is not None and s > best:
+            best, bname = s, name
+    if bname is None or best < 0.75:      # 4 timing fields -> need at least 3
+        return None
+    return {"name": bname, "score": round(best, 2)}
+
+
+def _fresh_device():
+    """The matched device only while it is still fresh, else None.
+
+    Named rather than inlined into the /data handler so the momentary behaviour
+    can be unit-tested without a running server; inlined, the only way to check
+    it would be to watch the page and trust my eyes.
+    """
+    if not last_device:
+        return None
+    age = (time.time() - START_TIME) - last_device.get("t", -1e9)
+    return last_device if age <= DEVICE_HOLD_S else None
+
+
+def _refine_device(name, sig):
+    """Fold a fresh sighting into an enrolled signature.
+
+    Enrolment captures ONE burst, and a marginal capture produces a signature
+    that describes that capture rather than the device: the two enrolments in
+    this project came out differing by 32 % in short_us and 58 % in long_us,
+    which is more than a model difference should be. Blending every later match
+    in at 20 % converges on the device's real timing and quietly repairs a bad
+    first enrolment, so the user does not have to re-enrol and hope.
+    """
+    ref = (_devices.get(name) or {}).get("sig")
+    if not ref:
+        return
+    moved = False
+    for key in ("short_us", "long_us", "ratio"):
+        a, b = ref.get(key), sig.get(key)
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            ref[key] = round(a * 0.8 + b * 0.2, 2)
+            moved = True
+    if moved:
+        _save_devices()
+
+
+_load_devices()
 
 
 def decode_cap(hexstr, sample_us=48.0):
@@ -319,7 +538,25 @@ def decode_cap(hexstr, sample_us=48.0):
         bursts.append(cur)
     if not bursts:
         return None
-    burst = max(bursts, key=len)
+
+    # Try EVERY burst, longest first, and return the first that yields a frame.
+    # Taking only the longest was wrong: the longest burst is often a fragment
+    # cut by an idle gap - it carries no preamble and decoded to nothing - while
+    # a shorter burst in the same capture IS a complete frame. That discarded
+    # good frames and left the reported code changing from capture to capture.
+    for burst in sorted(bursts, key=len, reverse=True):
+        got = _decode_burst(burst)
+        if got:
+            return got[0], got[1], frames
+    return None
+
+
+def _decode_burst(burst):
+    """Classify one burst's runs into short/long and pack its payload.
+
+    Returns (hex, unit_samples) or None if this burst is not a clean frame.
+    Layout assumed: an alternating preamble, then the payload.
+    """
     if len(burst) < 12:
         return None
 
@@ -363,13 +600,20 @@ def decode_cap(hexstr, sample_us=48.0):
     if len(hexout) < 2:
         return None
     # unit = the shorter pulse cluster (1 unit of the PWM encoding, so 1/unit is
-    # a rough symbol rate); frames = how many times the device retransmitted
-    # within this capture window.
-    return hexout, max(short, 1.0), frames
+    # a rough symbol rate).
+    return hexout, max(short, 1.0)
 
 
 def handle_line(line):
     global port_error, raw_captures, scan_active, last_decode, events
+    # _ev_bursts and _ev_unit_us are ASSIGNED below, so they must be declared
+    # global here. Without this they become locals, and reading them before the
+    # first assignment raises UnboundLocalError - which aborted the whole reader
+    # and cost a 2+5+2 = 9 second reconnect every time a capture decoded while a
+    # transmission was in progress.
+    global _ev_bursts, _ev_unit_us
+    # Same trap, same fix, for the device-signature state.
+    global last_signature, last_device
     line = line.decode("utf-8", "ignore").strip()
     if line.startswith("SCAN_START"):
         scan_data.clear()
@@ -397,9 +641,17 @@ def handle_line(line):
             # Tag each logged capture with the settings it was taken under, so a
             # session spanning modulation / data-rate changes stays analysable
             # (the raw hex alone cannot tell you which mode produced it).
+            # Prefix the wall-clock time of the capture. Without it there is no
+            # way to tell which captures came from the SAME press of a fob, and
+            # that distinction is the whole fixed-vs-rolling question: a payload
+            # that changes BETWEEN presses is a rolling code, whereas one that
+            # changes BETWEEN captures of a single press is just a marginal
+            # demodulator. Log order was the only grouping cue before, which
+            # cannot survive a reconnect or a Clear.
             with open(CAPTURE_PATH, "a", encoding="utf-8") as f:
-                f.write("%s MOD=%d DRATE=%d\n"
-                        % (line, selected_mod, selected_drate))
+                f.write("%.3f %s MOD=%d DRATE=%d\n"
+                        % (time.time() - START_TIME, line, selected_mod,
+                           selected_drate))
             raw_captures += 1
             parts = line.split()
             if len(parts) >= 4:
@@ -409,6 +661,16 @@ def handle_line(line):
                     sample_us = float(parts[2]) / float(parts[1])
                 except (ValueError, ZeroDivisionError):
                     sample_us = 48.0
+                # Signature first: it must work even when the payload will not
+                # decode, which is the common case for a rolling-code remote.
+                sig = _signature(_cap_runs(parts[3]), sample_us)
+                if sig:
+                    last_signature = sig
+                    m = _match_device(sig)
+                    if m:
+                        m["t"] = round(time.time() - START_TIME, 2)
+                        last_device = m
+                        _refine_device(m["name"], sig)
                 d = decode_cap(parts[3], sample_us)
                 if d:
                     code, bit_samples, nbursts = d
@@ -636,7 +898,7 @@ def set_scan():
 
 
 def reader():
-    global port_error, ser_handle
+    global port_error, ser_handle, last_reader_error, reconnects
     ser = None
     while True:
         try:
@@ -663,9 +925,20 @@ def reader():
             while True:
                 line = ser.readline()
                 if line:
-                    handle_line(line)
+                    # A bug in the line handler must NOT tear down the port.
+                    # Letting it reach the handler below closes the serial port
+                    # and re-soaks for 2+5+2 = 9 s, which the user experiences
+                    # as the whole page freezing. Record it and keep reading.
+                    try:
+                        handle_line(line)
+                    except Exception as exc:          # noqa: BLE001
+                        last_reader_error = ("line %s: %s"
+                                             % (type(exc).__name__, exc))
         except Exception as exc:          # noqa: BLE001
             port_error = str(exc)
+            last_reader_error = ("port %s: %s"
+                                 % (type(exc).__name__, exc))
+            reconnects += 1
         finally:
             with lock:
                 ser_handle = None
@@ -879,9 +1152,17 @@ class Handler(BaseHTTPRequestHandler):
                                "scan_active": scan_on,
                                "record_active": record_active,
                                "raw_captures": raw_captures,
+                               "devices": _devices,
+                               "last_signature": last_signature,
+                               # Momentary, not latching: _fresh_device() returns
+                               # None once the match is older than
+                               # DEVICE_HOLD_S, which unlights the chip.
+                               "last_device": _fresh_device(),
                                "last_decode": dict(last_decode) if last_decode else None,
                                "sample_age": age,
                                "max_data_ms": round(_max_data_ms, 1),
+                               "last_error": last_reader_error,
+                               "reconnects": reconnects,
                                "port_error": port_error}).encode("utf-8")
             _elapsed = (time.perf_counter() - _t0) * 1000
             if _elapsed > _max_data_ms:
@@ -896,6 +1177,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        # Deleting a device clears any match against it, so this method assigns a
+        # module-level name and must declare it - the same trap that once killed
+        # this server with UnboundLocalError on every request.
+        global last_device
         if self.path == "/clear":
             clear_history()
             body = b'{"ok": true}'
@@ -918,6 +1203,103 @@ class Handler(BaseHTTPRequestHandler):
             ok = set_modulation(mod)
             body = json.dumps({"ok": ok, "mod": selected_mod}).encode("utf-8")
             self.send_response(200 if ok else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/enrol":
+            # Enrol the most recent signal as a named device. The stored thing is
+            # a TIMING signature, not a payload, so this works for a rolling-code
+            # remote - with the honest consequence that two different fobs of the
+            # same model enrol as the same device.
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                data = json.loads(self.rfile.read(length).decode("utf-8", "ignore"))
+                name = str(data.get("name", "")).strip()[:24]
+                color = str(data.get("color", "")).strip()[:16]
+            except Exception:
+                data, name, color = {}, "", ""
+            if not name or not last_signature:
+                why = "no name given" if not name else "nothing received yet"
+                body = json.dumps({"ok": False, "error": why}).encode("utf-8")
+                status = 400
+            else:
+                _devices[name] = {"color": color or _pick_color(name),
+                                  "sig": last_signature}
+                _save_devices()
+                body = json.dumps({"ok": True, "name": name}).encode("utf-8")
+                status = 200
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/devices/clear":
+            _devices.clear()
+            _save_devices()
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/devices/delete":
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                name = str(json.loads(self.rfile.read(length)
+                                      .decode("utf-8", "ignore"))
+                           .get("name", "")).strip()
+            except Exception:
+                name = ""
+            gone = _devices.pop(name, None) is not None
+            if gone:
+                _save_devices()
+                # A device that is deleted while lit would leave the chip lit
+                # with nothing behind it, so drop the match too.
+                if last_device and last_device.get("name") == name:
+                    last_device = None
+            body = json.dumps({"ok": gone, "name": name,
+                               "error": None if gone else "no such device"}
+                              ).encode("utf-8")
+            self.send_response(200 if gone else 400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/devices/rename":
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                data = json.loads(self.rfile.read(length)
+                                  .decode("utf-8", "ignore"))
+                name = str(data.get("name", "")).strip()
+                to = str(data.get("to", "")).strip()[:24]
+            except Exception:
+                name, to = "", ""
+            if not name or not to:
+                err = "a name is required"
+            elif name not in _devices:
+                err = "no such device"
+            elif to != name and to in _devices:
+                err = "a device called %s already exists" % to
+            else:
+                err = None
+            if err is None:
+                _devices[to] = _devices.pop(name)
+                _save_devices()
+                body = json.dumps({"ok": True, "name": to}).encode("utf-8")
+                status = 200
+            else:
+                body = json.dumps({"ok": False, "error": err}).encode("utf-8")
+                status = 400
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

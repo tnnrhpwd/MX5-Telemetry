@@ -58,6 +58,9 @@ Stop the webapp first: it holds COM3.
 | `scripts/probe_boot.py` | Boot diagnostic count, idle level and capture rate. Use it to A/B a config change |
 | `scripts/rate_sweep.py` | Steps the RX data rate and reports which one reproduces the signal cleanest. Needs the fob held for the whole run |
 | `scripts/analyze_capture.py` | Decode the pulse structure of a saved capture log |
+| `scripts/compare_tags.py` | Group the capture log by its `MOD=` tag and compare pulse widths, short/long separation and decode rate. This is how you compare two RX configs on the same fob |
+| `scripts/compare_press.py` | Check whether captures from one press share a common frame, i.e. fixed code versus rolling code. Works on decoded payloads, so it is only as good as the framing |
+| `scripts/find_frame.py` | Framing-independent version of the above: aligns the raw run-length sequences of every capture pair and compares the result against a **shuffled control**, because "best match over all offsets" is a maximum statistic that beats a median even on pure noise. Use this one to decide whether a repeating frame was captured at all |
 | `scripts/capture.py` | Dump raw serial to a file |
 | `scripts/dump_regs.py` | Read back the RX registers |
 | `scripts/check_*.py` | One-line status probes against the running webapp |
@@ -78,3 +81,10 @@ venv\Scripts\python.exe tools\cc1101\tests\test_fsk_vs_ook.py
 
 They exercise the FSK/ASK toggle, the TX burst, the sweep and the scan, and
 print what they observed rather than asserting.
+
+Two of them do not need the radio at all, and both guard a real bug:
+
+| Test | Guards |
+| --- | --- |
+| `tests/check_module_globals.py` | A function that reads a module-level name before assigning it. `py_compile` and the editor both call this valid, but it raises `UnboundLocalError` at runtime |
+| `tests/test_line_handler.py` | `handle_line()` surviving a capture that decodes *while a transmission is in progress* - the path that once killed the reader and froze the page for 9 seconds |

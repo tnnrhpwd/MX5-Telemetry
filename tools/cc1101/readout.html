@@ -148,6 +148,54 @@
   .icon-btn:focus-visible { outline: 2px solid var(--fg-blue); outline-offset: 2px; }
   .icon-btn.paused { border-color: var(--fg-orange); color: var(--fg-orange); }
   .icon-btn.tx-on { border-color: var(--fg-red); color: var(--fg-red); }
+
+  /* Device indicator: one chip per enrolled device, lit when the most recent
+     transmission matches that device's timing signature. */
+  .devbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 0 0 16px; padding: 10px 14px;
+    background: var(--bg-1); border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .devbar-label {
+    font-size: 11px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--text-color-accent);
+  }
+  .devchip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 14px; border-radius: 999px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-color-accent);
+    font-size: 12px; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase;
+    /* Slower than the other UI transitions on purpose: the chip is a MOMENTARY
+       indicator, and a visible fade makes the trailing edge read as "that
+       device has stopped transmitting" rather than a repaint glitch. */
+    transition: background .25s, color .25s, border-color .25s, box-shadow .25s;
+  }
+  .devchip::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dev, #888); opacity: .3;
+  }
+  .devchip.lit {
+    background: var(--dev); border-color: var(--dev); color: #0d1117;
+    box-shadow: 0 0 18px var(--dev);
+  }
+  .devchip.lit::before { opacity: 1; background: #0d1117; }
+  /* The chip is interactive: click it to rename, use the x to delete. Both are
+     applied immediately and persisted to devices.json. */
+  .devchip { cursor: pointer; }
+  .devdel {
+    border: 0; background: transparent; color: inherit; cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0 0 0 2px; opacity: .5;
+    font-family: inherit;
+  }
+  .devdel:hover { opacity: 1; }
+  .devnone { font-size: 12px; color: var(--text-color-accent); }
+  .devmeta {
+    font-size: 11px; color: var(--text-color-accent); margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
   .icon-btn.scan-on { border-color: var(--fg-red); color: var(--fg-red); }
   .icon-btn.rec-on { border-color: var(--fg-red); color: var(--fg-red); background: rgba(255, 60, 60, 0.14); }
   .icon-btn.sweeping { border-color: var(--fg-mint); color: var(--fg-mint); }
@@ -294,8 +342,16 @@
       <button class="icon-btn" id="pauseBtn" type="button" title="Freeze the chart so you can read it. Data keeps streaming and being logged underneath; press again to resume.">Pause</button>
       <button class="icon-btn" id="clearBtn" type="button" title="Reset the chart, the event table and the raw-capture counter. Does not change any radio setting.">Clear</button>
       <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle light and dark theme" title="Switch between the light and dark theme.">Light</button>
+      <button class="icon-btn" id="enrolBtn" type="button" title="Record the timing signature of the most recently received signal as a named device, so the indicator below lights up when that device transmits again. It matches TIMING, not data, so it recognises a device model - a Mazda fob from a Nissan fob - not one individual unit.">Enrol</button>
     </div>
   </header>
+
+  <div class="devbar">
+    <span class="devbar-label">Devices</span>
+    <span id="devbadges"></span>
+    <span class="devnone" id="devnone">none enrolled &mdash; receive a signal, then press Enrol</span>
+    <span class="devmeta" id="devmeta"></span>
+  </div>
 
   <main class="grid">
     <section class="card readout-card">
@@ -710,23 +766,122 @@ function render() {
   draw();
 }
 
+// --- device indicator ------------------------------------------------------
+// One chip per enrolled device, lit while the most recent transmission matches
+// that device's timing signature. The match is deliberately on TIMING (pulse
+// widths, ratio, frame period) rather than payload: that is what survives a
+// marginal demodulator, and it is the only thing available for a rolling-code
+// remote. The honest consequence is that it identifies a device MODEL - two
+// different Mazda fobs light the same chip.
+function renderDevices(d) {
+  var badges = document.getElementById('devbadges');
+  var none = document.getElementById('devnone');
+  var meta = document.getElementById('devmeta');
+  if (!badges) return;
+  var devices = d.devices || {};
+  var names = Object.keys(devices).sort();
+  var last = d.last_device;
+  badges.innerHTML = names.map(function (n) {
+    var dev = devices[n] || {};
+    var col = dev.color || '#888888';
+    var lit = (last && last.name === n) ? ' lit' : '';
+    var safe = n.replace(/[<>&"]/g, '');
+    return '<span class="devchip' + lit + '" style="--dev:' + col +
+           '" data-dev="' + safe +
+           '" title="Click to rename this device, or use the x to delete it.">' +
+           safe + '<button class="devdel" type="button" data-del="' + safe +
+           '" title="Delete ' + safe + '">&times;</button></span>';
+  }).join('');
+  none.style.display = names.length ? 'none' : '';
+  if (last) {
+    meta.textContent = last.name + ' matched ' +
+      Math.round((last.score || 0) * 100) + '%';
+  } else if (d.last_signature) {
+    var s = d.last_signature;
+    meta.textContent = 'last: ' + s.short_us + '/' + s.long_us + ' us, ' +
+      s.ratio + 'x' + (s.period_syms ? ', frame ' + s.period_syms : '');
+  } else {
+    meta.textContent = '';
+  }
+}
+
+// Device management. Delegated from the badge container rather than bound per
+// chip, because the chips are re-rendered from scratch on every poll - a
+// per-chip listener would be discarded four times a second.
+document.getElementById('devbadges').addEventListener('click', function (ev) {
+  var del = ev.target.closest('.devdel');
+  if (del) {
+    ev.stopPropagation();
+    var dn = del.getAttribute('data-del');
+    if (!window.confirm('Delete "' + dn + '"?\n\nIts saved timing signature is ' +
+        'removed, so the indicator will no longer light for it.')) return;
+    fetch('/devices/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: dn })
+    }).then(function () { poll(); });
+    return;
+  }
+  var chip = ev.target.closest('.devchip');
+  if (!chip) return;
+  var from = chip.getAttribute('data-dev');
+  var to = window.prompt('Rename "' + from + '":', from);
+  if (!to || to === from) return;
+  fetch('/devices/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: from, to: to })
+  }).then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j.ok) window.alert('Could not rename: ' + (j.error || 'unknown'));
+      poll();
+    });
+});
+
+document.getElementById('enrolBtn').addEventListener('click', function () {
+  var name = window.prompt(
+    'Name this device (for example "Mazda fob").\n\n' +
+    'This stores the TIMING signature of the most recently received signal, ' +
+    'not its data - so it recognises a device model rather than one unit.');
+  if (!name) return;
+  fetch('/enrol', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name })
+  }).then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j.ok) window.alert('Could not enrol: ' + (j.error || 'unknown'));
+      poll();
+    });
+});
+
+
 function poll() {
   fetch('/data')
     .then(function (res) { return res.json(); })
     .then(function (d) {
       var st = document.getElementById('status');
       var age = d.sample_age;
+      var diag = [];
+      if (d.reconnects) diag.push('reconnects: ' + d.reconnects);
+      if (d.last_error) diag.push('last error: ' + d.last_error);
+      st.title = diag.length ? diag.join('\n') : 'Serial reader healthy.';
       if (d.port_error) {
         st.textContent = 'port error'; st.className = 'pill pill-err';
       } else if (age !== null && age !== undefined && age > 2.5) {
         // The reader has stopped feeding us. The chart looks frozen either way,
         // so say which it is instead of leaving it ambiguous.
         st.textContent = 'stalled ' + age.toFixed(1) + 's'; st.className = 'pill pill-err';
+      } else if (d.reconnects) {
+        // Recovered, but something went wrong earlier. Hover for the reason.
+        st.textContent = 'live (' + d.reconnects + ')';
+        st.className = 'pill pill-live';
       } else {
         st.textContent = 'live'; st.className = 'pill pill-live';
       }
       var rc = document.getElementById('rawCount');
       if (rc) rc.textContent = String(d.raw_captures || 0);
+      renderDevices(d);
       if (d.tx_on !== null && d.tx_on !== undefined) syncTxBtn(d.tx_on);
       if (d.scan) { scanData = d.scan; }
       if (d.scan_history) { scanHistory = d.scan_history; }
