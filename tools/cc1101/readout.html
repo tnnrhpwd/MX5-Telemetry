@@ -21,6 +21,11 @@
     color-scheme: dark;
     --bg-page: #0d1117;
     --bg-1: rgba(22, 27, 34, 0.82);
+    /* Opaque twin of --bg-1, for the one element that sits OVER other content
+       rather than on the page: the sticky table header. --bg-1 is translucent,
+       so a sticky row drawn in it lets the rows scroll visibly through the
+       headings. */
+    --bg-solid: #161b22;
     --text-color: #e6edf3;
     --text-color-accent: #8b949e;
     --border: rgba(139, 148, 158, 0.24);
@@ -44,6 +49,7 @@
     color-scheme: light;
     --bg-page: #f6f8fa;
     --bg-1: rgba(255, 255, 255, 0.86);
+    --bg-solid: #ffffff;
     --text-color: #1f2328;
     --text-color-accent: #59636e;
     --border: rgba(31, 35, 40, 0.14);
@@ -191,7 +197,24 @@
     font-family: inherit;
   }
   .devdel:hover { opacity: 1; }
+  /* Armed for deletion: the first press on the x asks, the second confirms.
+     Deliberately not a modal dialog - see the note on the click handler. */
+  .devchip.armed {
+    border-color: var(--fg-red); color: var(--fg-red);
+    box-shadow: 0 0 12px rgba(255, 60, 60, 0.35);
+  }
   .devnone { font-size: 12px; color: var(--text-color-accent); }
+  /* In-page name editor - see the note in the devbar markup for why this exists
+     instead of a prompt(). */
+  .devedit { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .devedit[hidden] { display: none; }
+  .devinput {
+    background: var(--bg-1); color: var(--text-color);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 8px; font-size: 12px; font-family: inherit;
+    min-width: 16ch; max-width: 38vw;
+  }
+  .devinput:focus-visible { outline: 2px solid var(--fg-blue); outline-offset: 1px; }
   .devmeta {
     font-size: 11px; color: var(--text-color-accent); margin-left: auto;
     font-variant-numeric: tabular-nums;
@@ -212,9 +235,12 @@
      instead of letting .events-scroll scroll. This is what pushed the page
      to 921px wide on a 768px screen. */
   .grid > * { min-width: 0; }
-  /* Stack while the chart card would otherwise be too narrow for the table
-     (~670px of table); below this the two-column split forces it to scroll. */
-  @media (max-width: 900px) {
+  /* Stack while the chart card would otherwise be too narrow for the table.
+     1120 rather than 900: between them the chart column lands at about 540px,
+     and a 620px table in a 540px card means a horizontal scrollbar through the
+     whole laptop-common 1024 range. Stacking those widths instead gives the
+     table the full shell and costs nothing but a taller page. */
+  @media (max-width: 1120px) {
     .grid { grid-template-columns: 1fr; }
   }
 
@@ -266,14 +292,75 @@
 
   .events { margin-top: 16px; }
   .events .eyebrow { margin-bottom: 8px; }
-  .events-scroll { overflow-x: auto; }
-  .events-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  /* Many captures: the list scrolls inside a bounded box instead of pushing
+     everything below it off the screen. Both axes, because on a phone the nine
+     columns are wider than the card that holds them. */
+  .events-scroll {
+    overflow: auto;
+    max-height: clamp(200px, 42vh, 460px);
+    border-radius: 8px;
+  }
+  .events-table {
+    width: 100%;
+    /* Below this the nine columns stop being readable, so scroll sideways
+       rather than crushing them. Sized so the full grid fits unaided from
+       tablet up; anything narrower than 600px gets the stacked layout below. */
+    min-width: 620px;
+    /* FIXED layout is the fix for the table "going wonky". With auto layout the
+       browser re-derives every column from the widest cell in it, so each new
+       row carrying a longer hex code re-widths the Code column and shifts the
+       other eight under the reader's eye: the columns move while you watch.
+       Fixed layout takes the widths from the header row and never moves them
+       again, whatever arrives. */
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
   .events-table th {
     text-align: left; font-weight: 600; color: var(--text-color-accent);
-    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
-    padding: 6px 8px; border-bottom: 1px solid var(--border);
+    /* 10px, not 11: at a fixed 78px the word FREQUENCY is the widest thing in
+       the table, and at 11px with letter-spacing it does not fit. */
+    font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 6px 6px; border-bottom: 1px solid var(--border);
+    /* Headings stay in view while the body scrolls. This needs --bg-solid and
+       not --bg-1: a translucent sticky row lets the rows show through it. */
+    position: sticky; top: 0; z-index: 1;
+    background: var(--bg-solid);
   }
-  .events-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .events-table td { padding: 7px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  /* Column widths, declared once on the header row and the only thing that
+     sets them (fixed layout). Code - the third - is deliberately left unsized
+     so it takes the slack, since it is the only column whose length varies.
+     Each width is the wider of its heading and its typical value: Time is set
+     by "10:51:44", Peak by "-84 dBm", Frequency by "315.0 MHz" and Duration
+     by the word DURATION, and sizing any of them narrower than the content
+     makes the cell wrap and every row 20px taller for nothing. */
+  .events-table th:nth-child(1) { width: 68px; }
+  .events-table th:nth-child(2) { width: 70px; }
+  .events-table th:nth-child(4) { width: 56px; }
+  .events-table th:nth-child(5) { width: 58px; }
+  .events-table th:nth-child(6) { width: 58px; }
+  /* 72 and not 62: "-94 dBm" measures 50px in the 50px a 62px column leaves
+     after padding, so it wrapped, and because every cell stretches to the
+     tallest one in the row, a single wrapped Peak made EVERY row 49px tall
+     instead of 30. One column being 10px short cost 19px on every row. */
+  .events-table th:nth-child(7) { width: 72px; }
+  .events-table th:nth-child(8) { width: 70px; }
+  .events-table th:nth-child(9) { width: 78px; }
+  /* A rolling-code snoop can hand back a 30-character hex string. Truncate it
+     rather than let it set the column width; the whole value is in the title.
+     NB: never `overflow-wrap: anywhere` here - it makes the cell's min-content
+     one character wide and the auto layout collapses the column to ~4
+     characters per line. */
+  .events-table td.mono {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* The ID cell carries a word label - "fob (TX test)" is far longer than the
+     column - so clip it here too rather than let it set the width. */
+  .events-table td.type-signal,
+  .events-table td.type-noise {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .events-table .peak { font-weight: 700; color: var(--fg-orange); }
   .events-table .empty { color: var(--text-color-accent); }
   .events-table .type-signal { color: var(--fg-orange); }
@@ -307,6 +394,36 @@
 
   .foot { color: var(--text-color-accent); font-size: 13px; }
 
+  /* Phones: nine columns cannot be read side by side at this width, so each
+     row becomes a small block that carries its own labels. The header row goes,
+     because every value now names itself - which is also why the table stops
+     being a table (display: block) and the fixed column widths no longer
+     apply. */
+  @media (max-width: 600px) {
+    .events-table { min-width: 0; table-layout: auto; }
+    .events-table thead { display: none; }
+    .events-table tbody, .events-table tr { display: block; }
+    .events-table tr { border-bottom: 1px solid var(--border); padding: 8px; }
+    .events-table td {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 12px; border: 0; padding: 2px 0; text-align: right;
+    }
+    .events-table td::before {
+      content: attr(data-label);
+      color: var(--text-color-accent);
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      flex: none; text-align: left;
+    }
+    /* The code is the one value worth letting wrap here: it has its own row and
+       a label beside it, so there is no column width left for it to wreck. */
+    .events-table td.mono,
+    .events-table td.type-signal,
+    .events-table td.type-noise {
+      white-space: normal; overflow-wrap: anywhere;
+    }
+  }
+
   /* Narrow screens: shrink the controls a little so the top bar wraps to two
      rows rather than four. */
   @media (max-width: 560px) {
@@ -337,6 +454,7 @@
       <span class="pill pill-live" id="status">live</span>
       <button class="icon-btn" id="txBtn" type="button" title="Transmit a continuous carrier from the second module. Use it to prove the receiver hears something: the level should jump, then switch it straight back off. Leave OFF while trying to receive a fob.">TX Off</button>
       <button class="icon-btn" id="fobBtn" type="button" title="Transmit a synthetic OOK key-fob burst, so you can test the receiver and the decode path without a real key in your hand.">Fob Burst</button>
+      <button class="icon-btn" id="tpmsBtn" type="button" title="Transmit a synthetic TPMS sensor burst: a group of identical frames, which is what a tyre sensor emits per timeout and why its Repeat column is metronomic while a fob's is sporadic. Real TPMS is usually FSK and this transmitter can only key its carrier on/off, so treat it as an OOK stand-in for the decode and UI path rather than a clone of a sensor.">TPMS Burst</button>
       <button class="icon-btn" id="scanBtn" type="button" title="Sweep 300-470 MHz and plot signal strength against frequency, to find which band a device is transmitting on. Pauses the live monitor while it runs; press again to stop.">Scan</button>
       <button class="icon-btn" id="recBtn" type="button" title="Log every reading to record_log.csv for offline analysis. Stays on while you change band, modulation or data rate, so one file can cover a whole tuning session.">Record</button>
       <button class="icon-btn" id="pauseBtn" type="button" title="Freeze the chart so you can read it. Data keeps streaming and being logged underneath; press again to resume.">Pause</button>
@@ -349,8 +467,22 @@
   <div class="devbar">
     <span class="devbar-label">Devices</span>
     <span id="devbadges"></span>
-    <span class="devnone" id="devnone">none enrolled &mdash; receive a signal, then press Enrol</span>
+    <span class="devnone" id="devnone">none enrolled. Receive a signal, then press Enrol</span>
     <span class="devmeta" id="devmeta"></span>
+    <!-- Naming happens HERE, in the page, and must never go back to
+         window.prompt(). prompt(), confirm() and alert() are ALL unimplemented
+         in the embedded browser this dashboard is normally read in, and calling
+         one throws "prompt() is not supported" - which killed the Enrol button
+         outright (its handler died on the first line, so the button did nothing
+         and logged an error) and, together with the re-render bug, made Delete
+         look broken too. -->
+    <span class="devedit" id="devedit" hidden>
+      <span class="devbar-label" id="devlabel"></span>
+      <input class="devinput" id="devinput" type="text" maxlength="24"
+             autocomplete="off" spellcheck="false" aria-label="Device name">
+      <button class="icon-btn" id="devsave" type="button">Save</button>
+      <button class="icon-btn" id="devcancel" type="button">Cancel</button>
+    </span>
   </div>
 
   <main class="grid">
@@ -469,7 +601,7 @@
       </div>
     </div>
     <div class="spectrum-box" id="spectrum-box"><canvas id="spec"></canvas></div>
-    <p class="filter-hint">dBm vs frequency (continuous sweep). Hold a fob and its frequency spikes on this wave. The signal-over-time chart above is a waterfall: time on X, frequency on Y, brightness = strength — a held fob paints a bright band at its frequency.</p>
+    <p class="filter-hint">dBm vs frequency (continuous sweep). Hold a fob and its frequency spikes on this wave. The signal-over-time chart above is a waterfall: time on X, frequency on Y, brightness = strength. A held fob paints a bright band at its frequency.</p>
   </section>
 
   <footer class="foot">Press a 315 MHz key fob or garage remote near the antenna to test.</footer>
@@ -691,47 +823,69 @@ function eventMatches(e) {
   return true;
 }
 
+// Escapes a value for markup and for a title attribute. The decode path hands
+// us plain hex, but a title attribute is one stray quote away from breaking the
+// whole row into the page, so it is cheap to be certain.
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+
+// The rows are rebuilt only when the markup actually changes. Re-assigning
+// innerHTML ten times a second discarded the body's scroll position and made
+// the browser re-measure and repaint every row on each frame - which is the
+// churn that reads as "the table goes wonky once a lot of signals have been
+// captured", and it was invisible while the list was two rows long.
+var _eventsHtml = '';
+
 function renderEvents() {
   var tb = document.getElementById('eventsBody');
   if (!tb) return;
   var countEl = document.getElementById('eventCount');
+  var html;
   if (!events.length) {
-    tb.innerHTML = '<tr><td colspan="9" class="empty">No transmissions detected yet. Press a key fob near the antenna.</td></tr>';
+    html = '<tr><td colspan="9" class="empty">No transmissions detected yet. Press a key fob near the antenna.</td></tr>';
     if (countEl) countEl.textContent = '';
-    return;
-  }
-  var shown = 0;
-  var rows = '';
-  for (var i = events.length - 1; i >= 0; i--) {
-    var e = events[i];
-    if (!eventMatches(e)) continue;
-    shown++;
-    var dur = (e.duration !== null && e.duration !== undefined) ? e.duration.toFixed(2) + ' s' : '--';
-    var fr = (e.freq !== null && e.freq !== undefined) ? e.freq.toFixed(1) + ' MHz' : '--';
-    var pk = (e.peak !== null && e.peak !== undefined) ? e.peak + ' dBm' : '--';
-    var id = e.label || e.type || 'noise';
-    var code = e.code || '--';
-    var pulse = (e.unit_us !== null && e.unit_us !== undefined) ? e.unit_us + ' us' : '--';
-    var rep = (e.repeat_s !== null && e.repeat_s !== undefined) ? e.repeat_s.toFixed(1) + ' s' : 'first';
-    var bursts = (e.bursts !== null && e.bursts !== undefined) ? e.bursts : '--';
-    rows += '<tr>' +
-      '<td>' + (e.clock || '--') + '</td>' +
-      '<td class="type-' + (e.type || 'noise') + '">' + id + '</td>' +
-      '<td class="mono">' + code + '</td>' +
-      '<td>' + pulse + '</td>' +
-      '<td>' + rep + '</td>' +
-      '<td>' + bursts + '</td>' +
-      '<td class="peak">' + pk + '</td>' +
-      '<td>' + dur + '</td>' +
-      '<td>' + fr + '</td>' +
-      '</tr>';
-  }
-  if (!shown) {
-    tb.innerHTML = '<tr><td colspan="9" class="empty">No transmissions match the current filters.</td></tr>';
   } else {
-    tb.innerHTML = rows;
+    var shown = 0;
+    var rows = '';
+    for (var i = events.length - 1; i >= 0; i--) {
+      var e = events[i];
+      if (!eventMatches(e)) continue;
+      shown++;
+      var dur = (e.duration !== null && e.duration !== undefined) ? e.duration.toFixed(2) + ' s' : '--';
+      var fr = (e.freq !== null && e.freq !== undefined) ? e.freq.toFixed(1) + ' MHz' : '--';
+      var pk = (e.peak !== null && e.peak !== undefined) ? e.peak + ' dBm' : '--';
+      var id = e.label || e.type || 'noise';
+      var code = e.code || '--';
+      var pulse = (e.unit_us !== null && e.unit_us !== undefined) ? e.unit_us + ' us' : '--';
+      var rep = (e.repeat_s !== null && e.repeat_s !== undefined) ? e.repeat_s.toFixed(1) + ' s' : 'first';
+      var bursts = (e.bursts !== null && e.bursts !== undefined) ? e.bursts : '--';
+      rows += '<tr>' +
+        '<td data-label="Time">' + esc(e.clock || '--') + '</td>' +
+        '<td data-label="ID" class="type-' + (e.type || 'noise') +
+          '" title="' + esc(id) + '">' + esc(id) + '</td>' +
+        '<td data-label="Code" class="mono" title="' + esc(code) + '">' + esc(code) + '</td>' +
+        '<td data-label="Pulse">' + pulse + '</td>' +
+        '<td data-label="Repeat">' + rep + '</td>' +
+        '<td data-label="Bursts">' + bursts + '</td>' +
+        '<td data-label="Peak" class="peak">' + pk + '</td>' +
+        '<td data-label="Duration">' + dur + '</td>' +
+        '<td data-label="Frequency">' + fr + '</td>' +
+        '</tr>';
+    }
+    if (!shown) {
+      html = '<tr><td colspan="9" class="empty">No transmissions match the current filters.</td></tr>';
+    } else {
+      html = rows;
+    }
+    if (countEl) countEl.textContent = shown + ' / ' + events.length;
   }
-  if (countEl) countEl.textContent = shown + ' / ' + events.length;
+  if (html !== _eventsHtml) {
+    tb.innerHTML = html;
+    _eventsHtml = html;
+  }
 }
 
 function render() {
@@ -773,6 +927,30 @@ function render() {
 // marginal demodulator, and it is the only thing available for a rolling-code
 // remote. The honest consequence is that it identifies a device MODEL - two
 // different Mazda fobs light the same chip.
+// The chip markup is rewritten only when it actually CHANGES. Rewriting
+// innerHTML destroys every chip node, and that is not cosmetic: a human click
+// lasts longer than the 100 ms poll interval, so a re-render landing between
+// mousedown and mouseup makes the browser report the click on the CONTAINER
+// instead of the button. ev.target.closest('.devdel') then returns null, the
+// handler falls through, and the delete silently does nothing at all - no
+// error, no dialog, nothing. Measured before the fix: an instant synthetic
+// click reached the handler (1 call), a realistic 150 ms one never did (0).
+var _devHtml = '';
+// Deleting is confirmed IN PAGE, not with window.confirm. A modal is the one
+// interaction a host page or an attached automation client may dismiss on the
+// user's behalf, and when that happens the answer is simply "no" - so the
+// delete becomes nothing-happening, with no error to explain it. Two presses
+// on the x cannot be dismissed by anybody but the person clicking.
+var _pendingDel = null;
+var _pendingDelAt = 0;
+var PENDING_DEL_MS = 4000;
+var _note = '';
+var _noteAt = 0;
+// The enrolled names as last rendered, so Enrol can suggest a unique one.
+var _devNames = [];
+
+function note(msg) { _note = msg; _noteAt = Date.now(); }
+
 function renderDevices(d) {
   var badges = document.getElementById('devbadges');
   var none = document.getElementById('devnone');
@@ -780,20 +958,35 @@ function renderDevices(d) {
   if (!badges) return;
   var devices = d.devices || {};
   var names = Object.keys(devices).sort();
+  _devNames = names;
   var last = d.last_device;
-  badges.innerHTML = names.map(function (n) {
+  var armed = null;
+  if (_pendingDel && (Date.now() - _pendingDelAt) <= PENDING_DEL_MS) {
+    armed = _pendingDel;
+  }
+  var html = names.map(function (n) {
     var dev = devices[n] || {};
     var col = dev.color || '#888888';
     var lit = (last && last.name === n) ? ' lit' : '';
+    var arm = (armed === n) ? ' armed' : '';
     var safe = n.replace(/[<>&"]/g, '');
-    return '<span class="devchip' + lit + '" style="--dev:' + col +
-           '" data-dev="' + safe +
-           '" title="Click to rename this device, or use the x to delete it.">' +
-           safe + '<button class="devdel" type="button" data-del="' + safe +
-           '" title="Delete ' + safe + '">&times;</button></span>';
+    var x = (armed === n) ? 'delete?' : '&times;';
+    var ttl = (armed === n)
+      ? 'Click again to delete ' + safe
+      : 'Click to rename this device, or use the x to delete it.';
+    return '<span class="devchip' + lit + arm + '" style="--dev:' + col +
+           '" data-dev="' + safe + '" title="' + ttl + '">' + safe +
+           '<button class="devdel" type="button" data-del="' + safe +
+           '" title="Delete ' + safe + '">' + x + '</button></span>';
   }).join('');
+  if (html !== _devHtml) {
+    badges.innerHTML = html;
+    _devHtml = html;
+  }
   none.style.display = names.length ? 'none' : '';
-  if (last) {
+  if (_note && (Date.now() - _noteAt) < 4000) {
+    meta.textContent = _note;
+  } else if (last) {
     meta.textContent = last.name + ' matched ' +
       Math.round((last.score || 0) * 100) + '%';
   } else if (d.last_signature) {
@@ -806,53 +999,106 @@ function renderDevices(d) {
 }
 
 // Device management. Delegated from the badge container rather than bound per
-// chip, because the chips are re-rendered from scratch on every poll - a
-// per-chip listener would be discarded four times a second.
+// chip, because the chips are re-rendered on every poll - a per-chip listener
+// would be discarded four times a second.
+//
+// Deleting takes TWO presses of the x (the x itself reads "delete?" in
+// between, and the chip turns red). That is the confirmation step, in the
+// page, with nothing to block it: the earlier window.confirm() version could
+// be dismissed by the host or by an attached automation client, and the user
+// only ever saw "it won't let me delete".
 document.getElementById('devbadges').addEventListener('click', function (ev) {
-  var del = ev.target.closest('.devdel');
-  if (del) {
-    ev.stopPropagation();
-    var dn = del.getAttribute('data-del');
-    if (!window.confirm('Delete "' + dn + '"?\n\nIts saved timing signature is ' +
-        'removed, so the indicator will no longer light for it.')) return;
+  var chip = ev.target.closest('.devchip');
+  if (!chip) return;
+  ev.stopPropagation();
+  var name = chip.getAttribute('data-dev');
+  var onX = !!ev.target.closest('.devdel');
+  var armed = (_pendingDel === name &&
+               (Date.now() - _pendingDelAt) <= PENDING_DEL_MS);
+  if (armed) {
+    _pendingDel = null;
     fetch('/devices/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: dn })
-    }).then(function () { poll(); });
+      body: JSON.stringify({ name: name })
+    }).then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) note('Could not delete ' + name + ': ' + (j.error || '?'));
+        poll();
+      });
     return;
   }
-  var chip = ev.target.closest('.devchip');
-  if (!chip) return;
-  var from = chip.getAttribute('data-dev');
-  var to = window.prompt('Rename "' + from + '":', from);
-  if (!to || to === from) return;
-  fetch('/devices/rename', {
+  if (onX) {
+    _pendingDel = name;
+    _pendingDelAt = Date.now();
+    poll();
+    return;
+  }
+  openEditor('rename', name, name, 'Rename');
+});
+
+// --- naming a device, in the page -----------------------------------------
+// This replaces both the old Enrol prompt and the old Rename prompt. It is not
+// a style preference: in the browser this page is usually read in, prompt(),
+// confirm() and alert() are unimplemented and THROW. The Enrol button's handler
+// used to die on its first statement because of it, so the button did nothing
+// at all and the only trace was a line in the console.
+var _editMode = null;      // 'enrol' | 'rename'
+var _editFrom = null;
+
+function openEditor(mode, from, initial, label) {
+  var box = document.getElementById('devedit');
+  if (!box) return;
+  _editMode = mode;
+  _editFrom = from;
+  document.getElementById('devlabel').textContent = label;
+  var inp = document.getElementById('devinput');
+  inp.value = initial || '';
+  box.hidden = false;
+  inp.focus();
+  inp.select();
+}
+
+function closeEditor() {
+  _editMode = null;
+  _editFrom = null;
+  var box = document.getElementById('devedit');
+  if (box) box.hidden = true;
+}
+
+function submitEditor() {
+  var val = (document.getElementById('devinput').value || '').trim().slice(0, 24);
+  var mode = _editMode;
+  var from = _editFrom;
+  if (!val) { note('A device name is required.'); return; }
+  if (mode === 'rename' && val === from) { closeEditor(); return; }
+  closeEditor();
+  fetch(mode === 'enrol' ? '/enrol' : '/devices/rename', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: from, to: to })
+    body: JSON.stringify(mode === 'enrol' ? { name: val }
+                                          : { name: from, to: val })
   }).then(function (r) { return r.json(); })
     .then(function (j) {
-      if (!j.ok) window.alert('Could not rename: ' + (j.error || 'unknown'));
+      if (!j.ok) note('Could not ' + mode + ': ' + (j.error || 'unknown'));
+      else if (mode === 'enrol') note('Enrolled ' + val);
       poll();
     });
+}
+
+document.getElementById('devsave').addEventListener('click', submitEditor);
+document.getElementById('devcancel').addEventListener('click', closeEditor);
+document.getElementById('devinput').addEventListener('keydown', function (ev) {
+  if (ev.key === 'Enter') { ev.preventDefault(); submitEditor(); }
+  else if (ev.key === 'Escape') { ev.preventDefault(); closeEditor(); }
 });
 
 document.getElementById('enrolBtn').addEventListener('click', function () {
-  var name = window.prompt(
-    'Name this device (for example "Mazda fob").\n\n' +
-    'This stores the TIMING signature of the most recently received signal, ' +
-    'not its data - so it recognises a device model rather than one unit.');
-  if (!name) return;
-  fetch('/enrol', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name })
-  }).then(function (r) { return r.json(); })
-    .then(function (j) {
-      if (!j.ok) window.alert('Could not enrol: ' + (j.error || 'unknown'));
-      poll();
-    });
+  // Pre-filled rather than empty: the button is pressed straight after a press,
+  // and an empty box that has to be typed into is a step in the way. The count
+  // only exists to keep the suggested name unique.
+  openEditor('enrol', null, 'Device ' + (_devNames.length + 1),
+             'Name this device');
 });
 
 
@@ -1012,6 +1258,17 @@ txBtn.addEventListener('click', function () {
   }).then(function (r) { return r.json(); })
     .then(function (d) { if (d && d.tx_on !== undefined) syncTxBtn(d.tx_on); })
     .catch(function () {});
+});
+
+var tpmsBtn = document.getElementById('tpmsBtn');
+tpmsBtn.addEventListener('click', function () {
+  tpmsBtn.disabled = true;
+  fetch('/tpmsburst', { method: 'POST' })
+    .then(function () {
+      setTimeout(function () { tpmsBtn.disabled = false; }, 1200);
+    }, function () {
+      tpmsBtn.disabled = false;
+    });
 });
 
 var fobBtn = document.getElementById('fobBtn');

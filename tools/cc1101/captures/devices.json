@@ -1,24 +1,24 @@
 {
-  "Nissan Fob": {
-    "color": "#4f9de0",
+  "mazda fob": {
+    "color": "#b07fd6",
     "sig": {
-      "long_us": 809,
-      "n_runs": 70,
-      "period_match": 0.0,
-      "period_syms": null,
-      "ratio": 7.18,
-      "short_us": 113
+      "long_us": 410,
+      "n_runs": 213,
+      "period_match": 0.94,
+      "period_syms": 96,
+      "ratio": 2.84,
+      "short_us": 144
     }
   },
-  "Nissan Fob 2": {
+  "nissan fob": {
     "color": "#4fd0c0",
     "sig": {
-      "long_us": 344,
-      "n_runs": 55,
+      "long_us": 1262.22,
+      "n_runs": 16,
       "period_match": 0.0,
       "period_syms": null,
-      "ratio": 4.5,
-      "short_us": 76
+      "ratio": 9.99,
+      "short_us": 126.85
     }
   }
 }

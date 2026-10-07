@@ -41,11 +41,12 @@ def reset():
     L._ev_codes.clear()
     L.last_decode = None
     L.fobburst_at = None
+    L.tpmsburst_at = None
 
 
-def feed(levels):
+def feed(levels, t0=0.0):
     """Run the detector over a level sequence; return the rows it produced."""
-    t = 0.0
+    t = t0
     for lv in levels:
         L._update_events(lv, FREQ, t)
         t += STEP
@@ -96,6 +97,64 @@ def main():
     ok &= check("1 Hz pulse train -> one row per pulse, ~1 s repeat",
                 len(rows) == 4 and len(good) == 3,
                 "rows=%d repeating=%d" % (len(rows), len(good)))
+
+    # A TX-test burst blocks the Arduino while it transmits, so it never reaches
+    # the RSSI detector - the label has to come from which BUTTON was pressed,
+    # and the most recent one must win so pressing TPMS then Fob cannot mislabel
+    # the second burst. Burst times are set against START_TIME so the check does
+    # not depend on how long the test itself takes.
+    reset()
+    L.fobburst_at = L.START_TIME + 9.0
+    L.tpmsburst_at = L.START_TIME + 9.5
+    rows = feed([FLOOR] * 6 + [STRONG] + [FLOOR] * 6, t0=10.0)
+    ok &= check("TPMS pressed last -> labelled tpms",
+                bool(rows) and rows[0]["label"] == "tpms (TX test)",
+                "got %r" % (rows[0]["label"] if rows else None))
+
+    reset()
+    L.fobburst_at = L.START_TIME + 9.5
+    L.tpmsburst_at = L.START_TIME + 9.0
+    rows = feed([FLOOR] * 6 + [STRONG] + [FLOOR] * 6, t0=10.0)
+    ok &= check("Fob pressed last -> labelled fob",
+                bool(rows) and rows[0]["label"] == "fob (TX test)",
+                "got %r" % (rows[0]["label"] if rows else None))
+
+    reset()
+    rows = feed([FLOOR] * 6 + [STRONG] + [FLOOR] * 6, t0=10.0)
+    ok &= check("no burst pressed -> no label",
+                bool(rows) and rows[0]["label"] is None,
+                "got %r" % (rows[0]["label"] if rows else None))
+
+    # --- a stale noise floor must not silence the detector for good ---------
+    # Seen live: the board was unplugged and replugged repeatedly while the
+    # server kept running. The receiver rails for a moment when that happens,
+    # so the level handed over on the first sample after a restart is elevated,
+    # and _floor got anchored tens of dB above the quiet level. Every later
+    # quiet sample then deviated by far more than EVENT_RISE_DB, which OPENED
+    # an event whose "back within hysteresis" close can never be satisfied -
+    # the deviation never shrinks. _in_event latched True and the table stayed
+    # empty for the rest of the run, while the chart went on showing the fob
+    # spikes perfectly. Recovery has to be automatic: there is no reason the
+    # user should have to restart a server or press Clear to see a signal.
+    reset()
+    L._floor = -60.0                  # stale: ~50 dB above the quiet level
+    feed([FLOOR] * 25)                # nothing but quiet, at the real level
+    ok &= check("a stale floor does not latch _in_event forever",
+                L._in_event is False, "still latched after 5 s of quiet")
+
+    reset()
+    L._floor = -60.0
+    rows = feed([FLOOR] * 20 + [STRONG] + [FLOOR] * 6)
+    ok &= check("stale floor recovers and a later pulse still records",
+                len(rows) == 1, "got %d rows" % len(rows))
+
+    # The abandoned event must not be reported as a transmission either: a
+    # 30-minute "signal" row is worse than no row, because it is wrong.
+    reset()
+    L._floor = -60.0
+    rows = feed([FLOOR] * 40)
+    ok &= check("the abandoned stale event is not reported",
+                len(rows) == 0, "got %d rows" % len(rows))
 
     print("\n%s" % ("all checks passed" if ok else "FAILURES above"))
     return 0 if ok else 1

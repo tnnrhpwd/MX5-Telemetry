@@ -67,6 +67,7 @@ ser_handle = None
 raw_captures = 0
 last_decode = None        # latest decoded transmission: {"hex": ..., "bit_us": ...}
 fobburst_at = 0.0         # time.time() when the last Fob Burst was triggered
+tpmsburst_at = 0.0        # ... and the last TPMS Burst, for event labelling
 CAPTURE_PATH = os.path.join(CAPTURES_DIR, "capture_live.txt")
 START_TIME = time.time()
 IDLE_RUN = 60             # GDO0 runs longer than this are idle gaps between repeats
@@ -163,6 +164,7 @@ EVENT_RISE_DB = 8.0
 EVENT_HYST_DB = 4.0
 EVENT_MIN_S = 0.1
 EVENT_MIN_ABOVE = 3
+EVENT_MAX_S = 3.0   # nothing real lasts longer - see the stuck-event guard
 
 
 def _update_events(rssi, freq, t):
@@ -194,6 +196,25 @@ def _update_events(rssi, freq, t):
             _ev_bursts = 0
             _ev_unit_us = None
     else:
+        if t - _ev_start > EVENT_MAX_S:
+            # STUCK-EVENT GUARD. If _floor is anchored to a level the signal no
+            # longer matches, the deviation stays large for ever, so the "back
+            # within hysteresis" close below can never fire: _in_event latches
+            # True and the detector records NOTHING again for the rest of the
+            # run, while the chart carries on showing the spikes. That is a
+            # live failure, not a theory - the receiver rails for a moment
+            # whenever the board is replugged, and an elevated first sample
+            # anchors the floor tens of dB high.
+            # Nothing real lasts EVENT_MAX_S, so drop the event and re-anchor.
+            # min() and not the current level: the floor gets stuck too HIGH,
+            # so only ever lower it here - assigning the present reading would
+            # drag the baseline up onto a genuinely long carrier.
+            # The event is abandoned WITHOUT being reported, because a
+            # 30-minute "signal" row is worse than no row: it is wrong.
+            _in_event = False
+            _below_count = 0
+            _floor = min(_floor, float(rssi))
+            return
         if abs(rssi - _floor) > abs(_ev_peak - _floor):
             _ev_peak = rssi
         if abs(rssi - _floor) > EVENT_RISE_DB:
@@ -230,6 +251,17 @@ def _update_events(rssi, freq, t):
                         code = last_decode["hex"]
                     if fobburst_at and 0 < (START_TIME + _ev_start) - fobburst_at < 3.0:
                         label = "fob (TX test)"
+                    # A TX-test burst blocks the Arduino while it transmits, so
+                    # the RSSI deviation it causes is never sampled - the event
+                    # has to be labelled from which button was pressed. Most
+                    # recent wins, so pressing TPMS and then Fob cannot mislabel
+                    # the second burst as the first.
+                    cands = [(at, nm) for at, nm in ((fobburst_at, "fob"),
+                                                     (tpmsburst_at, "tpms")) if at]
+                    if cands:
+                        bat, bnm = max(cands)
+                        if 0 < (START_TIME + _ev_start) - bat < 3.0:
+                            label = "%s (TX test)" % bnm
                     # Interval since the previous transmission on this frequency.
                     # A tyre sensor repeats metronomically (typically ~60 s); a
                     # fob press is sporadic. Far more useful than raw strength
@@ -301,22 +333,95 @@ def _pick_color(name):
     return _DEVICE_COLORS[sum(ord(c) for c in name) % len(_DEVICE_COLORS)]
 
 
+_devices_load_error = None
+
+
 def _load_devices():
-    global _devices
+    """Load the enrolments, and never let a read failure become data loss.
+
+    The previous version set _devices = {} on ANY OSError or bad JSON, and
+    _refine_device() calls _save_devices() on every match - so a single
+    transient read failure, or a file left half-written by an interrupted
+    save, was written straight back as an EMPTY FILE. Every enrolment was gone
+    for good, with nothing anywhere to say why.
+
+    Observed exactly that: devices.json went from two devices to {} at
+    10:54:01, about a minute after a server restart, and the only reason it is
+    recoverable at all is that the file is tracked in git. A read failure now
+    blocks saving rather than authorising a wipe.
+    """
+    global _devices, _devices_load_error
     try:
         with open(DEVICES_PATH, encoding="utf-8") as f:
-            loaded = json.load(f)
-        _devices = loaded if isinstance(loaded, dict) else {}
-    except (OSError, ValueError):
+            text = f.read()
+    except FileNotFoundError:
+        # Nothing enrolled yet: a normal state, and safe to save over.
+        _devices, _devices_load_error = {}, None
+        return
+    except OSError as exc:
         _devices = {}
-
-
-def _save_devices():
+        _devices_load_error = "could not read devices.json: %s" % exc
+        return
     try:
-        with open(DEVICES_PATH, "w", encoding="utf-8") as f:
-            json.dump(_devices, f, indent=2, sort_keys=True)
+        loaded = json.loads(text)
+    except ValueError as exc:
+        _devices = {}
+        _devices_load_error = "devices.json is not valid JSON: %s" % exc
+        return
+    if not isinstance(loaded, dict):
+        _devices = {}
+        _devices_load_error = "devices.json does not hold an object"
+        return
+    _devices, _devices_load_error = loaded, None
+
+
+def _preserve_unreadable_devices():
+    """Keep a copy of a devices.json we could not read, before it is replaced.
+
+    It holds the only copy of the enrolments, and a deliberate save is about to
+    overwrite it. A plain copy rather than shutil, to keep the imports as they
+    are. Clears the load error once the bytes are safe, so saving resumes.
+    """
+    global _devices_load_error
+    if not os.path.exists(DEVICES_PATH):
+        _devices_load_error = None
+        return
+    try:
+        with open(DEVICES_PATH, "rb") as src:
+            blob = src.read()
+        with open(DEVICES_PATH + ".bad", "wb") as dst:
+            dst.write(blob)
     except OSError:
-        pass
+        return          # could not preserve it: refuse to overwrite instead
+    _devices_load_error = None
+
+
+def _save_devices(force=False):
+    """Persist the enrolments: atomically, and never over a failed load.
+
+    `force` is for deliberate changes - enrol, rename, delete, clear. The
+    automatic save from _refine_device() must NOT pass it, because that path
+    runs on every match, so it is the one that turns an unreadable file into an
+    empty one within a second of the next signal.
+
+    Written through a temp file and os.replace() so an interrupted save cannot
+    leave a half-written devices.json behind - which is how the unparseable
+    file that started this got there in the first place.
+    """
+    if _devices_load_error:
+        if not force:
+            return False
+        _preserve_unreadable_devices()
+    try:
+        tmp = DEVICES_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_devices, f, indent=2, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, DEVICES_PATH)
+        return True
+    except OSError:
+        return False
 
 
 def _cap_runs(hexstr):
@@ -709,6 +814,9 @@ def handle_line(line):
     if line.startswith("TXCODE "):
         parts = line.split()
         if len(parts) >= 2:
+            # "TXCODE <hex> [fob|tpms]" - the kind is optional so firmware that
+            # prints only the code still labels its burst as a fob.
+            kind = parts[2] if len(parts) > 2 else "fob"
             last_decode = {"hex": parts[1], "bit_us": 480}
             # The TX burst blocks the Arduino while it transmits, so the RSSI
             # deviation it causes never reaches this reader. Log the event
@@ -721,7 +829,7 @@ def handle_line(line):
                 "duration": 0.78,
                 "freq": selected_freq,
                 "type": "signal",
-                "label": "fob (TX test)",
+                "label": "%s (TX test)" % kind,
                 "code": parts[1],
             })
         return
@@ -878,6 +986,21 @@ def set_fobburst():
     if s is not None:
         try:
             s.write(b"FOBBURST\n")
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def set_tpmsburst():
+    """Tell the Arduino to transmit a synthetic TPMS-style sensor burst."""
+    global tpmsburst_at
+    tpmsburst_at = time.time()
+    with lock:
+        s = ser_handle
+    if s is not None:
+        try:
+            s.write(b"TPMSBURST\n")
             return True
         except Exception:
             return False
@@ -1153,6 +1276,10 @@ class Handler(BaseHTTPRequestHandler):
                                "record_active": record_active,
                                "raw_captures": raw_captures,
                                "devices": _devices,
+                               # Why the enrolments are empty, when they are
+                               # empty for a reason: a silent {} looks exactly
+                               # like "you never enrolled anything".
+                               "devices_error": _devices_load_error,
                                "last_signature": last_signature,
                                # Momentary, not latching: _fresh_device() returns
                                # None once the match is older than
@@ -1160,6 +1287,16 @@ class Handler(BaseHTTPRequestHandler):
                                "last_device": _fresh_device(),
                                "last_decode": dict(last_decode) if last_decode else None,
                                "sample_age": age,
+                               # Detector internals. Without these, the only
+                               # visible symptom of a latched detector is an
+                               # empty table next to a chart full of spikes,
+                               # which looks exactly like "the fob isn't being
+                               # received" - it cost a hardware teardown to
+                               # find that once already.
+                               "floor": _floor,
+                               "in_event": _in_event,
+                               "below_count": _below_count,
+                               "ev_above": _ev_above,
                                "max_data_ms": round(_max_data_ms, 1),
                                "last_error": last_reader_error,
                                "reconnects": reconnects,
@@ -1228,7 +1365,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 _devices[name] = {"color": color or _pick_color(name),
                                   "sig": last_signature}
-                _save_devices()
+                _save_devices(force=True)
                 body = json.dumps({"ok": True, "name": name}).encode("utf-8")
                 status = 200
             self.send_response(status)
@@ -1240,7 +1377,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/devices/clear":
             _devices.clear()
-            _save_devices()
+            _save_devices(force=True)
             body = b'{"ok": true}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1259,7 +1396,7 @@ class Handler(BaseHTTPRequestHandler):
                 name = ""
             gone = _devices.pop(name, None) is not None
             if gone:
-                _save_devices()
+                _save_devices(force=True)
                 # A device that is deleted while lit would leave the chip lit
                 # with nothing behind it, so drop the match too.
                 if last_device and last_device.get("name") == name:
@@ -1293,7 +1430,7 @@ class Handler(BaseHTTPRequestHandler):
                 err = None
             if err is None:
                 _devices[to] = _devices.pop(name)
-                _save_devices()
+                _save_devices(force=True)
                 body = json.dumps({"ok": True, "name": to}).encode("utf-8")
                 status = 200
             else:
@@ -1353,6 +1490,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ok = set_sweep(on)
             body = json.dumps({"ok": ok, "sweep_mode": sweep_mode}).encode("utf-8")
+            self.send_response(200 if ok else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/tpmsburst":
+            ok = set_tpmsburst()
+            body = json.dumps({"ok": ok}).encode("utf-8")
             self.send_response(200 if ok else 503)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

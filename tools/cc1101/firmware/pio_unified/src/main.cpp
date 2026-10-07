@@ -109,6 +109,27 @@ bool probeSignal() {
 }
 
 
+// Count GDO0 edges over `ms`, the same way the live RSSI line does.
+//
+// This exists as a READ-FREE observable. Every register read on this two-module
+// bus is unreliable (FREQ2 returned 0x0C then 0x1E for the same config), so no
+// conclusion can rest on one. Edge rate can: a receiver in RX mode idles at a
+// few edges per 100 ms, whereas one that has been reset sits in IDLE and its
+// output stops moving. That is enough to test chip-select wiring with.
+static int countGdoEdges(unsigned long ms) {
+  int edges = 0;
+  uint8_t prev = (PIND & 0x04) ? 1 : 0;
+  unsigned long t0 = millis();
+  while (millis() - t0 < ms) {
+    uint8_t cur = (PIND & 0x04) ? 1 : 0;
+    if (cur != prev) edges++;
+    prev = cur;
+    delayMicroseconds(4);
+  }
+  return edges;
+}
+
+
 void captureAndDump(uint8_t delayUs) {
   unsigned long t0 = micros();
   for (int i = 0; i < CAP_BYTES; i++) {
@@ -335,9 +356,52 @@ void txFobBurst() {
   // Report the transmitted frame so the webapp can label the burst it is
   // about to receive (the TX's own burst can't be captured: txFobBurst()
   // blocks loop() while transmitting, so the GDO0 probe only ever sees it
-  // after it has finished).
-  Serial.print(F("TXCODE AAAAAAAAAAAAAAAA2DD4010204081020\n"));
+  // after it has finished). The trailing kind is what lets one reader label
+  // both test buttons; it is optional so older firmware still parses.
+  Serial.print(F("TXCODE AAAAAAAAAAAAAAAA2DD4010204081020 fob\n"));
   Serial.println(F("FOBBURST_DONE"));
+}
+
+
+// Transmit a synthetic TPMS sensor burst.
+//
+// A tyre sensor's signature is its CADENCE: it sends a short group of identical
+// frames, then repeats that group on a slow timeout (tens of seconds), which is
+// what makes its Repeat column metronomic and a fob's sporadic. So this sends
+// six identical frames back to back - one group - rather than one long burst.
+//
+// ⚠️ This is an APPROXIMATION, for two reasons, and both are worth stating
+// rather than hiding behind a button:
+//   1. Real TPMS is usually FSK. This transmitter can only key its carrier on
+//      and off (STX/SIDLE), so this is an OOK stand-in, not a frequency-shifted
+//      signal. It exercises the decode and UI path, it does not clone a sensor.
+//   2. The TX module currently radiates nothing at all, so until that hardware
+//      fault is found this will not appear as a received signal either.
+void txTpmsBurst() {
+  configureTx(currentMHz);
+
+  const int BIT_US = 480;          // ~2.1 kbps, the keying rate the TX can do
+  byte frame[13] = {
+    0xAA, 0xAA, 0xAA, 0xAA,        //  0-3  preamble
+    0x44, 0x54,                    //  4-5  sync 'D','T' (not the fob's 2DD4)
+    0x1A, 0x2B, 0x3C, 0x4D,        //  6-9  sensor id
+    0x20,                          //   10  pressure
+    0x18,                          //   11  temperature (~24 C)
+    0x00                           //   12  checksum, filled below
+  };
+  byte sum = 0;
+  for (byte i = 6; i <= 11; i++) sum += frame[i];
+  frame[12] = sum;                 // plain 8-bit sum over id + pressure + temp
+
+  txFrame(frame, 13, BIT_US, 6);
+
+  Serial.print(F("TXCODE "));
+  for (byte i = 0; i < 13; i++) {
+    if (frame[i] < 0x10) Serial.print('0');
+    Serial.print(frame[i], HEX);
+  }
+  Serial.println(F(" tpms"));
+  Serial.println(F("TPMS_DONE"));
 }
 
 
@@ -956,6 +1020,43 @@ void handleCommands() {
       Serial.println(F("TX_ON"));
     } else if (cmd == "FOBBURST") {
       txFobBurst();
+    } else if (cmd == "CSNTEST") {
+      // Are the TX and RX chip selects really separate chips?
+      //
+      // The user measured ~10 ohms between D9 and D10, which is NOT diagnostic on
+      // its own - both modules share VCC/GND, so ESD paths read as tens of ohms
+      // on a perfectly healthy board. But IF they are tied, every strobe "to the
+      // TX" also lands on the RX, and configureTx() STARTS with an SRES - so
+      // each TX experiment would be resetting the RECEIVER. That would explain
+      // the bistable railed-or-live behaviour and why the loopback never saw a
+      // carrier from our own transmitter.
+      //
+      // The RX is its own CONTROL: resetting it through ITS OWN chip select must
+      // stop its output. If resetting through the TX's chip select does the same
+      // thing, they are the same chip. Without that control, a quiet reading
+      // after the second reset would prove nothing.
+      applyAsyncConfig();
+      delay(300);
+      Serial.print(F("CSNTEST_RX_BEFORE "));
+      Serial.println(countGdoEdges(200));
+      rawRxStrobe(CC1101_SRES);            // CONTROL: reset via the RX's CSN
+      delay(300);
+      Serial.print(F("CSNTEST_RX_AFTER "));
+      Serial.println(countGdoEdges(200));
+
+      applyAsyncConfig();
+      delay(300);
+      Serial.print(F("CSNTEST_TX_BEFORE "));
+      Serial.println(countGdoEdges(200));
+      rawTxStrobe(CC1101_SRES);            // TEST: reset via the TX's CSN
+      delay(300);
+      Serial.print(F("CSNTEST_TX_AFTER "));
+      Serial.println(countGdoEdges(200));
+
+      applyAsyncConfig();                  // leave the receiver working
+      Serial.println(F("CSNTEST_DONE"));
+    } else if (cmd == "TPMSBURST") {
+      txTpmsBurst();
     } else if (cmd == "TXLOOP" || cmd.startsWith("TXLOOP ")) {
       // "TXLOOP [samples_per_bit]" -> loopback self-test. Default 10 (~110 us
       // bit, ~9 kbps); raise it to find the fastest rate that keys the carrier.
