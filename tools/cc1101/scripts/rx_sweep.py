@@ -1,129 +1,85 @@
-"""Sweep RX registers against a measurable objective: does the output FOLLOW a keyed carrier?
+"""Sweep band and RX data rate through the running webapp while a fob is pressed.
 
-`tx_check.py` established that the link is alive but weak: keying a 480 us carrier
-produced ~98 edges where a faithful demodulator would produce ~1250 (2 transitions
-per 480 us period over 300 ms). Silent was ~8. So the receiver registers the
-carrier but barely tracks it - a threshold/AGC/bandwidth mismatch, not a dead radio.
+Why a sweep rather than one guess: the captured waveform is a constant-duty
+square wave with no symbol structure, so no payload can be read from it. Three
+explanations demand different fixes -
 
-Each entry here sets ONE register (via `RXREG <addr> <val>`, which applies the full
-config first so every entry starts from the same baseline) and then measures the
-KEYED edge count. Figure of merit is `keyed` (want ~1250); `silent` is the guard
-against a setting that just makes the receiver noisier.
+  * the band is wrong, so the receiver hears the fob's OSCILLATOR LEAKAGE rather
+    than its modulated signal, which would be identical for every fob,
+  * it is the fob's own signal and the receiver's data rate is mis-tuned, or
+  * it is the receiver's slicer oscillating, in which case the frequency follows
+    the RX DATA RATE rather than the fob.
 
-Suspects, in the order they were chosen:
-  AGCCTRL0 (0x1C) = 0xB2 -> AGC_FREEZE = 11 (freeze after 16 gain steps). A frozen
-      AGC is precisely how a slicer gets stuck at one level and stops tracking.
-  MDMCFG4 (0x10)  bandwidth, keeping the low nibble (DRATE_E) at 8 so the data rate
-      is unchanged: 0xD8=81 kHz, 0xE8=69 kHz, 0xF8=58 kHz are all narrower than the
-      current 0xC8=101 kHz, and narrower means less noise into the slicer.
-  AGCCTRL2 (0x1B) MAGN_TARGET [2:0] - the AGC's target level, i.e. the OOK decision
-      point. Current 0x43 = MAGN_TARGET 3.
-  AGCCTRL1 (0x1A) CARRIER_SENSE_ABS_THR [3:0] - the carrier-sense threshold.
+Only a sweep separates them. Each sweep dwells on one rate long enough for
+several presses, and the server tags every capture it logs with the rate in
+force (`DRATE=`), so nothing needs bookkeeping here - compare afterwards with
+`pwm_decode.py --by-drate`.
 
-Run with the webapp STOPPED - it owns COM3.
+This talks to the running webapp over HTTP rather than opening COM3, so the
+server does not have to be stopped. (scripts/rate_sweep.py is the older
+direct-serial variant: it needs COM3 exclusively and analyses run lengths with
+the two-cluster timing model this project has since abandoned.)
+
+Usage:
+  python rx_sweep.py [dwell_seconds] [rate ...]
 """
-import statistics
+
+import json
 import sys
 import time
+import urllib.request
 
-import serial
-
-PORT = "COM3"
-BAUD = 115200
-BIT_US = 480
-MS = 300
-PA = 12
-
-R_AGCCTRL0, R_AGCCTRL1, R_AGCCTRL2, R_MDMCFG4 = 0x1C, 0x1A, 0x1B, 0x10
-
-SWEEP = [
-    ("baseline (current config)", R_AGCCTRL0, 0xB2),
-    ("agc0 freeze NEVER", R_AGCCTRL0, 0x82),
-    ("agc0 freeze after 4", R_AGCCTRL0, 0x92),
-    ("agc0 freeze after 8", R_AGCCTRL0, 0xA2),
-    ("agc0 ti default", R_AGCCTRL0, 0x91),
-    ("agc0 no-freeze hyst3", R_AGCCTRL0, 0x83),
-    ("bw 116 kHz", R_MDMCFG4, 0xB8),
-    ("bw  81 kHz", R_MDMCFG4, 0xD8),
-    ("bw  69 kHz", R_MDMCFG4, 0xE8),
-    ("bw  58 kHz", R_MDMCFG4, 0xF8),
-    ("magntgt 0", R_AGCCTRL2, 0x40),
-    ("magntgt 1", R_AGCCTRL2, 0x41),
-    ("magntgt 7", R_AGCCTRL2, 0x47),
-    ("magntgt 7 +dvga", R_AGCCTRL2, 0x77),
-    ("cs abs thr +4", R_AGCCTRL1, 0x04),
-    ("cs abs thr -8", R_AGCCTRL1, 0x08),
-    ("lna priority + thr -8", R_AGCCTRL1, 0x48),
-]
-
-EXPECTED = MS * 1000 // BIT_US     # one carrier transition per loop iteration
+BASE = "http://127.0.0.1:8765"
+# 433.92 FIRST. The modules are E07-M1101D-433 parts and 315 MHz sits outside the
+# CC1101's 387-464 MHz range, so the 433 band is the higher prior - and if the
+# band is the problem, most of the session is then spent on the right one.
+FREQS = [433.92, 315.0]
+RATES = [2000, 10000, 38400]
 
 
-def read_edges(ser, cmd, timeout=10.0):
-    ser.reset_input_buffer()
-    ser.write((cmd + "\n").encode())
-    end = time.time() + timeout
-    while time.time() < end:
-        line = ser.readline().decode("ascii", "ignore").strip()
-        if line.startswith("TXKEY_EDGES "):
-            return int(line.split()[1])
-    return None
+def post(path, obj):
+    req = urllib.request.Request(
+        BASE + path, data=json.dumps(obj).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.loads(r.read().decode())
+
+
+def get(path):
+    with urllib.request.urlopen(BASE + path, timeout=5) as r:
+        return json.loads(r.read().decode())
 
 
 def main():
-    ser = serial.Serial(PORT, BAUD, timeout=0.2)
-    quiet, end = time.time(), time.time() + 14
-    while time.time() < end:
-        if ser.readline():
-            quiet = time.time()
-        elif time.time() - quiet > 1.5:
-            break
+    args = sys.argv[1:]
+    dwell = float(args[0]) if args and args[0].replace(".", "").isdigit() else 10.0
+    rates = [int(a) for a in args if a.isdigit() and int(a) > 100] or RATES
 
-    ser.write(("TXPA %d\n" % PA).encode())
-    time.sleep(0.3)
-    print("objective: keyed edges approaching %d (a faithful demod of a %d us "
-          "keyed carrier over %d ms)\n" % (EXPECTED, BIT_US, MS))
-    print("%-26s %7s %7s %8s" % ("config", "keyed", "silent", "keyed/1250"))
+    d = get("/data")
+    print("start: mod=%s (2=ASK/OOK)  freq=%s MHz"
+          % (d.get("selected_mod"), d.get("selected_freq")))
+    if int(d.get("selected_mod", 2)) != 2:
+        print("!! modulation is not ASK/OOK - select ASK/OOK on the page first")
+        return 1
 
-    rows = []
-    for label, addr, val in SWEEP:
-        ser.reset_input_buffer()
-        ser.write(("RXREG %02X %02X\n" % (addr, val)).encode())
-        # Wait for RXREG_OK rather than sleeping a guessed interval.
-        end = time.time() + 8
-        ok = False
-        while time.time() < end:
-            line = ser.readline().decode("ascii", "ignore").strip()
-            if line.startswith("RXREG_OK"):
-                ok = True
-                break
-        if not ok:
-            print("%-26s %7s" % (label, "no ack"))
-            continue
-        k = read_edges(ser, "TXKEY %d %d 1" % (BIT_US, MS))
-        s = read_edges(ser, "TXKEY %d %d 0" % (BIT_US, MS))
-        if k is None or s is None:
-            print("%-26s %7s" % (label, "no data"))
-            continue
-        print("%-26s %7d %7d %8.2f" % (label, k, s, k / float(EXPECTED)))
-        rows.append((k, s, label, addr, val))
-
-    if rows:
-        best = max(rows)
-        print("\nbest: %s -> keyed %d, silent %d" % (best[2], best[0], best[1]))
-        base = next((r for r in rows if r[2].startswith("baseline")), None)
-        if base and best[0] > base[0] * 1.5:
-            print("IMPROVED over baseline (%d -> %d keyed)" % (base[0], best[0]))
-        else:
-            print("no setting beat the baseline materially - the slicer is not "
-                  "the limit")
-
-    # Leave the radio back on the shipped config rather than the last probe.
-    ser.write(("RXREG %02X %02X\n" % (R_AGCCTRL0, 0xB2)).encode())
-    time.sleep(1.0)
-    ser.write(b"DRATE 10000\n")
-    time.sleep(1.0)
-    ser.close()
+    combos = [(f, r) for f in FREQS for r in rates]
+    for i, (freq, rate) in enumerate(combos):
+        post("/freq", {"mhz": freq})
+        post("/drate", {"bps": rate})
+        print("")
+        print(">>> %d/%d   %.2f MHz @ %d bps   %.0fs   KEEP PRESSING THE FOB"
+              % (i + 1, len(combos), freq, rate, dwell))
+        remaining = dwell
+        while remaining > 5.0:
+            time.sleep(5.0)
+            remaining -= 5.0
+            print("      ... %.0fs left at %.2f MHz / %d bps"
+                  % (remaining, freq, rate))
+        time.sleep(max(remaining, 0.0))
+    post("/freq", {"mhz": 315.0})
+    post("/drate", {"bps": 10000})
+    print("")
+    print("sweep complete - receiver left at 315 MHz / 10 kbps ASK/OOK")
     return 0
 
 

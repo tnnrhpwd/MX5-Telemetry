@@ -37,13 +37,21 @@ def cap_hex(samples):
     return "".join(out)
 
 
-def fob_samples(short=8, long_=20, reps=3, gap=600):
+def fob_samples(short=8, long_=20, reps=3, gap=600, frame_bits=6):
     """A PWM/PPM remote burst: alternating preamble, payload, inter-frame silence.
 
     The gap has to exceed FRAME_GAP, otherwise it is just a long symbol - and a
     long symbol is exactly what the old code mistook for part of the signature.
+
+    `frame_bits` repeats the 32-bit pattern so that ONE frame carries about as
+    many pulse runs as a real capture: these fobs produce ~190 runs per frame,
+    and the original single-pattern frame (32 runs) was six times shorter than
+    anything real. That mattered as soon as enrollment gained a minimum
+    run-count - the fixture would have been refused for being a fragment, which
+    is correct behaviour applied to an unrepresentative input.
     """
-    bits = [1, 0] * 8 + [1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1]
+    base = [1, 0] * 8 + [1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1]
+    bits = base * frame_bits
     level, samples = 1, []
     for _ in range(reps):
         for b in bits:
@@ -90,6 +98,12 @@ def main():
     ok &= check("railed (all-ones) capture yields NO signature", railed is None,
                 "got %s" % (railed,))
 
+    # NOTE: silence handling was investigated here and REVERTED - see the note
+    # above _signature() in live_readout.py. Two candidate rules were measured
+    # against the real capture log and both rejected, so there is deliberately no
+    # test pinning either of them. What the fixture DOES pin is that a gap beyond
+    # FRAME_GAP still breaks the stretch (the fob_samples() default gap).
+
     idle = L._signature(L._cap_runs(cap_hex([1] * 2400 + [0] * 2400)), SAMPLE_US)
     ok &= check("single-transition capture yields NO signature", idle is None,
                 "got %s" % (idle,))
@@ -104,17 +118,29 @@ def main():
     ok &= check("a different device scores low (< 0.75)",
                 s_diff is None or s_diff < 0.75, "got %s" % s_diff)
 
-    # Enrolling must be a real round trip: the matched name has to come back.
+    # The run-count "fragment" rule went with timing identification. What gates
+    # enrolment now is whether the capture produced a MESSAGE - a capture that
+    # decodes nothing cannot be enrolled, whatever its pulse structure.
+    ok &= check("a capture with no decoded message cannot be enrolled",
+                L._enrol_reason("x", None) is not None)
+    ok &= check("a decoded message can be enrolled",
+                L._enrol_reason("x", "1A2B") is None)
+
+    # Identification is by MESSAGE now, so the round trip uses codes rather than
+    # signatures: the same code must come back, a different one must not.
     saved = dict(L._devices)
     try:
         L._devices.clear()
-        L._devices["TestFob"] = {"color": "#fff", "sig": a}
-        m = L._match_device(b)
-        ok &= check("enrolled device is recognised", m is not None and
-                    m["name"] == "TestFob", "got %s" % m)
-        m2 = L._match_device(other)
-        ok &= check("a different device does NOT match it",
-                    m2 is None or m2["name"] != "TestFob", "got %s" % m2)
+        L._devices["TestFob"] = {"color": "#fff", "sig": a, "code": "1A2B3C"}
+        m = L._match_code("1A2B3C")
+        ok &= check("an enrolled message is recognised",
+                    m is not None and m["name"] == "TestFob", "got %s" % m)
+        m2 = L._match_code("4D5E6F")
+        ok &= check("a different message does NOT match it", m2 is None,
+                    "got %s" % m2)
+        m3 = L._match_code("001a2b3c")
+        ok &= check("case and leading zeros do not defeat the match",
+                    m3 is not None and m3["name"] == "TestFob", "got %s" % m3)
     finally:
         L._devices.clear()
         L._devices.update(saved)

@@ -460,7 +460,7 @@
       <button class="icon-btn" id="pauseBtn" type="button" title="Freeze the chart so you can read it. Data keeps streaming and being logged underneath; press again to resume.">Pause</button>
       <button class="icon-btn" id="clearBtn" type="button" title="Reset the chart, the event table and the raw-capture counter. Does not change any radio setting.">Clear</button>
       <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle light and dark theme" title="Switch between the light and dark theme.">Light</button>
-      <button class="icon-btn" id="enrolBtn" type="button" title="Record the timing signature of the most recently received signal as a named device, so the indicator below lights up when that device transmits again. It matches TIMING, not data, so it recognises a device model - a Mazda fob from a Nissan fob - not one individual unit.">Enrol</button>
+      <button class="icon-btn" id="enrolBtn" type="button" title="Record the MESSAGE of the most recently decoded signal as a named device, so the indicator below lights when that device transmits again. Identification is by the decoded code, not by pulse timing: how long you hold the button cannot change what was sent.">Enrol</button>
     </div>
   </header>
 
@@ -513,9 +513,13 @@
           <button class="seg-btn" data-mhz="433.92" type="button" title="433.92 MHz - European and Asian key fobs, gate and garage remotes, weather stations, and TPMS in some regions.">433.92 MHz</button>
         </div>
         <span class="meta-label">Modulation</span>
+        <!-- The static `active` below must match the server's own default
+             (selected_mod in live_readout.py), or the page paints the wrong
+             mode for the moment before the first /data poll and invites a
+             click to "fix" a mode that was never wrong. -->
         <div class="segmented" id="modSeg">
-          <button class="seg-btn active" data-mod="0" type="button" title="2-FSK (frequency shift keying). Use for TPMS tyre sensors and FSK car fobs - Nissan, Mazda, Honda and Toyota tyre sensors are commonly FSK at 315 MHz. Best paired with the 10k data rate.">FSK</button>
-          <button class="seg-btn" data-mod="2" type="button" title="ASK/OOK (amplitude keying). Use for nearly every simple key fob, gate/garage remote and fixed-code remote. Start at the 10k data rate.">ASK/OOK</button>
+          <button class="seg-btn" data-mod="0" type="button" title="2-FSK (frequency shift keying). Use for TPMS tyre sensors and FSK car fobs - Nissan, Mazda, Honda and Toyota tyre sensors are commonly FSK at 315 MHz. Best paired with the 10k data rate.">FSK</button>
+          <button class="seg-btn active" data-mod="2" type="button" title="ASK/OOK (amplitude keying). Use for nearly every simple key fob, gate/garage remote and fixed-code remote. Start at the 10k data rate.">ASK/OOK</button>
         </div>
         <span class="meta-label">Data rate</span>
         <div class="segmented" id="drateSeg">
@@ -987,12 +991,9 @@ function renderDevices(d) {
   if (_note && (Date.now() - _noteAt) < 4000) {
     meta.textContent = _note;
   } else if (last) {
-    meta.textContent = last.name + ' matched ' +
-      Math.round((last.score || 0) * 100) + '%';
-  } else if (d.last_signature) {
-    var s = d.last_signature;
-    meta.textContent = 'last: ' + s.short_us + '/' + s.long_us + ' us, ' +
-      s.ratio + 'x' + (s.period_syms ? ', frame ' + s.period_syms : '');
+    meta.textContent = last.name + ' = ' + (last.code || '?');
+  } else if (d.last_decode && d.last_decode.hex) {
+    meta.textContent = 'last message: ' + d.last_decode.hex + ' (not enrolled)';
   } else {
     meta.textContent = '';
   }

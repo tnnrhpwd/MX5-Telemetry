@@ -144,6 +144,23 @@ FRAME_GAP = 500           # ~5 ms of silence = a real gap BETWEEN frames, not th
                           # sub-millisecond dropouts the marginal demodulator makes
                           # inside one; used to count how often a device retransmits
 
+# --- NOTE: silence handling, tried and REVERTED --------------------------
+# Clustering 2-3 ms of silence as if it were a symbol is a real bug, and it is
+# why long_us wandered between 293 and 1246 us for a single fob. Two fixes were
+# measured against 11 logged captures and BOTH were rejected:
+#
+#   * an ABSOLUTE cutoff of 300 us separated the Nissan's symbols from its
+#     silence and pulled the ratio scatter from 2.8-16.0 down to 2.25-2.85 - but
+#     the Mazda's symbols ARE 441 us, so it silently deleted them;
+#   * a RELATIVE cutoff (3x this device's own long symbol) cannot bootstrap:
+#     when the silence dominates the window it also dominates the first
+#     clustering pass, so the threshold comes out too high to remove it.
+#
+# The limit is the CAPTURE, not the threshold. A 45 ms window holding a variable
+# amount of silence cannot be made to yield a stable symbol pair by any cutoff
+# that is also safe for a device with different symbol lengths. See the note at
+# the top of scripts/run_profile.py.
+
 # --- signal-event detection ----------------------------------------------
 # Detects bursts of RSSI well above the (slowly adapting) noise floor and
 # records them as "transmissions". No name is assigned here: RSSI is only
@@ -317,6 +334,10 @@ def _kmeans2(vals):
 DEVICES_PATH = os.path.join(CAPTURES_DIR, "devices.json")
 _devices = {}
 last_signature = None
+# WHEN that signature was seen. A chip lit at enrolment time has to be honest
+# about whether the signal it is being attributed to is still recent - see
+# _refresh_match().
+last_signature_t = None
 last_device = None
 _DEVICE_COLORS = ["#e06c4f", "#4f9de0", "#7fd06a", "#d6b23c",
                   "#b07fd6", "#4fd0c0"]
@@ -327,6 +348,18 @@ _DEVICE_COLORS = ["#e06c4f", "#4f9de0", "#7fd06a", "#d6b23c",
 # second) re-arms this on every capture, so it stays lit while the button is
 # held and fades out ~3 s after the last pulse.
 DEVICE_HOLD_S = 3.0
+# ⚠️ NOTHING HERE IDENTIFIES A DEVICE ANY MORE.
+# A device is identified by the MESSAGE it sends - see _match_code() - and by
+# nothing else. Pulse timing was abandoned after it repeatedly failed to
+# identify the same fob twice: one device enrolled five times measured long_us
+# at 264, 290, 295, 675, 850 and 1246 us, because the widths depend on how long
+# the button was held and on how much silence the capture window happened to
+# contain. The signature is still computed and still displayed, because it is
+# useful for reading a capture, but it no longer decides which chip lights.
+#
+# ENROL_MIN_RUNS survives only for scripts/consolidate_devices.py, which uses it
+# to spot enrolments taken from a slice of a transmission.
+ENROL_MIN_RUNS = 120
 
 
 def _pick_color(name):
@@ -471,14 +504,11 @@ def _period_of(sym, lo=40, hi=400):
     return blen, best
 
 
-def _signature(runs, sample_us):
-    # Keep only the longest gap-free stretch FIRST. A run of 24 ms is silence
-    # between repeats, not a pulse, and clustering it in with the pulses made a
-    # capture that was mostly idle look like a device with a 109x ratio - a
-    # signature with no meaning that would happily enrol and then match nothing.
+def _stretch(runs, lim):
+    """The longest run of runs no longer than `lim` - i.e. one transmission."""
     best, cur = [], []
     for r in runs:
-        if r > FRAME_GAP:
+        if r > lim:
             if len(cur) > len(best):
                 best = cur
             cur = []
@@ -486,7 +516,15 @@ def _signature(runs, sample_us):
             cur.append(r)
     if len(cur) > len(best):
         best = cur
-    runs = best
+    return best
+
+
+def _signature(runs, sample_us):
+    # Keep only the longest gap-free stretch FIRST. A run of 24 ms is silence
+    # between repeats, not a pulse, and clustering it in with the pulses made a
+    # capture that was mostly idle look like a device with a 109x ratio - a
+    # signature with no meaning that would happily enrol and then match nothing.
+    runs = _stretch(runs, FRAME_GAP)
     if len(runs) < 16:
         return None
     short, long_ = _kmeans2(runs)
@@ -509,6 +547,11 @@ def _signature(runs, sample_us):
 
 def _sig_score(a, b):
     """Fraction of comparable timing fields that agree; None if too few."""
+    # Either side may legitimately be absent: a capture that yields no signature
+    # must score as "no opinion" rather than raising. Display-only now - nothing
+    # identifies a device by timing any more (see _match_code).
+    if not a or not b:
+        return None
     compared = matched = 0
     for key, tol in (("short_us", 0.30), ("long_us", 0.30),
                      ("ratio", 0.25), ("period_syms", 0.20)):
@@ -524,16 +567,56 @@ def _sig_score(a, b):
     return matched / float(compared)
 
 
-def _match_device(sig):
-    """Best enrolled device for this signature, or None."""
-    best, bname = 0.0, None
-    for name, dev in _devices.items():
-        s = _sig_score(sig, (dev or {}).get("sig") or {})
-        if s is not None and s > best:
-            best, bname = s, name
-    if bname is None or best < 0.75:      # 4 timing fields -> need at least 3
+def _enrol_reason(name, code):
+    """Why this enrolment cannot be accepted, or None if it can.
+
+    A device is its MESSAGE. There is deliberately no fallback to pulse timing:
+    a press that does not decode is a press that cannot be identified, and saying
+    so is far better than enrolling a guess or matching on a duration that
+    depends on how long the button was held.
+    """
+    if not name:
+        return "no name given"
+    if not code:
+        return ("nothing decoded - that press produced no code, and a device is "
+                "identified by its message. Press again, and check that ASK/OOK "
+                "and the data rate are right for this fob.")
+    for other, dev in _devices.items():
+        if other != name and _same_code((dev or {}).get("code"), code):
+            return "that message is already enrolled as %s" % other
+    return None
+
+
+def _same_code(a, b):
+    """Compare two decoded codes, tolerating leading zeros.
+
+    The decoder can emit a different number of leading zeros for the same
+    payload depending on where in the frame the capture happened to start.
+    """
+    if not a or not b:
+        return False
+    x = str(a).strip().upper().lstrip("0")
+    y = str(b).strip().upper().lstrip("0")
+    return bool(x) and x == y
+
+
+def _match_code(code):
+    """The device whose enrolled MESSAGE this is, or None.
+
+    Identification is by the decoded payload and nothing else. Pulse timing was
+    tried for a long time and could not be made to work: the same fob enrols
+    five times and measures long_us at 264, 290, 295, 675, 850 and 1246 us, and
+    short_us from 44 to 144. That is not a device fingerprint - it records how
+    long the button was held and how much silence the capture window happened to
+    contain. A message does not vary with either. It is the same message or it
+    is a different one.
+    """
+    if not code:
         return None
-    return {"name": bname, "score": round(best, 2)}
+    for name, dev in _devices.items():
+        if _same_code((dev or {}).get("code"), code):
+            return {"name": name, "score": 1.0, "code": str(code).upper()}
+    return None
 
 
 def _fresh_device():
@@ -570,6 +653,44 @@ def _refine_device(name, sig):
             moved = True
     if moved:
         _save_devices()
+
+
+def _refresh_match():
+    """Re-attribute the last DECODED MESSAGE to the device set as it is NOW.
+
+    The match is otherwise computed only when a new capture arrives, so the chip
+    just enrolled stays dark until the next press - at the one moment the user is
+    looking at it for confirmation. Called after every change to the device set.
+    """
+    global last_device
+    code = (last_decode or {}).get("hex")
+    if not code:
+        last_device = None
+        return None
+    m = _match_code(code)
+    if m:
+        # Stamped NOW rather than at the capture: the chip is an acknowledgement
+        # that the change took effect, and _fresh_device() holds it for
+        # DEVICE_HOLD_S from this moment.
+        m["t"] = round(time.time() - START_TIME, 2)
+    last_device = m
+    return m
+
+
+def _enrol(name, color, code):
+    """Record an enrolment. Returns None on success, or why it failed.
+
+    `sig` is stored alongside the code because the page still reports it, but
+    nothing identifies a device by it any more.
+    """
+    why = _enrol_reason(name, code)
+    if why:
+        return why
+    _devices[name] = {"color": color or _pick_color(name),
+                      "code": str(code).upper(), "sig": last_signature}
+    _save_devices(force=True)
+    _refresh_match()
+    return None
 
 
 _load_devices()
@@ -718,7 +839,7 @@ def handle_line(line):
     # transmission was in progress.
     global _ev_bursts, _ev_unit_us
     # Same trap, same fix, for the device-signature state.
-    global last_signature, last_device
+    global last_signature, last_signature_t, last_device
     line = line.decode("utf-8", "ignore").strip()
     if line.startswith("SCAN_START"):
         scan_data.clear()
@@ -754,9 +875,9 @@ def handle_line(line):
             # demodulator. Log order was the only grouping cue before, which
             # cannot survive a reconnect or a Clear.
             with open(CAPTURE_PATH, "a", encoding="utf-8") as f:
-                f.write("%.3f %s MOD=%d DRATE=%d\n"
+                f.write("%.3f %s MOD=%d DRATE=%d FREQ=%.2f\n"
                         % (time.time() - START_TIME, line, selected_mod,
-                           selected_drate))
+                           selected_drate, selected_freq))
             raw_captures += 1
             parts = line.split()
             if len(parts) >= 4:
@@ -771,16 +892,21 @@ def handle_line(line):
                 sig = _signature(_cap_runs(parts[3]), sample_us)
                 if sig:
                     last_signature = sig
-                    m = _match_device(sig)
-                    if m:
-                        m["t"] = round(time.time() - START_TIME, 2)
-                        last_device = m
-                        _refine_device(m["name"], sig)
+                    last_signature_t = time.time() - START_TIME
                 d = decode_cap(parts[3], sample_us)
                 if d:
                     code, bit_samples, nbursts = d
                     unit_us = bit_samples * sample_us
                     last_decode = {"hex": code, "bit_us": round(unit_us)}
+                    # IDENTIFY HERE, ON THE MESSAGE. Nothing about the pulse
+                    # widths or the transmission duration decides which chip
+                    # lights - see _match_code().
+                    m = _match_code(code)
+                    if m:
+                        m["t"] = round(time.time() - START_TIME, 2)
+                        last_device = m
+                        if sig:
+                            _refine_device(m["name"], sig)
                     # While a transmission is in progress, tally the code against
                     # it - the event reports the most common one when it closes.
                     # Creating a row per capture is what used to fill the table
@@ -1358,14 +1484,11 @@ class Handler(BaseHTTPRequestHandler):
                 color = str(data.get("color", "")).strip()[:16]
             except Exception:
                 data, name, color = {}, "", ""
-            if not name or not last_signature:
-                why = "no name given" if not name else "nothing received yet"
+            why = _enrol(name, color, (last_decode or {}).get("hex"))
+            if why:
                 body = json.dumps({"ok": False, "error": why}).encode("utf-8")
                 status = 400
             else:
-                _devices[name] = {"color": color or _pick_color(name),
-                                  "sig": last_signature}
-                _save_devices(force=True)
                 body = json.dumps({"ok": True, "name": name}).encode("utf-8")
                 status = 200
             self.send_response(status)
@@ -1378,6 +1501,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/devices/clear":
             _devices.clear()
             _save_devices(force=True)
+            _refresh_match()
             body = b'{"ok": true}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1397,10 +1521,10 @@ class Handler(BaseHTTPRequestHandler):
             gone = _devices.pop(name, None) is not None
             if gone:
                 _save_devices(force=True)
-                # A device that is deleted while lit would leave the chip lit
-                # with nothing behind it, so drop the match too.
-                if last_device and last_device.get("name") == name:
-                    last_device = None
+                # Re-attribute rather than just clearing: removing one device
+                # can promote ANOTHER one to the best match, and the chip for
+                # the deleted device must not stay lit with nothing behind it.
+                _refresh_match()
             body = json.dumps({"ok": gone, "name": name,
                                "error": None if gone else "no such device"}
                               ).encode("utf-8")
@@ -1431,6 +1555,7 @@ class Handler(BaseHTTPRequestHandler):
             if err is None:
                 _devices[to] = _devices.pop(name)
                 _save_devices(force=True)
+                _refresh_match()
                 body = json.dumps({"ok": True, "name": to}).encode("utf-8")
                 status = 200
             else:
