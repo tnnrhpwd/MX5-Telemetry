@@ -10,5 +10,17 @@
       "ratio": 16.68,
       "short_us": 86
     }
+  },
+  "nissan fob": {
+    "code": "20000010AA42000405",
+    "color": "#4fd0c0",
+    "sig": {
+      "long_us": 1010,
+      "n_runs": 74,
+      "period_match": 0.0,
+      "period_syms": null,
+      "ratio": 12.51,
+      "short_us": 81
+    }
   }
 }
