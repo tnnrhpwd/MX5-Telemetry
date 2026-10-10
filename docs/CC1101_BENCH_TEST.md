@@ -8,6 +8,96 @@ car. Host is a spare **Arduino Nano** on a breadboard (5 V power, USB to PC).
 > transmit while the wheel is rolling — so they will *not* be heard in the
 > bedroom. Silence at 315 MHz here is expected and is **not** a sign of broken
 > hardware.
+>
+> This bench test is **step 1 of the action plan below**. Read that first.
+
+---
+
+## Action plan — the path to a working receiver
+
+Four milestones, plus two prerequisite gates. The order matters: each milestone is only
+meaningful once the one above it is *proven*, not assumed. Steps 0 and 1 are the gates that
+have cost the most time by being skipped.
+
+| # | Milestone | Gate — how you know it is done |
+|---|-----------|-------------------------------|
+| **0** | Trustworthy diagnostics | Both chips report `PARTNUM=00` / `VERSION=14`, ten reads in a row, and again after a re-seat |
+| **1** | Receive chain proven against a **known** signal | A frame we transmitted ourselves is recovered bit-for-bit at the receiver |
+| **2** | **Fob decode** | Two presses of the *same* fob give a byte-identical frame — or a rolling code whose serial field is stable |
+| **3** | **TPMS detect + read** | A captured burst repeats the same frame 4–8× inside one 45 ms window |
+| **4** | **TPMS decode + corner assignment** | Every sensor ID resolves to a pressure/temperature reading, and all four corners are identified |
+| **5** | **Repo integration** | Decoded values reach the display and the logger, sourced from this receiver |
+
+### 0. Trustworthy diagnostics
+
+**Why first:** the register readback currently returns `PARTNUM` and `VERSION` as the
+**same byte** on each chip. Those are two different hardware constants (`0x00` and `0x14`),
+so no valid read can make them equal — the access is not reaching the registers. Anything
+concluded from `DUMP` / `TXV` is therefore void, including several conclusions already
+drawn in this project.
+
+- Determine whether the fault is the read sequence or the chip. The library prints its own
+  `CC1101 FOUND` / `NOT FOUND` from a *different* read path — capture that banner at boot.
+- Remove the mechanical variable: solder the modules down, or fit good sockets. The
+  readback has flipped between working and broken purely from re-seating.
+- **Gate:** `00` and `14` from both chips, ten consecutive reads, and stable across a re-seat.
+- **Consequence:** on this board, verify configuration **behaviourally** (does changing a
+  setting change the output?) — never by reading registers back.
+
+### 1. Prove the receive chain against a known signal
+
+**Why first:** you cannot decode a fob until the receiver has been proven on a signal whose
+contents you already know. Without this, nothing can distinguish "this fob is unusual" from
+"the receiver does not work".
+
+- Transmit the known frame (`AA×8`, `2D D4`, `01 02 04 08 10 20`) from the TX module and
+  compare what the RX captures.
+- **Variables not yet tested:** move the two modules **apart** — this document's own note
+  says two modules on one bench *saturate* the RX, which invalidates the loopback; also sweep
+  TX power and both packet modes.
+- **Gate:** the 128-bit frame recovered at the receiver, scored against a shuffled-pattern
+  control so that a flat capture cannot pass.
+
+### 2. Fob decoding ← *milestone 1 in the original list*
+
+- Capture a real press and get a keyed waveform — high fraction well away from 0 % / 100 %.
+- Find the frame: symbol clock, preamble, then payload.
+- **Gate:** two presses of the same fob produce the same frame. If they differ, look for a
+  **stable serial field before concluding the code is rolling** — rolling codes still carry a
+  fixed serial, and that alone identifies the fob.
+- **Deliverable:** the webapp reports a fob ID and code from a captured burst.
+
+### 3. TPMS: detect and read ← *milestone 2*
+
+- Sensors are **motion-gated**: wake one with a pressure change, a roll, or an LF tool.
+- Expect **FSK** on most Nissan / Mazda / Honda / Toyota sensors, at a **slower** data rate
+  than the fobs. Set the receiver accordingly.
+- **Gate:** one 45 ms window contains the **same frame repeated 4–8×**. That repeat is
+  something a fob cannot give you, and it is the reason TPMS is the easier target.
+
+### 4. TPMS: decode and assign corners ← *milestone 3*
+
+- Decode: sensor ID, pressure, temperature, flags, and check the CRC.
+- **Corner assignment:** trigger **one wheel at a time** (deflate or roll just that wheel) and
+  record which ID appears. Repeat per corner.
+- **Gate:** all four corners identified, each reporting a plausible pressure, and the mapping
+  survives a new session.
+
+### 5. Integrate into the repo ← *milestone 4*
+
+- Feed decoded fob/TPMS events into the existing pipeline (`DataLogger`, `CANHandler`, the
+  ESP32-S3 display) rather than leaving them inside the bench tool.
+- **Gate:** a real sensor's pressure appears on the display and in the log, end to end.
+
+### Known state — 2026-10-09
+
+- **Receiver as a signal detector: working.** Live level, floor ≈ −110 dBm, responds to a fob press.
+- **Receiver as a data output: none obtained.** A known transmission produces no usable capture.
+- **Transmitter: no measurable effect at the receiver** on any setting tried.
+- **Register readback: unusable** (`PARTNUM` = `VERSION`), so it is not evidence either way.
+- Working habits worth keeping: verify behaviourally; **snapshot the capture log before
+  restarting the webapp** (it has been wiped mid-session several times); record the settings
+  (`MOD=`, `DRATE=`, `FREQ=`) with every capture.
 
 ---
 
@@ -33,36 +123,52 @@ AMS1117 regulator**, so it must be powered from **3.3 V**:
 
 ## 2. Wiring
 
+Two CC1101 modules share **one SPI bus**. They are told apart by chip select
+alone — **RX on `CSN D10`**, **TX on `CSN D9`** — so power and the three SPI
+lines are wired in parallel, and only the two chip selects plus the receiver's
+`GDO0` are unique to a module.
+
 ```
-            Arduino Nano                        CC1101 module (8-pin header)
-        ┌─────────────────┐                ┌──────────────────────┐
-        │       3V3 rail ├───────────────►│ 2 VCC                │
-        │  (regulator out)│                │                      │
-        │             GND ├───────────────►│ 1 GND                │
-        │             D13 ├───────────────►│ 5 SCK                │
-        │             D12 │◄───────────────┤ 7 MISO (MISO/GDO1)   │
-        │             D11 ├───────────────►│ 6 MOSI               │
-        │             D10 ├───────────────►│ 4 CSN                │
-        │              D2 ├───────────────►│ 3 GDO0               │
-        │              D3 ├───────────────►│ 8 GDO2      (opt.)   │
-        └─────────────────┘                └──────────────────────┘
+                        CC1101 "RX"                     CC1101 "TX"
+   Arduino Nano         CSN → D10                       CSN → D9
+ ┌────────────────┐    ┌──────────────────┐           ┌──────────────────┐
+ │  3V3 rail ─────┼───►│ 2  VCC ──────────┼──────────►│ 2  VCC           │
+ │           GND ─┼───►│ 1  GND ──────────┼──────────►│ 1  GND           │
+ │                │    │                  │           │                  │
+ │           D13 ─┼─[÷]► 5  SCK ──────────┼──────────►│ 5  SCK           │
+ │           D11 ─┼─[÷]► 6  MOSI ─────────┼──────────►│ 6  MOSI          │
+ │           D12 ◄┼──── 7  MISO/GDO1 ◄───┼───────────┤ 7  MISO/GDO1     │
+ │                │    │                  │           │                  │
+ │           D10 ─┼─[÷]► 4  CSN           │           │                  │
+ │            D9 ─┼─[÷]──────────────────────────────►│ 4  CSN           │
+ │                │    │                  │           │                  │
+ │            D2 ◄┼──── 3  GDO0           │           │ 3  GDO0    (n/c) │
+ │            D3 ◄┼──── 8  GDO2  (opt.)   │           │ 8  GDO2    (n/c) │
+ └────────────────┘    └──────────────────┘           └──────────────────┘
+
+ [÷]  = 5 V → 3.3 V divider on every Nano OUTPUT (D13, D11, D10, D9):
+            Nano pin ── 1 kΩ ──┬── CC1101 pin
+                             2.2 kΩ
+                               │
+                              GND
 ```
 
-| Header pin | Name | Nano pin | Notes |
-|-----------|------|----------|-------|
-| 1 | `GND` | `GND` | common ground — required |
-| 2 | `VCC` | **`3V3 rail`** (regulator out) | 3.3 V only, no regulator — shared GND with Nano |
-| 3 | `GDO0` | `D2` | **direct** — receive interrupt |
-| 4 | `CSN` | `D10` | 5 V→3.3 V (see below) |
-| 5 | `SCK` | `D13` | 5 V→3.3 V (see below) |
-| 6 | `MOSI` | `D11` | 5 V→3.3 V (see below) |
-| 7 | `MISO/GDO1` | `D12` | **direct** — 3.3 V out into 5 V in is safe (we use MISO only) |
-| 8 | `GDO2` | `D3` | **direct** — optional for this test |
+| Header pin | Name | RX module (`D10`) | TX module (`D9`) | Notes |
+|-----------|------|-------------------|------------------|-------|
+| 1 | `GND` | `GND` | `GND` | common ground — required, shared |
+| 2 | `VCC` | **`3V3 rail`** | **`3V3 rail`** | 3.3 V only, no onboard regulator — shared |
+| 3 | `GDO0` | `D2` | *not connected* | **direct** — demodulated data out; receiver only |
+| 4 | `CSN` | `D10` | `D9` | the only pin that separates the two chips |
+| 5 | `SCK` | `D13` | `D13` | shared, 5 V→3.3 V |
+| 6 | `MOSI` | `D11` | `D11` | shared, 5 V→3.3 V |
+| 7 | `MISO/GDO1` | `D12` | `D12` | shared, **direct** (3.3 V out into 5 V in is safe) |
+| 8 | `GDO2` | `D3` | *not connected* | **direct**, optional for this test |
 
 ### Grouping into two 4-pin connectors
 
-The natural split is **by function** — all four SPI lines together, everything
-else together:
+Do this **per module** — each CC1101 gets its own pair, so four connectors in
+total. The natural split is **by function** — all four SPI lines together,
+everything else together:
 
 | Connector A — power + status | Connector B — SPI |
 |------------------------------|-------------------|
@@ -73,6 +179,8 @@ else together:
 
 Notes:
 
+- On the **TX** module only `GND` and `VCC` are used from connector A — its
+  `GDO0` and `GDO2` are not connected.
 - Keep the pin-1 orientation identical on both connectors (keyed housings help)
   so a re-plug can never be reversed.
 - Connector B has no ground of its own — fine for short bench wires. If you
@@ -142,21 +250,10 @@ from "weak / wrong-frequency signal" is to transmit a known carrier from a
 
 ### Wiring the second module as a transmitter
 
-Everything is shared with the existing module — only **one new wire**:
-
-| TX module pin | Connect to |
-|---------------|------------|
-| `GND` (1) | Nano `GND` *(share)* |
-| `VCC` (2) | 3.3 V rail *(share)* |
-| `GDO0` (3) | *(unconnected)* |
-| `CSN` (4) | **`D9`** ← the only new wire |
-| `SCK` (5) | `D13` *(share)* |
-| `MOSI` (6) | `D11` *(share)* |
-| `MISO/GDO1` (7) | `D12` *(share)* |
-| `GDO2` (8) | *(unconnected)* |
-
-No GDO pins are needed on the transmitter — the sketch uses a timed send, not
-a GDO handshake.
+Both modules are already wired in **[§2 Wiring](#2-wiring)** above. The
+transmitter shares `VCC`, `GND`, `SCK`, `MOSI` and `MISO` with the receiver, and
+needs **no GDO pins at all**, because the sketch uses a timed send rather than a
+GDO handshake. The one wire unique to it is **`CSN` → `D9`**.
 
 ### Firmware
 
