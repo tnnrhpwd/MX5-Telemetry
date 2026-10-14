@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The adaptive-icon background. Deep mint, one of the two hue anchors the
+         webapp's default Aurora scheme is built from, so the mark sits on the
+         app's own colour rather than a generic blue. -->
+    <color name="ic_launcher_background">#FF0E2E2E</color>
+</resources>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fixed structural colours plus the accent colours the Pi webapp uses for alert
+  states. The scheme-driven colours are NOT here: they are resolved at runtime in
+  Palette.java, because they change with the chosen scheme and with light/dark. -->
+<resources>
+    <color name="strip">#FF2D2D2E</color>
+    <color name="strip_line">#FF3A3A3C</color>
+    <color name="gauge_idle">#FF3B82F6</color>
+    <color name="gauge_eco">#FF22C55E</color>
+    <color name="gauge_normal">#FFEAB308</color>
+    <color name="gauge_spirited">#FFF97316</color>
+    <color name="gauge_high">#FFEF4444</color>
+    <color name="ok">#FF22C55E</color>
+    <color name="warn">#FFF59E0B</color>
+    <color name="bad">#FFEF4444</color>
+    <color name="gear_red">#FFEF4444</color>
+    <color name="gear_blue">#FF3B82F6</color>
+    <color name="gear_green">#FF22C55E</color>
+    <color name="gear_yellow">#FFEAB308</color>
+    <color name="gear_cyan">#FF22D3EE</color>
+</resources>

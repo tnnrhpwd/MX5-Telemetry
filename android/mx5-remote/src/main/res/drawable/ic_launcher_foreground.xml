@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app mark: the RPM gauge from the app itself, reduced to three strokes.
+
+  Drawn in a 108x108 adaptive-icon viewport but kept inside a 60dp circle about the
+  centre, because the launcher masks the outer ring and a mark that uses the full
+  canvas gets its edges cut off on a round mask.
+
+  The arc runs the same 270 degrees as GaugeView, from bottom-left to bottom-right,
+  so the icon and the app's own dial are literally the same shape. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+        android:width="108dp"
+        android:height="108dp"
+        android:viewportWidth="108"
+        android:viewportHeight="108">
+    <!-- The dial. Centre (54,54), radius 26, stroke 7.5, so the outer edge is at
+         29.75 and stays inside the safe circle. -->
+    <path android:pathData="M35.6,72.4 A26,26 0 1 1 72.4,72.4"
+          android:strokeColor="#FF00FFFF"
+          android:strokeWidth="7.5"
+          android:strokeLineCap="butt" />
+    <!-- The needle, on the accent hue the app uses for its primary. -->
+    <path android:pathData="M54,54 L66,42"
+          android:strokeColor="#FFFF379B"
+          android:strokeWidth="5.5"
+          android:strokeLineCap="round" />
+    <!-- The hub. Two 180 degree arcs is the reliable way to draw a filled circle
+         as a path; a single arc with large-arc-flag is ambiguous at exactly 180. -->
+    <path android:pathData="M54,54 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0"
+          android:fillColor="#FFF4F7FD" />
+</vector>

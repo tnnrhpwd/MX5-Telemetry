@@ -1,450 +1,811 @@
-/* MX5 Remote Control - Minimal Mobile-First Design */
+/* ==========================================================================
+   MX5 Remote
 
+   Built to the frontend UI standard. This page is a SERVICE PAGE (5.7):
+   one ambient room, translucent panes resting on it, no bands, no scroll
+   reveals. Motion here means "state changed" and nothing else.
+
+   The palette, the type/spacing scale, the plane recipe and the glass
+   material are taken from the standard's index.css so this page belongs to
+   the same family. The scheme is the standard's DEFAULT pair: the accent is
+   --fg-mint, the primary is --fg-pink. Orange is deliberately never used as
+   decor, it stays the alert hue.
+   ========================================================================== */
+
+/* --------------------------------------------------------------- 1 tokens */
 :root {
-    --primary: #00d9ff;
-    --primary-dark: #00a3cc;
-    --bg-dark: #0a0a0a;
-    --bg-card: #1a1a1a;
-    --text: #ffffff;
-    --text-dim: #888888;
-    --border: #333333;
-    --success: #00ff88;
-    --warning: #ffaa00;
-    --danger: #ff3366;
+    /* palette primitives */
+    --white0: #f4f7fd;
+    --white1: #faf7fb;
+    --dark-blue0: #101b22;
+    --grey0: #e0e2e8;
+    --grey1: #bbbdc2;
+    --grey3-accessible: #4a4a4d;
+    --grey5: #151516;
+    --grey6: #353535;
+    --red0: #dc0000;
+    --link-color-accessible: #0066cc;
+    --link-color-dark-accessible: #4da6ff;
+
+    /* type + spacing scale, all off --nav-size */
+    --nav-size: 48px;
+    --font-size-scale: 1;
+    --font-size-xs: calc(var(--nav-size) * 0.22 * var(--font-size-scale));
+    --font-size-small: calc(var(--nav-size) * 0.32 * var(--font-size-scale));
+    --font-size-base: calc(var(--nav-size) * 0.36 * var(--font-size-scale));
+    --font-size-large: calc(var(--nav-size) * 0.44 * var(--font-size-scale));
+    --font-size-heading: calc(var(--nav-size) * 0.6 * var(--font-size-scale));
+    --font-size-display: calc(var(--nav-size) * 0.8 * var(--font-size-scale));
+
+    --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
+        'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans',
+        'Helvetica Neue', sans-serif;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+    --line-height-tight: 1.3;
+    --line-height-base: 1.5;
+    --line-height-relaxed: 1.6;
+
+    --spacing-xs: calc(var(--nav-size) * 0.25);
+    --spacing-sm: calc(var(--nav-size) * 0.5);
+    --spacing-md: calc(var(--nav-size) * 0.75);
+
+    --border-radius: 8px;
+    --border-radius-lg: 12px;
+    --border-radius-xl: 16px;
+    --border-radius-2xl: 24px;
+
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
+
+    font-size: calc(var(--nav-size) * 0.81);
 }
 
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
+@media (orientation: landscape) and (max-height: 200px) {
+    :root {
+        --nav-size: min(5vw, 5vh);
+        --nav-size: min(5vw, 5svh);
+    }
 }
+
+/* --------------------------------------------------------------- 2 themes */
+/* The palette lives on <body>, the element carrying the theme class. Every
+   derived token is declared in the SAME block: a custom property substitutes
+   where it is declared, so putting one on :root would resolve it against an
+   element that has never seen the palette and quietly collapse it. */
+body.light-theme {
+    --bg-page: var(--white0);
+    --bg-1: rgba(255, 255, 255, 0.95);
+    --bg-accent: rgb(216, 219, 226);
+    --bg-orange: rgb(255, 244, 225);
+    --bg-pink: rgb(255, 233, 255);
+    --bg-blue: rgb(224, 224, 255);
+    --bg-mint: rgb(219, 255, 255);
+
+    --fg-orange: rgb(255, 115, 46);
+    --fg-pink: rgb(255, 55, 155);
+    --fg-blue: var(--link-color-accessible);
+    --fg-mint: rgb(0, 193, 193);
+
+    --text-color: var(--dark-blue0);
+    --text-color-accent: var(--grey3-accessible);
+    --text-color-inv: #ffffff;
+    --border-nav: #7a7a7d;
+
+    --focus-outline: 3px solid var(--link-color-accessible);
+    --focus-outline-offset: 2px;
+
+    /* A plane is the SAME HUE as its accent, lightness pinned, chroma kept.
+       Mixing toward --bg-1 instead is what made service pages read pastel. */
+    --plane-l: 0.87;
+    --plane-l-strong: 0.76;
+    --plane-fallback: 32%;
+    --plane-raise: 24%;
+    --plane-muted: color-mix(in srgb, var(--text-color-accent) 72%, var(--text-color));
+
+    /* Glass: the material a pane is made of, resting on the room. */
+    --glass-land: var(--bg-page);
+    --glass-a: 84%;
+    --glass-sheen: color-mix(in srgb, var(--text-color) 6.5%, transparent);
+    --glass-sunken: color-mix(in srgb, var(--text-color) 6%, transparent);
+    --glass-sunken-strong: color-mix(in srgb, var(--text-color) 11%, transparent);
+    --glass-row: color-mix(in srgb, var(--text-color) 4%, transparent);
+    --glass-btn-hover: color-mix(in srgb, var(--bg-1) 90%, var(--text-color));
+
+    --room-mix: 90%;
+    --room-halo: 10%;
+    --action-hi: 0.5;
+    --action-lo: 0.4;
+}
+
+body.dark-theme {
+    --bg-page: var(--grey5);
+    --bg-1: rgba(45, 45, 46, 0.95);
+    --bg-accent: rgb(58, 58, 61);
+    --bg-orange: rgb(98, 63, 0);
+    --bg-pink: rgb(81, 0, 81);
+    --bg-blue: rgb(0, 0, 67);
+    --bg-mint: rgb(0, 62, 62);
+
+    --fg-orange: rgb(255, 115, 46);
+    --fg-pink: rgb(255, 55, 155);
+    --fg-blue: var(--link-color-dark-accessible);
+    --fg-mint: rgb(0, 255, 255);
+
+    --text-color: var(--white0);
+    --text-color-accent: #a5a5aa;
+    --text-color-inv: var(--dark-blue0);
+    --border-nav: #7a7a7d;
+
+    --focus-outline: 3px solid var(--link-color-dark-accessible);
+    --focus-outline-offset: 2px;
+
+    --plane-l: 0.3;
+    --plane-l-strong: 0.4;
+    --plane-fallback: 48%;
+    --plane-raise: 32%;
+    --plane-muted: color-mix(in srgb, var(--text-color-accent) 45%, var(--text-color));
+
+    /* The land is lifted off the page: merely "lighter than black" reads as a
+       hole, and the tints invert because here the text IS the light. */
+    --glass-land: color-mix(in srgb, var(--bg-page) 93%, var(--white0));
+    --glass-a: 84%;
+    --glass-sheen: color-mix(in srgb, var(--white0) 6%, transparent);
+    --glass-sunken: color-mix(in srgb, var(--white0) 6%, transparent);
+    --glass-sunken-strong: color-mix(in srgb, var(--white0) 10%, transparent);
+    --glass-row: color-mix(in srgb, var(--white0) 4%, transparent);
+    --glass-btn-hover: color-mix(in srgb, var(--bg-1) 88%, var(--white0));
+
+    --room-mix: 86%;
+    --room-halo: 12%;
+    --action-hi: 0.82;
+    --action-lo: 0.72;
+}
+
+/* ---------------------------------------------------- 3 scheme + material */
+body.light-theme,
+body.dark-theme {
+    --scheme-accent: var(--fg-mint);
+    --scheme-primary: var(--fg-pink);
+    --scheme-alert: var(--fg-orange);
+
+    --glass: color-mix(in srgb, var(--glass-land) var(--glass-a), transparent);
+    --glass-radius: var(--border-radius-2xl);
+    --glass-radius-inner: var(--border-radius);
+    --glass-shadow: var(--shadow-md);
+
+    /* The one action ramp: two stops INSIDE the scheme's primary hue, re-pinned
+       in lightness so the label clears AA. The plain line is the fallback for a
+       browser without relative colour syntax. */
+    --action: linear-gradient(135deg, var(--scheme-primary), var(--fg-pink));
+    --action: linear-gradient(
+        135deg,
+        oklch(from var(--scheme-primary) var(--action-hi) c h),
+        oklch(from var(--scheme-primary) var(--action-lo) c h)
+    );
+}
+
+/* ------------------------------------------------------------ 3b schemes */
+/* A scheme is TWO HUES. Everything the page consumes is derived from them, so
+   adding a scheme is one line and re-pointing the whole page is a change here.
+
+   Two order rules, both load-bearing:
+     - the derivation comes FIRST and the presets after it, so a preset that
+       overrides something derived (neutral turns the chroma off) wins at equal
+       specificity;
+     - the whole section comes AFTER the theme blocks, because `body[data-scheme]`
+       and `body.light-theme` are both (0,1,1) and later wins.
+
+   The seed lines exist because `[data-scheme]` is an attribute-PRESENCE
+   selector, so it matches an id no scheme is named for: unseeded, the
+   derivation would take its hue from an undefined token and every accent on
+   the page would quietly vanish. */
+body[data-scheme] {
+    --scheme-hue-accent: var(--fg-mint);
+    --scheme-hue-primary: var(--fg-pink);
+    --scheme-l: 0.52;
+    --scheme-c: 0.125;
+    --scheme-l-primary: var(--scheme-l);
+    --scheme-c-primary: var(--scheme-c);
+
+    /* Plain lines first: the fallback for a browser without relative colour
+       syntax. The oklch lines are the real ones. */
+    --scheme-accent: var(--scheme-hue-accent);
+    --scheme-primary: var(--scheme-hue-primary);
+    --scheme-accent: oklch(from var(--scheme-hue-accent) var(--scheme-l) var(--scheme-c) h);
+    --scheme-primary: oklch(from var(--scheme-hue-primary) var(--scheme-l-primary) var(--scheme-c-primary) h);
+
+    --scheme-accent-bg: color-mix(in srgb, var(--scheme-hue-accent) 38%, var(--bg-page));
+    --scheme-primary-bg: color-mix(in srgb, var(--scheme-hue-primary) 38%, var(--bg-page));
+
+    /* A backdrop pins its lightness and takes only the hue, so a pale identity
+       hue cannot wash out a dark page. */
+    --scheme-backdrop-a: oklch(from var(--scheme-hue-accent) 0.9 min(c, 0.07) h);
+    --scheme-backdrop-b: oklch(from var(--scheme-hue-primary) 0.9 min(c, 0.07) h);
+}
+
+/* On a dark page the accents come UP, not down: a hue at 0.58 on near-black is
+   a smudge. The backdrops follow in the other direction, down to the depth the
+   theme's own planes sit at. */
+body.dark-theme[data-scheme] {
+    --scheme-l: 0.76;
+    --scheme-c: 0.13;
+    --scheme-backdrop-a: oklch(from var(--scheme-hue-accent) 0.3 min(c, 0.07) h);
+    --scheme-backdrop-b: oklch(from var(--scheme-hue-primary) 0.3 min(c, 0.07) h);
+}
+
+/* The presets. One line each; this is the entire palette. */
+body[data-scheme='aurora']    { --scheme-hue-accent: #00c1c1; --scheme-hue-primary: #ff379b; }
+body[data-scheme='crimson']   { --scheme-hue-accent: #dc2626; --scheme-hue-primary: #f472b6; }
+body[data-scheme='emerald']   { --scheme-hue-accent: #10b981; --scheme-hue-primary: #06b6d4; }
+body[data-scheme='sakura']    { --scheme-hue-accent: #ec4899; --scheme-hue-primary: #a78bfa; }
+body[data-scheme='midnight']  { --scheme-hue-accent: #3b82f6; --scheme-hue-primary: #8b5cf6; }
+body[data-scheme='sunset']    { --scheme-hue-accent: #f97316; --scheme-hue-primary: #ec4899; }
+body[data-scheme='ocean']     { --scheme-hue-accent: #06b6d4; --scheme-hue-primary: #3b82f6; }
+body[data-scheme='cyberpunk'] { --scheme-hue-accent: #f0e030; --scheme-hue-primary: #e040fb; }
+body[data-scheme='monokai']   { --scheme-hue-accent: #a6e22e; --scheme-hue-primary: #66d9ef; }
+body[data-scheme='usa']       { --scheme-hue-accent: #b22234; --scheme-hue-primary: #3c3b6e; }
+body[data-scheme='forest']    { --scheme-hue-accent: #4d8c57; --scheme-hue-primary: #65a30d; }
+
+/* The one scheme with no hue at all, so its two roles are told apart by
+   LIGHTNESS instead: the primary is pushed away from the page. `--scheme-c: 0`
+   is the load-bearing line and it has to be in BOTH blocks, or a grey handed
+   chroma at hue 0 comes out pink in dark mode. */
+body[data-scheme='neutral'] {
+    --scheme-hue-accent: #808080;
+    --scheme-hue-primary: #808080;
+    --scheme-c: 0;
+    --scheme-c-primary: 0;
+    --scheme-l-primary: 0.36;
+}
+body.dark-theme[data-scheme='neutral'] {
+    --scheme-c: 0;
+    --scheme-c-primary: 0;
+    --scheme-l-primary: 0.86;
+}
+
+/* ---------------------------------------------------------------- 4 room */
+/* The ambient ground a service page's panes rest on. The root must not paint
+   an opaque background of its own, and must not gain a stacking context, or
+   the room is trapped behind it instead of sitting over the page. */
+.service-room::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: var(--bg-page);
+    background-image: linear-gradient(
+        -45deg,
+        color-mix(in srgb, var(--scheme-backdrop-a, var(--bg-mint)) var(--room-mix), var(--bg-page)),
+        color-mix(in srgb, var(--scheme-backdrop-b, var(--bg-pink)) var(--room-mix), var(--bg-page)),
+        color-mix(in srgb, var(--scheme-backdrop-a, var(--bg-mint)) var(--room-mix), var(--bg-page)),
+        color-mix(in srgb, var(--scheme-backdrop-b, var(--bg-pink)) var(--room-mix), var(--bg-page))
+    );
+    background-size: 300% 300%;
+    background-repeat: no-repeat;
+    animation: mxRoomSweep 26s ease-in-out infinite;
+}
+
+.service-room::after {
+    content: '';
+    position: fixed;
+    inset: -12%;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+        radial-gradient(34vw 30vh at 22% 68%, color-mix(in srgb, var(--scheme-accent) var(--room-halo), transparent), transparent 70%),
+        radial-gradient(30vw 26vh at 78% 18%, color-mix(in srgb, var(--scheme-primary) var(--room-halo), transparent), transparent 72%);
+    animation: mxHalo 30s ease-in-out infinite;
+}
+
+@keyframes mxRoomSweep {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
+@keyframes mxHalo {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(1.8%, -2%, 0) scale(1.05); }
+}
+
+/* ----------------------------------------------------------------- 5 base */
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg-dark);
-    color: var(--text);
-    line-height: 1.6;
+    font-family: var(--font-family-base);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-base);
+    color: var(--text-color);
+    background-color: var(--bg-page);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
 }
 
-.container {
-    max-width: 600px;
+button, input, select { font: inherit; color: inherit; }
+
+:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
+}
+
+.mx-hidden { display: none !important; }
+
+/* --------------------------------------------------------------- 6 layout */
+.mx {
+    width: 100%;
+    max-width: 1180px;
     margin: 0 auto;
-    padding: 20px;
-    padding-bottom: 40px;
+    padding: calc(var(--nav-size) * 0.5) calc(var(--nav-size) * 0.3) calc(var(--nav-size) * 1);
 }
 
-/* Header */
-header {
-    text-align: center;
-    padding: 20px 0;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 30px;
+/* Top row: name + live state + action, in the flow, never pinned (5.7). */
+.mx-row {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-xs);
+    padding-bottom: calc(var(--nav-size) * 0.3);
+    margin-bottom: calc(var(--nav-size) * 0.35);
 }
 
-header h1 {
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 10px;
+/* The page's single piece of brand: an accent-gradient hairline (5.7). */
+.mx-row::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--scheme-accent), var(--scheme-primary));
 }
 
-.connection-status {
+.mx-row-id {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.mx-name {
+    font-size: var(--font-size-display);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: -0.01em;
+    line-height: var(--line-height-tight);
+}
+
+.mx-row-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+/* The scheme picker: one dot per preset, painted with that scheme's own pair. */
+.mx-schemes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--nav-size) * 0.1);
+}
+.mx-swatch {
+    width: calc(var(--nav-size) * 0.44);
+    height: calc(var(--nav-size) * 0.44);
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-color) 30%, transparent);
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.mx-swatch:hover:not(:disabled) { transform: scale(1.14); }
+.mx-swatch.is-active {
+    box-shadow: 0 0 0 2px var(--bg-page), 0 0 0 4px var(--text-color);
+}
+
+.mx-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-sm);
+    align-items: start;
+}
+
+@media (min-width: 900px) {
+    .mx-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .mx-panel--wide { grid-column: 1 / -1; }
+}
+
+/* --------------------------------------------------------------- 7 panes */
+/* A pane is translucent land with its head a saturated plane of the scheme's
+   ACCENT, so every pane on the page is the same colour and changing scheme
+   moves all of them together. The blocks are kept apart by a TONE step rather
+   than a second hue: the panes already sit apart on the room with a gap
+   between them, and one hue across all three is the look that was asked for. */
+.mx-panel {
+    --hue: var(--scheme-accent);
+    --plane-dose: var(--plane-fallback);
+    --plane-tone: 0;
+    background: var(--glass);
+    border-radius: var(--glass-radius);
+    box-shadow: var(--glass-shadow);
+    overflow: hidden;
+}
+.mx-panel:nth-child(3n + 2) {
+    --plane-dose: calc(var(--plane-fallback) + 12%);
+    --plane-tone: 0.06;
+}
+.mx-panel:nth-child(3n + 3) {
+    --plane-dose: calc(var(--plane-fallback) - 10%);
+    --plane-tone: -0.06;
+}
+
+.mx-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+    padding: calc(var(--nav-size) * 0.28) var(--spacing-sm) calc(var(--nav-size) * 0.26);
+    background: color-mix(in srgb, var(--hue) var(--plane-dose), var(--bg-1));
+    background: oklch(from var(--hue) calc(var(--plane-l-strong) + var(--plane-tone)) c h);
+}
+
+.mx-eyebrow {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--plane-muted);
+}
+
+.mx-panel-title {
+    margin-top: 2px;
+    font-size: var(--font-size-heading);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+    color: var(--text-color);
+}
+
+.mx-panel-body {
+    padding: var(--spacing-xs) var(--spacing-sm) var(--spacing-sm);
+}
+
+.mx-rows {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+}
+@media (min-width: 700px) {
+    .mx-rows--dense { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.mx-item {
+    padding: var(--spacing-xs) calc(var(--nav-size) * 0.2);
+    border-radius: var(--glass-radius-inner);
+}
+.mx-item:nth-child(odd) { background: var(--glass-row); }
+
+.mx-item-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--spacing-xs);
+    margin-bottom: calc(var(--nav-size) * 0.12);
+}
+
+.mx-label { font-size: var(--font-size-base); }
+
+.mx-value {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    font-variant-numeric: tabular-nums;
+}
+
+.mx-hint {
+    margin-top: calc(var(--nav-size) * 0.1);
+    font-size: var(--font-size-small);
+    color: var(--text-color-accent);
+}
+
+/* ------------------------------------------------------------ 8 controls */
+.mx-btn {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    background: var(--bg-card);
-    border-radius: 20px;
-    font-size: 14px;
-}
-
-.connection-status .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-dim);
-    animation: pulse 2s infinite;
-}
-
-.connection-status.connected .dot {
-    background: var(--success);
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-/* Sections */
-section {
-    background: var(--bg-card);
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
-}
-
-section h2 {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 15px;
-    color: var(--text-dim);
+    justify-content: center;
+    gap: calc(var(--nav-size) * 0.1);
+    min-height: calc(var(--nav-size) * 0.72);
+    padding: 0 var(--spacing-sm);
+    border: 0;
+    border-radius: 999px;
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-/* Current Screen Display */
-.current-screen {
-    text-align: center;
-    padding: 30px 20px;
-}
-
-.screen-label {
-    font-size: 14px;
-    color: var(--text-dim);
-    margin-bottom: 10px;
-}
-
-.screen-name {
-    font-size: 32px;
-    font-weight: 700;
-    color: var(--primary);
-}
-
-/* Buttons */
-.btn {
-    background: var(--bg-card);
-    color: var(--text);
-    border: 2px solid var(--border);
-    border-radius: 10px;
-    padding: 15px 20px;
-    font-size: 16px;
-    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
-    touch-action: manipulation;
+    transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+.mx-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.mx-btn:active:not(:disabled) { transform: translateY(0); }
+.mx-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Primary: the scheme's action ramp, inverted ink. */
+.mx-btn--primary {
+    background: linear-gradient(45deg, var(--scheme-accent), var(--scheme-primary));
+    background: var(--action);
+    color: var(--text-color-inv);
+}
+.mx-btn--primary:hover:not(:disabled) {
+    color: var(--text-color-inv);
+    box-shadow: var(--shadow-md);
 }
 
-.btn:active {
-    transform: scale(0.95);
+/* Secondary carries no border, just a quieter pane (5). */
+.mx-btn--ghost {
+    background: var(--glass-sunken);
+    color: var(--text-color);
+}
+.mx-btn--ghost:hover:not(:disabled) { background: var(--glass-sunken-strong); }
+
+.mx-btn--icon {
+    width: calc(var(--nav-size) * 0.72);
+    padding: 0;
+    letter-spacing: 0;
+    font-size: var(--font-size-base);
+    background: var(--glass-sunken);
+    color: var(--text-color);
+}
+.mx-btn--icon:hover:not(:disabled) { background: var(--glass-sunken-strong); }
+
+.mx-btn--wide {
+    width: 100%;
+    margin-top: var(--spacing-xs);
 }
 
-.btn-nav {
-    flex: 1;
-    background: var(--primary);
-    color: var(--bg-dark);
-    border-color: var(--primary);
-}
+.mx-stepper { display: flex; gap: calc(var(--nav-size) * 0.12); }
 
-.btn-nav:active {
-    background: var(--primary-dark);
-}
-
-.button-row {
-    display: flex;
-    gap: 10px;
-}
-
-/* Screen Grid */
-.screen-buttons {
+/* Chips: the current one is a PLACE, so it wears its hue as a plane tint and
+   never the action ramp (6). */
+.mx-chips {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(calc(var(--nav-size) * 2.2), 1fr));
+    gap: calc(var(--nav-size) * 0.12);
 }
 
-.btn-screen {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 20px 10px;
-    min-height: 100px;
-}
-
-.btn-screen.active {
-    border-color: var(--primary);
-    background: rgba(0, 217, 255, 0.1);
-}
-
-.screen-icon {
-    font-size: 32px;
-}
-
-.screen-text {
-    font-size: 14px;
-    color: var(--text-dim);
-}
-
-.btn-screen:active .screen-text {
-    color: var(--text);
-}
-
-/* Settings */
-.setting-item {
-    padding: 15px 0;
-    border-bottom: 1px solid var(--border);
-}
-
-.setting-item:last-child {
-    border-bottom: none;
-}
-
-.setting-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-}
-
-.setting-header span:first-child {
-    font-size: 16px;
-}
-
-.setting-value {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--primary);
-}
-
-.toggle-label {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+.mx-chip {
+    min-height: calc(var(--nav-size) * 0.8);
+    padding: 0 calc(var(--nav-size) * 0.16);
+    border: 0;
+    border-radius: var(--glass-radius-inner);
+    background: var(--glass-sunken);
+    color: var(--text-color-accent);
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     cursor: pointer;
-    user-select: none;
+    transition: background 0.18s ease, color 0.18s ease;
+}
+.mx-chip:hover:not(:disabled) { background: var(--glass-sunken-strong); }
+.mx-chip.is-active {
+    background: color-mix(in srgb, var(--hue) var(--plane-fallback), var(--bg-1));
+    background: oklch(from var(--hue) var(--plane-l) c h);
+    color: var(--text-color);
 }
 
-.toggle-label span {
-    font-size: 16px;
+.mx-modes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: calc(var(--nav-size) * 0.12);
+}
+/* "One Touch" is the longest label, so in three columns it needs the smaller
+   type and tighter tracking to stay on one line. */
+.mx-modes .mx-chip {
+    font-size: var(--font-size-xs);
+    letter-spacing: 0.04em;
+}
+@media (max-width: 360px) {
+    .mx-modes { grid-template-columns: 1fr; }
 }
 
-/* Toggle Switch */
-.toggle {
+/* Slider */
+.mx-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: calc(var(--nav-size) * 0.16);
+    border-radius: 999px;
+    background: var(--glass-sunken-strong);
+    cursor: pointer;
+}
+.mx-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: calc(var(--nav-size) * 0.48);
+    height: calc(var(--nav-size) * 0.48);
+    border: 0;
+    border-radius: 50%;
+    background: linear-gradient(45deg, var(--scheme-accent), var(--scheme-primary));
+    box-shadow: var(--shadow-sm);
+}
+.mx-slider::-moz-range-thumb {
+    width: calc(var(--nav-size) * 0.48);
+    height: calc(var(--nav-size) * 0.48);
+    border: 0;
+    border-radius: 50%;
+    background: linear-gradient(45deg, var(--scheme-accent), var(--scheme-primary));
+}
+
+/* Toggle */
+.mx-toggle {
     position: relative;
-    width: 50px;
-    height: 28px;
+    flex: 0 0 auto;
+    width: calc(var(--nav-size) * 1.05);
+    height: calc(var(--nav-size) * 0.58);
 }
-
-.toggle input {
+.mx-toggle input {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    margin: 0;
     opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.toggle-slider {
-    position: absolute;
     cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--border);
-    transition: 0.3s;
-    border-radius: 28px;
 }
-
-.toggle-slider:before {
+.mx-toggle-track {
     position: absolute;
-    content: "";
-    height: 20px;
-    width: 20px;
-    left: 4px;
-    bottom: 4px;
-    background-color: var(--text);
-    transition: 0.3s;
+    inset: 0;
+    border-radius: 999px;
+    background: var(--glass-sunken-strong);
+    pointer-events: none;
+    transition: background 0.2s ease;
+}
+.mx-toggle-track::after {
+    content: '';
+    position: absolute;
+    top: calc(var(--nav-size) * 0.07);
+    left: calc(var(--nav-size) * 0.07);
+    width: calc(var(--nav-size) * 0.44);
+    height: calc(var(--nav-size) * 0.44);
     border-radius: 50%;
+    background: var(--text-color);
+    transition: transform 0.2s ease;
+}
+.mx-toggle input:checked + .mx-toggle-track {
+    background: linear-gradient(45deg, var(--scheme-accent), var(--scheme-primary));
+}
+.mx-toggle input:checked + .mx-toggle-track::after {
+    transform: translateX(calc(var(--nav-size) * 0.47));
+}
+.mx-toggle input:focus-visible + .mx-toggle-track {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
 }
 
-.toggle input:checked + .toggle-slider {
-    background-color: var(--primary);
+.mx-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-xs);
+    cursor: pointer;
 }
 
-.toggle input:checked + .toggle-slider:before {
-    transform: translateX(22px);
-}
-
-/* Sliders */
-.slider {
-    -webkit-appearance: none;
+/* Select */
+.mx-select {
     width: 100%;
-    height: 8px;
-    border-radius: 4px;
-    background: var(--border);
-    outline: none;
-    transition: background 0.2s;
-}
-
-.slider::-webkit-slider-thumb {
+    min-height: calc(var(--nav-size) * 0.8);
+    padding: 0 var(--spacing-xs);
+    border: 0;
+    border-radius: var(--glass-radius-inner);
+    background: var(--bg-1);
+    color: var(--text-color);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
     -webkit-appearance: none;
     appearance: none;
-    width: 24px;
-    height: 24px;
+    cursor: pointer;
+}
+
+/* ----------------------------------------------------------------- 9 roof */
+.mx-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(var(--nav-size) * 0.12);
+    margin-bottom: var(--spacing-xs);
+}
+
+.mx-badge {
+    padding: calc(var(--nav-size) * 0.06) var(--spacing-xs);
+    border-radius: 999px;
+    background: var(--glass-sunken);
+    font-size: var(--font-size-small);
+    color: var(--text-color-accent);
+}
+.mx-badge b { color: var(--text-color); font-weight: var(--font-weight-semibold); }
+
+/* -------------------------------------------------------------- 10 status */
+.mx-state {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--nav-size) * 0.1);
+    padding: calc(var(--nav-size) * 0.06) var(--spacing-xs);
+    border-radius: 999px;
+    background: var(--glass-sunken);
+    color: var(--text-color-accent);
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+.mx-dot {
+    flex: 0 0 auto;
+    width: calc(var(--nav-size) * 0.14);
+    height: calc(var(--nav-size) * 0.14);
     border-radius: 50%;
-    background: var(--primary);
-    cursor: pointer;
-    transition: all 0.2s;
+    background: currentColor;
 }
+.mx-state.is-live { color: var(--text-color); background: color-mix(in srgb, var(--scheme-accent) 22%, transparent); }
+.mx-state.is-live .mx-dot { background: var(--scheme-accent); }
+/* An alarm keeps the theme's own red: it must not follow the decor. */
+.mx-state.is-down { color: var(--text-color); background: color-mix(in srgb, var(--red0) 22%, transparent); }
+.mx-state.is-down .mx-dot { background: var(--red0); }
 
-.slider::-webkit-slider-thumb:active {
-    transform: scale(1.2);
-    background: var(--primary-dark);
-}
-
-.slider::-moz-range-thumb {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: var(--primary);
-    cursor: pointer;
-    border: none;
-    transition: all 0.2s;
-}
-
-.slider::-moz-range-thumb:active {
-    transform: scale(1.2);
-    background: var(--primary-dark);
-}
-
-/* Select Dropdown */
-.setting-select {
-    width: 100%;
-    padding: 12px;
-    background: var(--bg-dark);
-    color: var(--text);
-    border: 2px solid var(--border);
-    border-radius: 8px;
-    font-size: 16px;
-    font-weight: 600;
-    cursor: pointer;
-    outline: none;
-    transition: all 0.2s;
-    -webkit-appearance: none;
-    -moz-appearance: none;
-    appearance: none;
-    background-image: url('data:image/svg+xml;charset=UTF-8,<svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L6 6L11 1" stroke="%2300d9ff" stroke-width="2" stroke-linecap="round"/></svg>');
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    padding-right: 40px;
-}
-
-.setting-select:focus {
-    border-color: var(--primary);
-}
-
-.setting-select option {
-    background: var(--bg-card);
-    color: var(--text);
-    padding: 12px;
-}
-
-/* Calibration Button */
-.calibration-btn {
-    width: 100%;
-    padding: 14px;
-    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-    color: var(--bg-dark);
-    border: none;
-    border-radius: 8px;
-    font-size: 16px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.3s;
-    text-transform: none;
-    box-shadow: 0 4px 12px rgba(0, 217, 255, 0.3);
-}
-
-.calibration-btn:hover {
-    background: linear-gradient(135deg, #00d9ff, var(--primary));
-    box-shadow: 0 6px 16px rgba(0, 217, 255, 0.4);
-    transform: translateY(-1px);
-}
-
-.calibration-btn:active {
-    transform: scale(0.98) translateY(0);
-    box-shadow: 0 2px 6px rgba(0, 217, 255, 0.3);
-}
-
-.setting-hint {
-    font-size: 12px;
-    color: var(--text-dim);
-    margin-top: 8px;
-    line-height: 1.4;
-}
-
-/* Toast Notification */
-.toast {
+/* --------------------------------------------------------------- 11 toast */
+.mx-toast {
     position: fixed;
-    top: 20px;
     left: 50%;
-    transform: translateX(-50%) translateY(-100px);
-    padding: 14px 20px;
-    background: var(--bg-card);
-    border: 2px solid var(--primary);
-    border-radius: 8px;
-    font-weight: 600;
-    font-size: 14px;
-    z-index: 10000;
+    bottom: var(--spacing-sm);
+    z-index: 50;
+    max-width: min(90vw, 420px);
+    padding: calc(var(--nav-size) * 0.18) var(--spacing-sm);
+    border-radius: 999px;
+    background: var(--bg-1);
+    box-shadow: var(--shadow-md);
+    color: var(--text-color);
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-semibold);
+    text-align: center;
     opacity: 0;
-    transition: all 0.3s ease;
-    max-width: 90%;
-    text-align: center;
+    pointer-events: none;
+    transform: translate(-50%, calc(var(--nav-size) * 1.2));
+    transition: transform 0.28s ease, opacity 0.28s ease;
+}
+.mx-toast.is-show { opacity: 1; transform: translate(-50%, 0); }
+.mx-toast.is-ok { color: var(--fg-mint); }
+.mx-toast.is-bad { color: var(--red0); }
+
+/* -------------------------------------------------------------- 12 footer */
+.mx-foot {
+    margin-top: var(--spacing-sm);
+    font-size: var(--font-size-xs);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-color-accent);
 }
 
-.toast-show {
-    transform: translateX(-50%) translateY(0);
-    opacity: 1;
+/* --------------------------------------------------------- 13 motion a11y */
+@media (orientation: portrait) {
+    .mx { padding-left: var(--spacing-xs); padding-right: var(--spacing-xs); }
 }
 
-.toast-success {
-    border-color: var(--success);
-    color: var(--success);
-}
-
-.toast-error {
-    border-color: var(--danger);
-    color: var(--danger);
-}
-
-.toast-info {
-    border-color: var(--primary);
-    color: var(--primary);
-}
-
-/* Footer */
-footer {
-    text-align: center;
-    padding: 20px 0;
-    color: var(--text-dim);
-    font-size: 14px;
-}
-
-footer p {
-    margin: 5px 0;
-}
-
-.hint {
-    font-size: 12px;
-    opacity: 0.7;
-}
-
-/* Responsive adjustments */
-@media (max-width: 400px) {
-    .screen-buttons {
-        grid-template-columns: 1fr;
-    }
-    
-    .btn-screen {
-        flex-direction: row;
-        justify-content: flex-start;
-        gap: 15px;
-        min-height: auto;
-        padding: 15px;
-    }
-}
-
-/* iOS safe area */
 @supports (padding: max(0px)) {
-    .container {
-        padding-bottom: max(40px, env(safe-area-inset-bottom));
+    .mx { padding-bottom: max(calc(var(--nav-size) * 1), env(safe-area-inset-bottom)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .service-room::before,
+    .service-room::after { animation: none; }
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
     }
 }

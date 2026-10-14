@@ -27,6 +27,8 @@ import time
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 
+from link_service import LinkService
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -93,6 +95,11 @@ class WebRemoteServer:
         self._cors = [o.strip() for o in cors_env.split(',') if o.strip()] if cors_env else []
         self.socketio = SocketIO(self.app, cors_allowed_origins=self._cors)
         self.display_app = display_app
+        # Every read and every command lives in LinkService, so this HTTP surface and the
+        # Bluetooth link are two adapters over one implementation. self.roof is kept as
+        # an alias because that is the name the controller used to be reachable under.
+        self.link = LinkService(display_app)
+        self.roof = self.link.roof
 
         # Per-IP auth failure tracking for basic brute-force throttling.
         self._auth_failures = {}
@@ -185,135 +192,106 @@ class WebRemoteServer:
         @self._require_auth
         def get_status():
             """Get current system status"""
-            return jsonify({
-                'screen': self.display_app.current_screen,
-                'screen_name': self.display_app.screen_names[self.display_app.current_screen],
-                'demo_mode': self.display_app.settings.demo_mode,
-                'sleeping': self.display_app.sleeping,
-                'nav_locked': self.display_app.swc_handler.nav_locked if self.display_app.swc_handler else False,
-                'settings': {
-                    'demo_mode': self.display_app.settings.demo_mode,
-                    'brightness': self.display_app.settings.brightness,
-                    'volume': self.display_app.settings.volume,
-                    'shift_rpm': self.display_app.settings.shift_rpm,
-                    'redline_rpm': self.display_app.settings.redline_rpm,
-                    'use_mph': self.display_app.settings.use_mph,
-                    'tire_low_psi': self.display_app.settings.tire_low_psi,
-                    'tire_high_psi': self.display_app.settings.tire_high_psi,
-                    'coolant_warn_f': self.display_app.settings.coolant_warn_f,
-                    'led_sequence': self.display_app.settings.led_sequence,
-                    'clutch_display_mode': self.display_app.settings.clutch_display_mode
-                }
-            })
+            return jsonify(self.link.status())
         
         @self.app.route('/api/screen/<int:screen_num>', methods=['POST'])
         @self._require_auth
         def change_screen(screen_num):
             """Change to specific screen"""
-            if 0 <= screen_num < 8:
-                self.display_app.change_screen(screen_num)
+            payload, status = self.link.set_screen(screen_num)
+            if payload.get('success'):
                 # Notify all connected clients
-                self.socketio.emit('screen_changed', {'screen': screen_num})
-                return jsonify({'success': True, 'screen': screen_num})
-            return jsonify({'success': False, 'error': 'Invalid screen number'}), 400
+                self.socketio.emit('screen_changed', {'screen': payload['screen']})
+            return jsonify(payload), status
         
         @self.app.route('/api/screen/next', methods=['POST'])
         @self._require_auth
         def next_screen():
             """Go to next screen"""
-            new_screen = (self.display_app.current_screen + 1) % 8
-            self.display_app.change_screen(new_screen)
-            self.socketio.emit('screen_changed', {'screen': new_screen})
-            return jsonify({'success': True, 'screen': new_screen})
+            payload, status = self.link.next_screen()
+            self.socketio.emit('screen_changed', {'screen': payload['screen']})
+            return jsonify(payload), status
         
         @self.app.route('/api/screen/prev', methods=['POST'])
         @self._require_auth
         def prev_screen():
             """Go to previous screen"""
-            new_screen = (self.display_app.current_screen - 1) % 8
-            self.display_app.change_screen(new_screen)
-            self.socketio.emit('screen_changed', {'screen': new_screen})
-            return jsonify({'success': True, 'screen': new_screen})
+            payload, status = self.link.prev_screen()
+            self.socketio.emit('screen_changed', {'screen': payload['screen']})
+            return jsonify(payload), status
         
         @self.app.route('/api/settings/update', methods=['POST'])
         @self._require_auth
         def update_setting():
             """Update any setting"""
             data = request.json
-            name = data.get('name')
-            value = data.get('value')
-            
-            if not name:
-                return jsonify({'success': False, 'error': 'Missing setting name'}), 400
-            
-            try:
-                # Handle each setting type appropriately
-                if name == 'demo_mode':
-                    self.display_app.settings.demo_mode = (value == '1' or value == True)
-                    # Reinitialize data sources if demo mode changed
-                    self.display_app._init_data_sources()
-                elif name == 'brightness':
-                    self.display_app.settings.brightness = int(value)
-                elif name == 'volume':
-                    self.display_app.settings.volume = int(value)
-                    self.display_app.sound.set_volume(self.display_app.settings.volume)
-                elif name == 'shift_rpm':
-                    self.display_app.settings.shift_rpm = int(value)
-                elif name == 'redline_rpm':
-                    self.display_app.settings.redline_rpm = int(value)
-                elif name == 'use_mph':
-                    self.display_app.settings.use_mph = (value == '1' or value == True)
-                elif name == 'tire_low_psi':
-                    self.display_app.settings.tire_low_psi = float(value)
-                elif name == 'tire_high_psi':
-                    self.display_app.settings.tire_high_psi = float(value)
-                elif name == 'coolant_warn':
-                    self.display_app.settings.coolant_warn_f = int(value)
-                elif name == 'led_sequence':
-                    self.display_app.settings.led_sequence = int(value)
-                    # Send LED sequence change to Arduino using the app's method
-                    if hasattr(self.display_app, '_send_led_sequence_to_arduino'):
-                        self.display_app._send_led_sequence_to_arduino()
-                elif name == 'clutch_display_mode':
-                    self.display_app.settings.clutch_display_mode = int(value)
-                else:
-                    return jsonify({'success': False, 'error': 'Unknown setting'}), 400
-                
-                # Sync to ESP32 if available
-                if self.display_app.esp32_handler:
-                    self.display_app._sync_settings_to_esp32()
-                
+            payload, status = self.link.update_setting(
+                data.get('name'), data.get('value'))
+            if payload.get('success'):
                 # Notify all clients
-                self.socketio.emit('setting_changed', {name: value})
-                return jsonify({'success': True, 'name': name, 'value': value})
-                
-            except Exception:
-                logger.exception("Failed to update setting %r", name)
-                return jsonify({'success': False, 'error': 'Internal error'}), 500
+                self.socketio.emit('setting_changed',
+                                   {payload['name']: payload['value']})
+            return jsonify(payload), status
         
         @self.app.route('/api/wake', methods=['POST'])
         @self._require_auth
         def wake_display():
             """Wake display from sleep"""
-            if self.display_app.sleeping:
-                self.display_app.sleeping = False
-                self.display_app.last_activity = time.time()
-            return jsonify({'success': True})
+            payload, status = self.link.wake()
+            return jsonify(payload), status
         
         @self.app.route('/api/calibrate_imu', methods=['POST'])
         @self._require_auth
         def calibrate_imu():
             """Calibrate IMU gyroscope zero point"""
-            try:
-                # Send calibration command to ESP32
-                if self.display_app.esp32_handler:
-                    self.display_app.esp32_handler.send_calibrate_imu()
-                    return jsonify({'success': True, 'message': 'Calibration command sent'})
-                else:
-                    return jsonify({'success': False, 'message': 'ESP32 not connected'}), 503
-            except Exception:
-                logger.exception("Failed to calibrate IMU")
-                return jsonify({'success': False, 'message': 'Internal error'}), 500
+            payload, status = self.link.calibrate_imu()
+            return jsonify(payload), status
+
+        @self.app.route('/api/telemetry')
+        @self._require_auth
+        def get_telemetry():
+            """Full live telemetry snapshot.
+
+            The web page only ever needed the current screen and the settings, so the
+            live values went to the ESP32 over serial and were never exposed over HTTP.
+            The car app replaces that display, so it needs everything the serial link
+            carries. Built by LinkService.telemetry(), which the Bluetooth link shares.
+            """
+            return jsonify(self.link.telemetry())
+
+        # -- roof controller (MX5things RCNC-2) -------------------------
+
+        @self.app.route('/api/roof/status')
+        @self._require_auth
+        def roof_status():
+            """Current roof controller settings (or connected=False)."""
+            return jsonify(self.link.roof_status())
+
+        @self.app.route('/api/roof/speed', methods=['POST'])
+        @self._require_auth
+        def roof_set_speed():
+            """Set the roof speed limit (mph)."""
+            return self._roof_apply('speed')
+
+        @self.app.route('/api/roof/auto', methods=['POST'])
+        @self._require_auth
+        def roof_set_auto():
+            """Turn Auto (lower on latch release) on or off."""
+            return self._roof_apply('auto')
+
+        @self.app.route('/api/roof/mode', methods=['POST'])
+        @self._require_auth
+        def roof_set_mode():
+            """Set 0=Valet, 1=One Touch, 2=OEM."""
+            return self._roof_apply('mode')
+
+    def _roof_apply(self, kind):
+        """Apply one roof setting from an HTTP body, then notify the web clients."""
+        value = (request.get_json(silent=True) or {}).get('value')
+        payload, status = self.link.roof_set(kind, value)
+        if payload.get('success'):
+            self.socketio.emit('roof_changed', payload['roof'])
+        return jsonify(payload), status
     
     def _setup_socketio(self):
         """Setup WebSocket event handlers"""

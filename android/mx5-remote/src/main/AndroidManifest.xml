@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MX5 Remote for Android Auto.
+
+  Parked app, so the two declarations that matter are android:appCategory="game"
+  on <application> and android.intent.category.CAR_LAUNCHER on the activity.
+
+  usesCleartextTraffic is load bearing: the Pi serves plain HTTP on the USB tether,
+  and API 28+ blocks cleartext by default, which would make every request fail with
+  no obvious cause. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Optional per the car games guidance, and required=false because not every
+         head unit or phone has one. OEMs read this to decide what to offer. -->
+    <uses-feature android:name="android.hardware.gamepad"
+                  android:required="false" />
+    <application android:appCategory="game"
+                 android:icon="@mipmap/ic_launcher"
+                 android:roundIcon="@mipmap/ic_launcher_round"
+                 android:label="MX5 Remote"
+                 android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+                 android:usesCleartextTraffic="true">
+        <activity android:name=".MainActivity"
+                  android:exported="true"
+                  android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density"
+                  android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- this line is what makes Android Auto list it -->
+                <category android:name="android.intent.category.CAR_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

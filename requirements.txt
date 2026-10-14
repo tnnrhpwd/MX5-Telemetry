@@ -12,6 +12,18 @@ python-socketio>=5.0.0,<6
 pygame>=2.0.0,<3
 pyserial>=3.5,<4
 
+# Bluetooth link (optional - lets the car app run without the USB tether)
+#
+# SPP needs no pip package at all: it uses the Python Bluetooth socket, plus `sdptool`
+# and `hciconfig` from bluez-tools at the OS level (sudo apt install bluez-tools).
+#
+# BLE needs a Python wrapper around the BlueZ GATT D-Bus API. Left commented out because
+# it pulls in system GObject libraries, and a failure here would abort the whole install.
+# The BLE transport degrades gracefully without it; install with:
+#     sudo apt install python3-dbus python3-gi
+#     pip install bless
+# bless>=0.2.6
+
 # ESP32 Display Simulator (Hot-reload support)
 watchdog>=6.0.0,<7
 

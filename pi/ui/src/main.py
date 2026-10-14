@@ -516,6 +516,9 @@ class PiDisplayApp:
         # Web remote server (for phone control)
         self.web_server = None
         
+        # Bluetooth link (SPP/BLE) for the car app when the USB tether is not connected
+        self.bt_link = None
+        
         # MPG calculator for fuel efficiency tracking
         self.mpg_calculator = None
 
@@ -530,6 +533,9 @@ class PiDisplayApp:
         
         # Start web remote server
         self._init_web_server()
+        
+        # Start the Bluetooth link, which shares the web server's LinkService
+        self._init_bt_link()
     
     def _init_data_sources(self):
         """Initialize or reinitialize CAN and ESP32 handlers based on demo_mode setting"""
@@ -685,6 +691,44 @@ class PiDisplayApp:
             print("  ✓ Web remote server initialized (see logs for bind address)")
         else:
             print("  ✗ Web server not available - install flask and flask-socketio")
+    
+    def _init_bt_link(self):
+        """Start the Bluetooth link, which serves the same operations as the web API.
+
+        Reuses the web server's LinkService when there is one, so both transports act on
+        one roof controller and one set of settings rather than each holding its own
+        copy. LinkService does not import flask, so Bluetooth still comes up on a Pi with
+        no web server installed.
+
+        A failure here is contained: the display, the web page and the USB tether all
+        keep working, and the reason is printed rather than raised.
+        """
+        try:
+            from bt_link import BtLink
+        except Exception as e:
+            print(f"  ✗ Bluetooth link unavailable: {e}")
+            self.bt_link = None
+            return
+
+        service = getattr(self.web_server, 'link', None) if self.web_server else None
+        if service is None:
+            try:
+                from link_service import LinkService
+                service = LinkService(self)
+            except Exception as e:
+                print(f"  ✗ Bluetooth link unavailable: {e}")
+                self.bt_link = None
+                return
+
+        self.bt_link = BtLink(service)
+        if not self.bt_link.enabled:
+            print("  - Bluetooth link disabled (MX5_BT=off)")
+            return
+
+        if self.bt_link.start():
+            print(f"  ✓ Bluetooth link started (mode={self.bt_link.mode})")
+        else:
+            print(f"  ✗ Bluetooth link did not start: {self.bt_link.errors}")
     
     def _on_esp32_screen_change(self, screen_index: int):
         """Callback when ESP32 display changes screen via touch (bidirectional sync)"""

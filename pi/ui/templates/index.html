@@ -2,246 +2,262 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="color-scheme" content="dark light">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>MX5 Remote</title>
-    <link rel="stylesheet" href="/static/style.css?v=1.1">
+    <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header>
-            <h1>🏎️ MX5 Remote</h1>
-            <div class="connection-status" id="connection-status">
-                <span class="dot"></span>
-                <span id="status-text">Connecting...</span>
+    <script>
+        // Paint the stored theme and scheme before the first frame, so the page
+        // never flashes the wrong palette. The authorities are initTheme() and
+        // initScheme() in app.js; this only has to copy the storage shape.
+        //
+        // The scheme id is written UNVALIDATED on purpose: the id list lives in
+        // app.js and must not be copied into the HTML. That is only safe because
+        // `body[data-scheme]` seeds the two hues, so an id no scheme is named
+        // for degrades to the theme's own pair instead of collapsing the accents.
+        (function () {
+            var mode = null;
+            var scheme = null;
+            try {
+                mode = localStorage.getItem('mx5_theme');
+                scheme = localStorage.getItem('mx5_scheme');
+            } catch (e) { /* private mode */ }
+            if (!mode) {
+                mode = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.body.className = mode === 'light' ? 'light-theme' : 'dark-theme';
+            if (scheme) document.body.setAttribute('data-scheme', scheme);
+        })();
+    </script>
+
+    <div class="mx service-room">
+        <!-- Top row: name + live state + action, in the flow (5.7) -->
+        <header class="mx-row">
+            <div class="mx-row-id">
+                <h1 class="mx-name">MX5 Remote</h1>
+                <span class="mx-state" id="link-state">
+                    <span class="mx-dot"></span><span id="link-state-text">Connecting</span>
+                </span>
+            </div>
+            <div class="mx-row-actions">
+                <div class="mx-schemes" id="scheme-picker" role="radiogroup" aria-label="Colour scheme"></div>
+                <button class="mx-btn mx-btn--ghost" id="btn-theme" type="button">Light</button>
             </div>
         </header>
 
-        <!-- Current Screen Display -->
-        <section class="current-screen">
-            <div class="screen-label">Current Screen</div>
-            <div class="screen-name" id="current-screen">Overview</div>
-        </section>
-
-        <!-- Navigation Controls -->
-        <section class="nav-controls">
-            <h2>Navigation</h2>
-            <div class="button-row">
-                <button class="btn btn-nav" id="btn-prev" onclick="prevScreen()">
-                    ← Previous
-                </button>
-                <button class="btn btn-nav" id="btn-next" onclick="nextScreen()">
-                    Next →
-                </button>
-            </div>
-        </section>
-
-        <!-- Screen Quick Access -->
-        <section class="screen-grid">
-            <h2>Quick Access</h2>
-            <div class="screen-buttons">
-                <button class="btn btn-screen" onclick="changeScreen(0)">
-                    <span class="screen-icon">📊</span>
-                    <span class="screen-text">Overview</span>
-                </button>
-                <button class="btn btn-screen" onclick="changeScreen(1)">
-                    <span class="screen-icon">🔄</span>
-                    <span class="screen-text">RPM</span>
-                </button>
-                <button class="btn btn-screen" onclick="changeScreen(2)">
-                    <span class="screen-icon">🛞</span>
-                    <span class="screen-text">TPMS</span>
-                </button>
-                <button class="btn btn-screen" onclick="changeScreen(3)">
-                    <span class="screen-icon">🔧</span>
-                    <span class="screen-text">Engine</span>
-                </button>
-                <button class="btn btn-screen" onclick="changeScreen(4)">
-                    <span class="screen-icon">📈</span>
-                    <span class="screen-text">G-Force</span>
-                </button>
-                <button class="btn btn-screen" onclick="changeScreen(5)">
-                    <span class="screen-icon">⚠️</span>
-                    <span class="screen-text">Diagnostics</span>
-                </button>
-                <button class="btn btn-screen" onclick="changeScreen(6)">
-                    <span class="screen-icon">💻</span>
-                    <span class="screen-text">System</span>
-                </button>
-                <button class="btn btn-screen" onclick="changeScreen(7)">
-                    <span class="screen-icon">⚙️</span>
-                    <span class="screen-text">Settings</span>
-                </button>
-            </div>
-        </section>
-
-        <!-- Settings -->
-        <section class="settings">
-            <h2>Settings</h2>
-            
-            <!-- Demo Mode Toggle -->
-            <div class="setting-item">
-                <label class="toggle-label">
-                    <span>Demo Mode</span>
-                    <div class="toggle">
-                        <input type="checkbox" id="toggle-demo" onchange="toggleSetting('demo_mode')">
-                        <span class="toggle-slider"></span>
+        <main class="mx-grid">
+            <!-- Display -->
+            <section class="mx-panel" aria-labelledby="display-title">
+                <div class="mx-panel-head">
+                    <div>
+                        <p class="mx-eyebrow">Display</p>
+                        <h2 class="mx-panel-title" id="display-title">Overview</h2>
                     </div>
-                </label>
-            </div>
-            
-            <!-- Brightness Slider -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Brightness</span>
-                    <span class="setting-value" id="brightness-value">100</span>
-                </div>
-                <input type="range" class="slider" id="brightness" 
-                       min="10" max="255" value="200" 
-                       oninput="updateSlider('brightness')">
-            </div>
-            
-            <!-- Volume Slider -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Volume</span>
-                    <span class="setting-value" id="volume-value">70</span>
-                </div>
-                <input type="range" class="slider" id="volume" 
-                       min="0" max="100" value="70" 
-                       oninput="updateSlider('volume')">
-            </div>
-            
-            <!-- Shift RPM Slider -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Shift Light RPM</span>
-                    <span class="setting-value" id="shift-rpm-value">6500</span>
-                </div>
-                <input type="range" class="slider" id="shift-rpm" 
-                       min="4000" max="7500" step="100" value="6500" 
-                       oninput="updateSlider('shift-rpm')">
-            </div>
-            
-            <!-- Redline RPM Slider -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Redline RPM</span>
-                    <span class="setting-value" id="redline-rpm-value">7000</span>
-                </div>
-                <input type="range" class="slider" id="redline-rpm" 
-                       min="5000" max="8000" step="100" value="7000" 
-                       oninput="updateSlider('redline-rpm')">
-            </div>
-            
-            <!-- Speed Units Toggle -->
-            <div class="setting-item">
-                <label class="toggle-label">
-                    <span>Use MPH (off = KM/H)</span>
-                    <div class="toggle">
-                        <input type="checkbox" id="toggle-mph" checked onchange="toggleSetting('use_mph')">
-                        <span class="toggle-slider"></span>
+                    <div class="mx-stepper">
+                        <button class="mx-btn mx-btn--icon" id="btn-prev" type="button" aria-label="Previous screen">&uarr;</button>
+                        <button class="mx-btn mx-btn--icon" id="btn-next" type="button" aria-label="Next screen">&darr;</button>
                     </div>
-                </label>
-            </div>
-            
-            <!-- Tire Pressure Warning Slider -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Tire Low Pressure (PSI)</span>
-                    <span class="setting-value" id="tire-psi-value">28</span>
                 </div>
-                <input type="range" class="slider" id="tire-psi" 
-                       min="25" max="35" step="0.5" value="28" 
-                       oninput="updateSlider('tire-psi')">
-            </div>
-            
-            <!-- Tire Pressure High Warning Slider -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Tire High Pressure (PSI)</span>
-                    <span class="setting-value" id="tire-high-psi-value">36</span>
+                <div class="mx-panel-body">
+                    <div class="mx-chips" id="screen-list"></div>
                 </div>
-                <input type="range" class="slider" id="tire-high-psi" 
-                       min="32" max="42" step="0.5" value="36" 
-                       oninput="updateSlider('tire-high-psi')">
-            </div>
-            
-            <!-- Coolant Warning Slider -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Coolant Warning (°F)</span>
-                    <span class="setting-value" id="coolant-warn-value">220</span>
-                </div>
-                <input type="range" class="slider" id="coolant-warn" 
-                       min="200" max="240" step="5" value="220" 
-                       oninput="updateSlider('coolant-warn')">
-            </div>
-            
-            <!-- Oil Warning Slider -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Oil Warning (°F)</span>
-                    <span class="setting-value" id="oil-warn-value">260</span>
-                </div>
-                <input type="range" class="slider" id="oil-warn" 
-                       min="240" max="300" step="5" value="260" 
-                       oninput="updateSlider('oil-warn')">
-            </div>
-            
-            <!-- LED Sequence Selector -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>LED Sequence</span>
-                    <span class="setting-value" id="led-seq-value">Center Out</span>
-                </div>
-                <select class="setting-select" id="led-seq" onchange="updateSelect('led-seq')">
-                    <option value="1">Center Out</option>
-                    <option value="2">Left to Right</option>
-                    <option value="3">Right to Left</option>
-                    <option value="4">Center In</option>
-                </select>
-            </div>
-            
-            <!-- Clutch Display Mode Selector -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>Clutch Display Mode</span>
-                    <span class="setting-value" id="clutch-mode-value">Gear# (Colored)</span>
-                </div>
-                <select class="setting-select" id="clutch-mode" onchange="updateSelect('clutch-mode')">
-                    <option value="0">Gear# (Colored)</option>
-                    <option value="1">'C' for Clutch</option>
-                    <option value="2">'S' for Shifting</option>
-                    <option value="3">'-' for Unknown</option>
-                </select>
-            </div>
-            
-            <!-- IMU Calibration -->
-            <div class="setting-item">
-                <div class="setting-header">
-                    <span>G-Force Calibration</span>
-                </div>
-                <button class="calibration-btn" onclick="calibrateIMU()">
-                    🎯 Set Zero Point (Current Position)
-                </button>
-                <p class="setting-hint">Sets the current orientation as the default zero point for gyroscope readings</p>
-            </div>
-        </section>
+            </section>
 
-        <!-- Notification Toast -->
-        <div id="toast" class="toast"></div>
+            <!-- Roof controller -->
+            <section class="mx-panel" aria-labelledby="roof-title">
+                <div class="mx-panel-head">
+                    <div>
+                        <p class="mx-eyebrow">Roof</p>
+                        <h2 class="mx-panel-title" id="roof-title">Roof Controller</h2>
+                    </div>
+                    <span class="mx-state" id="roof-state">
+                        <span class="mx-dot"></span><span id="roof-state-text">Checking</span>
+                    </span>
+                </div>
+                <div class="mx-panel-body">
+                    <div id="roof-controls" class="mx-hidden">
+                        <div class="mx-badges">
+                            <span class="mx-badge">Firmware <b id="roof-version">&ndash;</b></span>
+                            <span class="mx-badge">Port <b id="roof-port">&ndash;</b></span>
+                        </div>
 
-        <!-- Footer -->
-        <footer>
-            <p>MX5 Telemetry Remote Control v1.0</p>
-            <p class="hint">Save this page to your home screen for quick access</p>
-        </footer>
+                        <div class="mx-rows">
+                            <div class="mx-item">
+                                <div class="mx-item-head">
+                                    <span class="mx-label">Speed limit</span>
+                                    <span class="mx-value"><span id="roof-speed-value">30</span> mph</span>
+                                </div>
+                                <input class="mx-slider" type="range" id="roof-speed" min="0" max="30" step="1" value="30">
+                                <p class="mx-hint">The roof will not operate above this speed.</p>
+                            </div>
+
+                            <div class="mx-item">
+                                <div class="mx-item-head">
+                                    <span class="mx-label">Mode</span>
+                                    <span class="mx-value" id="roof-mode-value">&ndash;</span>
+                                </div>
+                                <div class="mx-modes" id="roof-modes">
+                                    <button class="mx-chip" type="button" data-mode="1">One Touch</button>
+                                    <button class="mx-chip" type="button" data-mode="2">OEM</button>
+                                    <button class="mx-chip" type="button" data-mode="0">Valet</button>
+                                </div>
+                                <p class="mx-hint">One Touch for normal use. OEM restores the factory limits. Valet disables the roof.</p>
+                            </div>
+
+                            <div class="mx-item">
+                                <label class="mx-toggle-row">
+                                    <span class="mx-label">Auto, lower when the latch is released</span>
+                                    <span class="mx-toggle">
+                                        <input type="checkbox" id="roof-auto">
+                                        <span class="mx-toggle-track"></span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <button class="mx-btn mx-btn--ghost mx-btn--wide" id="roof-refresh" type="button">Refresh</button>
+                    </div>
+
+                    <p class="mx-hint" id="roof-error"></p>
+                </div>
+            </section>
+
+            <!-- Settings -->
+            <section class="mx-panel mx-panel--wide" aria-labelledby="settings-title">
+                <div class="mx-panel-head">
+                    <div>
+                        <p class="mx-eyebrow">System</p>
+                        <h2 class="mx-panel-title" id="settings-title">Settings</h2>
+                    </div>
+                </div>
+                <div class="mx-panel-body">
+                    <div class="mx-rows mx-rows--dense">
+                        <div class="mx-item">
+                            <label class="mx-toggle-row">
+                                <span class="mx-label">Demo mode</span>
+                                <span class="mx-toggle">
+                                    <input type="checkbox" id="toggle-demo">
+                                    <span class="mx-toggle-track"></span>
+                                </span>
+                            </label>
+                        </div>
+
+                        <div class="mx-item">
+                            <label class="mx-toggle-row">
+                                <span class="mx-label">Use MPH, off is KM/H</span>
+                                <span class="mx-toggle">
+                                    <input type="checkbox" id="toggle-mph" checked>
+                                    <span class="mx-toggle-track"></span>
+                                </span>
+                            </label>
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Brightness</span>
+                                <span class="mx-value" id="brightness-value">200</span>
+                            </div>
+                            <input class="mx-slider" type="range" id="brightness" min="10" max="255" value="200">
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Volume</span>
+                                <span class="mx-value" id="volume-value">70</span>
+                            </div>
+                            <input class="mx-slider" type="range" id="volume" min="0" max="100" value="70">
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Shift light RPM</span>
+                                <span class="mx-value" id="shift-rpm-value">6500</span>
+                            </div>
+                            <input class="mx-slider" type="range" id="shift-rpm" min="4000" max="7500" step="100" value="6500">
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Redline RPM</span>
+                                <span class="mx-value" id="redline-rpm-value">7000</span>
+                            </div>
+                            <input class="mx-slider" type="range" id="redline-rpm" min="5000" max="8000" step="100" value="7000">
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Tire low pressure</span>
+                                <span class="mx-value"><span id="tire-psi-value">28</span> psi</span>
+                            </div>
+                            <input class="mx-slider" type="range" id="tire-psi" min="25" max="35" step="0.5" value="28">
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Tire high pressure</span>
+                                <span class="mx-value"><span id="tire-high-psi-value">36</span> psi</span>
+                            </div>
+                            <input class="mx-slider" type="range" id="tire-high-psi" min="32" max="42" step="0.5" value="36">
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Coolant warning</span>
+                                <span class="mx-value"><span id="coolant-warn-value">220</span> &deg;F</span>
+                            </div>
+                            <input class="mx-slider" type="range" id="coolant-warn" min="200" max="240" step="5" value="220">
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Oil warning</span>
+                                <span class="mx-value"><span id="oil-warn-value">260</span> &deg;F</span>
+                            </div>
+                            <input class="mx-slider" type="range" id="oil-warn" min="240" max="300" step="5" value="260">
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">LED sequence</span>
+                                <span class="mx-value" id="led-seq-value">Center Out</span>
+                            </div>
+                            <select class="mx-select" id="led-seq">
+                                <option value="1">Center out</option>
+                                <option value="2">Left to right</option>
+                                <option value="3">Right to left</option>
+                                <option value="4">Center in</option>
+                            </select>
+                        </div>
+
+                        <div class="mx-item">
+                            <div class="mx-item-head">
+                                <span class="mx-label">Clutch display</span>
+                                <span class="mx-value" id="clutch-mode-value">Gear number</span>
+                            </div>
+                            <select class="mx-select" id="clutch-mode">
+                                <option value="0">Gear number, coloured</option>
+                                <option value="1">C for clutch</option>
+                                <option value="2">S for shifting</option>
+                                <option value="3">Dash for unknown</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button class="mx-btn mx-btn--ghost mx-btn--wide" id="btn-calibrate" type="button">Set G-force zero at the current position</button>
+                </div>
+            </section>
+        </main>
+
+        <footer class="mx-foot">MX5 Telemetry</footer>
     </div>
 
+    <div id="toast" class="mx-toast" role="status" aria-live="polite"></div>
+
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=3"></script>
 </body>
 </html>

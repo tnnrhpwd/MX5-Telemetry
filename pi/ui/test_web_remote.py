@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
+
+from roof_controller import RoofController, RoofControllerError
 import time
 import webbrowser
 import threading
@@ -63,6 +65,9 @@ socketio = SocketIO(app, cors_allowed_origins=[])
 
 # Create mock display app
 display_app = MockDisplayApp()
+
+# Real roof controller when one is plugged in, so the preview shows live data.
+roof = RoofController()
 
 # Routes
 @app.route('/')
@@ -134,6 +139,53 @@ def wake_display():
         display_app.sleeping = False
     print("✓ Display woken")
     return jsonify({'success': True})
+
+# -- roof controller (MX5things RCNC-2) ------------------------------------
+
+def _roof_status_payload():
+    try:
+        info = roof.status()
+    except RoofControllerError as e:
+        return {'connected': False, 'error': str(e)}
+    info['connected'] = True
+    return info
+
+
+def _roof_apply(kind, value):
+    if value is None:
+        return jsonify({'success': False, 'error': 'Missing value'}), 400
+    try:
+        if kind == 'speed':
+            roof.set_speed(value)
+        elif kind == 'auto':
+            roof.set_auto(value)
+        else:
+            roof.set_mode(value)
+    except RoofControllerError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    payload = _roof_status_payload()
+    socketio.emit('roof_changed', payload)
+    return jsonify({'success': True, 'roof': payload})
+
+
+@app.route('/api/roof/status')
+def roof_status():
+    return jsonify(_roof_status_payload())
+
+
+@app.route('/api/roof/speed', methods=['POST'])
+def roof_set_speed():
+    return _roof_apply('speed', (request.get_json(silent=True) or {}).get('value'))
+
+
+@app.route('/api/roof/auto', methods=['POST'])
+def roof_set_auto():
+    return _roof_apply('auto', (request.get_json(silent=True) or {}).get('value'))
+
+
+@app.route('/api/roof/mode', methods=['POST'])
+def roof_set_mode():
+    return _roof_apply('mode', (request.get_json(silent=True) or {}).get('value'))
 
 # WebSocket handlers
 @socketio.on('connect')
