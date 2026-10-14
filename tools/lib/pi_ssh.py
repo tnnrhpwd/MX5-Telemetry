@@ -54,6 +54,10 @@ def get_password():
     return os.environ.get('PI_PASSWORD') or _config().get('password') or None
 
 
+# Key types worth guessing, in the order most likely to be the one the Pi trusts.
+_KEY_CANDIDATES = ('id_ed25519', 'id_rsa', 'id_ecdsa')
+
+
 def get_key_path():
     env = os.environ.get('PI_SSH_KEY')
     if env:
@@ -61,7 +65,14 @@ def get_key_path():
     cfg = _config().get('key')
     if cfg:
         return os.path.expanduser(cfg)
-    return os.path.expanduser('~/.ssh/id_ed25519')
+    # Naming a single type was wrong on a machine whose only key is RSA: the guess pointed at
+    # a file that did not exist, so every tool reported "no SSH key found" while a perfectly
+    # good key sat next to it. Take the first candidate that is actually there.
+    for name in _KEY_CANDIDATES:
+        candidate = os.path.expanduser('~/.ssh/' + name)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.expanduser('~/.ssh/' + _KEY_CANDIDATES[0])
 
 
 def _load_private_key(path):
