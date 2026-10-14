@@ -22,6 +22,22 @@ logger = logging.getLogger(__name__)
 SCREEN_COUNT = 8
 
 
+def screen_index(app):
+    """The display app's current screen as a plain int.
+
+    The app holds current_screen as a Screen enum. That is neither JSON-serialisable nor
+    usable as a list index, so every payload and every lookup has to unwrap it first. The
+    protocol and parity tests drive a stand-in whose current_screen is already an int,
+    which is exactly why they passed while this failed against the real app.
+    """
+    return getattr(app.current_screen, 'value', app.current_screen)
+
+
+def screen_name(app):
+    """The name of the display app's current screen."""
+    return app.screen_names[screen_index(app)]
+
+
 class LinkService:
     """The shared operations behind /api/* and the Bluetooth line protocol."""
 
@@ -40,8 +56,8 @@ class LinkService:
         """Current screen, demo/sleep flags and every persisted setting."""
         app = self.display_app
         return {
-            'screen': app.current_screen,
-            'screen_name': app.screen_names[app.current_screen],
+            'screen': screen_index(app),
+            'screen_name': screen_name(app),
             'demo_mode': app.settings.demo_mode,
             'sleeping': app.sleeping,
             'nav_locked': app.swc_handler.nav_locked if app.swc_handler else False,
@@ -141,12 +157,12 @@ class LinkService:
         return {'success': False, 'error': 'Invalid screen number'}, 400
 
     def next_screen(self):
-        new_screen = (self.display_app.current_screen + 1) % SCREEN_COUNT
+        new_screen = (screen_index(self.display_app) + 1) % SCREEN_COUNT
         self.display_app.change_screen(new_screen)
         return {'success': True, 'screen': new_screen}, 200
 
     def prev_screen(self):
-        new_screen = (self.display_app.current_screen - 1) % SCREEN_COUNT
+        new_screen = (screen_index(self.display_app) - 1) % SCREEN_COUNT
         self.display_app.change_screen(new_screen)
         return {'success': True, 'screen': new_screen}, 200
 

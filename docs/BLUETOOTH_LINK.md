@@ -492,6 +492,12 @@ presence of a car.
 | Phone connects, then drops after five requests | Five bad tokens closed the link. Check the token, then reconnect. |
 | Footer still shows the tether address with the cable out | The app has not fallen back: check that a Bluetooth permission was granted and that a device is paired. |
 | Works over SPP but telemetry is slow over BLE | Expected: a ~1 KB snapshot becomes several notifications. SPP is preferred for this reason. |
+| BLE starts, but no phone ever sees `MX5 Pi Link` | The adapter is not discoverable, or BlueZ's `DiscoverableTimeout` (default 180 s) has expired. Set `DiscoverableTimeout = 0` in `/etc/bluetooth/main.conf`. To check the app rather than the radio, ask BlueZ: `busctl get-property org.bluez /org/bluez/hci0 org.bluez.LEAdvertisingManager1 ActiveInstances` — `y 1` means a registered advertisement, `y 0` means nothing is broadcasting however healthy the process looks. |
+| Phone says "Could not connect", or the Pi logs `org.bluez.Error.Rejected` | The adapter is advertising a profile the phone prefers. PulseAudio's `module-bluetooth-discover` registers Headset/Headset AG, so the phone opens a headset connection instead of this service. Comment it and `module-bluetooth-policy` out of `/etc/pulse/default.pa`, unload them, and restart; the adapter should then advertise only GAP/GATT/PnP plus this UUID. |
+| Pairing fails on a passkey: `No agent available for request type 2` | No pairing agent is registered. Install `bluez-tools` and run `bt-agent`. Under systemd it reads its confirmation from **stdin**, and stdin is `/dev/null`, so it must be fed: `ExecStart=/bin/bash -c 'yes yes | /usr/bin/bt-agent --capability=NoInputNoOutput'`. It also ignores SIGTERM, so stopping it needs `pkill -9`. |
+| `Failed to register advertisement`, right after a restart | The previous instance's advertisement had not been released yet, so BlueZ refused the new registration. `BleServer.start()` now waits for registration and raises on failure rather than returning optimistically. Stopping the app and starting it again clears it. |
+| A screen or setting never updates over Bluetooth, and the log shows `Object of type Screen is not JSON serializable` | The app's `Screen` enum reached `json.dumps` un-unwrapped. Use `link_service.screen_index()` / `screen_name()` wherever a screen number is wanted. |
+| The startup line claims success for a transport that is not working | Both transports used to report `start()` success without checking. SPP now fails when its SDP record could not be published, and BLE fails when the advertisement could not be registered, so the banner names only what is actually listening. |
 | Everything worked, then stopped after a config edit | `dtoverlay=disable-bt` was enabled, which takes the UART from Bluetooth. |
 
 ## What is verified, and what is not
@@ -529,6 +535,26 @@ and two of them answered badly:
 - The protocol, authentication and every operation pass unmodified on the real hardware:
   **47/47**, run on the Pi rather than on a desk.
 
+**Settled over the air, from a laptop (2026-10-14).** The BLE transport was driven end to end
+by `tools/bt/ble_probe.py`, a client that scans, connects, authenticates and calls the
+operations, so no phone was involved:
+
+- The GATT server **does** register and advertise under the real BlueZ, and the Pi's own
+transcript agrees: `ActiveInstances` was `y 1` while the probe ran, and `btmon` showed a
+connectable `ADV_IND` carrying the name and this service UUID.
+- A central **does** connect, negotiate MTU 517, subscribe to the notify characteristic, and
+exchange the line protocol: `hello`, `ping`, `status`, `telemetry` and `roof.status` all
+answered. `10 checks: 9 pass, 1 warn, 0 fail`.
+- The one warning is on the client's side and is not the Pi: Windows' stack reports
+`GATT Protocol Error: Unlikely Error` on the write while the Pi replies normally. The reply
+is the evidence that matters.
+
+Two of those answers close unknowns that the desk tests could not reach. The whole GATT
+peripheral was untested code until this run, and it was wrong in three separate ways that all
+failed **silently** — the wrong write callback signature, async callbacks that bless never
+awaits, and an `await` on a synchronous `get_characteristic`. Replying to a write without any
+of the three fixes looked exactly like working code from the client's side.
+
 **Not verified, because it needs the Pi, a phone and a car.** Each line names the stage that
 settles it, so this doubles as the test's own checklist: tick a line off as it is answered,
 and leave it standing if you skipped that stage.
@@ -537,7 +563,7 @@ and leave it standing if you skipped that stage.
 | --- | --- |
 | That a phone can be paired and the token typed on it matches | Stage 4, 5 |
 | Anything about the Android Bluetooth client against real hardware | Stage 5 |
-| That the BLE GATT server registers and advertises under the real BlueZ | Stage 5, with `MX5_BT=ble` |
+| That a phone can connect and reach the Pi without the cable | Stage 5 |
 | That settings travel head unit to phone to Pi, and not merely get logged | Stage 7 |
 | That the failover's ordering and its refusal rule hold in practice | Stage 9 |
 | That the app recovers from a Pi reboot without being restarted | Stage 9 |

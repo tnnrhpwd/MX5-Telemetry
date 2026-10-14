@@ -125,20 +125,32 @@ def describe_scan(seen):
             print("           services: %s" % u)
 
 
-async def find_pi(seconds, name_hint):
-    """Find the Pi by service UUID, falling back to a name match with a warning."""
-    seen = await scan(seconds)
+async def find_pi(seconds, name_hint, attempts=3):
+    """Find the Pi by service UUID, falling back to a name match with a warning.
 
-    matches = [(d, u) for d, u in seen
-               if any(x.lower() == SERVICE_UUID for x in u)]
-    if matches:
-        return matches[0][0], seen, "advertises the MX5 service"
+    Retried, because one scan window can easily miss a peripheral that advertises on a
+    slow interval: the same Pi turned up in a 20s scan and was absent from a 12s one, and
+    a tool that has to be re-run by hand to succeed is a tool that wastes the argument it
+    was invoked for.
+    """
+    seen = []
+    for attempt in range(attempts):
+        seen = await scan(seconds)
 
-    if name_hint:
-        by_name = [(d, u) for d, u in seen
-                   if (d.name or "").lower() == name_hint.lower()]
-        if by_name:
-            return by_name[0][0], seen, "matched by name %r, not by service UUID" % name_hint
+        matches = [(d, u) for d, u in seen
+                   if any(x.lower() == SERVICE_UUID for x in u)]
+        if matches:
+            return matches[0][0], seen, "advertises the MX5 service"
+
+        if name_hint:
+            by_name = [(d, u) for d, u in seen
+                       if (d.name or "").lower() == name_hint.lower()]
+            if by_name:
+                return (by_name[0][0], seen,
+                        "matched by name %r, not by service UUID" % name_hint)
+
+        if attempt + 1 < attempts:
+            print("       (not seen in that window; scanning again)")
 
     return None, seen, None
 
@@ -156,6 +168,11 @@ class Link(object):
         self._buffer = bytearray()
         self._lines = asyncio.Queue()
         self._next_id = 0
+        # A write can be reported as failed by the local stack while the server accepted
+        # and acted on it, so keep the two facts apart: errors go here, and the reply
+        # notification (or its absence) is what decides whether the link works.
+        self.write_errors = []
+        self.tolerate_write_errors = False
 
     def _on_notify(self, _characteristic, data):
         self._buffer.extend(bytes(data))
@@ -173,9 +190,16 @@ class Link(object):
         message = {"id": request_id, "op": op}
         message.update(fields)
 
-        await self.client.write_gatt_char(
-            RX_UUID, (json.dumps(message) + "\n").encode("utf-8"),
-            response=self.write_with_response)
+        try:
+            await self.client.write_gatt_char(
+                RX_UUID, (json.dumps(message) + "\n").encode("utf-8"),
+                response=self.write_with_response)
+        except Exception as e:
+            self.write_errors.append("%s" % (e,))
+            if not self.tolerate_write_errors:
+                raise
+            # Keep going: the server may have received it anyway, and the reply below is
+            # the only trustworthy statement about that.
 
         deadline = time.monotonic() + timeout
         while True:
@@ -251,6 +275,16 @@ async def run(args):
     async with BleakClient(device) as client:
         record(PASS, "Connected over BLE", "mtu=%s" % getattr(client, "mtu_size", "?"))
 
+        if args.show_services:
+            # What the server advertises is what decides which writes BlueZ will accept,
+            # so print it rather than inferring it from an error code.
+            for service in client.services:
+                print("       service %s" % service.uuid)
+                for ch in service.characteristics:
+                    print("         char  %s   [%s]"
+                          % (ch.uuid, ", ".join(getattr(ch, "properties", None) or [])))
+            return 0
+
         link = Link(client, write_with_response=True)
         try:
             await link.start()
@@ -261,21 +295,52 @@ async def run(args):
             return 1
 
         # -- authenticate ------------------------------------------------------
-        try:
-            reply = await link.request("hello", token=token)
-        except asyncio.TimeoutError as e:
-            record(FAIL, "hello accepted", str(e),
-                   "the Pi accepted the write but never replied; check the journal for "
-                   "'BLE link'")
-            return 1
-        except Exception as e:
-            record(FAIL, "hello accepted", str(e),
-                   "the write was refused; the Android client writes with response, so "
-                   "this is what it would see too")
+        # Which write type the server accepts is worth establishing explicitly. A
+        # characteristic that only permits write-without-response answers a Write Request
+        # with an opaque ATT error rather than anything naming the fault, and the Android
+        # client writes with response - so if this needs the fallback, the phone will fail
+        # the same way and it is the characteristic's flags that need fixing, not the app.
+        modes = {"response": [True], "no-response": [False],
+                 "auto": [True, False]}[args.write_mode]
+        reply = None
+        used = None
+        failures = []
+        for with_response in modes:
+            link.write_with_response = with_response
+            link.tolerate_write_errors = True
+            try:
+                reply = await link.request("hello", token=token)
+                used = with_response
+                break
+            except Exception as e:
+                failures.append("%s: %s" % (
+                    "with response" if with_response else "without response", e))
+
+        if reply is None:
+            record(FAIL, "hello accepted",
+                   "\n".join(failures + link.write_errors) or "no reply arrived",
+                   "the Pi never answered; check the write handler and RX flags in "
+                   "bt_ble_server.py")
             return 1
 
+        if link.write_errors:
+            record(WARN, "Write reported an error locally",
+                   "%s\nbut the Pi replied, so it received and handled the write"
+                   % link.write_errors[-1],
+                   "this is the local BLE stack, not the Pi; the reply notification is "
+                   "the evidence that matters")
+
+        if used is False:
+            record(WARN, "Wrote with response",
+                   "refused, so the RX characteristic does not permit it; fell back to "
+                   "write-without-response",
+                   "the Android client uses WRITE_TYPE_DEFAULT (with response) and would "
+                   "fail identically")
+
         if reply.get("ok") and reply.get("data", {}).get("ok", True):
-            record(PASS, "hello accepted", "authenticated")
+            record(PASS, "hello accepted",
+                   "authenticated, writing %s"
+                   % ("with response" if used else "without response"))
         else:
             record(FAIL, "hello accepted", json.dumps(reply),
                    "the token does not match the Pi's MX5_WEB_TOKEN")
@@ -290,6 +355,11 @@ async def run(args):
             ("telemetry", lambda d: "rpm=%s coolant=%s speed=%s"
                                     % (d.get("rpm"), d.get("coolant_temp_f"),
                                        d.get("speed_mph"))),
+            # The app polls this too, and the RCNC-2 is optional hardware. A refused
+            # command must come back as ok:true with success:false, so that the app's
+            # transport does not mistake a missing roof controller for a dead link.
+            ("roof.status", lambda d: "connected=%s mode=%s"
+                                      % (d.get("connected"), d.get("mode"))),
         ):
             try:
                 reply = await link.request(op)
@@ -325,6 +395,13 @@ def main():
                              "advertised")
     parser.add_argument("--scan", type=float, default=8.0,
                         help="scan duration in seconds (default 8)")
+    parser.add_argument("--write-mode", choices=("auto", "response", "no-response"),
+                        default="auto",
+                        help="GATT write type; 'auto' tries write-with-response first, "
+                             "matching the Android client (default auto)")
+    parser.add_argument("--show-services", action="store_true",
+                        help="connect and print the GATT services and characteristic "
+                             "properties, then stop")
     parser.add_argument("--list-only", action="store_true",
                         help="report what this radio can see, then stop")
     args = parser.parse_args()

@@ -71,6 +71,9 @@ class BleServer:
         self._thread = None
         self._loop = None
         self._stop = threading.Event()
+        # Registration is asynchronous, so start() waits on this before reporting success.
+        self._ready = threading.Event()
+        self._start_error = None
         self._notifications = 0
         self._writes = 0
 
@@ -89,7 +92,16 @@ class BleServer:
 
     # -- lifecycle -----------------------------------------------------------
 
-    def start(self):
+    def start(self, timeout=10):
+        """Start the peripheral and wait until it is really advertising.
+
+        Waiting matters. Registering the advertisement is asynchronous, so a start() that
+        only spawns the thread reports success for a transport that can still fail a
+        moment later. That has been observed: with a previous instance's advertisement not
+        yet released, BlueZ refused the registration and the app printed a confident
+        "Bluetooth link started" for a link that was already dead. Raising here instead
+        lets bt_link.py record the reason and the banner tell the truth.
+        """
         if not BLESS_AVAILABLE:
             raise RuntimeError(
                 'The BLE transport needs the `bless` package (pip install bless). '
@@ -98,11 +110,20 @@ class BleServer:
             return
 
         self._stop.clear()
+        self._ready.clear()
+        self._start_error = None
         self._thread = threading.Thread(target=self._run, name='ble-link', daemon=True)
         self._thread.start()
 
+        if not self._ready.wait(timeout):
+            raise RuntimeError(
+                'The BLE transport did not finish registering within %ss' % timeout)
+        if self._start_error is not None:
+            raise self._start_error
+
     def stop(self):
         self._stop.set()
+        self._ready.set()  # release any start() still waiting
         if self._loop is not None:
             try:
                 asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop).result(3)
@@ -119,9 +140,14 @@ class BleServer:
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(self._main())
-        except Exception:
+        except Exception as e:
+            # Only a failure before _ready is a *startup* failure; the same except also
+            # catches a transport that dies long after boot, which start() must not report.
+            if not self._ready.is_set():
+                self._start_error = e
             logger.exception("BLE link stopped")
         finally:
+            self._ready.set()
             try:
                 loop.close()
             except Exception:
@@ -149,6 +175,9 @@ class BleServer:
         await self._server.start()
         logger.info("BLE link advertising as %r (service %s)", self.name, SERVICE_UUID)
 
+        # Past this line the advertisement is registered, so start() may report success.
+        self._ready.set()
+
         # Idle until stopped; bless runs the D-Bus work on its own tasks.
         while not self._stop.is_set():
             await asyncio.sleep(0.5)
@@ -159,27 +188,48 @@ class BleServer:
 
     # -- GATT callbacks ------------------------------------------------------
 
-    async def _on_read(self, characteristic, **kwargs):
-        """A central read the characteristic directly."""
+    def _on_read(self, characteristic, **kwargs):
+        """A central read the characteristic directly.
+
+        Synchronous on purpose: bless does ``return self.read_request_func(characteristic)``
+        and does not await it, so an async handler hands the D-Bus layer a coroutine
+        object instead of bytes.
+        """
         return characteristic.value
 
-    async def _on_write(self, characteristic, **kwargs):
-        """A central wrote bytes: feed them to the protocol and notify the replies."""
-        try:
-            value = characteristic.value
-        except Exception:
-            return
+    def _on_write(self, characteristic, value=None, **kwargs):
+        """A central wrote bytes: feed them to the protocol and schedule the replies.
+
+        Two things about bless's contract are easy to get wrong, and both fail silently
+        rather than loudly:
+
+        * It calls ``write_request_func(characteristic, value)`` - two positional
+          arguments. Accepting only the characteristic raised TypeError inside BlueZ's
+          WriteValue handler, which the central sees as an opaque ATT "Unlikely Error"
+          (0x0E) that names nothing about the cause.
+        * It calls that function without awaiting it. An ``async def`` handler therefore
+          returned a coroutine nobody ran: the write was accepted and did nothing.
+
+        The value argument is authoritative. The BlueZ backend passes the payload as an
+        argument rather than storing it, so characteristic.value can hold the previous
+        write.
+        """
+        if value is None:
+            # Other backends (and direct calls) do set the attribute instead.
+            try:
+                value = characteristic.value
+            except Exception:
+                return
 
         if value is None:
             return
 
         self._writes += 1
-        if isinstance(value, str):
-            value = value.encode('utf-8')
+        value = value.encode('utf-8') if isinstance(value, str) else bytes(value)
 
         out = self.link.on_bytes(value)
         if out:
-            await self._notify(out)
+            self._notify_soon(out)
 
         if self.link.closed:
             logger.warning("BLE link closed: %s", self.link.closed_reason)
@@ -187,16 +237,38 @@ class BleServer:
             # one goes away.
             self.link.reset()
 
+    def _notify_soon(self, payload):
+        """Schedule a reply on the server's own loop.
+
+        The write callback is synchronous, so the notification has to be handed to the
+        loop rather than awaited here. run_coroutine_threadsafe is used rather than
+        ensure_future so this stays correct if a future bless version dispatches the
+        callback from another thread.
+        """
+        if self._loop is None:
+            logger.warning("BLE reply dropped: no event loop")
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self._notify(payload), self._loop)
+        except Exception as e:
+            logger.warning("BLE reply could not be scheduled: %s", e)
+
     async def _notify(self, payload):
         """Send a reply, chunked to fit the MTU. Order is preserved, so the central can
-        reassemble by accumulating until it sees a newline."""
-        tx = None
+        reassemble by accumulating until it sees a newline.
+
+        get_characteristic is synchronous in bless. Awaiting it raised TypeError, and a
+        bare except logged that at debug level, so every reply was dropped in silence
+        while the write that prompted it succeeded: the client saw a server that accepted
+        requests and never answered.
+        """
         try:
-            tx = await self._server.get_characteristic(TX_UUID)
+            tx = self._server.get_characteristic(TX_UUID)
         except Exception as e:
-            logger.debug("BLE get_characteristic failed: %s", e)
+            logger.warning("BLE reply dropped: get_characteristic failed: %s", e)
             return
         if tx is None:
+            logger.warning("BLE reply dropped: no characteristic %s", TX_UUID)
             return
 
         for i in range(0, len(payload), self.chunk_bytes):
@@ -204,7 +276,7 @@ class BleServer:
             try:
                 self._server.update_value(SERVICE_UUID, TX_UUID)
             except Exception as e:
-                logger.debug("BLE notify failed: %s", e)
+                logger.warning("BLE reply stopped: update_value failed: %s", e)
                 return
             self._notifications += 1
             # Yield so the stack actually flushes between chunks.

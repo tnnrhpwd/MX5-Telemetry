@@ -193,13 +193,28 @@ class SppServer:
     # -- lifecycle -----------------------------------------------------------
 
     def start(self):
-        """Publish SDP and start accepting connections in a background thread."""
+        """Publish SDP and start accepting connections in a background thread.
+
+        Raises when the SDP record was not published. Without a record an Android client
+        cannot find this service: createRfcommSocketToServiceRecord() resolves the UUID
+        through SDP, so it fails to connect no matter how healthy the listening socket
+        looks. Reporting that as a successful start made the app claim a working SPP link
+        on a Pi where the record could never be published. BLE needs no SDP and is
+        unaffected.
+        """
         if self._thread is not None:
             return
         if self._listener is None:
             # Publish before listening: a client that connects the instant we are up
             # should already be able to find us.
             self._publish_sdp()
+            # Only an attempted-and-failed publish is an error. publish_sdp=False means the
+            # caller chose to skip SDP, which is a legitimate configuration.
+            if self.publish_sdp and not self._sdp_published:
+                raise RuntimeError(
+                    'No SDP record was published, so an Android client cannot find '
+                    'this service by UUID. SPP is unusable until `sdptool browse '
+                    'local` works; BLE needs no SDP.')
             self._listener = self._make_listener()
 
         self._stop.clear()

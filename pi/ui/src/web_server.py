@@ -27,7 +27,7 @@ import time
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 
-from link_service import LinkService
+from link_service import LinkService, screen_index, screen_name
 
 logger = logging.getLogger(__name__)
 
@@ -306,8 +306,8 @@ class WebRemoteServer:
                 return False
             print("Web remote client connected")
             emit('status', {
-                'screen': self.display_app.current_screen,
-                'screen_name': self.display_app.screen_names[self.display_app.current_screen],
+                'screen': screen_index(self.display_app),
+                'screen_name': screen_name(self.display_app),
                 'demo_mode': self.display_app.settings.demo_mode
             })
         
@@ -320,8 +320,8 @@ class WebRemoteServer:
         def handle_status_request():
             """Client requesting status update"""
             emit('status', {
-                'screen': self.display_app.current_screen,
-                'screen_name': self.display_app.screen_names[self.display_app.current_screen],
+                'screen': screen_index(self.display_app),
+                'screen_name': screen_name(self.display_app),
                 'demo_mode': self.display_app.settings.demo_mode
             })
     

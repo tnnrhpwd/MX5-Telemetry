@@ -726,7 +726,15 @@ class PiDisplayApp:
             return
 
         if self.bt_link.start():
-            print(f"  ✓ Bluetooth link started (mode={self.bt_link.mode})")
+            # Report what is actually listening, not just what was configured. The two
+            # differ: SPP needs an SDP record that this BlueZ cannot publish, so a Pi
+            # configured for `both` may be reachable over BLE only.
+            detail = self.bt_link.status()
+            up = [t for t in ('spp', 'ble') if t in detail]
+            print(f"  ✓ Bluetooth link started: {' + '.join(up).upper()} "
+                  f"(configured mode={self.bt_link.mode})")
+            for transport, why in (self.bt_link.errors or {}).items():
+                print(f"    - {transport.upper()} not up: {why}")
         else:
             print(f"  ✗ Bluetooth link did not start: {self.bt_link.errors}")
     
