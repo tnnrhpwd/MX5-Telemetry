@@ -104,7 +104,18 @@ public final class PiClient {
         if (out.isEmpty()) {
             out.add("No transports configured");
         }
+        // Why the last attempt failed. A transport can report itself ready and still fail
+        // to open on every try, and without this line the screen showed OFFLINE with no
+        // reason anywhere: the exception was caught, stored, and never read.
+        if (!lastError.isEmpty()) {
+            out.add("Last error: " + lastError);
+        }
         return Collections.unmodifiableList(out);
+    }
+
+    /** Why the last attempt failed, or "" if the last one worked. */
+    public String lastError() {
+        return lastError;
     }
 
     /** Forget which transport worked, so the chain is walked from the top again. */

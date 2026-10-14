@@ -478,6 +478,7 @@ presence of a car.
 
 | Symptom | Cause |
 | --- | --- |
+| The Pi passes every check, but the phone still shows OFFLINE | Check the app's build before the link. `BleTransport.java` is recent, so a build from before it has no BLE transport, and SPP cannot work on this Pi, leaving the app no route to the Pi however healthy the Pi looks. An HCI capture settles it: a real client sends an ATT **MTU request** and a **CCCD write** (handle `0x2902`), and a phone that sends neither is not running this transport. |
 | `sdptool not found` in the log | `bluez-tools` not installed. SPP cannot publish its SDP record; use BLE. |
 | `sdptool browse local` shows no Serial Port record | The record was never published, so Android will not connect over SPP. Use BLE. |
 | `RFCOMM channel N is already in use` | Something else holds that channel. On stock BlueZ `bluetoothd` reserves **channel 3** for its SAP plugin, so the shipped default collides with the daemon and SPP can never start. Choose a free channel with `MX5_BT_SPP_CHANNEL`; do not set `MX5_BT_ADDRESS` for this, the address is not the problem. |
