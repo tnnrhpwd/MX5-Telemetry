@@ -27,6 +27,11 @@ pyserial>=3.5,<4
 # ESP32 Display Simulator (Hot-reload support)
 watchdog>=6.0.0,<7
 
+# PC-side tools (tools/**) - SSH to the Pi. Not needed ON the Pi, which is why this is
+# commented: the tools run from your PC, and their helper imports paramiko directly.
+#     pip install paramiko
+# paramiko>=3.0
+
 # CAN Bus Communication (optional - for real vehicle data)
 # python-can>=3.3.0
 

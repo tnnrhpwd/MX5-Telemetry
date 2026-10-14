@@ -52,6 +52,20 @@ class BtLink:
         self.token = token if token is not None else (env_token or None)
         self.require_token = bool(self.token)
 
+        # A radio has no notion of localhost, so the web server's fail-safe has no equivalent
+        # here: with no token it binds loopback-only and stays private, while a Bluetooth link
+        # with no token accepts every command from any device that pairs. That is the screen,
+        # every setting, and the roof. Refusing to start is the safe half of that trade, and
+        # MX5_BT_ALLOW_NO_TOKEN=1 is the deliberate opt-out for a bench test over a pipe you
+        # trust.
+        self.allow_no_token = _env_bool('MX5_BT_ALLOW_NO_TOKEN', False)
+        self.refused_reason = None
+        if self.enabled and not self.require_token and not self.allow_no_token:
+            self.refused_reason = (
+                'no token configured, so the link would accept commands from any paired'
+                ' device. Set MX5_WEB_TOKEN (or MX5_BT_TOKEN), or set'
+                ' MX5_BT_ALLOW_NO_TOKEN=1 to run unauthenticated on purpose.')
+
         try:
             self.spp_channel = int(spp_channel or os.environ.get('MX5_BT_SPP_CHANNEL', 3))
         except (TypeError, ValueError):
@@ -76,6 +90,13 @@ class BtLink:
         """Start the enabled transports. Returns True if anything is listening."""
         if not self.enabled:
             logger.info("Bluetooth link disabled (MX5_BT=off)")
+            return False
+
+        if self.refused_reason is not None:
+            logger.error("Bluetooth link NOT started: %s", self.refused_reason)
+            logger.error("  The web API and the USB tether are unaffected.")
+            self.errors['spp'] = self.refused_reason
+            self.errors['ble'] = self.refused_reason
             return False
 
         started = False
@@ -136,6 +157,8 @@ class BtLink:
     def status(self):
         """A summary for the startup log and for anything that wants to report it."""
         out = {'mode': self.mode, 'token_required': self.require_token, 'errors': self.errors}
+        if self.refused_reason is not None:
+            out['refused'] = self.refused_reason
         if self._spp is not None:
             out['spp'] = self._spp.describe()
         if self._ble is not None:

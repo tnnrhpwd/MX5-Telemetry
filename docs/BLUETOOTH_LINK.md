@@ -65,6 +65,15 @@ not authorise this application's commands, and the Pi may have other paired devi
 token is the same `MX5_WEB_TOKEN` the HTTP API uses, so there is one secret to distribute,
 not two. Five bad tokens in a row close the link.
 
+**With no token configured the link refuses to start.** The web server has a safe answer to
+a missing token, because it can bind to the loopback address, and a radio has no loopback:
+the same omission here would mean that any device which pairs can drive the screen, every
+setting, and the roof. So the link logs why and stays shut. `MX5_BT_ALLOW_NO_TOKEN=1` is the
+deliberate opt-out, for a bench test over a pipe you trust rather than for a car.
+
+Under systemd the token only arrives if the unit loads it, which is why setup step 3 comes
+before pairing.
+
 ## Pi setup
 
 ### 1. Make the adapter work
@@ -98,12 +107,30 @@ SPP needs no pip package; it uses the stdlib Bluetooth socket.
 
 ### 3. Configure
 
-All optional, set in the service environment:
+**Do the token first, because nothing works without it.** The unit ships with its
+`EnvironmentFile` line commented out, so the display app starts with no token at all: the
+web remote quietly falls back to localhost-only, and the Bluetooth link **refuses to start**
+(see Authentication below). Create the file and enable it:
+
+```bash
+TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')
+printf 'MX5_WEB_TOKEN=%s\n' "$TOKEN" > ~/MX5-Telemetry/pi/.web-env
+chmod 600 ~/MX5-Telemetry/pi/.web-env
+sudo sed -i 's|^# *EnvironmentFile=.*|EnvironmentFile=/home/pi/MX5-Telemetry/pi/.web-env|' \
+  /etc/systemd/system/mx5-display.service
+sudo systemctl daemon-reload
+cat ~/MX5-Telemetry/pi/.web-env      # this is the value to type into the phone
+```
+
+`pi/.web-env` is gitignored, which is the point: the token is per-install, not per-repo.
+
+Everything below is optional, and also belongs in that environment:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `MX5_BT` | `both` | `off`, `spp`, `ble`, or `both` |
 | `MX5_BT_TOKEN` | `MX5_WEB_TOKEN` | Access token the link requires |
+| `MX5_BT_ALLOW_NO_TOKEN` | unset | `1` lets the link run with **no** token at all. Refused by default. |
 | `MX5_BT_SPP_CHANNEL` | `3` | RFCOMM channel, must match the SDP record |
 | `MX5_BT_ADDRESS` | auto | Local adapter MAC, if `hciconfig` cannot be read |
 | `MX5_BT_NAME` | `MX5 Pi Link` | Name advertised over BLE |
@@ -213,8 +240,8 @@ is a legitimate choice and is reported rather than nagged about.
 ## The mimic harness
 
 Iterating a car UI by installing onto a phone and squinting at it is slow, and it needs the
-phone held sideways. `android/mimic/` renders the app in a browser at exactly 800x480 so the
-design can be screenshotted and measured directly.
+phone held sideways. `android/mimic/` renders the app in a browser at the resolution the
+head unit gets, so the design can be screenshotted and measured directly.
 
 ```bash
 cd android/mimic
@@ -223,7 +250,17 @@ python extract_tokens.py          # regenerate tokens.js from the Java sources
 # then open, no server needed:
 #   index.html?screen=rpm&scheme=ocean&mode=light
 #   index.html?all=1              # all nine screens at half scale, for consistency
+#   index.html?narrow=1&drawer=1  # the phone shell, drawer open
+#   index.html?battery=8          # battery states; also &charging=1 and &clock=14:32
 ```
+
+It renders two canvases, because the app has two shells: 800x480 for the car, and 400x832
+when you pass `narrow=1`. Rendering the phone shell in the car's frame clips the drawer and
+makes a working layout look broken, which is worth remembering before believing a
+screenshot.
+
+`battery`, `charging` and `clock` exist so a screenshot is reproducible. A real clock in a
+screenshot makes two runs differ for no reason, which is how a real regression gets missed.
 
 `extract_tokens.py` reads the twelve schemes, both mode palettes, the fixed alert colours,
 the four blend fractions, the type scale and the spacing ramp **out of `Palette.java` and
@@ -236,6 +273,29 @@ one place the two can disagree. The harness is a design tool, not a substitute: 
 stays the source of truth and the device stays the final check. It is also a browser, so it
 says nothing about Android's own measurement or drawing.
 
+## One command instead of five
+
+Stages 0-4 below are five separate SSH commands, and each one is a place to misread a
+result. `tools/bt/doctor.py` runs them all in a single pass, from the machine you are
+sitting at:
+
+```bash
+python tools/bt/doctor.py                     # the configured Pi
+python tools/bt/doctor.py --host 10.62.26.67   # the hotspot address
+```
+
+It reports PASS / WARN / FAIL per check alongside the command it ran, so a failure is
+attributable instead of re-derived. Two checks are worth knowing about:
+
+- It reads the token out of the **running process's own environment**, not out of a config
+  file. A token that never reached the app is invisible from everywhere else, and it fails
+  silently in two different ways (the web remote drops to localhost-only, the link refuses
+  to start).
+- It separates `sdptool` being missing from the SDP record being missing, because those
+  have the same symptom and different fixes.
+
+Run it first. If it is clean, start the full test at Stage 4.
+
 ## Full system test
 
 Run this when the car is available and the Pi is reachable. It is written to be done in
@@ -245,7 +305,7 @@ not a link you can rely on in a car.
 
 ```bash
 PI=pi@192.168.1.23          # or pi@mx5pi.local, or the tether address
-BRANCH=your-branch-name
+BRANCH=main
 ```
 
 ### Stage 0 — the Pi is healthy before any of this is about Bluetooth
@@ -271,9 +331,9 @@ ssh $PI 'journalctl -u mx5-display -n 40 --no-pager | grep -iE "bluetooth|SPP|BL
 ```
 
 Expect `✓ Bluetooth link started (mode=both)` plus the per-transport detail. If it says the
-link did not start, the reason is printed — `sdptool not found`, `Could not bind RFCOMM
-channel`, `bless not installed` — and the matching row of the table below applies. **Fix it
-here rather than continuing**, because every later stage assumes it.
+link did not start, the reason is printed — `no token configured`, `sdptool not found`,
+`Could not bind RFCOMM channel`, `bless not installed` — and the matching row of the table
+below applies. **Fix it here rather than continuing**, because every later stage assumes it.
 
 ### Stage 2 — the protocol, with no radio involved
 
@@ -284,7 +344,7 @@ Bluetooth.
 ssh $PI 'cd ~/MX5-Telemetry/pi/ui/src && python3 test_link_protocol.py'
 ```
 
-Expect `46/46 passed`.
+Expect `47/47 passed`.
 
 ### Stage 3 — the SDP record, which is the fragile part
 
@@ -403,8 +463,14 @@ presence of a car.
 - Rev the engine and watch the tachometer keep up. BLE will be visibly slower than SPP, and
   SPP slower than the cable.
 - Drive out of range and back, and confirm recovery without touching the phone.
-- Check the phone's battery and temperature after an hour. A Bluetooth link plus a 4Hz poll
-  is not free, and this is where you find out whether it is acceptable.
+- **Measure the drain rather than estimating it.** The header now shows the phone's own
+  charge level, which is what makes this measurable: note it when you start, leave the app
+  open for an hour with the cable out, and note it again. A 4 Hz poll over Bluetooth is not
+  free, and one hour of it is the number worth having. Take the same measurement on the
+  tether, and once more with the app closed, so that you know what **the link** costs rather
+  than what the phone costs.
+- Check the phone's temperature after the same hour. A phone in a car cradle in summer is
+  already hot, and this is the stage that tells you whether the link makes it worse.
 - Confirm the head unit still treats it as a parked app and does not dim or block it once
   the car is moving.
 
@@ -417,6 +483,8 @@ presence of a car.
 | `Could not bind RFCOMM channel` | No adapter address found. Check `hciconfig`; or set `MX5_BT_ADDRESS`. |
 | `AF_BLUETOOTH is unavailable` | This Python has no Bluetooth socket support. |
 | BLE never starts, `bless not installed` | `pip install bless` (plus `python3-dbus`, `python3-gi`). |
+| Link does not start, log says `no token configured` | The unit has no `EnvironmentFile`, so `MX5_WEB_TOKEN` never reached the display app. See setup step 3. |
+| Every command is accepted with no token entered | `MX5_BT_ALLOW_NO_TOKEN=1` is set. Remove it, or set a token. |
 | Phone pairs, then every command is refused | Token mismatch. The app's token must equal `MX5_WEB_TOKEN`. |
 | Phone connects, then drops after five requests | Five bad tokens closed the link. Check the token, then reconnect. |
 | Footer still shows the tether address with the cable out | The app has not fallen back: check that a Bluetooth permission was granted and that a device is paired. |
@@ -427,22 +495,35 @@ presence of a car.
 
 Verified on a desk, with no Bluetooth hardware and no car:
 
-- The protocol, authentication and every operation (46 checks).
+- The protocol, authentication and every operation (47 checks).
 - The whole SPP accept/serve/connection-isolation loop, driven over a TCP socket through
   the server's own injected listener. Only the three lines that create the Bluetooth
   socket are untested.
+- That the link **refuses to start with no token**, and that `MX5_BT_ALLOW_NO_TOKEN=1`
+  switches that refusal off. Pinned from both sides, and confirmed to fail against the
+  previous behaviour rather than passing vacuously.
 - That the web API is byte-for-byte unchanged after sharing its logic with this link:
   40 requests across every endpoint, comparing status, body and side effects.
 - That a machine with no Bluetooth at all reports both transports as unavailable and keeps
   everything else running.
 - That the Android app compiles, installs, runs, and still reaches the Pi over the tether
   after the transport chain replaced the old single HTTP client.
+- The Android chrome that carries the link's state: the System screen's address and token
+  fields persist, and the footer names the active transport once it is not the tether.
 
-**Not verified, because it needs the Pi, a phone and a car:**
+**Not verified, because it needs the Pi, a phone and a car.** Each line names the stage that
+settles it, so this doubles as the test's own checklist: tick a line off as it is answered,
+and leave it standing if you skipped that stage.
 
-- That `sdptool add` publishes a record Android will find on your BlueZ version.
-- That the BLE GATT server registers and advertises under the real BlueZ.
-- Anything about the Android Bluetooth client against real hardware. It has been compiled
-  and reasoned about, never executed against a Pi.
-- The failover in anger. Its ordering and its refusal rule are reasoned about, not observed.
-- The mimic harness's fidelity to Android's own measurement and drawing.
+| Unknown | Settled by |
+| --- | --- |
+| That the display app receives the token at all under systemd | Stage 1, `doctor.py` |
+| That `sdptool add` publishes a record Android can find on your BlueZ version | Stage 3 |
+| That a phone can be paired and the token typed on it matches | Stage 4, 5 |
+| Anything about the Android Bluetooth client against real hardware | Stage 5 |
+| That the BLE GATT server registers and advertises under the real BlueZ | Stage 5, with `MX5_BT=ble` |
+| That settings travel head unit to phone to Pi, and not merely get logged | Stage 7 |
+| That the failover's ordering and its refusal rule hold in practice | Stage 9 |
+| That the app recovers from a Pi reboot without being restarted | Stage 9 |
+| Whether a 4 Hz poll over Bluetooth is a tolerable battery cost | Stage 10 |
+| The mimic harness's fidelity to Android's own measurement and drawing | never; it is a design tool |

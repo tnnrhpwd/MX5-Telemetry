@@ -759,6 +759,56 @@ def test_bt_link_takes_the_web_token_when_none_is_given(monkeypatch=None):
             os.environ['MX5_BT_TOKEN'] = saved_bt
 
 
+def test_bt_link_refuses_to_start_without_a_token():
+    """With no token the link would take commands from any paired device, so it stays shut.
+
+    The web server's fail-safe cannot be reused here: it binds loopback-only, and a radio
+    has no loopback. This pins both halves, because either alone would pass against a
+    broken implementation: the refusal must fire with no token, AND the documented opt-out
+    must still be able to switch it off on purpose.
+    """
+    import os
+    from bt_link import BtLink
+
+    keys = ('MX5_WEB_TOKEN', 'MX5_BT_TOKEN', 'MX5_BT_ALLOW_NO_TOKEN')
+    saved = {k: os.environ.get(k) for k in keys}
+    try:
+        for k in keys:
+            os.environ.pop(k, None)
+
+        link = BtLink(LinkService(FakeDisplayApp()), mode='both')
+        assert link.require_token is False
+        assert link.refused_reason, "opened the link with no token and no complaint"
+        assert link.start() is False
+        assert link.status()['refused'] == link.refused_reason
+        link.stop()
+
+        # The opt-out has to work, or a bench test could never exercise the link.
+        os.environ['MX5_BT_ALLOW_NO_TOKEN'] = '1'
+        allowed = BtLink(LinkService(FakeDisplayApp()), mode='both')
+        assert allowed.refused_reason is None
+        assert allowed.require_token is False
+        allowed.stop()
+
+        # With no transports enabled there is nothing to guard, so it must not refuse.
+        off = BtLink(LinkService(FakeDisplayApp()), mode='off')
+        assert off.refused_reason is None
+        off.stop()
+
+        # And a token clears it with no opt-out needed.
+        os.environ['MX5_WEB_TOKEN'] = 'shared-secret'
+        tokened = BtLink(LinkService(FakeDisplayApp()), mode='both')
+        assert tokened.refused_reason is None
+        assert tokened.require_token is True
+        tokened.stop()
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 # -- runner ------------------------------------------------------------------
 
 def main():
