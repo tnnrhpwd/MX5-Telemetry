@@ -1,8 +1,10 @@
 package com.mx5.remote;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -74,6 +76,22 @@ public final class Ui {
         d.setColor(color);
         d.setCornerRadius(dp(c, radiusDp));
         return d;
+    }
+
+    /**
+     * A rounded background that answers a touch.
+     *
+     * The platform's own RippleDrawable, so this costs no dependency. A control that shows
+     * nothing on press reads as broken, and this app is mostly tapped at arm's length.
+     */
+    public static RippleDrawable ripple(Context c, int rippleColor, int fillColor, float radiusDp) {
+        return new RippleDrawable(ColorStateList.valueOf(rippleColor),
+                rounded(c, fillColor, radiusDp), null);
+    }
+
+    /** The press haze: the accent held back to a film, so it reads on either theme. */
+    public static int haze(int color) {
+        return (color & 0x00FFFFFF) | 0x33000000;
     }
 
     public static GradientDrawable roundedTop(Context c, int color, float radiusDp) {
@@ -179,6 +197,20 @@ public final class Ui {
     public static LinearLayout.LayoutParams stack(Context c, int marginDp) {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.setMargins(dp(c, marginDp), dp(c, marginDp), dp(c, marginDp), dp(c, marginDp));
+        return p;
+    }
+
+    /**
+     * A stack item that also claims an equal share of the column's leftover height.
+     *
+     * A column of natural-height tiles in a tall panel stacks them all at the top and
+     * leaves the rest empty, which reads as an unfinished screen rather than as spacing.
+     * Weighting them spreads the tiles down the column and makes each one a card.
+     */
+    public static LinearLayout.LayoutParams stackFill(Context c, int marginDp) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
         p.setMargins(dp(c, marginDp), dp(c, marginDp), dp(c, marginDp), dp(c, marginDp));
         return p;
     }
@@ -381,8 +413,8 @@ public final class Ui {
             rest = new View(c);
             track.addView(fill, wex(1f, ViewGroup.LayoutParams.MATCH_PARENT));
             track.addView(rest, wex(9f, ViewGroup.LayoutParams.MATCH_PARENT));
-            LinearLayout.LayoutParams tp = lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(c, 5));
-            tp.topMargin = dp(c, 4);
+            LinearLayout.LayoutParams tp = lp(ViewGroup.LayoutParams.MATCH_PARENT, dp(c, 8));
+            tp.topMargin = dp(c, 5);
             addView(track, tp);
 
             set(0f, "");

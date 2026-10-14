@@ -57,10 +57,23 @@ public class GForceView extends View {
         paint.setTextAlign(Paint.Align.CENTER);
     }
 
+    /** Surface colour for the pad behind the rings. Zero leaves the pad off. */
+    private int tileColor = 0;
+
     public void setColors(int text, int dim, int track, int accent) {
+        setColors(text, dim, track, accent, 0);
+    }
+
+    /**
+     * @param tile a surface colour for the pad behind the rings. Without a pad the dial is
+     *             thin circles adrift in a large empty square, which reads as an unfinished
+     *             panel rather than as an instrument.
+     */
+    public void setColors(int text, int dim, int track, int accent, int tile) {
         this.dimColor = dim;
         this.trackColor = track;
         this.accentColor = accent;
+        this.tileColor = tile;
         invalidate();
     }
 
@@ -112,13 +125,26 @@ public class GForceView extends View {
         float outer = size * 0.38f;
         float scale = outer / RANGE_G;
 
-        // Rings at 0.4, 0.8 and the full range, so the spacing reads as g values.
-        stroke.setStrokeWidth(Math.max(1f, size * 0.006f));
+        // The pad, before anything else, so the rings and the trail sit on a surface.
+        if (tileColor != 0) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(tileColor);
+            canvas.drawCircle(cx, cy, outer, paint);
+        }
+
+        // Inner rings at 0.4 and 0.8, so the spacing reads as g values.
+        stroke.setStrokeWidth(Math.max(1.5f, size * 0.008f));
         stroke.setColor(trackColor);
-        float[] rings = {0.4f, 0.8f, 1.2f};
+        float[] rings = {0.4f, 0.8f};
         for (float r : rings) {
             canvas.drawCircle(cx, cy, r * scale, stroke);
         }
+
+        // The outer ring is the edge of the pad, so it is drawn heavier and brighter.
+        // That edge is what makes the pad read as a surface rather than as a haze.
+        stroke.setStrokeWidth(Math.max(2f, size * 0.011f));
+        stroke.setColor(Palette.alpha(trackColor, 0.95f));
+        canvas.drawCircle(cx, cy, outer, stroke);
 
         // Crosshair, lighter than the rings so the axes read as guides.
         stroke.setColor(Palette.alpha(trackColor, 0.65f));

@@ -52,11 +52,15 @@ public class RpmScreen extends Screen {
         speed = new Ui.Stat(c, p, "SPEED", "mph");
         shift = new Ui.Stat(c, p, "SHIFT AT", "rpm");
         redline = new Ui.Stat(c, p, "REDLINE", "rpm");
-        side.addView(gear, Ui.stack(c, 3));
-        side.addView(speed, Ui.stack(c, 3));
-        side.addView(shift, Ui.stack(c, 3));
-        side.addView(redline, Ui.stack(c, 3));
+        // Filling rather than natural height: four short tiles at the top of a tall column
+        // left the bottom half of the panel empty.
+        side.addView(gear, Ui.stackFill(c, 3));
+        side.addView(speed, Ui.stackFill(c, 3));
+        side.addView(shift, Ui.stackFill(c, 3));
+        side.addView(redline, Ui.stackFill(c, 3));
         throttle = new Ui.Bar(c, p, "Throttle", p.primary);
+        // The bar keeps its natural height: it is a gauge, not a readout, so it should not
+        // grow to match the tiles beside it.
         side.addView(throttle, Ui.stack(c, 3));
         body.addView(side, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 0.55f));

@@ -2,6 +2,7 @@ package com.mx5.remote;
 
 import android.content.Context;
 import android.view.Gravity;
+import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -27,9 +28,20 @@ public class Chips extends LinearLayout {
         this.palette = p;
         this.values = values;
         this.color = color;
-        setOrientation(HORIZONTAL);
+        setOrientation(Screen.isNarrow(c) ? VERTICAL : HORIZONTAL);
+
+        // Four chips across half of a phone is about 45dp each, which breaks "Center out"
+        // and "C for clutch" across three lines mid-word. Two per row instead.
+        int perRow = Screen.isNarrow(c) ? 2 : names.length;
+        LinearLayout row = null;
 
         for (int i = 0; i < names.length; i++) {
+            if (perRow > 0 && i % perRow == 0) {
+                row = Ui.row(c);
+                addView(row, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
             final int value = values[i];
             TextView b = Ui.label(c, 10f, p.text);
             b.setText(names[i]);
@@ -42,7 +54,7 @@ public class Chips extends LinearLayout {
                 select(value);
                 onPick.onPick(value);
             });
-            addView(b, Ui.cell(c, 2));
+            row.addView(b, Ui.cell(c, 2));
             buttons.add(b);
         }
     }

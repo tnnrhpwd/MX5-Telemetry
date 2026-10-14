@@ -43,7 +43,7 @@ public class GForceScreen extends Screen {
         LinearLayout body = Ui.row(c);
 
         view = new GForceView(c);
-        view.setColors(p.text, p.textDim, p.track, p.accent);
+        view.setColors(p.text, p.textDim, p.track, p.accent, p.tile);
         body.addView(view, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
@@ -52,14 +52,17 @@ public class GForceScreen extends Screen {
         peakTotal = new Ui.Stat(c, p, "PEAK TOTAL", "g");
         peakLateral = new Ui.Stat(c, p, "PEAK LATERAL", "g");
         peakLongitudinal = new Ui.Stat(c, p, "PEAK LONG", "g");
-        side.addView(now, Ui.stack(c, 3));
-        side.addView(peakTotal, Ui.stack(c, 3));
-        side.addView(peakLateral, Ui.stack(c, 3));
-        side.addView(peakLongitudinal, Ui.stack(c, 3));
+        // Filling, so the readouts spread down the column instead of bunching at the top.
+        side.addView(now, Ui.stackFill(c, 3));
+        side.addView(peakTotal, Ui.stackFill(c, 3));
+        side.addView(peakLateral, Ui.stackFill(c, 3));
+        side.addView(peakLongitudinal, Ui.stackFill(c, 3));
 
         lap = new Ui.Stat(c, p, "LAP", "");
         best = new Ui.Stat(c, p, "BEST", "");
-        side.addView(grid(c, lap, best), Ui.stack(c, 0));
+        // Paired rather than stacked, because they are the same quantity and are read
+        // against each other.
+        side.addView(grid(c, lap, best), Ui.stackFill(c, 0));
 
         bar = new Ui.Bar(c, p, "Cornering load", p.primary);
         side.addView(bar, Ui.stack(c, 3));

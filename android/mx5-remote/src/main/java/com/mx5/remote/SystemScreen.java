@@ -26,6 +26,7 @@ public class SystemScreen extends Screen {
     private Ui.Stat piState, canState, tpmsState, piScreen, demoState, heapState;
     private EditText addressField, tokenField;
     private TextView piScreenName;
+    private TextView transportList;
 
     @Override
     public String title() {
@@ -40,6 +41,21 @@ public class SystemScreen extends Screen {
     @Override
     public int piScreen() {
         return 6;
+    }
+
+    /** Re-read the transport chain. Called whenever the link state changes. */
+    public void refreshTransport() {
+        if (transportList == null || host == null) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String line : host.pi().transportReport()) {
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(line);
+        }
+        transportList.setText(sb.toString());
     }
 
     @Override
@@ -117,6 +133,16 @@ public class SystemScreen extends Screen {
         LinearLayout applyRow = Ui.row(c);
         applyRow.addView(apply, Ui.cell(c, 2));
         panel.body.addView(applyRow);
+
+        // -- transport -------------------------------------------------------
+        // Which link is carrying the app, and why the others are not. The footer shows the
+        // one in use but not the reason a fallback did not happen, which is the thing you
+        // actually need when Bluetooth is meant to take over and has not.
+        panel.body.addView(section(c, p, "TRANSPORT"));
+        transportList = Ui.label(c, 9f, p.textDim);
+        transportList.setLineSpacing(0f, 1.35f);
+        panel.body.addView(transportList);
+        refreshTransport();
 
         return panel;
     }

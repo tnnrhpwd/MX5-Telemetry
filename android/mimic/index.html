@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MX5 car app mimic (800x480)</title>
+<!--
+  The car app rendered in a browser at the exact Android Auto resolution, so the design can
+  be iterated and screenshot without a phone.
+
+  Open directly from disk; there is no build step and no server:
+
+      android/mimic/index.html?screen=rpm&scheme=ocean&mode=light
+
+  Colours come from tokens.js, which extract_tokens.py generates from Palette.java, so the
+  palette here is the app's palette rather than a copy of it. The DOM is hand-written to
+  mirror Ui.java; that is the one thing that can drift, so the Java stays the source of truth
+  and the device stays the final check.
+
+  Run extract_tokens.py again after changing Palette.java or Ui.java.
+-->
+<link rel="stylesheet" href="mimic.css">
+</head>
+<body>
+  <div id="device"></div>
+  <script src="tokens.js"></script>
+  <script src="mimic.js"></script>
+</body>
+</html>

@@ -73,34 +73,88 @@ public abstract class Screen {
         return hue == 1 ? p.primary : p.accent;
     }
 
+    /** Below this width the app is on a phone in portrait rather than on a car screen. */
+    private static final int NARROW_WIDTH_DP = 600;
+
     /**
-     * A horizontal row of cells, each taking an equal share of the width.
-     * The row carries its own params so a caller that forgets them cannot end up
-     * with a wrapper-width row, which collapses to nothing inside a column.
+     * Tiles per row on a phone.
+     *
+     * Four across 380dp leaves each tile about 85dp, which is narrower than its own
+     * caption needs, so the caption truncates and the value crowds the unit. Two columns
+     * give every tile room for both.
      */
-    protected static LinearLayout grid(Context c, View... cells) {
+    private static final int NARROW_COLUMNS = 2;
+
+    /** True when the window is a phone in portrait rather than a car screen. */
+    public static boolean isNarrow(Context c) {
+        return c.getResources().getConfiguration().screenWidthDp < NARROW_WIDTH_DP;
+    }
+
+    /** One row of equal-width cells, optionally claiming a share of the height. */
+    private static LinearLayout gridRow(Context c, boolean fill, View[] cells) {
         LinearLayout r = Ui.row(c);
         for (View v : cells) {
-            r.addView(v, Ui.cell(c, 3));
+            r.addView(v, fill ? Ui.cellFill(c, 3) : Ui.cell(c, 3));
         }
-        r.setLayoutParams(new LinearLayout.LayoutParams(
+        r.setLayoutParams(fill ? Ui.fillHeight() : new LinearLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
         return r;
     }
 
     /**
+     * Take up to count cells from index, padding with empty views.
+     *
+     * The padding matters: without it a final row holding one cell would stretch that cell
+     * to the full width, so a grid of five tiles would have a double-width tile at the end.
+     */
+    private static View[] slice(Context c, View[] all, int from, int count) {
+        View[] out = new View[count];
+        for (int i = 0; i < count; i++) {
+            out[i] = (from + i < all.length) ? all[from + i] : new View(c);
+        }
+        return out;
+    }
+
+    /**
+     * A horizontal row of cells, each taking an equal share of the width.
+     * The row carries its own params so a caller that forgets them cannot end up
+     * with a wrapper-width row, which collapses to nothing inside a column.
+     *
+     * On a phone the same cells become rows of {@link #NARROW_COLUMNS} instead, so every
+     * screen becomes phone-shaped without each one having to know about it.
+     */
+    protected static LinearLayout grid(Context c, View... cells) {
+        if (!isNarrow(c) || cells.length <= NARROW_COLUMNS) {
+            return gridRow(c, false, cells);
+        }
+        LinearLayout col = Ui.column(c);
+        col.setLayoutParams(new LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
+        for (int i = 0; i < cells.length; i += NARROW_COLUMNS) {
+            col.addView(gridRow(c, false, slice(c, cells, i, NARROW_COLUMNS)));
+        }
+        return col;
+    }
+
+    /**
      * Like grid(), but the row claims an equal share of the panel's leftover height and
      * its cells stretch with it. A dashboard whose tiles are pinned to the top of a tall
      * panel leaves a dead field below them; weighted rows distribute instead.
+     *
+     * On a phone that becomes a weighted column of weighted rows, so the space is shared
+     * between the rows rather than each row fighting for all of it.
      */
     protected static LinearLayout gridFill(Context c, View... cells) {
-        LinearLayout r = Ui.row(c);
-        for (View v : cells) {
-            r.addView(v, Ui.cellFill(c, 3));
+        if (isNarrow(c)) {
+            // A phone's panel is around 700dp tall. Distributing that height, which is what
+            // makes the car canvas work, would give each tile a quarter of the screen and
+            // strand its caption in the middle of a large empty card. Natural height
+            // instead, and the leftover stays at the bottom where it reads as margin.
+            return grid(c, cells);
         }
-        r.setLayoutParams(Ui.fillHeight());
-        return r;
+        return gridRow(c, true, cells);
     }
 
     /** Text showing a value with a trailing unit, or a dash when there is none. */

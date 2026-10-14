@@ -46,6 +46,18 @@ public class OverviewScreen extends Screen {
         fuelBar = new Ui.Bar(c, p, "Fuel level", p.primary);
         throttleBar = new Ui.Bar(c, p, "Throttle", p.accent);
         brakeBar = new Ui.Bar(c, p, "Brake", p.warn);
+        // The bars are gauges rather than readouts, so they get their own band below a
+        // hairline. Without the separation they read as a stray extra row of the grid
+        // above them rather than as a different kind of thing.
+        // An explicit 1dp height. Passing params to addView REPLACES the hairline's own, and
+        // a View with a background colour but no intrinsic size measures to nothing, so
+        // relying on the view's own params here would make the separator vanish.
+        android.widget.LinearLayout.LayoutParams hairParams =
+                new android.widget.LinearLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        Math.max(1, Ui.dp(c, 1)));
+        hairParams.topMargin = Ui.dp(c, 8);
+        panel.body.addView(Ui.hairline(c, p.hairline), hairParams);
         panel.body.addView(fuelBar, topMargin(c, 6));
         panel.body.addView(throttleBar, topMargin(c, 6));
         panel.body.addView(brakeBar, topMargin(c, 6));

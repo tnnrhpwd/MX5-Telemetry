@@ -1,0 +1,682 @@
+/* Mimic harness styles.
+ *
+ * Colours are never written here: they arrive as custom properties computed from the
+ * Android Palette by mimic.js, so a palette change cannot leave this file behind. Only
+ * geometry and typography live here.
+ *
+ * The type scale and spacing ramp come from Ui.java via tokens.js, so the block below is
+ * generated at runtime too. What is hand-written is layout, which is the one thing the
+ * extractor cannot read, and the reason the device remains the final check.
+ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  background: #0b0b0d;
+  font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The car canvas. Exactly the resolution Android Auto projects at, so what is measured
+ * here is the same geometry the head unit gets. A class rather than an id, because the
+ * contact sheet needs nine of them at once. */
+.device {
+  position: relative;
+  width: 800px;
+  height: 480px;
+  overflow: hidden;
+  background: linear-gradient(to bottom, var(--page-glow), var(--page));
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The phone shell is a different canvas. The car's 800x480 is what Android Auto projects, but
+ * a phone is tall and narrow: rendering the narrow shell in the car's frame clips the drawer
+ * and makes a working layout look broken. 384x832dp is the S25 Ultra, near enough. */
+.device.phone {
+  width: 400px;
+  height: 832px;
+}
+
+/* Nine screens on one page, half scale, for a holistic read before drilling in. */
+.sheet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+}
+
+.sheet-cell { display: flex; flex-direction: column; gap: 3px; }
+
+.sheet-label {
+  font-size: 11px;
+  color: #9aa3b2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sheet-frame {
+  width: 400px;
+  height: 240px;
+  overflow: hidden;
+  border: 1px solid #2a2a30;
+  border-radius: 3px;
+}
+
+.sheet-frame .device {
+  transform: scale(0.5);
+  transform-origin: top left;
+}
+
+/* ------------------------------------------------------------------ title row */
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s5);
+  padding: var(--s5) calc(var(--s5) + 2px) var(--s3);
+  flex: 0 0 auto;
+}
+
+.title-text {
+  font-size: var(--type-display);
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pill {
+  font-size: var(--type-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.pill.on { color: var(--good); background: var(--wash-good); }
+.pill.off { color: var(--bad); background: var(--wash-bad); }
+.pill.setup { color: var(--warn); background: var(--wash-warn); }
+
+.chip-button {
+  font-size: var(--type-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--track);
+  border-radius: 99px;
+  padding: 4px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chip-button:hover { color: var(--text); }
+
+/* ------------------------------------------------------------ status cluster */
+
+.status-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  background: var(--track);
+  border-radius: 99px;
+  padding: 6px 10px;
+}
+
+/* The battery is drawn rather than set as a glyph, for the reason given in BatteryIcon.java:
+ * the head unit's font is not ours to choose. These rules mirror that file's geometry, and
+ * --bat-ink is the single variable that changes per state. */
+.battery {
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 18px;
+  --bat-ink: var(--text);
+  --bat-chip: var(--track);
+}
+.battery.low { --bat-ink: var(--bad); }
+.battery.charging { --bat-ink: var(--good); }
+
+.battery-body {
+  position: absolute;
+  inset: 0.6px 3.6px 0.6px 0.6px;
+  box-sizing: border-box;
+  border: 1.2px solid var(--bat-ink);
+  border-radius: 3.5px;
+}
+
+.battery-nub {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 44%;
+  background: var(--bat-ink);
+  border-radius: 1px;
+}
+
+/* The inner region, so .battery-fill can be a plain percentage of it exactly as the Java
+ * fill rect is a fraction of its inner rect. */
+.battery-inner {
+  position: absolute;
+  inset: 3.3px 6.3px 3.3px 3.3px;
+  display: flex;
+  align-items: stretch;
+}
+
+.battery-fill {
+  background: var(--bat-ink);
+  border-radius: 1.5px;
+}
+
+/* Knocked out of the fill in the chip's own colour, in a near-square box: the bolt's arms
+ * are only ~12% of its width, so a wide box flattens it into a wedge. Same seven normalised
+ * points as BatteryIcon.drawBolt. */
+.battery-bolt {
+  position: absolute;
+  left: 10.6px;
+  width: 15.8px;
+  top: 3.1px;
+  bottom: 3.1px;
+  background: var(--bat-chip);
+  clip-path: polygon(59.1% 8.3%, 13.6% 58.3%, 47.7% 58.3%, 40.9% 91.7%,
+                     86.4% 41.7%, 52.3% 41.7%);
+}
+
+.battery-pct {
+  font-size: var(--type-eyebrow);
+  font-weight: 600;
+  /* Tight, unlike the tracked-out words around it: this is a number, and a number with an
+   * eyebrow's letter-spacing reads as "7 2 %". */
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.clock {
+  font-size: var(--type-body);
+  font-weight: 700;
+  color: var(--text);
+  margin-left: var(--s4);
+  /* Tabular figures, or the readout shivers once a minute as the digits change width. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* The only control in this row that is not a cosmetic toggle, hence the alert tone. */
+.exit-button {
+  font-size: var(--type-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bad);
+  background: var(--wash-bad);
+  border-radius: 99px;
+  padding: 6px 14px;
+  margin-left: var(--s5);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* -------------------------------------------------------------------- hamburger */
+
+.hamburger {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  background: var(--track);
+  border-radius: 99px;
+  cursor: pointer;
+}
+
+.hamburger span {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 99px;
+  background: var(--text);
+}
+
+/* ----------------------------------------------------------------------- drawer */
+
+.drawer-host { position: absolute; inset: 0; z-index: 10; }
+.drawer-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); }
+
+.drawer-panel {
+  position: absolute;
+  top: 52px;
+  right: var(--s4);
+  width: 72%;
+  padding: var(--s5) var(--s4);
+  background: var(--panel);
+  border-radius: 14px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+}
+
+.drawer-group {
+  padding: var(--s4) 0 var(--s2);
+  font-size: var(--type-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.drawer-group:first-child { padding-top: var(--s2); }
+
+.drawer-row {
+  padding: var(--s5) var(--s3);
+  border-radius: 9px;
+  font-size: var(--type-body);
+  font-weight: 600;
+  color: var(--text);
+}
+.drawer-row.on { color: var(--accent); background: var(--wash-accent); }
+.drawer-row.action { color: var(--accent); }
+.drawer-row.danger { color: var(--bad); }
+
+/* ----------------------------------------------------------------------- body */
+
+.body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  padding: 0 calc(var(--s5) + 2px) 0;
+  gap: var(--s5);
+}
+
+/* wide: a left rail */
+.rail {
+  flex: 0 0 auto;
+  width: 132px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding-bottom: var(--s4);
+}
+
+.rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 var(--s4) 0 calc(var(--s5) + 4px);
+  border-radius: 9px;
+  font-size: var(--type-body);
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rail-item.on {
+  color: var(--accent);
+  background: var(--wash-accent);
+}
+
+/* The marker sits outside the rounded pill: a square bar inside one pokes through the
+ * corner. Same reason as the Java view code. */
+.rail-item .marker {
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.rail-item.on .marker { background: var(--accent); }
+
+.content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+/* narrow: a top strip of chips instead of a rail */
+.chips-strip {
+  display: flex;
+  gap: var(--s2);
+  padding: 0 calc(var(--s5) + 2px) var(--s4);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.chips-strip .chip-button.on {
+  color: var(--accent);
+  background: var(--wash-accent);
+}
+
+/* ---------------------------------------------------------------------- panel */
+
+.panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.panel-head {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  background: var(--panel-head);
+}
+
+.panel-eyebrow {
+  font-size: var(--type-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.panel-title {
+  font-size: var(--type-title);
+  font-weight: 700;
+  color: var(--panel-accent);
+}
+
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+/* ---------------------------------------------------------------------- tiles */
+
+.row {
+  display: flex;
+  gap: var(--s3);
+}
+
+.row.fill { flex: 1 1 auto; min-height: 0; }
+
+.tile {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--tile);
+  border-radius: 9px;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.row.fill .tile { min-height: 0; }
+
+.caption {
+  font-size: var(--type-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-top: 1px;
+}
+
+.value {
+  font-size: var(--type-value);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+.unit {
+  font-size: var(--type-label);
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.ok { color: var(--good); }
+.caution { color: var(--warn); }
+.fault { color: var(--bad); }
+.dim { color: var(--text-dim); }
+
+/* ------------------------------------------------------------------------ bars */
+
+.bar-block { display: flex; flex-direction: column; gap: 3px; }
+
+.bar-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--type-label);
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.bar-head .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.bar-track {
+  height: 8px;
+  border-radius: 99px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--accent);
+}
+
+/* --------------------------------------------------------------------- gauges */
+
+.gauge-wrap {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The dial grows into the space it is given instead of sitting in the middle of it.
+ * preserveAspectRatio keeps it circular, so extra height is absorbed rather than
+ * leaving a band of nothing above and below. */
+.gauge-wrap svg {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+/* A column of full-width readouts beside a dial. Every row is the same shape, so the
+ * eye is not asked to compare a 2-up row against a full-width one. */
+.stat-column {
+  flex: 0 0 296px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+/* Only tiles flex. A bar is a gauge rather than a readout, so it keeps its natural
+ * height instead of growing to match the tiles beside it. */
+.stat-column > .tile,
+.stat-column > .row {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.stat-column > .bar-block {
+  flex: 0 0 auto;
+}
+
+/* The bars are gauges rather than readouts, so they get their own band: a hairline
+ * separates them from the tiles and stops them reading as a stray row. */
+.bars-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--s4);
+}
+
+/* --------------------------------------------------------------- form controls */
+
+.slider-block {
+  padding: var(--s2) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.slider-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--type-body);
+}
+
+.slider-head .val { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.slider-track {
+  height: 5px;
+  border-radius: 99px;
+  background: var(--track);
+  position: relative;
+}
+
+.slider-knob {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.section-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding-top: var(--s4);
+  padding-bottom: var(--s2);
+}
+
+.section-label.gap { flex: 1 1 auto; display: flex; align-items: flex-end; }
+
+.pill-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--type-body);
+  padding-top: var(--s3);
+}
+
+.switch {
+  font-size: var(--type-eyebrow);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 7px 11px;
+  border-radius: 99px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch.on { color: var(--good); background: var(--wash-good); }
+.switch.off { color: var(--text-dim); background: var(--track); }
+
+.chips {
+  display: flex;
+  gap: var(--s2);
+}
+
+.chips .chip {
+  flex: 1 1 0;
+  text-align: center;
+  font-size: var(--type-label);
+  padding: 12px 6px;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.chips .chip.on {
+  color: var(--accent);
+  background: var(--wash-accent);
+}
+
+.hint {
+  font-size: 9px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+/* A warning lamp. Tall tiles are fine as long as what is in them is legible, so the
+ * state is set large and backed by a dot rather than being small text adrift. */
+.lamp {
+  align-items: center;
+  justify-content: center;
+}
+
+.lamp .value { font-size: var(--type-value); line-height: 1; }
+
+.lamp .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-top: 5px;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--type-body);
+  padding-top: var(--s3);
+}
+
+.setting-row .val { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------- footer */
+
+.footer {
+  flex: 0 0 auto;
+  padding: var(--s3) calc(var(--s5) + 2px) var(--s4);
+}
+
+.footer-hairline {
+  height: 1px;
+  background: var(--hairline);
+  margin-bottom: var(--s3);
+}
+
+.footer-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--type-eyebrow);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.footer-row .right { color: var(--primary); }

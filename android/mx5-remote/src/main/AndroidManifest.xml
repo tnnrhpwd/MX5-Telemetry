@@ -9,6 +9,21 @@
   no obvious cause. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The Bluetooth fallback, used when the USB tether is not connected.
+
+         Before Android 12 these were granted at install time; from 12 they moved into the
+         "Nearby devices" runtime group, so the legacy pair is capped at API 30 and the new
+         permission is declared separately. Asking for the wrong one for the wrong version
+         is silently ignored, which looks like Bluetooth being broken.
+
+         BLUETOOTH_SCAN is deliberately NOT requested. The Pi must be paired before either
+         profile can be used, and connecting to an already-bonded device needs no scan, so
+         the app never scans and never needs that permission. -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+                     android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+                     android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Optional per the car games guidance, and required=false because not every
          head unit or phone has one. OEMs read this to decide what to offer. -->
     <uses-feature android:name="android.hardware.gamepad"

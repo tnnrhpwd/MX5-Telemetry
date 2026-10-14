@@ -4,6 +4,7 @@ import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 /** Everything the webapp's settings panel exposes, plus the Pi's own state. */
@@ -92,8 +93,8 @@ public class SettingsScreen extends Screen {
         // as the right column's three and lets the remainder fall below the last row.
         left.addView(spacer(c, 2));
 
-        columns.addView(left, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        // Both halves are attached at the end, because how they are arranged depends on the
+        // width, and that is not known until here.
 
         // -- right: vehicle thresholds and LED behaviour ---------------------
         LinearLayout right = Ui.column(c);
@@ -121,10 +122,31 @@ public class SettingsScreen extends Screen {
                 v -> push("clutch_display_mode", v));
         right.addView(clutchMode, wrap(c));
 
-        columns.addView(right, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        // Both halves are attached here rather than as they are built, because how they are
+        // arranged depends on the width.
+        if (isNarrow(c)) {
+            // One column on a phone. Two columns of sliders do not fit 380dp: the left
+            // slider's value label lands on top of the right column's heading and the track
+            // runs underneath it, which reads as a broken screen.
+            LinearLayout stack = Ui.column(c);
+            stack.addView(left);
+            stack.addView(right);
 
-        panel.body.addView(columns);
+            // Eleven settings are taller than a phone screen, so the list scrolls rather
+            // than being silently cut off at the bottom.
+            ScrollView scroller = new ScrollView(c);
+            scroller.setFillViewport(false);
+            scroller.addView(stack, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
+            panel.body.addView(scroller, Ui.fillHeight());
+        } else {
+            columns.addView(left, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            columns.addView(right, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            panel.body.addView(columns);
+        }
         return panel;
     }
 
@@ -149,6 +171,12 @@ public class SettingsScreen extends Screen {
      */
     private static TextView sectionGap(Context c, Palette p, String text, int weight) {
         TextView t = sectionLabel(c, p, text);
+        if (isNarrow(c)) {
+            // Inside a phone's scrolling column there is no leftover height to share, and a
+            // height-0 weighted view measures to nothing, so the heading would vanish
+            // rather than just lose its spacing.
+            return t;
+        }
         t.setGravity(android.view.Gravity.BOTTOM);
         t.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, weight));
