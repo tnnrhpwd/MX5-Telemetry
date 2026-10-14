@@ -174,7 +174,7 @@ covered by tests that need no Bluetooth stack:
 
 ```bash
 cd pi/ui/src
-python3 test_link_protocol.py         # 46 checks: protocol, service, SPP server over TCP
+python3 test_link_protocol.py         # 47 checks: protocol, service, SPP server over TCP
 python3 test_web_server_parity.py /tmp/after.json
 ```
 
@@ -192,7 +192,7 @@ that differs between SPP and BLE.
 | `bt_spp_server.py` | RFCOMM server, with an injectable listener so it is testable on a desk |
 | `bt_ble_server.py` | GATT server, via `bless` |
 | `bt_link.py` | Starts both, configured by environment, contains failures |
-| `test_link_protocol.py` | 46 checks that need no Bluetooth at all |
+| `test_link_protocol.py` | 47 checks that need no Bluetooth at all |
 
 `web_server.py` no longer holds any of this logic: its routes and the Bluetooth link are
 two adapters over `LinkService`. Because that meant rewriting a working API, it was proved
@@ -480,9 +480,12 @@ presence of a car.
 | --- | --- |
 | `sdptool not found` in the log | `bluez-tools` not installed. SPP cannot publish its SDP record; use BLE. |
 | `sdptool browse local` shows no Serial Port record | The record was never published, so Android will not connect over SPP. Use BLE. |
-| `Could not bind RFCOMM channel` | No adapter address found. Check `hciconfig`; or set `MX5_BT_ADDRESS`. |
+| `RFCOMM channel N is already in use` | Something else holds that channel. On stock BlueZ `bluetoothd` reserves **channel 3** for its SAP plugin, so the shipped default collides with the daemon and SPP can never start. Choose a free channel with `MX5_BT_SPP_CHANNEL`; do not set `MX5_BT_ADDRESS` for this, the address is not the problem. |
+| `Could not bind RFCOMM channel`, with no address in the message | No adapter address found. Check `hciconfig`; or set `MX5_BT_ADDRESS`. |
+| `sdptool add ... exited 255`, or `sdptool browse local` cannot reach the SDP server | The local SDP server is unreachable, so no record was published and Android's SDP lookup will fail no matter how healthy RFCOMM looks. No setting fixes this; use BLE, which needs no SDP. |
 | `AF_BLUETOOTH is unavailable` | This Python has no Bluetooth socket support. |
 | BLE never starts, `bless not installed` | `pip install bless` (plus `python3-dbus`, `python3-gi`). |
+| `pip install bless` stalls, or `packaging dbus-fast` never finishes | Current `bless` wants `bleak>=0.19`, and that bleak wants `dbus-fast`, which pip compiles from source on the Pi. Install `bless==0.2.6` with `bleak==0.18.0` instead: 0.2.x uses `dbus-next` (pure Python) and exposes the same `BlessServer` API. |
 | Link does not start, log says `no token configured` | The unit has no `EnvironmentFile`, so `MX5_WEB_TOKEN` never reached the display app. See setup step 3. |
 | Every command is accepted with no token entered | `MX5_BT_ALLOW_NO_TOKEN=1` is set. Remove it, or set a token. |
 | Phone pairs, then every command is refused | Token mismatch. The app's token must equal `MX5_WEB_TOKEN`. |
@@ -511,14 +514,27 @@ Verified on a desk, with no Bluetooth hardware and no car:
 - The Android chrome that carries the link's state: the System screen's address and token
   fields persist, and the footer names the active transport once it is not the tether.
 
+**Settled on the car's own Pi (2026-10-14).** Three of the questions below are now answered,
+and two of them answered badly:
+
+- The display app **does** receive the token under systemd, once the unit loads an
+  `EnvironmentFile`. This was the whole reason the link refused to start, and it was
+  invisible from every other angle: no token file existed anywhere, and the process
+  environment was the only place the answer lived.
+- `sdptool add` **does not** publish a record on this install, and choosing a different
+  channel cannot rescue it. The local SDP server is unreachable — `/var/run/sdp` is absent,
+  `sdptool add` exits **255**, and `sdptool browse local` reports that it cannot connect.
+  So SPP fails here for two independent reasons: the daemon's own claim on channel 3, and
+  a missing SDP server. That is the argument for having written the BLE transport at all.
+- The protocol, authentication and every operation pass unmodified on the real hardware:
+  **47/47**, run on the Pi rather than on a desk.
+
 **Not verified, because it needs the Pi, a phone and a car.** Each line names the stage that
 settles it, so this doubles as the test's own checklist: tick a line off as it is answered,
 and leave it standing if you skipped that stage.
 
 | Unknown | Settled by |
 | --- | --- |
-| That the display app receives the token at all under systemd | Stage 1, `doctor.py` |
-| That `sdptool add` publishes a record Android can find on your BlueZ version | Stage 3 |
 | That a phone can be paired and the token typed on it matches | Stage 4, 5 |
 | Anything about the Android Bluetooth client against real hardware | Stage 5 |
 | That the BLE GATT server registers and advertises under the real BlueZ | Stage 5, with `MX5_BT=ble` |

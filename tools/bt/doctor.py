@@ -32,8 +32,21 @@ except ImportError as e:
     print("    pip install -r requirements.txt")
     raise SystemExit(2)
 
+# The remote output this prints carries the glyphs the display app uses for its link
+# banner. A Windows console defaults to cp1252, which cannot encode them, so the doctor
+# crashed while reporting a finding - losing exactly the message it exists to deliver.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 TAG = {PASS: "PASS", WARN: "WARN", FAIL: "FAIL"}
+
+# The app's words for the link *as a whole*, kept separate from the per-transport lines.
+# "SPP link not started" appears even when the link came up happily on BLE, so matching
+# every failure phrase reported a working link as broken.
+LINK_FAILED = ("bluetooth link did not start", "bluetooth link unavailable")
+LINK_STARTED = "bluetooth link started"
+TRANSPORT_FAILED = "link not started"
 
 # The app's own environment, which is the only place the answer is authoritative. Matches the
 # service's ExecStart pattern, so a hand-started app is read the same way as a service one.
@@ -152,16 +165,37 @@ def main():
                    "bluez-tools is missing, so SPP cannot publish. BLE still works.")
         else:
             record(PASS, "sdptool installed", out)
+
+            # sdptool can only publish if the daemon's own SDP server answers. When it does
+            # not, no channel or MAC change can help, so surface that cause once here
+            # instead of letting the record check below imply a fixable fault.
+            _, srv = run(ssh, "sdptool browse local 2>&1 | head -2")
+            if "Failed to connect to SDP server" in srv or "No such file" in srv:
+                record(FAIL, "Local SDP server reachable", srv.strip(),
+                       "nothing can publish an SDP record without it, so SPP cannot work "
+                       "on this install at all. Use BLE (MX5_BT=ble); a different channel "
+                       "or address will not fix this.")
+                sdp_server_ok = False
+            else:
+                record(PASS, "Local SDP server reachable")
+                sdp_server_ok = True
+
             _, sdp = run(ssh, SDP_CMD)
             if "Channel: %d" % args.channel in sdp:
                 channel = [l.strip() for l in sdp.splitlines() if "Channel:" in l]
                 record(PASS, "SDP Serial Port record on channel %d" % args.channel,
                        channel[0] if channel else "")
             else:
+                # Only suggest sdptool when the server it talks to is actually up;
+                # otherwise the advice cannot work and wastes a trip.
+                hint = ("Android will not connect over SPP without it. "
+                        "Try: sudo sdptool add --channel=%d SP" % args.channel
+                        if sdp_server_ok else
+                        "Android will not connect over SPP without it, and the SDP server "
+                        "it would be published to is unreachable (see above), so no "
+                        "command here can fix it. Use BLE (MX5_BT=ble).")
                 record(FAIL, "SDP Serial Port record on channel %d" % args.channel,
-                       sdp or "(no Serial Port record found)",
-                       "Android will not connect over SPP without it. "
-                       "Try: sudo sdptool add --channel=%d SP" % args.channel)
+                       sdp or "(no Serial Port record found)", hint)
 
         # -- 5. BLE ------------------------------------------------------------
         _, out = run(ssh, "python3 -c 'import bless; print(\"ok\")' 2>&1 | tail -1")
@@ -185,20 +219,40 @@ def main():
                    "" if paired else "known but none marked Paired: yes")
 
         # -- 7. what the link said when it started ----------------------------
-        _, out = run(ssh, "journalctl -u mx5-display -n 300 --no-pager 2>/dev/null "
-                          "| grep -iE 'bluetooth link|SPP link|BLE link|SPP peer' | tail -12")
-        if out.strip():
-            starts = [l for l in out.splitlines() if "link started" in l.lower()]
-            if any("not started" in l.lower() or "NOT started" in l for l in out.splitlines()):
-                record(FAIL, "The link reported itself started", out)
-            elif starts:
+        # Filter by PID rather than by recency: a CAN transmit fault can print twenty
+        # lines a second, which pushed the startup banner out of any fixed window and made
+        # this check report "no link lines" against a link that had started fine.
+        _, out = run(ssh, "PID=$(pgrep -f 'python.*main.py' | head -1); "
+                          "if [ -z \"$PID\" ]; then echo __NOPID__; else "
+                          "journalctl _PID=$PID --no-pager 2>/dev/null "
+                          "| grep -iE 'bluetooth link|SPP link|BLE link|SPP peer' "
+                          "| tail -12; fi")
+        if "__NOPID__" in out:
+            record(WARN, "The link reported itself started",
+                   "no main.py process, so this cannot be answered",
+                   "start the app first, then re-run")
+        elif out.strip():
+            lines = out.splitlines()
+            failed = [l for l in lines if any(m in l.lower() for m in LINK_FAILED)]
+            started = [l for l in lines if LINK_STARTED in l.lower()]
+            degraded = [l for l in lines if TRANSPORT_FAILED in l.lower()]
+            if failed:
+                record(FAIL, "The link reported itself started", out,
+                       "the app printed why it refused; fix that reason, not this check")
+            elif started and degraded:
+                # Working, but on a fallback transport. Worth a warning: failover now
+                # depends entirely on whichever transport survived.
+                record(WARN, "The link reported itself started", out,
+                       "the link is up, but %d transport(s) did not start: fix those to "
+                       "get the preferred path back" % len(degraded))
+            elif started:
                 record(PASS, "The link reported itself started", out)
             else:
                 record(WARN, "The link reported itself started", out,
-                       "no start line in the last 300 journal entries")
+                       "the app started but said nothing about the link")
         else:
             record(WARN, "The link reported itself started",
-                   "no link lines in the journal",
+                   "the running app printed nothing about a link",
                    "the running code may predate the Bluetooth link; git pull and restart")
     finally:
         ssh.close()

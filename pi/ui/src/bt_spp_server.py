@@ -121,11 +121,25 @@ class SppServer:
                 "Install bluez-tools, or use the BLE transport, which needs no SDP.")
             return False
         try:
-            subprocess.run(['sdptool', 'add', '--channel=%d' % self.channel, 'SP'],
-                           capture_output=True, text=True, timeout=10,
-                           check=False)
+            result = subprocess.run(
+                ['sdptool', 'add', '--channel=%d' % self.channel, 'SP'],
+                capture_output=True, text=True, timeout=10, check=False)
         except (OSError, subprocess.SubprocessError) as e:
             logger.warning("sdptool failed: %s", e)
+            return False
+
+        # sdptool exits non-zero when the local SDP server is unreachable, and it is the
+        # only thing here that can publish this record. Ignoring the exit code made the
+        # log state that the record was published while every Android client failed its
+        # SDP lookup, which pointed the reader at the client instead of at the Pi.
+        if result.returncode != 0:
+            logger.warning(
+                "sdptool add --channel=%d exited %d, so NO SDP record was published "
+                "(%s). Android's createRfcommSocketToServiceRecord() will not find this "
+                "service. Check the local SDP server with `sdptool browse local`; the "
+                "BLE transport needs no SDP.",
+                self.channel, result.returncode,
+                (result.stderr or result.stdout or '').strip() or 'no output')
             return False
 
         # Publishing is asynchronous inside bluetoothd; give it a moment so a client that
@@ -153,8 +167,19 @@ class SppServer:
             sock.bind((address, self.channel))
         except OSError as e:
             sock.close()
-            # A bare 'bad bluetooth address' is the least helpful failure in this file: an
-            # empty address means no adapter address could be read, which has a fix.
+            # The two ways this fails have opposite fixes, so do not describe them with
+            # one message: a taken channel is not a missing adapter address, and blaming
+            # the address sent the reader looking for a fault that was not there. On stock
+            # BlueZ, bluetoothd's own SAP plugin reserves channel 3.
+            if e.errno == errno.EADDRINUSE:
+                raise RuntimeError(
+                    "RFCOMM channel %d is already in use on address %r: %s. Another "
+                    "process holds it - commonly bluetoothd itself, which reserves "
+                    "channel 3 for the SAP plugin on stock BlueZ. Choose a free channel "
+                    "with MX5_BT_SPP_CHANNEL, or stop whatever holds this one."
+                    % (self.channel, address, e))
+            # A bare 'bad bluetooth address' is unhelpful too: an empty address means no
+            # adapter address could be read, which has a fix.
             raise RuntimeError(
                 "Could not bind RFCOMM channel %d on address %r: %s. An empty address "
                 "means no local adapter address was found: check that `hciconfig` is "
