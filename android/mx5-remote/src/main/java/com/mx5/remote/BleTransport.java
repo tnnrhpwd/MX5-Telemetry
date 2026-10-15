@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.os.Build;
+import android.util.Log;
 
 import java.io.IOException;
 import java.util.UUID;
@@ -35,8 +36,33 @@ final class BleTransport extends BtTransport {
     /** The standard Client Characteristic Configuration descriptor, for enabling notify. */
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
+    /** Diagnostics. This transport had no logging at all, so a refused write said nothing. */
+    private static final String TAG = "MX5Ble";
+
     private static final long OPEN_TIMEOUT_MS = 8000;
     private static final long WRITE_TIMEOUT_MS = 2000;
+
+    /** BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY: another write is outstanding. */
+    private static final int GATT_WRITE_REQUEST_BUSY = 201;
+
+    /**
+     * Write commands, not write requests.
+     *
+     * A write *request* holds the connection's single GATT operation slot until its own
+     * onCharacteristicWrite arrives, and on this phone that callback never arrives at all:
+     * an HCI capture shows the write completing on the air and the Pi answering it, while
+     * the app is never told. The connection therefore stayed busy for ever after the first
+     * chunk, and every later chunk was refused with 201 no matter how long it retried.
+     *
+     * A write *command* needs no acknowledgement, so nothing is left outstanding and the
+     * next chunk can follow. The Pi's reply to the request is what confirms the bytes
+     * arrived, and request() already waits for exactly that. The Pi's RX characteristic
+     * accepts both write types so a client that prefers requests still works.
+     */
+    private static final int WRITE_TYPE = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
+
+    /** Pause between chunks while the stack releases the previous write. */
+    private static final long WRITE_PACING_MS = 20;
 
     /** Ask for a large MTU so telemetry needs fewer round trips. */
     private static final int WANTED_MTU = 517;
@@ -111,6 +137,11 @@ final class BleTransport extends BtTransport {
         descriptorStatus = BluetoothGatt.GATT_FAILURE;
         connected = false;
 
+        // Drop any previous connection before opening another. Leaving one behind leaves a
+        // second GATT client on the same peripheral, which Android answers by refusing the
+        // next write with status 201 and by delivering the old client's callbacks here.
+        closeGatt();
+
         try {
             // autoConnect=false: a direct connection to an already-bonded device, which
             // also means no scanning and therefore no scan permission.
@@ -143,25 +174,24 @@ final class BleTransport extends BtTransport {
 
         rx = findCharacteristic(SERVICE_UUID, RX_UUID);
         tx = findCharacteristic(SERVICE_UUID, TX_UUID);
+        Log.d(TAG, "discovered: rx=" + (rx != null) + " tx=" + (tx != null));
         if (rx == null || tx == null) {
             closePipe();
             throw new IOException("The Pi's BLE service was not found: is the Bluetooth "
                     + "link running on the Pi?");
         }
 
-        // Subscribe first, and only then ask for a bigger MTU.
-        //
-        // Android allows one GATT operation per connection at a time: requestMtu() holds
-        // the connection busy until onMtuChanged arrives, and a writeDescriptor() issued
-        // while that is outstanding is refused. With the two the other way round the
-        // subscription failed on every attempt, and the Pi saw only a client that
-        // discovered its services and then went quiet without ever writing to it.
         enableNotifications(tx);
 
-        // Best effort: a small MTU still works, it just costs more notifications. It does
-        // have to be waited for, because it holds the connection busy until it completes
-        // and the first request would otherwise be the operation that is dropped.
-        requestBiggerMtu();
+        // Deliberately no requestMtu() here.
+        //
+        // The Pi asks for a large MTU itself the moment a central connects, and Android
+        // reports the result through onMtuChanged, so asking cost nothing and bought
+        // nothing: an HCI capture showed zero MTU requests from this side on every
+        // connection while the link still ended up at 517. What it did do was sit between
+        // the subscribe and the first write, and the write that followed it never reported
+        // completion. A smaller MTU only costs more notifications, and the line protocol
+        // already tolerates a reply split across several of them.
     }
 
     private BluetoothGattCharacteristic findCharacteristic(UUID service, UUID characteristic) {
@@ -223,28 +253,6 @@ final class BleTransport extends BtTransport {
         }
     }
 
-    /**
-     * Ask for a larger MTU and wait for the answer.
-     *
-     * Best effort, so a refusal or a timeout is not fatal, but it is waited for: the
-     * request holds the connection busy until it completes. The return value is checked
-     * because a false here means the request was never sent, which used to pass unnoticed
-     * and leave the link on the small default MTU.
-     */
-    private void requestBiggerMtu() {
-        try {
-            mtuLatch = new CountDownLatch(1);
-            if (!gatt.requestMtu(WANTED_MTU)) {
-                return;
-            }
-            await(mtuLatch, WRITE_TIMEOUT_MS);
-        } catch (IOException e) {
-            // Keep the default MTU; it still carries the protocol.
-        } catch (SecurityException e) {
-            // Permission revoked mid-connect; the connection will fail on its own.
-        }
-    }
-
     // -- io -----------------------------------------------------------------
 
     @SuppressWarnings("deprecation")
@@ -258,57 +266,66 @@ final class BleTransport extends BtTransport {
 
         // Three bytes go to the ATT header, so anything larger is rejected.
         int chunk = Math.max(20, mtu - 3);
+        Log.d(TAG, "send " + data.length + " bytes, mtu=" + mtu + ", chunk=" + chunk);
         for (int off = 0; off < data.length; off += chunk) {
             int len = Math.min(chunk, data.length - off);
             byte[] part = new byte[len];
             System.arraycopy(data, off, part, 0, len);
+            writeChunk(g, c, part, off);
+        }
+    }
 
-            writeLatch = new CountDownLatch(1);
-            writeStatus = BluetoothGatt.GATT_FAILURE;
-            boolean accepted;
+    /**
+     * Write one chunk, retrying while Android reports the connection busy.
+     *
+     * Deliberately does not wait for onCharacteristicWrite. An HCI capture showed the write
+     * completes on the air: the Pi answers it with an ATT Write Response and with the reply
+     * to the request, and onCharacteristicChanged delivers that reply. That one callback
+     * just never arrives, while onDescriptorWrite, onServicesDiscovered and
+     * onConnectionStateChange all do, so waiting on it turned a working write into
+     * "BLE write timed out" and then into a reconnect. The reply is the real proof a request
+     * landed, and request() already waits for it.
+     *
+     * Pacing is still needed, because the stack can still be releasing the previous bytes.
+     * Retrying on ERROR_GATT_WRITE_REQUEST_BUSY covers that without needing a callback.
+     */
+    private void writeChunk(BluetoothGatt g, BluetoothGattCharacteristic c, byte[] part,
+                            int off) throws IOException {
+        long deadline = System.currentTimeMillis() + WRITE_TIMEOUT_MS;
+        while (true) {
+            int code;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                accepted = g.writeCharacteristic(
-                        c, part, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-                        == BluetoothGatt.GATT_SUCCESS;
+                code = g.writeCharacteristic(c, part, WRITE_TYPE);
             } else {
-                c.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+                c.setWriteType(WRITE_TYPE);
                 c.setValue(part);
-                accepted = g.writeCharacteristic(c);
+                code = g.writeCharacteristic(c) ? BluetoothGatt.GATT_SUCCESS : -1;
             }
-            if (!accepted) {
-                throw new IOException("The Pi would not accept a BLE write");
+            if (code == BluetoothGatt.GATT_SUCCESS) {
+                return;
             }
-
+            if (code != GATT_WRITE_REQUEST_BUSY) {
+                // The code matters: Android refuses a GATT write with a status that says why,
+                // and a generic message threw that away.
+                Log.w(TAG, "writeCharacteristic refused: code=" + code + " partLen="
+                        + part.length + " off=" + off);
+                throw new IOException("The Pi would not accept a BLE write (code " + code + ")");
+            }
+            if (System.currentTimeMillis() > deadline) {
+                Log.w(TAG, "write stayed busy for " + WRITE_TIMEOUT_MS + "ms, off=" + off);
+                throw new IOException("The Pi would not accept a BLE write (stayed busy)");
+            }
             try {
-                if (!writeLatch.await(WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                    throw new IOException("BLE write timed out");
-                }
+                Thread.sleep(WRITE_PACING_MS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IOException("Interrupted during a BLE write", e);
             }
-            // The callback fires for a failed write too, so the status is what decides.
-            if (writeStatus != BluetoothGatt.GATT_SUCCESS) {
-                throw new IOException(
-                        "The Pi would not accept a BLE write (status " + writeStatus + ")");
-            }
         }
     }
 
-    @Override
-    protected void closePipe() {
-        connected = false;
-        // Release anything waiting inside open(). A connection that has ended must unblock
-        // those waits rather than leave them to time out, and the statuses are cleared so
-        // that whatever is waiting reports a failure rather than a stale success.
-        writeStatus = BluetoothGatt.GATT_FAILURE;
-        descriptorStatus = BluetoothGatt.GATT_FAILURE;
-        servicesStatus = BluetoothGatt.GATT_FAILURE;
-        signal(connectLatch);
-        signal(servicesLatch);
-        signal(descriptorLatch);
-        signal(mtuLatch);
-        signal(writeLatch);
+    /** Close the current GATT client, if there is one, without touching the latches. */
+    private void closeGatt() {
         BluetoothGatt g = gatt;
         gatt = null;
         rx = null;
@@ -325,6 +342,24 @@ final class BleTransport extends BtTransport {
                 // already gone
             }
         }
+    }
+
+    @Override
+    protected void closePipe() {
+        Log.d(TAG, "closePipe, connected was " + connected);
+        connected = false;
+        // Release anything waiting inside open(). A connection that has ended must unblock
+        // those waits rather than leave them to time out, and the statuses are cleared so
+        // that whatever is waiting reports a failure rather than a stale success.
+        writeStatus = BluetoothGatt.GATT_FAILURE;
+        descriptorStatus = BluetoothGatt.GATT_FAILURE;
+        servicesStatus = BluetoothGatt.GATT_FAILURE;
+        signal(connectLatch);
+        signal(servicesLatch);
+        signal(descriptorLatch);
+        signal(mtuLatch);
+        signal(writeLatch);
+        closeGatt();
         clearReceived();
     }
 
@@ -332,8 +367,28 @@ final class BleTransport extends BtTransport {
 
     private final BluetoothGattCallback callback = new BluetoothGattCallback() {
 
+        /**
+         * True when this callback belongs to the connection currently in use.
+         *
+         * The operation latches are per-attempt, so a callback from a connection that has
+         * already been replaced would satisfy the *new* attempt's latch and let it continue
+         * on an operation that never happened. That is visible in the trace as "discovered"
+         * one millisecond after connecting.
+         */
+        private boolean isCurrent(BluetoothGatt g) {
+            if (g != gatt) {
+                Log.d(TAG, "ignoring a callback from a superseded connection");
+                return false;
+            }
+            return true;
+        }
+
         @Override
         public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
+            Log.d(TAG, "onConnectionStateChange status=" + status + " newState=" + newState);
+            if (!isCurrent(g)) {
+                return;
+            }
             connected = newState == BluetoothProfile.STATE_CONNECTED;
             if (!connected) {
                 // Unblocks a pending receiveLine rather than leaving it to time out.
@@ -344,18 +399,29 @@ final class BleTransport extends BtTransport {
 
         @Override
         public void onServicesDiscovered(BluetoothGatt g, int status) {
+            if (!isCurrent(g)) {
+                return;
+            }
             servicesStatus = status;
             signal(servicesLatch);
         }
 
         @Override
         public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor d, int status) {
+            Log.d(TAG, "onDescriptorWrite status=" + status);
+            if (!isCurrent(g)) {
+                return;
+            }
             descriptorStatus = status;
             signal(descriptorLatch);
         }
 
         @Override
         public void onMtuChanged(BluetoothGatt g, int newMtu, int status) {
+            Log.d(TAG, "onMtuChanged newMtu=" + newMtu + " status=" + status);
+            if (!isCurrent(g)) {
+                return;
+            }
             if (status == BluetoothGatt.GATT_SUCCESS && newMtu > 23) {
                 mtu = newMtu;
             }
@@ -364,6 +430,10 @@ final class BleTransport extends BtTransport {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic c) {
+            Log.d(TAG, "notify (legacy overload) len=" + (c.getValue() == null ? 0 : c.getValue().length));
+            if (!isCurrent(g)) {
+                return;
+            }
             feed(c.getValue());
         }
 
@@ -371,12 +441,20 @@ final class BleTransport extends BtTransport {
         public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic c,
                                             byte[] value) {
             // Android 13 added this overload; overriding both covers every version.
+            Log.d(TAG, "notify len=" + (value == null ? 0 : value.length));
+            if (!isCurrent(g)) {
+                return;
+            }
             feed(value);
         }
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic c,
                                           int status) {
+            Log.d(TAG, "onCharacteristicWrite status=" + status);
+            if (!isCurrent(g)) {
+                return;
+            }
             writeStatus = status;
             signal(writeLatch);
         }

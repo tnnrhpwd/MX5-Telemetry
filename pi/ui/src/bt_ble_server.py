@@ -162,8 +162,18 @@ class BleServer:
         await self._server.add_new_service(SERVICE_UUID)
 
         # RX: the central writes request lines here.
+        #
+        # Both write types are accepted, and that matters for Android. A write *request*
+        # occupies the client's single GATT operation slot until its own write callback
+        # arrives, and on at least one phone that callback never comes, so the connection
+        # stayed busy for ever after the first chunk and every later chunk was refused.
+        # A write *command* needs no acknowledgement, so nothing is left outstanding. The
+        # protocol already replies to the request itself, so dropping the ATT-level
+        # acknowledgement costs nothing.
         await self._server.add_new_characteristic(
-            SERVICE_UUID, RX_UUID, GATTCharacteristicProperties.write, None,
+            SERVICE_UUID, RX_UUID,
+            GATTCharacteristicProperties.write
+            | GATTCharacteristicProperties.write_without_response, None,
             GATTAttributePermissions.writeable)
 
         # TX: we notify reply lines from here. Readable as well, so a central can poll

@@ -1,6 +1,7 @@
 package com.mx5.remote;
 
 import android.content.Context;
+import android.util.Log;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -25,6 +26,15 @@ public final class PiClient {
 
     /** How long to stop trying after every transport has failed. */
     private static final long FAIL_BACKOFF_MS = 4000;
+
+    /**
+     * Why each transport failed is logged, not just stored.
+     *
+     * There was no logging in this app at all, so a link that failed left nothing behind
+     * anywhere: no message on the screen, and nothing in logcat to read from a laptop.
+     * That is the whole reason a failure here took an HCI capture to diagnose.
+     */
+    private static final String TAG = "MX5Link";
 
     private final HttpTransport http = new HttpTransport();
     private final List<LinkTransport> chain = new ArrayList<>();
@@ -195,8 +205,15 @@ public final class PiClient {
      * A Refused is rethrown immediately and never causes fallback: the Pi answered, so the
      * transport is fine, and moving to a slower one because a value was out of range would
      * be both wrong and invisible.
+     *
+     * Synchronized, because more than one caller reaches this at once: the poll loop, the
+     * refresh on resume, and the roof refresh each run on their own thread. That was fine
+     * while there was one HTTP client per request, but a Bluetooth transport owns one
+     * connection for the whole session. Three concurrent calls meant three connectGatt()
+     * calls on one peripheral, and Android then refused the next write with status 201
+     * (GATT write request busy) because another client still held the connection.
      */
-    private String request(String method, String path, String body) throws IOException {
+    private synchronized String request(String method, String path, String body) throws IOException {
         if (System.currentTimeMillis() < retryAfter) {
             // Still backing off from a total failure; fail fast rather than re-walking the
             // whole chain on every poll.
@@ -212,6 +229,7 @@ public final class PiClient {
             } catch (LinkTransport.Refused e) {
                 throw e;
             } catch (IOException e) {
+                Log.w(TAG, sticky.label() + " failed: " + e);
                 sticky.onFailure();
                 active = null;
                 failure = e;
@@ -235,6 +253,7 @@ public final class PiClient {
                 lastError = "";
                 throw e;
             } catch (IOException e) {
+                Log.w(TAG, t.label() + " failed: " + e);
                 t.onFailure();
                 if (failure == null) {
                     failure = e;
@@ -245,6 +264,7 @@ public final class PiClient {
         lastError = failure == null
                 ? "No way to reach the Pi: " + firstUnavailableReason()
                 : failure.getMessage();
+        Log.w(TAG, "no transport reached the Pi; last error: " + lastError);
         retryAfter = System.currentTimeMillis() + FAIL_BACKOFF_MS;
         throw failure != null ? failure : new IOException(lastError);
     }

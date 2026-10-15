@@ -829,8 +829,14 @@ public class MainActivity extends Activity implements Screen.Host {
                             handler.post(() -> ((RoofScreen) screen).applyRoof(roof));
                         }
                     } catch (Exception e) {
-                        if (online) {
+                        // Refresh even when the link has never been up. This used to be gated
+                        // on a previous success, so a link that had never worked showed
+                        // OFFLINE with an empty transport list and no reason anywhere on the
+                        // screen, which reads as the app doing nothing at all.
+                        String reason = e.getMessage() == null ? "" : e.getMessage();
+                        if (online || !reason.equals(lastLinkReason)) {
                             online = false;
+                            lastLinkReason = reason;
                             handler.post(this::updateLink);
                         }
                     }
@@ -927,6 +933,9 @@ public class MainActivity extends Activity implements Screen.Host {
             }
         }).start();
     }
+
+    /** The last failure reason already rendered, so the poll loop does not redraw it. */
+    private String lastLinkReason = "";
 
     private void updateLink() {
         String text;
