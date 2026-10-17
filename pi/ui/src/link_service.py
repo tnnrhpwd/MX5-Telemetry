@@ -139,11 +139,15 @@ class LinkService:
         }
 
     def roof_status(self):
-        """Settings dict for the web UI, or {'connected': False, 'error': ...}."""
+        """Settings dict for the web UI, or {'connected': False, ...}."""
         try:
             info = self.roof.status()
         except RoofControllerError as e:
-            return {'connected': False, 'error': str(e)}
+            return {
+                'connected': False,
+                'released': self.roof.released,
+                'error': str(e),
+            }
         info['connected'] = True
         return info
 
@@ -257,4 +261,22 @@ class LinkService:
                 return {'success': False, 'error': 'Unknown roof command'}, 400
         except RoofControllerError as e:
             return {'success': False, 'error': str(e)}, 503
+        return {'success': True, 'roof': self.roof_status()}, 200
+
+    def roof_connect(self):
+        """Claim the roof controller and report what it answers.
+
+        Claiming is not a hold: the read that proves the module is there opens
+        and closes the port itself, so the controller is never left busy.
+        """
+        try:
+            info = self.roof.connect()
+        except RoofControllerError as e:
+            return {'success': False, 'error': str(e)}, 503
+        info['connected'] = True
+        return {'success': True, 'roof': info}, 200
+
+    def roof_disconnect(self):
+        """Hand the module back to the car so the roof keeps working."""
+        self.roof.disconnect()
         return {'success': True, 'roof': self.roof_status()}, 200

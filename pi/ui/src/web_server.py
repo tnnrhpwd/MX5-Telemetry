@@ -285,6 +285,25 @@ class WebRemoteServer:
             """Set 0=Valet, 1=One Touch, 2=OEM."""
             return self._roof_apply('mode')
 
+        @self.app.route('/api/roof/connect', methods=['POST'])
+        @self._require_auth
+        def roof_connect():
+            """Claim the roof controller and report its state."""
+            return self._roof_link(self.link.roof_connect)
+
+        @self.app.route('/api/roof/disconnect', methods=['POST'])
+        @self._require_auth
+        def roof_disconnect():
+            """Hand the module back to the car so the roof keeps working."""
+            return self._roof_link(self.link.roof_disconnect)
+
+    def _roof_link(self, action):
+        """Run a claim or release and push the resulting state to the web clients."""
+        payload, status = action()
+        if payload.get('success'):
+            self.socketio.emit('roof_changed', payload['roof'])
+        return jsonify(payload), status
+
     def _roof_apply(self, kind):
         """Apply one roof setting from an HTTP body, then notify the web clients."""
         value = (request.get_json(silent=True) or {}).get('value')

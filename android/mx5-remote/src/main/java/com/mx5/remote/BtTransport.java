@@ -284,6 +284,10 @@ abstract class BtTransport implements LinkTransport {
         } else if ("/api/roof/mode".equals(path)) {
             req.put("op", "roof.mode");
             req.put("value", valueOf(body));
+        } else if ("/api/roof/connect".equals(path)) {
+            req.put("op", "roof.connect");
+        } else if ("/api/roof/disconnect".equals(path)) {
+            req.put("op", "roof.disconnect");
         } else if ("/api/calibrate_imu".equals(path)) {
             req.put("op", "calibrate_imu");
         } else if ("/api/wake".equals(path)) {

@@ -19,6 +19,20 @@ Protocol (recovered from the vendor app and the device's own ``help``)::
 Send ``"<command>\\n"``; the device echoes the command, prints its reply and
 finishes with a ``>`` prompt.  The baud rate is nominal - USB CDC ignores it.
 
+Port policy
+-----------
+
+The vendor's guide is explicit that "for normal operation, the USB cable must
+be unplugged from the computer", and that a solid red LED means the module is
+in its USB state rather than operating the roof.  Any host left on the module
+can therefore leave the roof dead until the module is power cycled.
+
+So this driver never holds the port open.  Every command opens the port, does
+its one exchange and closes it again, which is what lets the Pi poll the
+controller without taking it away from the car.  ``disconnect()`` goes one step
+further and stops the Pi touching the module at all, which is the state to
+leave the car in when the roof has to be guaranteed to work.
+
 Requires pyserial.  Everything degrades gracefully: if pyserial is missing or
 the device is not plugged in, ``status()`` raises ``RoofControllerError`` and
 the caller is expected to report "not connected" rather than crash.
@@ -47,9 +61,20 @@ _MODE_FROM_TEXT = {"valet mode": 0, "one touch mode": 1, "oem mode": 2}
 
 SPEED_MIN, SPEED_MAX = 0, 30
 
+RELEASED_MESSAGE = ("roof controller released: the Pi is leaving the module "
+                    "alone so the car keeps the roof")
+
 
 class RoofControllerError(RuntimeError):
     """Raised when the controller is missing or a command fails."""
+
+
+def _close_quietly(ser):
+    """Close one exchange's handle. A failure here is not worth reporting."""
+    try:
+        ser.close()
+    except Exception:
+        pass
 
 
 def find_port():
@@ -103,12 +128,16 @@ def parse_status(text):
 
 
 class RoofController:
-    """Thread-safe client for the RCNC-2 console (opens the port lazily)."""
+    """Thread-safe client for the RCNC-2 console.
+
+    The port is opened and closed around each exchange rather than held open,
+    so polling for status cannot take the controller away from the car.
+    """
 
     def __init__(self, port=None):
         self._lock = threading.RLock()
         self._port = port
-        self._ser = None
+        self._released = False
 
     # -- connection ------------------------------------------------------
 
@@ -117,65 +146,88 @@ class RoofController:
         return self._port
 
     @property
-    def connected(self):
-        return self._ser is not None and getattr(self._ser, "is_open", False)
+    def released(self):
+        """True while the Pi is deliberately leaving the module alone."""
+        return self._released
 
-    def _ensure(self):
+    def _open(self):
+        """Open the port for a single exchange; never left open for anyone else."""
         if serial is None:
             raise RoofControllerError("pyserial is not installed")
-        if self.connected:
-            return self._ser
+        if self._released:
+            raise RoofControllerError(RELEASED_MESSAGE)
         port = self._port or find_port()
         if not port:
             raise RoofControllerError("roof controller not found")
         self._port = port
         try:
-            self._ser = serial.Serial(port, BAUD, timeout=0.3)
+            return serial.Serial(port, BAUD, timeout=0.3)
         except (serial.SerialException, OSError) as e:
-            self._ser = None
             raise RoofControllerError("cannot open %s: %s" % (port, e))
-        return self._ser
 
-    def close(self):
+    def connect(self):
+        """Claim the module and prove it answers. Returns the parsed status.
+
+        Only the claim flag changes: the confirmation exchange opens and closes
+        the port by itself, so connecting does not hold the module.
+        """
         with self._lock:
-            if self._ser is not None:
-                try:
-                    self._ser.close()
-                except Exception:
-                    pass
-                self._ser = None
+            self._released = False
+            return self.status()
+
+    def disconnect(self):
+        """Hand the module back to the car so the roof keeps working.
+
+        Nothing holds the port at rest anyway, so this is a promise rather than
+        a cleanup: with the module released, every later command refuses without
+        touching the hardware at all. This is the state to leave the car in when
+        the roof has to be guaranteed to work.
+        """
+        with self._lock:
+            self._released = True
+
+    # ``close`` was the old name for letting go of the module; kept so callers
+    # written against it keep working.
+    close = disconnect
 
     # -- protocol --------------------------------------------------------
 
     def _transact(self, command, settle=0.35, timeout=2.0):
-        """Send one console command and return the decoded reply."""
-        with self._lock:
-            ser = self._ensure()
-            try:
-                ser.reset_input_buffer()
-                ser.write(("%s\n" % command).encode("ascii"))
-                ser.flush()
-            except (serial.SerialException, OSError) as e:
-                self.close()
-                raise RoofControllerError("write failed: %s" % e)
+        """Send one console command and return the decoded reply.
 
-            deadline = time.time() + timeout
-            idle_since = time.time()
-            buf = bytearray()
+        The port is opened for this exchange and closed again before returning,
+        on the failure paths as well as the happy one. Holding it open is what
+        put the module into its USB state and stopped the roof working, so no
+        path out of here keeps a handle.
+        """
+        with self._lock:
+            ser = self._open()
             try:
-                while time.time() < deadline:
-                    chunk = ser.read(256)
-                    if chunk:
-                        buf += chunk
-                        idle_since = time.time()
-                        if bytes(buf).rstrip().endswith(PROMPT):
+                try:
+                    ser.reset_input_buffer()
+                    ser.write(("%s\n" % command).encode("ascii"))
+                    ser.flush()
+                except (serial.SerialException, OSError) as e:
+                    raise RoofControllerError("write failed: %s" % e)
+
+                deadline = time.time() + timeout
+                idle_since = time.time()
+                buf = bytearray()
+                try:
+                    while time.time() < deadline:
+                        chunk = ser.read(256)
+                        if chunk:
+                            buf += chunk
+                            idle_since = time.time()
+                            if bytes(buf).rstrip().endswith(PROMPT):
+                                break
+                        elif time.time() - idle_since > settle:
                             break
-                    elif time.time() - idle_since > settle:
-                        break
-            except (serial.SerialException, OSError) as e:
-                self.close()
-                raise RoofControllerError("read failed: %s" % e)
-            return buf.decode("ascii", "replace")
+                except (serial.SerialException, OSError) as e:
+                    raise RoofControllerError("read failed: %s" % e)
+                return buf.decode("ascii", "replace")
+            finally:
+                _close_quietly(ser)
 
     # -- public API ------------------------------------------------------
 
@@ -186,6 +238,7 @@ class RoofController:
         if info["speed_limit"] is None and info["mode"] is None:
             raise RoofControllerError("unexpected reply: %r" % reply.strip())
         info["port"] = self._port
+        info["released"] = self._released
         return info
 
     def set_speed(self, mph):

@@ -146,7 +146,7 @@ def _roof_status_payload():
     try:
         info = roof.status()
     except RoofControllerError as e:
-        return {'connected': False, 'error': str(e)}
+        return {'connected': False, 'released': roof.released, 'error': str(e)}
     info['connected'] = True
     return info
 
@@ -186,6 +186,25 @@ def roof_set_auto():
 @app.route('/api/roof/mode', methods=['POST'])
 def roof_set_mode():
     return _roof_apply('mode', (request.get_json(silent=True) or {}).get('value'))
+
+
+@app.route('/api/roof/connect', methods=['POST'])
+def roof_connect():
+    try:
+        info = roof.connect()
+    except RoofControllerError as e:
+        return jsonify({'success': False, 'error': str(e)}), 503
+    info['connected'] = True
+    socketio.emit('roof_changed', info)
+    return jsonify({'success': True, 'roof': info})
+
+
+@app.route('/api/roof/disconnect', methods=['POST'])
+def roof_disconnect():
+    roof.disconnect()
+    payload = _roof_status_payload()
+    socketio.emit('roof_changed', payload)
+    return jsonify({'success': True, 'roof': payload})
 
 # WebSocket handlers
 @socketio.on('connect')

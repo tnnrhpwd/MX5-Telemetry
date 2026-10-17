@@ -18,6 +18,8 @@ public class RoofScreen extends Screen {
     private SliderRow speed;
     private Ui.Pill auto;
     private LinearLayout modes;
+    private TextView linkButton;
+    private boolean released;
     private static final int[] MODE_IDS = {1, 2, 0};
     private static final String[] MODE_NAMES = {"One Touch", "OEM", "Valet"};
 
@@ -105,7 +107,37 @@ public class RoofScreen extends Screen {
         hint.setPadding(0, Ui.dp(c, 10), 0, 0);
         panel.body.addView(hint);
 
+        // The claim toggle is a maintenance control, so it sits last: handing the module
+        // back is what leaves the car free to operate the roof normally.
+        linkButton = Ui.label(c, 11f, p.text);
+        linkButton.setGravity(Gravity.CENTER);
+        linkButton.setPadding(Ui.dp(c, 10), Ui.dp(c, 12), Ui.dp(c, 10), Ui.dp(c, 10));
+        linkButton.setClickable(true);
+        linkButton.setFocusable(true);
+        linkButton.setBackground(Ui.rounded(c, 0x00000000, 8f));
+        linkButton.setOnClickListener(v -> toggleLink());
+        panel.body.addView(linkButton, Ui.stack(c, 0));
+        setLinkLabel();
+
         return panel;
+    }
+
+    /** Flips the Pi between claiming the module and leaving it to the car. */
+    private void toggleLink() {
+        if (released) {
+            act(v -> host.pi().roofConnect(), 0, "Roof controller claimed");
+        } else {
+            act(v -> host.pi().roofDisconnect(), 0, "Handed back to the car");
+        }
+    }
+
+    /** The button names the state change it performs, not the state it is in. */
+    private void setLinkLabel() {
+        if (linkButton == null) {
+            return;
+        }
+        linkButton.setText(released ? "Claim controller" : "Hand back to car");
+        linkButton.setTextColor(released ? palette.accent : palette.text);
     }
 
     /** Runs one command off the UI thread and reports what the Pi said. */
@@ -139,14 +171,22 @@ public class RoofScreen extends Screen {
     /** Called by the shell with the payload from GET /api/roof/status. */
     public void applyRoof(JSONObject roof) {
         boolean connected = roof != null && roof.optBoolean("connected");
-        state.set(connected ? "LINKED" : "OFFLINE", connected ? 0xFF22C55E : 0xFFEF4444);
+        // Released is a deliberate state rather than a fault: the Pi is leaving the module
+        // alone so the car keeps the roof, which is why it is not painted as an alarm.
+        released = roof != null && roof.optBoolean("released");
+
+        if (released) {
+            state.set("RELEASED", palette.textDim);
+        } else {
+            state.set(connected ? "LINKED" : "OFFLINE",
+                    connected ? 0xFF22C55E : 0xFFEF4444);
+        }
+        setLinkLabel();
+
         // Reaching here at all means the Pi answered, so "no link" is about the RCNC-2
         // itself being unplugged, not about the phone's connection to the Pi.
         firmware.set(connected ? roof.optString("version", "unknown") : "no link");
         port.set(connected ? roof.optString("port", "none") : "no link");
-
-        int color = connected ? 0xFF22C55E : 0xFFEF4444;
-        state.set(connected ? "LINKED" : "OFFLINE", color);
 
         if (!connected) {
             return;

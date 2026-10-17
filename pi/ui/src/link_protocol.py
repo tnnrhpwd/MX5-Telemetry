@@ -166,6 +166,12 @@ class LinkProtocol:
         if op in ('roof.speed', 'roof.auto', 'roof.mode'):
             payload, _ = s.roof_set(op.split('.', 1)[1], self._int(request.get('value')))
             return payload
+        if op == 'roof.connect':
+            payload, _ = s.roof_connect()
+            return payload
+        if op == 'roof.disconnect':
+            payload, _ = s.roof_disconnect()
+            return payload
 
         return None
 

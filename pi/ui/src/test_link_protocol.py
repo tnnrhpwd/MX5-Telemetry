@@ -33,24 +33,45 @@ class _FakeRoofController:
     def __init__(self):
         self.calls = []
         self.fail_with = None
+        self.released = False
         self.state = {'mode': 1, 'auto': 0, 'speed_limit': 30, 'version': '44'}
 
     def status(self):
+        self._guard()
         if self.fail_with:
             raise _FakeRoofControllerError(self.fail_with)
-        return dict(self.state)
+        info = dict(self.state)
+        info['released'] = self.released
+        return info
+
+    def connect(self):
+        self.calls.append(('connect',))
+        self.released = False
+        return self.status()
+
+    def disconnect(self):
+        self.calls.append(('disconnect',))
+        self.released = True
 
     def set_speed(self, v):
+        self._guard()
         self.calls.append(('speed', v))
         self.state['speed_limit'] = v
 
     def set_auto(self, v):
+        self._guard()
         self.calls.append(('auto', v))
         self.state['auto'] = v
 
     def set_mode(self, v):
+        self._guard()
         self.calls.append(('mode', v))
         self.state['mode'] = v
+
+    def _guard(self):
+        """Mirrors the driver: a released module refuses without being touched."""
+        if self.released:
+            raise _FakeRoofControllerError('roof controller released')
 
 
 _roof_module = types.ModuleType('roof_controller')
@@ -425,6 +446,37 @@ def test_roof_disconnect_is_reported_not_raised():
     data = ask(session, id=24, op='roof.status')['data']
     assert data['connected'] is False
     assert 'ttyACM0' in data['error']
+
+
+def test_roof_disconnect_hands_the_module_back():
+    _, service, _, session = build()
+    hello(session)
+    reply = ask(session, id=25, op='roof.disconnect')
+    assert reply['data']['success'] is True
+    assert service.roof.released is True
+    assert reply['data']['roof']['connected'] is False
+    assert reply['data']['roof']['released'] is True
+
+
+def test_roof_connect_claims_the_module_again():
+    _, service, _, session = build()
+    hello(session)
+    ask(session, id=26, op='roof.disconnect')
+    reply = ask(session, id=27, op='roof.connect')
+    assert reply['data']['success'] is True
+    assert service.roof.released is False
+    assert reply['data']['roof']['connected'] is True
+    assert reply['data']['roof']['mode'] == 1
+
+
+def test_released_roof_refuses_commands_without_touching_it():
+    _, service, _, session = build()
+    hello(session)
+    ask(session, id=28, op='roof.disconnect')
+    before = list(service.roof.calls)
+    reply = ask(session, id=29, op='roof.mode', value=0)
+    assert reply['data']['success'] is False
+    assert service.roof.calls == before
 
 
 # -- framing and robustness --------------------------------------------------

@@ -337,6 +337,18 @@ function initRoof() {
     const refresh = document.getElementById('roof-refresh');
     if (refresh) refresh.addEventListener('click', () => loadRoofStatus());
 
+    const connect = document.getElementById('roof-connect');
+    if (connect) {
+        connect.addEventListener('click', () => postRoofLink('/api/roof/connect',
+            'Controller claimed'));
+    }
+
+    const disconnect = document.getElementById('roof-disconnect');
+    if (disconnect) {
+        disconnect.addEventListener('click', () => postRoofLink('/api/roof/disconnect',
+            'Handed back to the car'));
+    }
+
     loadRoofStatus();
 }
 
@@ -381,10 +393,19 @@ function renderRoof(data) {
         const want = data.auto === 1;
         if (auto.checked !== want) auto.checked = want;
     } else {
-        state.classList.add('is-down');
-        document.getElementById('roof-state-text').textContent = 'Not connected';
+        // Released is a deliberate state, not a fault, so it keeps the neutral
+        // styling: painting it as an alarm would send the user chasing a fault
+        // that is really just this switch.
+        const released = !!(data && data.released);
+        if (!released) state.classList.add('is-down');
+        document.getElementById('roof-state-text').textContent =
+            released ? 'Handed back' : 'Not connected';
         controls.classList.add('mx-hidden');
-        if (errEl) errEl.textContent = (data && data.error) ? data.error : 'Roof controller not found.';
+        if (errEl) {
+            errEl.textContent = (data && data.error)
+                ? data.error
+                : 'Roof controller not found.';
+        }
     }
 }
 
@@ -407,6 +428,26 @@ function postRoof(url, value, successMsg) {
         })
         .catch((err) => {
             console.error('Roof update failed:', err);
+            showToast('Roof controller error', 'error');
+            loadRoofStatus();
+        });
+}
+
+function postRoofLink(url, successMsg) {
+    fetch(url, { method: 'POST', headers: AUTH_HEADERS, body: '{}' })
+        .then((r) => r.json())
+        .then((data) => {
+            if (data.success) {
+                renderRoof(data.roof);
+                if (successMsg) showToast(successMsg, 'success');
+                vibrate();
+            } else {
+                showToast(data.error || 'Rejected', 'error');
+                loadRoofStatus();
+            }
+        })
+        .catch((err) => {
+            console.error('Roof link failed:', err);
             showToast('Roof controller error', 'error');
             loadRoofStatus();
         });

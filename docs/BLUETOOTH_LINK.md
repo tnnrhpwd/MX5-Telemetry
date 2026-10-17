@@ -56,6 +56,30 @@ back as `ok: false` with `error`, the id preserved, and the link left open.
 | `calibrate_imu` | | Ask the ESP32 to zero its gyro. |
 | `roof.status` | | RCNC-2 settings, or `connected: false`. |
 | `roof.speed` / `roof.auto` / `roof.mode` | `value` | Set one roof setting. |
+| `roof.connect` | | Claim the module and prove it answers. |
+| `roof.disconnect` | | Hand the module back to the car and stop touching it. |
+
+### The roof controller's serial port
+
+`roof.status`, `roof.speed`, `roof.auto` and `roof.mode` are ordinary exchanges: the Pi
+opens `/dev/ttyACM*`, does that one exchange and closes it again. Nothing keeps the port
+open between requests, and that is deliberate.
+
+The RCNC-2 treats an attached host as a configuration session. MX5things' own guide says
+the USB cable "must be unplugged from the computer" for normal operation, and that a solid
+red status LED means the module is in that USB state rather than operating the roof. A host
+left sitting on the module is therefore a roof that will not move until the module is power
+cycled, which is the failure that is hardest to diagnose from the driver's seat.
+
+`roof.disconnect` goes further and stops the Pi touching the module at all: while it is
+released, every command refuses without opening anything, so the car is left with the
+module to itself. `roof.connect` claims it again and proves it answers.
+
+Both `roof.status` and the replies to `roof.speed`, `roof.auto` and `roof.mode` carry
+`released`, so a client can tell "the Pi is deliberately leaving this alone" apart from
+"the controller is missing". The web panel and the car app's Roof screen both show the
+released state as its own condition rather than as a fault, and both offer the same
+claim and release actions.
 
 ### Authentication
 
@@ -435,6 +459,21 @@ ssh $PI 'curl -s -H "Authorization: Bearer $MX5_WEB_TOKEN" http://127.0.0.1:5000
 
 `connected` must be true and `mode` must match what you set. A `503` here means the Pi
 cannot see the controller, which is a serial problem, not a Bluetooth one.
+
+Then exercise the release path, because released is the state the car is meant to be left
+in and an untested release is not a release:
+
+```bash
+ssh $PI 'curl -s -X POST -H "Authorization: ******" http://127.0.0.1:5000/api/roof/disconnect'
+ssh $PI 'curl -s -H "Authorization: ******" http://127.0.0.1:5000/api/roof/status'
+ssh $PI 'curl -s -X POST -H "Authorization: ******" http://127.0.0.1:5000/api/roof/connect'
+```
+
+After the release, status must come back `connected: false` with `released: true` and an
+error naming the release; after `connect` it must be `connected: true` again. The same two
+actions are on the web panel's **Roof** box and the car app's **Roof** screen, where the
+released state shows as `Released` rather than as an alarm. What the release is for is
+covered under **The roof controller's serial port** above.
 
 ### Stage 9 — failure and recovery, which is the point of a fallback
 

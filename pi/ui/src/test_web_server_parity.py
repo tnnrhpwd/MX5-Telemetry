@@ -76,6 +76,8 @@ CASES = [
     ('roof_auto_off', 'post', '/api/roof/auto', {'json': {'value': 0}}, None),
     ('roof_mode_valet', 'post', '/api/roof/mode', {'json': {'value': 0}}, None),
     ('roof_mode_oem', 'post', '/api/roof/mode', {'json': {'value': 2}}, None),
+    ('roof_connect', 'post', '/api/roof/connect', {}, None),
+    ('roof_disconnect', 'post', '/api/roof/disconnect', {}, None),
     ('roof_speed_missing', 'post', '/api/roof/speed', {'json': {}}, None),
     ('roof_speed_null', 'post', '/api/roof/speed', {'json': {'value': None}}, None),
 

@@ -37,6 +37,7 @@ GET  /api/roof/status     RCNC-2 state
 POST /api/screen/<n>      also /api/screen/next and /prev
 POST /api/settings/update {name, value}
 POST /api/roof/speed      also /auto and /mode
+POST /api/roof/connect    claim the module; /disconnect hands it back to the car
 POST /api/calibrate_imu
 POST /api/wake
 ```

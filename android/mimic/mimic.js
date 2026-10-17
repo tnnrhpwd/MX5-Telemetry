@@ -612,6 +612,14 @@
         p.body.appendChild(pillRow('Auto, lower when the latch is released', true));
         p.body.appendChild(el('div', 'hint', 'One Touch for normal use. OEM restores the '
           + 'factory limits. Valet disables the roof.'));
+        // The claim toggle mirrors the app's Roof screen: the label names the change it
+        // performs, not the state it is in.
+        var linkRow = el('div', 'row');
+        linkRow.appendChild(el('div', 'chip-button',
+          o ? 'Claim controller' : 'Hand back to car'));
+        p.body.appendChild(linkRow);
+        p.body.appendChild(el('div', 'hint', 'The RCNC-2 must be left alone for the roof to '
+          + 'work normally, so hand it back when you are done.'));
         return p;
       }
     },

@@ -185,6 +185,14 @@ public final class PiClient {
         return roofCommand("/api/roof/mode", mode);
     }
 
+    public JSONObject roofConnect() throws IOException, JSONException {
+        return new JSONObject(request("POST", "/api/roof/connect", "{}"));
+    }
+
+    public JSONObject roofDisconnect() throws IOException, JSONException {
+        return new JSONObject(request("POST", "/api/roof/disconnect", "{}"));
+    }
+
     private JSONObject roofCommand(String path, int value) throws IOException, JSONException {
         JSONObject body = new JSONObject();
         body.put("value", value);
