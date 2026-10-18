@@ -413,16 +413,39 @@ class TransitionType(Enum):
     ZOOM = auto()         # Zoom effect
 
 
+# Loop rate for headless mode. Nothing is drawn there, so this only paces the
+# housekeeping: the MPG calculator, the lap timer and the ESP32 forward tick. Ten hertz
+# keeps those at their intended cadence (the ESP32 forwarder wants 30 Hz, which headless
+# cannot honour, so it gets every third tick instead of every second frame).
+HEADLESS_HZ = 10
+
+
 class PiDisplayApp:
-    def __init__(self, fullscreen: bool = False):
+    def __init__(self, fullscreen: bool = False, headless: bool = False):
         global PI_WIDTH, PI_HEIGHT
+        self.headless = headless
+        if headless:
+            # SDL picks its video driver when the video subsystem initialises, so this
+            # has to be set before pygame.init(). The dummy driver means no X connection
+            # and no HDMI output, but pygame still works, which keeps every caller of
+            # pygame that is not drawing happy.
+            os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
         pygame.init()
         
         # UI is designed for 800x480, we render to this then scale to display
         PI_WIDTH = 800
         PI_HEIGHT = 480
         
-        if fullscreen:
+        if headless:
+            # Nothing is presented, so the UI is drawn into an offscreen surface that
+            # nobody shows. CAN, the web remote, the Bluetooth link and the ESP32
+            # forwarder all run on their own threads and do not touch this surface.
+            self.screen = pygame.Surface((PI_WIDTH, PI_HEIGHT))
+            self.display_surface = self.screen
+            self.display_width, self.display_height = PI_WIDTH, PI_HEIGHT
+            self.scale_output = False
+            print("DISPLAY: Headless, no HDMI output (offscreen surface only)")
+        elif fullscreen:
             # Get display info before setting mode
             info = pygame.display.Info()
             print(f"DISPLAY: pygame.display.Info() = {info.current_w}x{info.current_h}")
@@ -1039,19 +1062,26 @@ class PiDisplayApp:
                     self.esp32_handler.send_telemetry()
             
             # Render
-            self._render()
-            
-            # Draw exit dialog on top if active
-            if self.show_exit_dialog:
-                self._render_exit_dialog()
-            
-            # Scale render surface to display if needed
-            if self.scale_output:
-                scaled = pygame.transform.scale(self.screen, (self.display_width, self.display_height))
-                self.display_surface.blit(scaled, (0, 0))
-            
-            pygame.display.flip()
-            self.clock.tick(60)  # 60 FPS for smooth G-force ball movement
+            if self.headless:
+                # Skip the entire draw and present. This is the part that cost a core:
+                # the loop redrew 800x480, scaled it and flipped it every 16 ms whether
+                # or not anything had changed. 10 Hz is plenty to pace the housekeeping
+                # (MPG maths, lap timer, ESP32 forward tick) that still has to happen.
+                self.clock.tick(HEADLESS_HZ)
+            else:
+                self._render()
+
+                # Draw exit dialog on top if active
+                if self.show_exit_dialog:
+                    self._render_exit_dialog()
+
+                # Scale render surface to display if needed
+                if self.scale_output:
+                    scaled = pygame.transform.scale(self.screen, (self.display_width, self.display_height))
+                    self.display_surface.blit(scaled, (0, 0))
+
+                pygame.display.flip()
+                self.clock.tick(60)  # 60 FPS for smooth G-force ball movement
         
         # Cleanup
         if self.mpg_calculator:
@@ -3024,7 +3054,13 @@ class PiDisplayApp:
 def main():
     parser = argparse.ArgumentParser(description="MX5 Telemetry Pi Display")
     parser.add_argument("--fullscreen", "-f", action="store_true", help="Run in fullscreen mode")
+    parser.add_argument("--headless", action="store_true",
+                        help="Run with no HDMI output. CAN, the web remote, the Bluetooth "
+                             "link and the ESP32 forwarder all keep running. Also enabled "
+                             "by MX5_HEADLESS=1 in the environment.")
     args = parser.parse_args()
+
+    headless = args.headless or os.environ.get("MX5_HEADLESS", "") not in ("", "0")
     
     print("="*60)
     print("MX5 Telemetry - Raspberry Pi Display")
@@ -3034,7 +3070,7 @@ def main():
     print("  DEMO    = Simulated data for testing")
     print("="*60)
     
-    app = PiDisplayApp(fullscreen=args.fullscreen)
+    app = PiDisplayApp(fullscreen=args.fullscreen, headless=headless)
     app.run()
 
 
