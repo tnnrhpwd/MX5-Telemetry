@@ -1,0 +1,17 @@
+[Unit]
+Description=MX5 Pi Link Bluetooth agent (auto-accept pairing, hold device class)
+Documentation=file:/home/pi/MX5-Telemetry/pi/mx5-bt-agent.py
+# Replaces two earlier hacks: bluez-tools' bt-agent (prompts on stdin under systemd and
+# is never answered) and a oneshot class-setter (races bluetoothd and loses on some
+# boots). Both live in this one process now.
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/MX5-Telemetry/pi/mx5-bt-agent.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
