@@ -92,7 +92,7 @@ class BleServer:
 
     # -- lifecycle -----------------------------------------------------------
 
-    def start(self, timeout=10):
+    def start(self, timeout=35):
         """Start the peripheral and wait until it is really advertising.
 
         Waiting matters. Registering the advertisement is asynchronous, so a start() that
@@ -182,7 +182,29 @@ class BleServer:
             SERVICE_UUID, TX_UUID, GATTCharacteristicProperties.notify, b'',
             GATTAttributePermissions.readable | GATTAttributePermissions.writeable)
 
-        await self._server.start()
+        # Registering the advertisement is the step that actually fails when the service
+        # is restarted while a phone is connected: BlueZ still holds the previous
+        # instance's advertisement, and refuses the new one outright. That left the BLE
+        # transport dead for the life of the process, and worse, the phone could still
+        # connect to the leftover GATT objects and subscribe, so it looked alive while
+        # nothing answered. Retry instead of giving up on the first refusal; it clears
+        # within a few seconds once the old client has gone.
+        last_error = None
+        for attempt in range(1, 8):
+            try:
+                await self._server.start()
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "BLE advertisement registration attempt %d failed: %s", attempt, e)
+                if attempt < 7:
+                    await asyncio.sleep(2)
+
+        if last_error is not None:
+            raise last_error
+
         logger.info("BLE link advertising as %r (service %s)", self.name, SERVICE_UUID)
 
         # Past this line the advertisement is registered, so start() may report success.
