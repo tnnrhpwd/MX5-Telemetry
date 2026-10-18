@@ -24,8 +24,32 @@ import java.util.List;
  */
 public final class PiClient {
 
-    /** How long to stop trying after every transport has failed. */
-    private static final long FAIL_BACKOFF_MS = 4000;
+    /** How long to stop trying after every transport has failed, before escalation. */
+    private static final long FAIL_BACKOFF_MIN_MS = 2000;
+
+    /**
+     * Ceiling for the "everything failed" backoff.
+     *
+     * This used to be a flat 4s. A link that had genuinely gone away was then re-walked
+     * every 4s for ever, and every walk paid the tether's connect timeout plus a
+     * connectGatt(), which is exactly the hammering that leaves Android's Bluetooth stack
+     * refusing new connections until the app is restarted. It grows now and resets the
+     * moment anything works.
+     */
+    private static final long FAIL_BACKOFF_MAX_MS = 20000;
+
+    /**
+     * How long a single transport sits out after it fails.
+     *
+     * Two things went wrong without this. A phone with no USB tether paid the 1.5s connect
+     * timeout on the tether on every single chain walk, because the tether address is
+     * always configured. And one dropped Bluetooth exchange cleared the sticky transport,
+     * so the next request had to lose that same 1.5s before retrying the link that had
+     * merely hiccuped. Both made a working link feel broken. The skip grows while a
+     * transport keeps failing and is dropped the moment it answers.
+     */
+    private static final long COOLDOWN_MIN_MS = 10000;
+    private static final long COOLDOWN_MAX_MS = 60000;
 
     /**
      * Why each transport failed is logged, not just stored.
@@ -48,6 +72,53 @@ public final class PiClient {
     /** Set when everything failed, so a poll loop does not hammer dead links. */
     private volatile long retryAfter;
     private volatile String lastError = "";
+
+    /**
+     * Per-transport failure memory, keyed by identity.
+     *
+     * Identity, not equals: these are the three singletons in the chain and nothing else
+     * is ever used as a key.
+     */
+    private final java.util.IdentityHashMap<LinkTransport, Health> health =
+            new java.util.IdentityHashMap<>();
+
+    private static final class Health {
+        long skipUntil;
+        int failures;
+    }
+
+    /** Consecutive "nothing reached the Pi" results, used to escalate the backoff. */
+    private int failStreak;
+
+    private boolean allowed(LinkTransport t) {
+        synchronized (health) {
+            Health h = health.get(t);
+            return h == null || System.currentTimeMillis() >= h.skipUntil;
+        }
+    }
+
+    private void markGood(LinkTransport t) {
+        synchronized (health) {
+            health.remove(t);
+        }
+        failStreak = 0;
+    }
+
+    private void markBad(LinkTransport t) {
+        synchronized (health) {
+            Health h = health.get(t);
+            if (h == null) {
+                h = new Health();
+                health.put(t, h);
+            }
+            h.failures++;
+            long delay = COOLDOWN_MIN_MS << Math.min(h.failures - 1, 3);
+            if (delay > COOLDOWN_MAX_MS) {
+                delay = COOLDOWN_MAX_MS;
+            }
+            h.skipUntil = System.currentTimeMillis() + delay;
+        }
+    }
 
     public void configure(String baseUrl, String token) {
         http.configure(baseUrl, token);
@@ -143,6 +214,27 @@ public final class PiClient {
         active = null;
         retryAfter = 0;
         lastError = "";
+        failStreak = 0;
+        synchronized (health) {
+            health.clear();
+        }
+    }
+
+    /**
+     * Forget the recovery timers because the user is looking at the screen again.
+     *
+     * Coming back into view is a fresh start: the Pi may have been power-cycled while the
+     * app was hidden, and making the first poll after a resume wait out a backoff that
+     * built up in the background is the sort of thing that reads as "the app is stuck and
+     * needs reopening". Keeps the sticky transport, so an already-good Bluetooth link is
+     * still used first.
+     */
+    public void clearBackoff() {
+        retryAfter = 0;
+        failStreak = 0;
+        synchronized (health) {
+            health.clear();
+        }
     }
 
     public void close() {
@@ -243,36 +335,61 @@ public final class PiClient {
         LinkTransport sticky = active;
         if (sticky != null && sticky.isReady()) {
             try {
-                return sticky.request(method, path, body);
+                String out = sticky.request(method, path, body);
+                if (retryAfter != 0) {
+                    retryAfter = 0;
+                }
+                return out;
             } catch (LinkTransport.Refused e) {
                 throw e;
             } catch (IOException e) {
                 Log.w(TAG, sticky.label() + " failed: " + e);
                 sticky.onFailure();
+                markBad(sticky);
                 active = null;
                 failure = e;
             }
         }
 
+        // Prefer transports that are not sitting out a cooldown. If every remaining
+        // candidate is cooling down, ignore the cooldowns instead of declaring the Pi
+        // unreachable: that is the difference between recovering slowly and staying dead
+        // until the app is restarted.
+        List<LinkTransport> ready = new ArrayList<>();
+        List<LinkTransport> cooling = new ArrayList<>();
         for (LinkTransport t : chain) {
             if (t == sticky || !t.isReady()) {
                 continue;
             }
+            if (allowed(t)) {
+                ready.add(t);
+            } else {
+                cooling.add(t);
+            }
+        }
+        if (ready.isEmpty()) {
+            ready.addAll(cooling);
+        }
+
+        for (LinkTransport t : ready) {
             try {
                 String out = t.request(method, path, body);
                 active = t;
                 retryAfter = 0;
                 lastError = "";
+                markGood(t);
                 return out;
             } catch (LinkTransport.Refused e) {
                 // It answered, so it works. Remember it and let the refusal through.
                 active = t;
                 retryAfter = 0;
                 lastError = "";
+                markGood(t);
                 throw e;
             } catch (IOException e) {
                 Log.w(TAG, t.label() + " failed: " + e);
                 t.onFailure();
+                markBad(t);
                 if (failure == null) {
                     failure = e;
                 }
@@ -282,8 +399,28 @@ public final class PiClient {
         lastError = failure == null
                 ? "No way to reach the Pi: " + firstUnavailableReason()
                 : failure.getMessage();
+
+        // The tether's error is always the one reported, because the tether is first in
+        // the chain and its exception is therefore the first failure recorded. On a phone
+        // that is simply not tethered, that message says "failed to connect to
+        // 192.168.42.100 after 1500ms" and buries the fact that Bluetooth has no paired Pi
+        // to fall back on, which is the one thing the user could act on.
+        String btWhy = bluetoothUnavailableReason();
+        if (!btWhy.isEmpty()) {
+            lastError = lastError + " | Bluetooth: " + btWhy;
+        }
+
         Log.w(TAG, "no transport reached the Pi; last error: " + lastError);
-        retryAfter = System.currentTimeMillis() + FAIL_BACKOFF_MS;
+
+        // Escalate. Consecutive total failures mean the Pi is genuinely away, and retrying
+        // it every couple of seconds is what makes the Bluetooth stack stop accepting
+        // connections.
+        int streak = ++failStreak;
+        long backoff = FAIL_BACKOFF_MIN_MS << Math.min(streak - 1, 4);
+        if (backoff > FAIL_BACKOFF_MAX_MS) {
+            backoff = FAIL_BACKOFF_MAX_MS;
+        }
+        retryAfter = System.currentTimeMillis() + backoff;
         throw failure != null ? failure : new IOException(lastError);
     }
 
@@ -295,5 +432,26 @@ public final class PiClient {
             }
         }
         return "nothing is configured";
+    }
+
+    /**
+     * Why Bluetooth cannot help right now, or "" if it can.
+     *
+     * Only consulted when every transport has already failed, so it never costs anything
+     * on the working path.
+     */
+    private String bluetoothUnavailableReason() {
+        for (LinkTransport t : chain) {
+            if (t instanceof HttpTransport) {
+                continue;
+            }
+            if (!t.isReady()) {
+                String why = t.unavailableReason();
+                if (!why.isEmpty()) {
+                    return why;
+                }
+            }
+        }
+        return "";
     }
 }

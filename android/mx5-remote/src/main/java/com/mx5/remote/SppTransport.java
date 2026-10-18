@@ -1,6 +1,7 @@
 package com.mx5.remote;
 
 import android.bluetooth.BluetoothSocket;
+import android.util.Log;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -54,7 +55,16 @@ final class SppTransport extends BtTransport {
 
     @Override
     protected boolean isOpen() {
-        return socket != null && socket.isConnected();
+        if (socket == null || !socket.isConnected()) {
+            return false;
+        }
+        // isConnected() only reports that connect() once succeeded; it stays true after the
+        // Pi drops the link. The reader thread is what actually notices, because its read()
+        // returns -1 when the peer closes, so a dead reader means a dead socket. Without
+        // this the transport kept reporting itself healthy and every request paid the full
+        // three second reply timeout before anything reconnected.
+        Thread r = reader;
+        return r == null || r.isAlive();
     }
 
     @Override
@@ -75,11 +85,38 @@ final class SppTransport extends BtTransport {
 
         try {
             s.connect();
-        } catch (IOException e) {
+        } catch (IOException secureFailure) {
             closeQuietly(s);
-            // The usual cause on a Pi is that the SDP record was never published, which
-            // reads as "service not found" here.
-            throw new IOException("SPP connect failed: " + e.getMessage(), e);
+
+            // Retry once over the insecure variant before giving up on SPP.
+            //
+            // createRfcommSocketToServiceRecord does an SDP lookup on the Pi and needs the
+            // cached record to still be right. A Pi that has been rebooted, had bluetoothd
+            // restarted, or been re-paired routinely leaves that cache stale, and the
+            // secure connect then fails with "service discovery failed" even though the
+            // device is paired and in range. The insecure socket skips authentication at
+            // the RFCOMM layer and still finds the record, and nothing is actually
+            // unprotected by it: the token in `hello` is the real gate, exactly as the
+            // comment on authenticate() says. Without this the app had to be restarted, or
+            // the pairing redone, to get the link back.
+            Log.d("MX5Link", "secure SPP connect failed, retrying insecure: " + secureFailure);
+            try {
+                s = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID);
+            } catch (SecurityException e) {
+                throw new IOException("Bluetooth permission denied", e);
+            } catch (IOException e) {
+                throw new IOException("SPP connect failed: " + secureFailure.getMessage(), e);
+            }
+
+            try {
+                s.connect();
+            } catch (IOException insecureFailure) {
+                closeQuietly(s);
+                // The usual cause on a Pi is that the SDP record was never published, which
+                // reads as "service not found" here.
+                throw new IOException("SPP connect failed: " + insecureFailure.getMessage(),
+                        insecureFailure);
+            }
         }
 
         socket = s;

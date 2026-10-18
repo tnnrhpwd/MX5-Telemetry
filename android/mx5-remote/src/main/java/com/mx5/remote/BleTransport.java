@@ -8,6 +8,8 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import java.io.IOException;
@@ -42,6 +44,14 @@ final class BleTransport extends BtTransport {
     private static final long OPEN_TIMEOUT_MS = 8000;
     private static final long WRITE_TIMEOUT_MS = 2000;
 
+    /**
+     * How long to wait for a retired client's disconnect before closing it regardless.
+     *
+     * Long enough that the normal path almost always takes the callback route, short enough
+     * that a stack which never reports the disconnect cannot pin a client for ever.
+     */
+    private static final long RETIRE_TIMEOUT_MS = 4000;
+
     /** BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY: another write is outstanding. */
     private static final int GATT_WRITE_REQUEST_BUSY = 201;
 
@@ -73,8 +83,22 @@ final class BleTransport extends BtTransport {
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic rx;
     private BluetoothGattCharacteristic tx;
+
+    /**
+     * Clients asked to disconnect, waiting for their own disconnect to land.
+     *
+     * Their callback can no longer be matched against {@link #gatt}, because a new attempt
+     * replaces it, so they are tracked separately and closed when their callback arrives.
+     */
+    private final java.util.Queue<BluetoothGatt> retiring =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private Handler handler;
+
     private int mtu = 23;
     private volatile boolean connected;
+
+    /** The status from the last connection-state callback, for a useful error message. */
+    private volatile int lastConnectStatus = BluetoothGatt.GATT_SUCCESS;
 
     // Assigned by the connecting thread and read by the GATT callbacks on a binder thread,
     // so these have to be volatile: without it a callback can look at a latch before it is
@@ -136,6 +160,7 @@ final class BleTransport extends BtTransport {
         servicesStatus = BluetoothGatt.GATT_FAILURE;
         descriptorStatus = BluetoothGatt.GATT_FAILURE;
         connected = false;
+        lastConnectStatus = BluetoothGatt.GATT_SUCCESS;
 
         // Drop any previous connection before opening another. Leaving one behind leaves a
         // second GATT client on the same peripheral, which Android answers by refusing the
@@ -158,8 +183,15 @@ final class BleTransport extends BtTransport {
             throw new IOException("BLE connect timed out");
         }
         if (!connected) {
+            int status = lastConnectStatus;
             closePipe();
-            throw new IOException("BLE connection was refused");
+            // 133 is GATT_ERROR, the catch-all Android returns when the stack still holds
+            // state for a client it has not finished tearing down, or when the peripheral
+            // has dropped the bond. Both are worth naming, because the fix is different
+            // and neither is guessable from "connection refused".
+            throw new IOException(status == 133
+                    ? "BLE connect failed (133): the phone or the Pi still holds the old link"
+                    : "BLE connection was refused (status " + status + ")");
         }
 
         if (!gatt.discoverServices() || !await(servicesLatch, OPEN_TIMEOUT_MS)) {
@@ -330,17 +362,50 @@ final class BleTransport extends BtTransport {
         gatt = null;
         rx = null;
         tx = null;
-        if (g != null) {
-            try {
-                g.disconnect();
-            } catch (Exception ignored) {
-                // already gone
+        if (g == null) {
+            return;
+        }
+
+        // Ask for the disconnect and let onConnectionStateChange close the client.
+        //
+        // This used to call close() on the next line. Closing a GATT client before its own
+        // disconnect has landed tells Android's stack the peripheral is still connected on
+        // behalf of a client that no longer exists; the next connectGatt() then comes back
+        // with status 133, and every attempt after it does too. That is a Bluetooth stack
+        // that only a process restart can free, which is exactly the "close the app and
+        // reopen it" this link used to need. The delayed close covers the case where the
+        // disconnect callback never arrives at all.
+        retiring.add(g);
+        try {
+            g.disconnect();
+        } catch (Exception ignored) {
+            // Already gone.
+        }
+        scheduleRetireClose(g);
+    }
+
+    /** Close a retired client that never reported its disconnect. */
+    private void scheduleRetireClose(final BluetoothGatt g) {
+        Handler h;
+        synchronized (this) {
+            if (handler == null) {
+                handler = new Handler(Looper.getMainLooper());
             }
-            try {
-                g.close();
-            } catch (Exception ignored) {
-                // already gone
+            h = handler;
+        }
+        h.postDelayed(() -> {
+            if (retiring.remove(g)) {
+                Log.d(TAG, "closing a retired GATT client after the disconnect timeout");
+                closeQuietly(g);
             }
+        }, RETIRE_TIMEOUT_MS);
+    }
+
+    private static void closeQuietly(BluetoothGatt g) {
+        try {
+            g.close();
+        } catch (Exception ignored) {
+            // Already gone.
         }
     }
 
@@ -386,9 +451,18 @@ final class BleTransport extends BtTransport {
         @Override
         public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
             Log.d(TAG, "onConnectionStateChange status=" + status + " newState=" + newState);
+
+            // A client we already retired: this is its disconnect landing, which is the
+            // point at which it is safe to close it. See closeGatt().
+            if (retiring.remove(g)) {
+                closeQuietly(g);
+                return;
+            }
+
             if (!isCurrent(g)) {
                 return;
             }
+            lastConnectStatus = status;
             connected = newState == BluetoothProfile.STATE_CONNECTED;
             if (!connected) {
                 // Unblocks a pending receiveLine rather than leaving it to time out.

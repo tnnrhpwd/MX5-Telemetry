@@ -1166,6 +1166,13 @@ public class MainActivity extends Activity implements Screen.Host {
     protected void onResume() {
         super.onResume();
         Log.i(TAG, "resume " + describeThis());
+        // Coming back into view clears the failure backoff and any transport cooldown. The
+        // Pi may well have been power-cycled while the app was hidden, and making the first
+        // poll of a resume wait out a timer that built up in the background is exactly the
+        // "stuck, close it and reopen" behaviour this link used to have.
+        if (pi != null) {
+            pi.clearBackoff();
+        }
         startPolling();
         refreshNow();
     }
