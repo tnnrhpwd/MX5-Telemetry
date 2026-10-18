@@ -34,10 +34,25 @@
                  android:label="MX5 Remote"
                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
                  android:usesCleartextTraffic="true">
+        <!-- singleTop, NOT singleTask.
+
+             Android Auto launches this with FLAG_ACTIVITY_NEW_TASK |
+             FLAG_ACTIVITY_MULTIPLE_TASK | FLAG_ACTIVITY_CLEAR_TASK. singleTask allows one
+             instance system-wide, which contradicts CLEAR_TASK, so the system resolved the
+             conflict by destroying the instance and recreating it in a new task, over and
+             over: the phone app vanished, the projected app never finished drawing, and
+             each teardown closed the Bluetooth link the next launch then had to rebuild.
+
+             singleTop gives the car screen its own instance in its own task and leaves
+             the phone's instance alone. PiLink keeps the two sharing one PiClient.
+
+             smallestScreenSize and uiMode are in configChanges because moving a task from
+             the phone's display to the head unit changes both; without them that move is a
+             configuration change and the activity is recreated anyway. -->
         <activity android:name=".MainActivity"
                   android:exported="true"
-                  android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density"
-                  android:launchMode="singleTask">
+                  android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboardHidden|density"
+                  android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

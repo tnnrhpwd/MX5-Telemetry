@@ -70,6 +70,16 @@ public final class PiClient {
         retryAfter = 0;
     }
 
+    /**
+     * Whether the Bluetooth half of the chain exists yet.
+     *
+     * A second activity instance shares this client, and must not rebuild the transports:
+     * that would drop the one already carrying the link and abandon its connection.
+     */
+    public boolean bluetoothConfigured() {
+        return ble != null;
+    }
+
     private void rebuildChain() {
         chain.clear();
         chain.add(http);

@@ -16,6 +16,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -51,8 +52,9 @@ import java.util.Locale;
 public class MainActivity extends Activity implements Screen.Host {
 
     private static final String PREFS = "mx5";
-    private static final String DEFAULT_ADDRESS = "192.168.42.100:5000";
-    private static final int POLL_MS = 250;
+    /** Lifecycle only. Link failures log under MX5Link, Bluetooth under MX5Ble. */
+    private static final String TAG = "MX5Life";
+    private static final String DEFAULT_ADDRESS = "192.168.42.100:5000";    private static final int POLL_MS = 250;
     private static final int STATUS_EVERY = 8;
     private static final int ROOF_EVERY = 12;
     /** Fixed height of a vertical rail row, so the rows are uniform and bounded. */
@@ -61,7 +63,12 @@ public class MainActivity extends Activity implements Screen.Host {
     /** Request code for the one-off Nearby devices prompt. */
     private static final int REQ_BLUETOOTH = 1001;
 
-    private final PiClient pi = new PiClient();
+    /**
+     * Shared with the other instance Android Auto may have running, and assigned in
+     * onCreate(). Not created here: a second instance must join the existing link rather
+     * than open a competing GATT connection, and must not close it when it goes away.
+     */
+    private PiClient pi;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     /**
@@ -148,8 +155,14 @@ public class MainActivity extends Activity implements Screen.Host {
         useMph = prefs.getBoolean("use_mph", true);
         currentIndex = prefs.getInt("screen", 0);
 
+        pi = PiLink.acquire();
         pi.configure(prefs.getString("address", DEFAULT_ADDRESS), prefs.getString("token", ""));
-        pi.setBluetooth(this, btDevices, prefs.getString("token", ""));
+        // Only the instance that created the shared client builds the Bluetooth chain. A
+        // second instance rebuilding it would drop the transport that is already carrying
+        // the link, and leave its GATT connection open but unreachable.
+        if (!pi.bluetoothConfigured()) {
+            pi.setBluetooth(this, btDevices, prefs.getString("token", ""));
+        }
         requestBluetoothPermission();
 
         DisplayMetrics dm = getResources().getDisplayMetrics();
@@ -800,18 +813,32 @@ public class MainActivity extends Activity implements Screen.Host {
 
     // ----------------------------------------------------------------- polling
 
+    /**
+     * Which poll loop is the current one.
+     *
+     * onPause() cannot simply interrupt the thread and forget it: interrupt is cooperative,
+     * so the old thread can still be inside a two second Bluetooth write when onResume()
+     * starts the next loop. Bumping this makes the stale loop and any frames it had already
+     * queued no-ops, which matters because both instances now share one PiClient.
+     */
+    private volatile int pollGen;
+
     private void startPolling() {
         if (poller != null) {
             return;
         }
+        final int gen = ++pollGen;
         poller = new Thread(() -> {
             int tick = 0;
-            while (alive) {
+            while (alive && gen == pollGen) {
                 if (pi.isConfigured()) {
                     try {
                         Telemetry t = Telemetry.from(pi.telemetry());
                         online = true;
                         handler.post(() -> {
+                            if (!alive || gen != pollGen) {
+                                return;
+                            }
                             copyInto(t);
                             screen.bind(latest);
                             updateLink();
@@ -819,6 +846,9 @@ public class MainActivity extends Activity implements Screen.Host {
                         if (tick % STATUS_EVERY == 0) {
                             JSONObject status = pi.status();
                             handler.post(() -> {
+                                if (!alive || gen != pollGen) {
+                                    return;
+                                }
                                 applyStatus(status);
                                 online = true;
                                 updateLink();
@@ -826,7 +856,12 @@ public class MainActivity extends Activity implements Screen.Host {
                         }
                         if (tick % ROOF_EVERY == 0 && screen instanceof RoofScreen) {
                             JSONObject roof = pi.roofStatus();
-                            handler.post(() -> ((RoofScreen) screen).applyRoof(roof));
+                            handler.post(() -> {
+                                if (!alive || gen != pollGen) {
+                                    return;
+                                }
+                                ((RoofScreen) screen).applyRoof(roof);
+                            });
                         }
                     } catch (Exception e) {
                         // Refresh even when the link has never been up. This used to be gated
@@ -837,7 +872,11 @@ public class MainActivity extends Activity implements Screen.Host {
                         if (online || !reason.equals(lastLinkReason)) {
                             online = false;
                             lastLinkReason = reason;
-                            handler.post(this::updateLink);
+                            handler.post(() -> {
+                                if (alive && gen == pollGen) {
+                                    updateLink();
+                                }
+                            });
                         }
                     }
                 }
@@ -850,6 +889,15 @@ public class MainActivity extends Activity implements Screen.Host {
             }
         }, "pi-poll");
         poller.start();
+    }
+
+    /** Supersede the running poll loop and drop the reference to it. */
+    private void stopPolling() {
+        pollGen++;
+        if (poller != null) {
+            poller.interrupt();
+            poller = null;
+        }
     }
 
     /** Telemetry is a fresh object per poll, so copy it into the long-lived one. */
@@ -1101,6 +1149,7 @@ public class MainActivity extends Activity implements Screen.Host {
     @Override
     protected void onResume() {
         super.onResume();
+        Log.i(TAG, "resume " + describeThis());
         startPolling();
         refreshNow();
     }
@@ -1108,30 +1157,49 @@ public class MainActivity extends Activity implements Screen.Host {
     @Override
     protected void onPause() {
         super.onPause();
+        Log.i(TAG, "pause " + describeThis());
         // Stop the poll loop while hidden: a backgrounded app holding a 4Hz poll
         // open on the tether just drains the phone.
-        if (poller != null) {
-            poller.interrupt();
-            poller = null;
-        }
+        stopPolling();
     }
 
     @Override
     protected void onDestroy() {
+        Log.i(TAG, "destroy " + describeThis() + " finishing=" + isFinishing());
         alive = false;
-        if (poller != null) {
-            poller.interrupt();
-            poller = null;
-        }
+        stopPolling();
         stopClock();
         if (batteryReceiver != null) {
             unregisterReceiver(batteryReceiver);
             batteryReceiver = null;
         }
         // Release any Bluetooth socket rather than leaving it to the process teardown: an
-        // RFCOMM connection left open keeps the Pi's listener occupied.
-        pi.close();
+        // RFCOMM connection left open keeps the Pi's listener occupied. Refcounted, because
+        // the car screen and the phone can both have an instance and only the last one may
+        // take the link down.
+        if (pi != null) {
+            PiLink.release(pi);
+        }
         super.onDestroy();
+    }
+
+    /**
+     * Which instance and which display this is, for the lifecycle log.
+     *
+     * The Android Auto loop was invisible in logcat because the app logged no lifecycle at
+     * all, so "the app closed" had no trace anywhere. These lines make the next one
+     * readable from a laptop: two different hashes or task ids on one launch means the
+     * car screen and the phone are running separate instances, which is now expected, and
+     * a rapid alternation of them would mean something is still recreating the activity.
+     */
+    private String describeThis() {
+        // getWindowManager().getDefaultDisplay() rather than Activity#getDisplay(): the
+        // latter is API 30 and this app still supports 26.
+        android.view.Display d = getWindowManager().getDefaultDisplay();
+        int display = d == null ? -1 : d.getDisplayId();
+        return Integer.toHexString(System.identityHashCode(this))
+                + " display=" + display
+                + " task=" + getTaskId();
     }
 
     @Override
