@@ -44,6 +44,10 @@ AGENT_PATH = "/mx5/pi_link_agent"
 ADAPTER_PATH = "/org/bluez/hci0"
 WANT_CLASS = 0x120103
 
+DISPLAY_UNIT = "mx5-display.service"
+ADV_STALE_TICKS = 9  # 9 x 10s = 90s with no advertiser before acting
+ADV_MAX_RESTARTS = 3
+
 log = logging.getLogger("mx5-bt-agent")
 
 
@@ -137,6 +141,84 @@ def hold_class(bus):
     return True
 
 
+_adv = {"stale": 0, "restarts": 0}
+
+
+def display_is_active():
+    try:
+        out = subprocess.check_output(
+            ["systemctl", "is-active", DISPLAY_UNIT], stderr=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return out.strip() == b"active"
+
+
+def watch_advertising(bus):
+    """Restart the display service if the BLE advertisement has gone missing.
+
+    bt_ble_server registers its advertisement once, when the display service starts.
+    BlueZ releases that registration when bluetoothd shuts down, and nothing re-creates
+    it - so after any bluetoothd restart the Pi is bonded, discoverable, pairable, and
+    has ActiveInstances = 0. There is literally nothing to connect to, yet the phone's
+    Bluetooth settings still say "connected" (that is the classic link), and the app
+    just reports the Pi as offline. This is exactly what happened after the pairing work
+    restarted bluetoothd several times.
+
+    Nothing inside the display service notices, so it is watched from out here.
+    Deliberately conservative: 90s of continuous zero before acting, so a normal start
+    (BLE takes up to ~25s to register) cannot trip it, and it gives up after a few
+    attempts rather than restarting forever if BLE is switched off in the Pi's config.
+    """
+    try:
+        props = dbus.Interface(
+            bus.get_object("org.bluez", ADAPTER_PATH),
+            "org.freedesktop.DBus.Properties",
+        )
+        active = int(props.Get("org.bluez.LEAdvertisingManager1", "ActiveInstances"))
+    except dbus.exceptions.DBusException:
+        return True
+
+    if active > 0:
+        _adv["stale"] = 0
+        return True
+
+    if not display_is_active():
+        return True
+
+    _adv["stale"] += 1
+    if _adv["stale"] < ADV_STALE_TICKS:
+        return True
+
+    _adv["stale"] = 0
+    if _adv["restarts"] >= ADV_MAX_RESTARTS:
+        if _adv["restarts"] == ADV_MAX_RESTARTS:
+            _adv["restarts"] += 1
+            log.error(
+                "BLE advertisement still missing after %d restarts of %s; giving up",
+                ADV_MAX_RESTARTS,
+                DISPLAY_UNIT,
+            )
+        return True
+
+    _adv["restarts"] += 1
+    log.warning(
+        "no BLE advertisement for %ds, restarting %s (%d/%d)",
+        ADV_STALE_TICKS * 10,
+        DISPLAY_UNIT,
+        _adv["restarts"],
+        ADV_MAX_RESTARTS,
+    )
+    # Popen, not call: blocking here would stall the GLib loop that has to answer
+    # bluetoothd's Release() while it shuts down.
+    subprocess.Popen(
+        ["systemctl", "restart", DISPLAY_UNIT],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return True
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -174,7 +256,7 @@ def main():
     # property read every ten seconds is a rounding error even on a Pi.
     from gi.repository import GLib
 
-    GLib.timeout_add_seconds(10, lambda: hold_class(bus))
+    GLib.timeout_add_seconds(10, lambda: (hold_class(bus), watch_advertising(bus)) and True)
 
     log.info("mx5-bt-agent running")
     GLib.MainLoop().run()
