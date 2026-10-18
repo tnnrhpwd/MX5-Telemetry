@@ -38,6 +38,8 @@ uint8_t LCD_GetBacklight(void);
 void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color);
 void LCD_DrawPixelBlend(uint16_t x, uint16_t y, uint16_t color, uint16_t bg, uint8_t coverage);
 void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
+// Blit an opaque block of native (non byte-swapped) RGB565 pixels in one pass.
+void LCD_DrawBuffer(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t* pixels);
 void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
 void LCD_FillRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color);
 void LCD_DrawRoundRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color);

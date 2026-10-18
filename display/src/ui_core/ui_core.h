@@ -124,6 +124,8 @@ struct CachedTelemetry {
     float coolantTemp;
     float fuelLevel;
     float ambientTemp;
+    float throttle;          // Cached throttle position (RPM screen)
+    float brake;             // Cached brake position (RPM screen)
     float tirePressure[4];
     float averageMPG;       // Cached MPG value
     float instantMPG;       // Cached instantaneous MPG value

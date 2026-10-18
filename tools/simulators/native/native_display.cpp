@@ -131,6 +131,15 @@ void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color
     LCD_FillRect(x + w - 1, y, 1, h, color);
 }
 
+void LCD_DrawBuffer(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t* pixels) {
+    if (pixels == NULL || w == 0 || h == 0) return;
+    for (int row = 0; row < (int)h; row++) {
+        for (int col = 0; col < (int)w; col++) {
+            set_px((int)x + col, (int)y + row, rgb565_to_rgb888(pixels[row * (int)w + col]));
+        }
+    }
+}
+
 static void fill_circle_px(int cx, int cy, int r, uint32_t c) {
     int x = r, y = 0;
     int err = 0;

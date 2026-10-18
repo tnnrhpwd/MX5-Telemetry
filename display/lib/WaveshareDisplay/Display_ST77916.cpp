@@ -497,16 +497,82 @@ void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color
     }
 }
 
+static inline uint16_t lcd_swap16(uint16_t c) {
+    return (uint16_t)(((c >> 8) & 0xFF) | ((c << 8) & 0xFF00));
+}
+
 void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color) {
     if (panel_handle == NULL) return;
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     
     // Byte swap for BIG endian
-    uint16_t swapped = ((color >> 8) & 0xFF) | ((color << 8) & 0xFF00);
+    uint16_t swapped = lcd_swap16(color);
     esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + 1, y + 1, &swapped);
 }
 
+void LCD_DrawBuffer(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t* pixels) {
+    if (panel_handle == NULL || pixels == NULL || w == 0 || h == 0) return;
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+
+    uint16_t draw_w = w;
+    uint16_t draw_h = h;
+    if (x + draw_w > LCD_WIDTH)  draw_w = LCD_WIDTH - x;
+    if (y + draw_h > LCD_HEIGHT) draw_h = LCD_HEIGHT - y;
+
+    // Stage through a DMA-capable scratch buffer one chunk of rows at a time so
+    // a whole block costs a handful of transactions instead of one per pixel.
+    if (!static_buffer_initialized) {
+        static_fill_buffer = (uint16_t*)heap_caps_malloc(STATIC_FILL_BUFFER_SIZE, MALLOC_CAP_DMA);
+        static_buffer_initialized = true;
+    }
+    uint16_t* stage = static_fill_buffer;
+    uint32_t stage_px = static_fill_buffer ? (STATIC_FILL_BUFFER_SIZE / 2) : 0;
+    if (stage == NULL || stage_px < draw_w) {
+        // No scratch space - degrade to row-at-a-time with a small stack buffer
+        uint16_t rowbuf[LCD_WIDTH];
+        if (draw_w > LCD_WIDTH) return;
+        for (uint16_t row = 0; row < draw_h; row++) {
+            for (uint16_t col = 0; col < draw_w; col++) {
+                rowbuf[col] = lcd_swap16(pixels[row * w + col]);
+            }
+            esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + 1, rowbuf);
+        }
+        return;
+    }
+
+    uint16_t rows_per_chunk = (uint16_t)(stage_px / draw_w);
+    if (rows_per_chunk > draw_h) rows_per_chunk = draw_h;
+
+    for (uint16_t row = 0; row < draw_h; row += rows_per_chunk) {
+        uint16_t chunk = rows_per_chunk;
+        if (row + chunk > draw_h) chunk = draw_h - row;
+        for (uint16_t r = 0; r < chunk; r++) {
+            const uint16_t* src = pixels + (uint32_t)(row + r) * w;
+            uint16_t* dst = stage + (uint32_t)r * draw_w;
+            for (uint16_t col = 0; col < draw_w; col++) {
+                dst[col] = lcd_swap16(src[col]);
+            }
+        }
+        esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + chunk, stage);
+    }
+}
+
 void LCD_DrawLine(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t color) {
+    // Axis-aligned lines go out as a single filled rect. The generic Bresenham
+    // loop costs one QSPI transaction per pixel, so it is the slow path.
+    if (y0 == y1) {
+        uint16_t xa = (x0 < x1) ? x0 : x1;
+        uint16_t xb = (x0 < x1) ? x1 : x0;
+        LCD_FillRect(xa, y0, (uint16_t)(xb - xa + 1), 1, color);
+        return;
+    }
+    if (x0 == x1) {
+        uint16_t ya = (y0 < y1) ? y0 : y1;
+        uint16_t yb = (y0 < y1) ? y1 : y0;
+        LCD_FillRect(x0, ya, 1, (uint16_t)(yb - ya + 1), color);
+        return;
+    }
+
     int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     int err = dx + dy, e2;
@@ -884,6 +950,7 @@ void LCD_DrawPixelBlend(uint16_t x, uint16_t y, uint16_t color, uint16_t bg, uin
 }
 
 void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {
+    if (panel_handle == NULL) return;
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     if (c < 32 || c > 127) c = '?';
 
@@ -901,16 +968,39 @@ void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, u
     }
 
     int g = c - 32;
-    for (int row = 0; row < H; row++) {
-        for (int col = 0; col < W; col++) {
-            uint8_t cov = alpha[g * W * H + row * W + col];
-            if (cov == 0) {
-                if (bg != color) LCD_DrawPixel(x + col, y + row, bg);
-            } else {
+
+    uint16_t cw = (uint16_t)W;
+    uint16_t ch = (uint16_t)H;
+    if (x + cw > LCD_WIDTH)  cw = LCD_WIDTH - x;
+    if (y + ch > LCD_HEIGHT) ch = LCD_HEIGHT - y;
+
+    // `bg == color` means "blend onto whatever is already on screen", which
+    // needs read-modify-write, so that case keeps the per-pixel path.
+    if (bg == color) {
+        for (uint16_t row = 0; row < ch; row++) {
+            for (uint16_t col = 0; col < cw; col++) {
+                uint8_t cov = alpha[g * W * H + row * W + col];
+                if (cov == 0) continue;
                 LCD_DrawPixel(x + col, y + row, (cov == 15) ? color : rgb565Blend(bg, color, cov));
             }
         }
+        return;
     }
+
+    // Composite the whole glyph into a small local buffer and push it with ONE
+    // panel transaction. The old path issued one transaction per glyph pixel -
+    // 315 of them for a size-3 character - which dominated the frame time.
+    static __attribute__((aligned(4))) uint16_t glyph_buf[15 * 21];
+    for (uint16_t row = 0; row < ch; row++) {
+        uint16_t* dst = glyph_buf + (uint32_t)row * cw;
+        const uint8_t* src = alpha + (uint32_t)g * W * H + (uint32_t)row * W;
+        for (uint16_t col = 0; col < cw; col++) {
+            uint8_t cov = src[col];
+            uint16_t px = (cov == 0) ? bg : ((cov == 15) ? color : rgb565Blend(bg, color, cov));
+            dst[col] = lcd_swap16(px);
+        }
+    }
+    esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + cw, y + ch, glyph_buf);
 }
 
 void LCD_DrawString(uint16_t x, uint16_t y, const char* str, uint16_t color, uint16_t bg, uint8_t size) {
