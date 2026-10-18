@@ -414,10 +414,13 @@ class TransitionType(Enum):
 
 
 # Loop rate for headless mode. Nothing is drawn there, so this only paces the
-# housekeeping: the MPG calculator, the lap timer and the ESP32 forward tick. Ten hertz
-# keeps those at their intended cadence (the ESP32 forwarder wants 30 Hz, which headless
-# cannot honour, so it gets every third tick instead of every second frame).
+# housekeeping: the MPG calculator, the lap timer and the touch/serial checks. The ESP32
+# forward has its own wall-clock cadence below, so it does not depend on this rate.
 HEADLESS_HZ = 10
+
+# ESP32 telemetry cadence: 30 Hz, which is what the old "every 2 frames at 60 fps"
+# counter actually produced. Time-based so it survives a change of loop rate.
+ESP32_TX_INTERVAL = 1.0 / 30.0
 
 
 class PiDisplayApp:
@@ -523,6 +526,9 @@ class PiDisplayApp:
         
         # Clock
         self.clock = pygame.time.Clock()
+
+        # Last time telemetry was pushed to the ESP32, for the wall-clock 30 Hz cadence.
+        self._last_esp32_send = 0.0
         
         # Serial connection (for production)
         self.serial_conn = None
@@ -1053,15 +1059,17 @@ class PiDisplayApp:
             if self.lap_timer_running:
                 self.telemetry.lap_time_ms = int(time.time() * 1000 - self.lap_timer_start_time)
             
-            # Forward telemetry to ESP32 (if connected)
+            # Forward telemetry to ESP32 at a fixed 30 Hz, independent of frame rate.
+            #
+            # This used to count frames ("every 2 frames at 60fps"), which quietly became
+            # 5 Hz once the loop ran headless at 10 Hz, so the round display's RPM lagged
+            # badly behind the engine. A wall-clock interval keeps the rate whatever the
+            # loop is doing, which matters because the LED strip reads CAN directly at
+            # 100 Hz and is already far ahead of the panel it sits next to.
             if self.esp32_handler and self.esp32_handler.connected:
-                # Send telemetry at 30Hz (every 2 frames at 60fps) - 3x faster than before
-                if hasattr(self, '_esp32_tx_counter'):
-                    self._esp32_tx_counter += 1
-                else:
-                    self._esp32_tx_counter = 0
-                if self._esp32_tx_counter >= 2:
-                    self._esp32_tx_counter = 0
+                now_tx = time.time()
+                if now_tx - self._last_esp32_send >= ESP32_TX_INTERVAL:
+                    self._last_esp32_send = now_tx
                     self.esp32_handler.send_telemetry()
             
             # Render
@@ -1147,6 +1155,13 @@ class PiDisplayApp:
                 # Notify web clients
                 if self.web_server:
                     self.web_server.notify_screen_change(screen_index)
+            else:
+                # Already on this page, but that says nothing about the ESP32: its panel
+                # can have been moved by its own touch screen since, and it never reports
+                # back. So a request for the page we are already on still has to be
+                # forwarded, otherwise picking a page on the phone appears to do nothing
+                # whenever the round display had drifted elsewhere.
+                self._sync_esp32_screen_for_transition(target_screen)
     
     def _handle_button(self, button: ButtonEvent):
         """Handle button press"""
