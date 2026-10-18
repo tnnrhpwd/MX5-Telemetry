@@ -2,13 +2,16 @@ package com.mx5.remote;
 
 import android.content.Context;
 import android.view.View;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 /** Everything at a glance: the four things you watch while driving, then the rest. */
 public class OverviewScreen extends Screen {
 
     private Host host;
-    private Ui.Stat speed, rpm, gear, coolant, fuel, range, volts, mpg, throttle, brake;
-    private Ui.Bar fuelBar, throttleBar, brakeBar;
+    private Ui.Stat speed, rpm, gear, coolant, fuel, range, volts, mpg;
+    private Ui.Bar fuelBar;
+    private GearRpmView ladder;
     private Ui.Panel panel;
 
     @Override
@@ -44,25 +47,40 @@ public class OverviewScreen extends Screen {
         panel.body.addView(gridFill(c, fuel, range, volts, mpg));
 
         fuelBar = new Ui.Bar(c, p, "Fuel level", p.primary);
-        throttleBar = new Ui.Bar(c, p, "Throttle", p.accent);
-        brakeBar = new Ui.Bar(c, p, "Brake", p.warn);
-        // The bars are gauges rather than readouts, so they get their own band below a
-        // hairline. Without the separation they read as a stray extra row of the grid
-        // above them rather than as a different kind of thing.
-        // An explicit 1dp height. Passing params to addView REPLACES the hairline's own, and
-        // a View with a background colour but no intrinsic size measures to nothing, so
-        // relying on the view's own params here would make the separator vanish.
-        android.widget.LinearLayout.LayoutParams hairParams =
-                new android.widget.LinearLayout.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                        Math.max(1, Ui.dp(c, 1)));
-        hairParams.topMargin = Ui.dp(c, 8);
-        panel.body.addView(Ui.hairline(c, p.hairline), hairParams);
+        // The bar is a gauge rather than a readout, so it gets its own band below a
+        // hairline. Without the separation it reads as a stray extra row of the grid
+        // above it rather than as a different kind of thing.
+        panel.body.addView(Ui.hairline(c, p.hairline), hair(c, 8));
         panel.body.addView(fuelBar, topMargin(c, 6));
-        panel.body.addView(throttleBar, topMargin(c, 6));
-        panel.body.addView(brakeBar, topMargin(c, 6));
+
+        // Shift ladder. Its caption earns its keep: six numbers sitting under a row of
+        // gear digits are easy to misread as a second set of statistics unless the band
+        // says what they are.
+        panel.body.addView(Ui.hairline(c, p.hairline), hair(c, 10));
+
+        LinearLayout ladderHead = Ui.row(c);
+        TextView ladderLabel = Ui.caps(c, Ui.TYPE_EYEBROW, p.textDim);
+        ladderLabel.setText("RPM BY GEAR");
+        TextView ladderHint = Ui.label(c, Ui.TYPE_LABEL, p.textDim);
+        ladderHint.setText("at this speed");
+        ladderHead.addView(ladderLabel);
+        ladderHead.addView(Ui.gap(c));
+        ladderHead.addView(ladderHint);
+        panel.body.addView(ladderHead, topMargin(c, 8));
+
+        ladder = new GearRpmView(c);
+        ladder.setColors(p.text, p.textDim, p.tile, p.accent, p.accentWash(), p.good, p.bad);
+        panel.body.addView(ladder, topMargin(c, 4));
 
         return panel;
+    }
+
+    /** A 1dp tone-change separator with a top margin of its own. */
+    private static LinearLayout.LayoutParams hair(Context c, int topDp) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, Math.max(1, Ui.dp(c, 1)));
+        p.topMargin = Ui.dp(c, topDp);
+        return p;
     }
 
     private static android.widget.LinearLayout.LayoutParams topMargin(Context c, int dp) {
@@ -104,8 +122,10 @@ public class OverviewScreen extends Screen {
         mpg.set(String.format("%.1f", t.averageMpg));
 
         fuelBar.set((float) (t.fuelLevelPercent / 100.0), Math.round(t.fuelLevelPercent) + "%");
-        throttleBar.set(t.throttlePercent / 100f, t.throttlePercent + "%");
-        brakeBar.set(t.brakePercent / 100f, t.brakePercent + "%");
+        // Throttle and brake are gone from this screen: the Pi derives throttle from one
+        // guessed byte of an undocumented frame and brake is a switch, so both showed a
+        // number that was not a percentage of anything.
+        ladder.setValue((float) t.speedFor(mph ? 1 : 0), mph, t.gear, t.inReverse);
     }
 
     static int gearColor(Telemetry t) {
