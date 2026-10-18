@@ -440,7 +440,10 @@ class PiDisplayApp:
             # Nothing is presented, so the UI is drawn into an offscreen surface that
             # nobody shows. CAN, the web remote, the Bluetooth link and the ESP32
             # forwarder all run on their own threads and do not touch this surface.
-            self.screen = pygame.Surface((PI_WIDTH, PI_HEIGHT))
+            # Depth is explicit because no display mode has been set here, so the default
+            # is an 8-bit surface with no palette, and Surface.copy() then raises
+            # "Empty destination palette" the first time a screen change is animated.
+            self.screen = pygame.Surface((PI_WIDTH, PI_HEIGHT), 0, 32)
             self.display_surface = self.screen
             self.display_width, self.display_height = PI_WIDTH, PI_HEIGHT
             self.scale_output = False
@@ -1384,6 +1387,27 @@ class PiDisplayApp:
         """Navigate to a screen with animation"""
         print(f"DEBUG: _navigate_to_screen called: {self.current_screen.name} -> {to_screen.name}")
         if to_screen == self.current_screen:
+            return
+
+        if self.headless:
+            # No animation and no drawing. _update_transition() is what actually advances
+            # current_screen, and it runs inside _render(), which headless skips: animating
+            # here would leave the app stuck on the old screen while the API reported
+            # success. Change over immediately, but still tell the ESP32 panel, which is a
+            # separate display and is still in use.
+            self.transition_type = TransitionType.NONE
+            self.transition_progress = 1.0
+            self.transition_surface_old = None
+            self.transition_surface_new = None
+            self.current_screen = to_screen
+            try:
+                self.sound.play('navigate')
+            except Exception:
+                # No audio device without the HDMI output; a missing blip must not turn a
+                # working screen change into a failed request.
+                pass
+            self._sync_esp32_screen_for_transition(to_screen)
+            print(f"DEBUG: headless screen change completed: {to_screen.name}")
             return
         
         # Determine transition type based on direction
