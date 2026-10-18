@@ -172,7 +172,9 @@ public class GearRpmView extends View {
 
         if (!nowUsable) {
             for (int i = 1; i <= GEARS; i++) {
-                if (rpm[i] != -1) {
+                // Not `rpm[i] != -1`: rpm starts at -1, so that test would skip the very
+                // first paint and leave the capsules blank instead of showing a dash.
+                if (rpm[i] != -1 || labelLen[i] != 1) {
                     rpm[i] = -1;
                     label[i][0] = '\u2013';
                     labelLen[i] = 1;
