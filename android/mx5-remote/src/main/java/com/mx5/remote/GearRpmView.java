@@ -19,15 +19,17 @@ import android.view.View;
  *
  *   - **One layout pass, one draw pass.** A TextView pair per gear is twelve measures
  *     and twelve draw calls per frame for six numbers.
- *   - **No allocation while running.** The paints, the font metrics, the rect, the digit
- *     buffer and the label strings are all fields. Nothing is created in onDraw.
+ *   - **No allocation, ever.** The paints, the font metrics, the rect and the digit
+ *     buffers are all fields, and digits are drawn straight from char[] via
+ *     Canvas.drawText(char[], ...). Not one object is created in onDraw, in setValue or
+ *     in the maths.
  *   - **The maths runs once per change, not per frame.** RPM ratio as a function of road
  *     speed is a straight line through the origin, so the per-gear slope is a constant
  *     and the whole bar is six multiplies. Those slopes are computed in a static
  *     initialiser, so even the first bind does no trigonometry.
  *   - **Steady state costs nothing at all.** bind() runs four times a second; at a
- *     constant speed, or stopped, setValue() returns before it touches anything, so the
- *     view is not even invalidated.
+ *     constant speed, or stopped, setValue() returns before it touches anything, and a
+ *     speed that drifts without changing a single rounded RPM does not invalidate.
  *
  * The driveline constants are the ones GearEstimator uses on the Pi, so the ladder and
  * the gear the Pi reports agree with each other.
@@ -79,8 +81,15 @@ public class GearRpmView extends View {
     private final RectF box = new RectF();
 
     private final int[] rpm = new int[GEARS + 1];
-    private final String[] label = new String[GEARS + 1];
-    private final char[] digits = new char[8];
+    /**
+     * RPM labels live as raw chars, drawn with Canvas.drawText(char[], ...).
+     * String.format or Integer.toString here would allocate on every speed change, and
+     * String.valueOf(g) would allocate six times per frame just to draw "1".."6".
+     */
+    private final char[][] label = new char[GEARS + 1][8];
+    private final int[] labelLen = new int[GEARS + 1];
+    private static final char[] GEAR_DIGIT =
+            {'\u2013', '1', '2', '3', '4', '5', '6'};
 
     private boolean mph = true;
     private float lastSpeed = -1f;
@@ -114,7 +123,8 @@ public class GearRpmView extends View {
         // Tabular figures: without them the ladder shivers as digits change width.
         rpmPaint.setFontFeatureSettings("tnum");
         for (int g = 0; g <= GEARS; g++) {
-            label[g] = "";
+            rpm[g] = -1;
+            labelLen[g] = 0;
         }
     }
 
@@ -149,6 +159,11 @@ public class GearRpmView extends View {
             return;
         }
 
+        // A speed that drifts by a fraction of a unit usually leaves every rounded RPM
+        // identical. Recomputing is free; invalidating is not, so track whether any
+        // pixel would actually differ before asking for a redraw.
+        boolean visualChange = stale || g != currentGear || useMph != mph || nowUsable != usable;
+
         stale = false;
         lastSpeed = roadSpeed;
         mph = useMph;
@@ -157,41 +172,54 @@ public class GearRpmView extends View {
 
         if (!nowUsable) {
             for (int i = 1; i <= GEARS; i++) {
-                rpm[i] = -1;
-                label[i] = "\u2013";
+                if (rpm[i] != -1) {
+                    rpm[i] = -1;
+                    label[i][0] = '\u2013';
+                    labelLen[i] = 1;
+                    visualChange = true;
+                }
             }
-            invalidate();
-            return;
+        } else {
+            float[] slope = useMph ? RPM_PER_MPH : RPM_PER_KMH;
+            for (int i = 1; i <= GEARS; i++) {
+                int v = Math.round(roadSpeed * slope[i]);
+                if (v != rpm[i]) {
+                    rpm[i] = v;
+                    labelLen[i] = formatInto(v, label[i]);
+                    visualChange = true;
+                }
+            }
         }
 
-        float[] slope = useMph ? RPM_PER_MPH : RPM_PER_KMH;
-        for (int i = 1; i <= GEARS; i++) {
-            int v = Math.round(roadSpeed * slope[i]);
-            if (v != rpm[i]) {
-                rpm[i] = v;
-                label[i] = format(v);
-            }
+        if (visualChange) {
+            invalidate();
         }
-        invalidate();
     }
 
-    /** Integer RPM without String.format: nothing but digits into a reused buffer. */
-    private String format(int v) {
+    /**
+     * Writes an RPM value as digits into {@code out} and returns the length.
+     * Nothing but digits and a '.' or 'k' is emitted, and nothing is allocated.
+     */
+    private int formatInto(int v, char[] out) {
+        if (v < 0) {
+            out[0] = '\u2013';
+            return 1;
+        }
         int n = 0;
         if (v >= 10000) {
             int thousands = v / 1000;
-            digits[n++] = (char) ('0' + thousands / 10);
-            digits[n++] = (char) ('0' + thousands % 10);
-            digits[n++] = '.';
-            digits[n++] = (char) ('0' + (v % 1000) / 100);
-            digits[n++] = 'k';
+            out[n++] = (char) ('0' + thousands / 10);
+            out[n++] = (char) ('0' + thousands % 10);
+            out[n++] = '.';
+            out[n++] = (char) ('0' + (v % 1000) / 100);
+            out[n++] = 'k';
         } else {
-            if (v >= 1000) digits[n++] = (char) ('0' + v / 1000);
-            if (v >= 100) digits[n++] = (char) ('0' + (v / 100) % 10);
-            if (v >= 10) digits[n++] = (char) ('0' + (v / 10) % 10);
-            digits[n++] = (char) ('0' + v % 10);
+            if (v >= 1000) out[n++] = (char) ('0' + v / 1000);
+            if (v >= 100) out[n++] = (char) ('0' + (v / 100) % 10);
+            if (v >= 10) out[n++] = (char) ('0' + (v / 10) % 10);
+            out[n++] = (char) ('0' + v % 10);
         }
-        return new String(digits, 0, n);
+        return n;
     }
 
     @Override
@@ -234,10 +262,10 @@ public class GearRpmView extends View {
             // Gear numbers are quiet; the RPM is the reading. An engaged gear lifts the
             // whole capsule instead, so it does not have to shout over the others.
             gearPaint.setColor(current ? accentColor : dimColor);
-            drawCentred(canvas, String.valueOf(g), (left + right) * 0.5f, gearY, gearPaint);
+            drawCentred(canvas, GEAR_DIGIT, g, 1, (left + right) * 0.5f, gearY, gearPaint);
 
             rpmPaint.setColor(current ? accentColor : rpmColorFor(rpm[g]));
-            drawCentred(canvas, label[g], (left + right) * 0.5f, rpmY, rpmPaint);
+            drawCentred(canvas, label[g], 0, labelLen[g], (left + right) * 0.5f, rpmY, rpmPaint);
         }
     }
 
@@ -258,9 +286,13 @@ public class GearRpmView extends View {
     }
 
     /** Vertically centred on the given line centre, using a reused FontMetrics. */
-    private void drawCentred(Canvas canvas, String text, float cx, float cy, Paint paint) {
+    private void drawCentred(Canvas canvas, char[] text, int index, int count,
+                             float cx, float cy, Paint paint) {
+        if (count <= 0) {
+            return;
+        }
         paint.getFontMetrics(metrics);
         float baseline = cy - (metrics.ascent + metrics.descent) * 0.5f;
-        canvas.drawText(text, cx, baseline, paint);
+        canvas.drawText(text, index, count, cx, baseline, paint);
     }
 }
