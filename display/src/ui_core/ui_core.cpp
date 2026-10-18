@@ -1282,6 +1282,34 @@ static void gfRestore(int bx, int by, int size) {
     LCD_DrawBuffer(bx, by, size, size, buf);
 }
 
+// Paint the dot by compositing it over the face into one buffer. A scanline
+// FillCircle costs ~13 panel transactions; this costs exactly one, which is
+// what keeps the 60Hz g-meter affordable.
+static void gfDrawDot(int cx, int cy, int r, uint16_t color) {
+    static uint16_t buf[GF_RESTORE_MAX * GF_RESTORE_MAX];
+    int size = (r + 3) * 2 + 1;
+    if (size > GF_RESTORE_MAX) size = GF_RESTORE_MAX;
+    int bx = cx - size / 2;
+    int by = cy - size / 2;
+    int rin = r * r;
+    int rout = (r + 1) * (r + 1);
+    for (int row = 0; row < size; row++) {
+        for (int col = 0; col < size; col++) {
+            int x = bx + col;
+            int y = by + row;
+            int dx = x - cx;
+            int dy = y - cy;
+            int d2 = dx * dx + dy * dy;
+            uint16_t c;
+            if (d2 <= rin)       c = color;
+            else if (d2 <= rout) c = MX5_WHITE;
+            else                 c = gfFaceAt(x, y);
+            buf[row * size + col] = c;
+        }
+    }
+    LCD_DrawBuffer(bx, by, size, size, buf);
+}
+
 void drawGForceScreen() {
     static int prevGX = -9999;
     static int prevGY = -9999;
@@ -1344,30 +1372,34 @@ void drawGForceScreen() {
             int pad = prevDotR + 3;
             gfRestore(prevGX - pad, prevGY - pad, pad * 2 + 1);
         }
-        LCD_FillCircle(gX, gY, dotR + 1, MX5_WHITE);
-        LCD_FillCircle(gX, gY, dotR, dotColor);
+        gfDrawDot(gX, gY, dotR, dotColor);
         prevGX = gX;
         prevGY = gY;
         prevDotR = dotR;
         prevDotColor = dotColor;
     }
 
-    // Numeric readouts, throttled to 10 Hz.
+    // Numeric readouts at 10Hz - and only when the rendered text actually
+    // changed, so a steady car costs nothing.
     if (needsFullRedraw || millis() - lastValueUpdate >= 100) {
         lastValueUpdate = millis();
-        char v[12];
+        static char lastV[3][12] = {"", "", ""};
+        char v[3][12];
 
-        LCD_FillRect(colX[0] - 28, 284, 56, 18, COLOR_BG);
-        snprintf(v, sizeof(v), "%+.1f", orientationPitch);
-        drawCentered(colX[0], 284, v, MX5_CYAN, COLOR_BG, 2);
+        snprintf(v[0], sizeof(v[0]), "%+.1f", orientationPitch);
+        snprintf(v[1], sizeof(v[1]), "%+.1f", orientationRoll);
+        snprintf(v[2], sizeof(v[2]), "%+.1f", forwardAccel);
 
-        LCD_FillRect(colX[1] - 28, 284, 56, 18, COLOR_BG);
-        snprintf(v, sizeof(v), "%+.1f", orientationRoll);
-        drawCentered(colX[1], 284, v, MX5_GREEN, COLOR_BG, 2);
+        const uint16_t colors[3] = {MX5_CYAN, MX5_GREEN, dotColor};
+        const int widths[3] = {56, 56, 64};
 
-        LCD_FillRect(colX[2] - 32, 284, 64, 18, COLOR_BG);
-        snprintf(v, sizeof(v), "%+.1f", forwardAccel);
-        drawCentered(colX[2], 284, v, dotColor, COLOR_BG, 2);
+        for (int i = 0; i < 3; i++) {
+            if (!needsFullRedraw && strcmp(v[i], lastV[i]) == 0) continue;
+            LCD_FillRect(colX[i] - widths[i] / 2, 284, widths[i], 18, COLOR_BG);
+            drawCentered(colX[i], 284, v[i], colors[i], COLOR_BG, 2);
+            strncpy(lastV[i], v[i], sizeof(lastV[i]) - 1);
+            lastV[i][sizeof(lastV[i]) - 1] = '\0';
+        }
     }
 }
 

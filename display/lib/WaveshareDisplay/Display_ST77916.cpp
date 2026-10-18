@@ -251,7 +251,9 @@ bool QSPI_Init(void) {
         .data5_io_num = -1,                      
         .data6_io_num = -1,                       
         .data7_io_num = -1,                      
-        .max_transfer_sz = 2048,  // Match reference exactly
+        .max_transfer_sz = 32768,  // 2KB forced ~127 DMA transactions per full-screen
+                                   // blit; each one costs more in setup than in data.
+                                   // 32KB matches the LCD_DrawImage band buffer.
         .flags = SPICOMMON_BUSFLAG_MASTER,  // Reference doesn't use QUAD flag here
         .intr_flags = 0,                            
     };
@@ -1092,14 +1094,32 @@ void LCD_DrawImage(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_
     uint16_t draw_w = (x + w > LCD_WIDTH) ? (LCD_WIDTH - x) : w;
     uint16_t draw_h = (y + h > LCD_HEIGHT) ? (LCD_HEIGHT - y) : h;
     
-    // Draw multiple rows at once for better performance
-    // Use 8KB buffer = ~11 rows at 360 width, or 22 rows at 180 width
-    const uint32_t MAX_BUF_SIZE = 8192;
+    // Every esp_lcd_panel_draw_bitmap() call pays a fixed QSPI command/setup cost
+    // on top of the pixel data, so a full-screen background in 8KB slices (33
+    // transactions) was costing far more than the bytes justified. Stage through
+    // a cached 32KB band instead - 360px wide -> 45 rows -> 8 transactions.
+    const uint32_t MAX_BUF_SIZE = 32768;
     uint16_t rows_per_batch = MAX_BUF_SIZE / (draw_w * 2);
     if (rows_per_batch < 1) rows_per_batch = 1;
     if (rows_per_batch > draw_h) rows_per_batch = draw_h;
     
-    uint16_t* row_buf = (uint16_t*)heap_caps_malloc(rows_per_batch * draw_w * 2, MALLOC_CAP_DMA);
+    static uint16_t* image_band_buf = NULL;
+    static uint32_t image_band_bytes = 0;
+    uint32_t need_bytes = (uint32_t)rows_per_batch * draw_w * 2;
+    if (image_band_buf == NULL || image_band_bytes < need_bytes) {
+        if (image_band_buf != NULL) {
+            heap_caps_free(image_band_buf);
+            image_band_buf = NULL;
+        }
+        image_band_buf = (uint16_t*)heap_caps_malloc(need_bytes, MALLOC_CAP_DMA);
+        image_band_bytes = (image_band_buf != NULL) ? need_bytes : 0;
+    }
+    uint16_t* row_buf = image_band_buf;
+    bool borrowed = true;
+    if (row_buf == NULL) {
+        borrowed = false;
+        row_buf = (uint16_t*)heap_caps_malloc(need_bytes, MALLOC_CAP_DMA);
+    }
     if (!row_buf) {
         Serial.println("LCD_DrawImage: Failed to allocate row buffer");
         return;
@@ -1116,7 +1136,9 @@ void LCD_DrawImage(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_
         esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + batch_rows, row_buf);
     }
     
-    heap_caps_free(row_buf);
+    if (!borrowed) {
+        heap_caps_free(row_buf);
+    }
 }
 
 void LCD_DrawImageWithAlpha(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
