@@ -455,30 +455,67 @@ static unsigned long lastIMUUpdate = 0;
 static bool imuInitialized = false;
 
 // IMU Calibration offsets (set by user via CAL_IMU command)
-static float imuCalibrationPitch = 0;  // Pitch offset to subtract
-static float imuCalibrationRoll = 0;   // Roll offset to subtract
+static float imuCalibrationPitch = 0;  // Kept for NVS compatibility; now always 0
+static float imuCalibrationRoll = 0;   // because the accel offsets define level directly
 static float imuCalibrationAccelX = 0; // Accel X offset
 static float imuCalibrationAccelY = 0; // Accel Y offset
 static float imuCalibrationAccelZ = 0; // Accel Z offset
+// Zero-rate bias of each gyro axis, measured at calibration.
+//
+// This is the number the tilt estimate was missing. A gyro reads a small non-zero rate
+// when perfectly still, and integrating that walks the tilt away from level. The filter
+// used to hide the walk by trusting the accelerometer almost completely, and trusting the
+// accelerometer is exactly what destroys the reading: during a corner the accelerometer
+// cannot tell sideways force from sideways tilt, so the corner was read as roll and then
+// subtracted as gravity. Subtracting the bias instead lets the gyro carry the tilt.
+static float imuCalibrationGyroX = 0;
+static float imuCalibrationGyroY = 0;
+static float imuCalibrationGyroZ = 0;
 
 void calibrateIMU() {
-    // Capture current IMU readings as the zero point
-    // This allows user to set any orientation as the default
-    imu.update();
-    
-    // Store current orientation as offset
-    imuCalibrationPitch = orientationPitch;
-    imuCalibrationRoll = orientationRoll;
-    
-    // Store current raw accelerometer readings as offset
-    imuCalibrationAccelX = imu.ax;
-    imuCalibrationAccelY = imu.ay - 1.0; // Subtract 1G since we want level to read 1G up
-    imuCalibrationAccelZ = imu.az;
-    
+    // Average over about half a second rather than trusting a single sample.
+    //
+    // One reading carries sensor noise and, with the engine idling or the car creeping,
+    // real motion as well. That error is written to NVS and subtracted for ever after, so
+    // a bad calibration is permanent until it is redone. Averaging also gives us the gyro
+    // bias, which is the part of the calibration that was previously missing entirely.
+    const int SAMPLES = 60;
+    const int SAMPLE_MS = 10;
+
+    float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
+    for (int i = 0; i < SAMPLES; i++) {
+        imu.update();
+        ax += imu.ax; ay += imu.ay; az += imu.az;
+        gx += imu.gx; gy += imu.gy; gz += imu.gz;
+        delay(SAMPLE_MS);
+    }
+    ax /= SAMPLES; ay /= SAMPLES; az /= SAMPLES;
+    gx /= SAMPLES; gy /= SAMPLES; gz /= SAMPLES;
+
+    // Whatever pose the car is in becomes zero. The accel offsets are what define level,
+    // so the separate pitch/roll offsets are redundant and are cleared rather than being
+    // subtracted a second time on top of the accel correction.
+    imuCalibrationAccelX = ax;
+    imuCalibrationAccelY = ay - 1.0f;  // keep reading 1g up when level
+    imuCalibrationAccelZ = az;
+    imuCalibrationPitch = 0;
+    imuCalibrationRoll = 0;
+
+    imuCalibrationGyroX = gx;
+    imuCalibrationGyroY = gy;
+    imuCalibrationGyroZ = gz;
+
+    // Start from level immediately, instead of letting the filter find it over a few
+    // frames and showing a spurious g on the first poll after a calibration.
+    orientationPitch = 0;
+    orientationRoll = 0;
+    imuInitialized = true;
+
     Serial.println("IMU: Calibrated to current position as zero");
-    Serial.printf("IMU: Offsets - Pitch:%.2f Roll:%.2f AccelX:%.3f AccelY:%.3f AccelZ:%.3f\n",
-                  imuCalibrationPitch, imuCalibrationRoll, 
-                  imuCalibrationAccelX, imuCalibrationAccelY, imuCalibrationAccelZ);
+    Serial.printf("IMU: Offsets - AccelX:%.3f AccelY:%.3f AccelZ:%.3f "
+                  "GyroX:%.2f GyroY:%.2f GyroZ:%.2f\n",
+                  imuCalibrationAccelX, imuCalibrationAccelY, imuCalibrationAccelZ,
+                  imuCalibrationGyroX, imuCalibrationGyroY, imuCalibrationGyroZ);
     
     // Save calibration to NVS for persistence
     saveIMUCalibrationToNVS();
@@ -557,52 +594,61 @@ void updateIMU() {
     }
     
     // ==========================================================================
-    // COMPLEMENTARY FILTER: Accel (stable) + Gyro (smooth)
+    // COMPLEMENTARY FILTER: gyro for tilt, accelerometer only as a slow correction
     // ==========================================================================
-    // Use high alpha (favor accelerometer) since we want accurate tilt, not fast response
-    // When sitting still: accelerometer is truth, gyro just smooths noise
-    // When moving: gyro helps during brief dynamic moments, accel corrects quickly
+    // The gyro is trusted with the tilt estimate because it measures rotation and is
+    // therefore blind to acceleration. The accelerometer is used only to stop the gyro
+    // drifting, and it is believed slowly on purpose: while cornering or braking, gravity
+    // and vehicle acceleration are the same thing to an accelerometer, and a fast
+    // correction would classify the g-force as tilt and then remove it as gravity.
     
     float totalAccel = sqrt(accelLateral*accelLateral + 
                            accelBackward*accelBackward + 
                            accelVertical*accelVertical);
     
-    // Gyroscope rates mapped to car coordinates (degrees/sec)
+    // Gyroscope rates mapped to car coordinates (degrees/sec), bias removed
     // gx = rotation around IMU X-axis = pitch rate
-    // gz = rotation around IMU Z-axis (pointing backward) = roll rate  
-    float gyroPitchRate = imu.gx;   // Positive = nose going up
-    float gyroRollRate = -imu.gz;   // Negative because Z points backward
-    
-    // Apply gyro for smoothing (integrate rotation rate)
-    float gyroPitch = orientationPitch + gyroPitchRate * dt;
-    float gyroRoll = orientationRoll + gyroRollRate * dt;
-    
-    // Choose alpha based on how close we are to pure gravity (1G)
-    // High alpha = trust accelerometer more (stable but includes real acceleration)
-    // Low alpha = trust gyro more (smooth but drifts)
-    float alpha;
-    if (totalAccel > 0.9 && totalAccel < 1.1) {
-        // Very close to 1G - strongly trust accelerometer (stationary or slow movement)
-        alpha = 0.15;
-    } else if (totalAccel > 0.7 && totalAccel < 1.3) {
-        // Moderate acceleration - blend more evenly
-        alpha = 0.08;
+    // gz = rotation around IMU Z-axis (pointing backward) = roll rate
+    float gyroPitchRate = imu.gx - imuCalibrationGyroX;   // Positive = nose going up
+    float gyroRollRate = -(imu.gz - imuCalibrationGyroZ); // Negative because Z points backward
+
+    // Integrate the bias-corrected rate. dt is clamped because a stall (or the very first
+    // sample after calibration) would otherwise turn one long gap into a large jump.
+    float step = constrain(dt, 0.0f, 0.1f);
+    float gyroPitch = orientationPitch + gyroPitchRate * step;
+    float gyroRoll = orientationRoll + gyroRollRate * step;
+
+    // Complementary filter, with the weight expressed as a TIME CONSTANT rather than as a
+    // per-sample alpha. A fixed alpha silently changes behaviour whenever the sample rate
+    // does; `alpha = dt / (dt + tau)` does not.
+    //
+    // The time constants are deliberately long. tau is how long the tilt estimate waits
+    // before believing the accelerometer, and the accelerometer cannot distinguish
+    // sideways force from sideways tilt. When tau was short the filter treated a corner as
+    // a bank and subtracted it back out as gravity, so linearAccelX collapsed towards zero
+    // and the scatter showed almost nothing. Trusting the gyro (which is blind to
+    // acceleration, because it measures rotation) keeps the corner as acceleration.
+    float tau;
+    if (totalAccel > 0.95f && totalAccel < 1.05f) {
+        // Nearly pure gravity: gentle correction, slow enough to ride out a long corner.
+        tau = 15.0f;
+    } else if (totalAccel > 0.7f && totalAccel < 1.3f) {
+        // Real braking or cornering: almost all gyro.
+        tau = 45.0f;
     } else {
-        // High acceleration - rely more on gyro (but still correct drift)
-        alpha = 0.03;
+        // Hard manoeuvre, bumps, kerbs: the accelerometer is not a tilt sensor here.
+        tau = 180.0f;
     }
-    
-    // Complementary filter: blend gyro-integrated value with accelerometer
-    orientationPitch = (1.0 - alpha) * gyroPitch + alpha * accelPitch;
-    orientationRoll = (1.0 - alpha) * gyroRoll + alpha * accelRoll;
-    
-    // Apply user calibration offsets (subtract to make calibration point = zero)
-    orientationPitch -= imuCalibrationPitch;
-    orientationRoll -= imuCalibrationRoll;
-    
-    // Clamp to reasonable range
-    orientationPitch = constrain(orientationPitch, -30.0f, 30.0f);
-    orientationRoll = constrain(orientationRoll, -30.0f, 30.0f);
+    float alpha = step / (step + tau);
+
+    // Complementary filter: gyro-integrated tilt, nudged slowly towards gravity.
+    orientationPitch = (1.0f - alpha) * gyroPitch + alpha * accelPitch;
+    orientationRoll = (1.0f - alpha) * gyroRoll + alpha * accelRoll;
+
+    // Clamp only to stop a runaway. 30 degrees was too tight: a banked corner or a steep
+    // hill exceeds it, and a clamped estimate then subtracts the wrong amount of gravity.
+    orientationPitch = constrain(orientationPitch, -60.0f, 60.0f);
+    orientationRoll = constrain(orientationRoll, -60.0f, 60.0f);
     
     // ==========================================================================
     // STORE VALUES FOR DISPLAY
@@ -1483,6 +1529,9 @@ void saveIMUCalibrationToNVS() {
     imuPrefs.putFloat("accelX", imuCalibrationAccelX);
     imuPrefs.putFloat("accelY", imuCalibrationAccelY);
     imuPrefs.putFloat("accelZ", imuCalibrationAccelZ);
+    imuPrefs.putFloat("gyroX", imuCalibrationGyroX);
+    imuPrefs.putFloat("gyroY", imuCalibrationGyroY);
+    imuPrefs.putFloat("gyroZ", imuCalibrationGyroZ);
     
     imuPrefs.end();
     
@@ -1494,22 +1543,38 @@ void loadIMUCalibrationFromNVS() {
     
     // Check if we have saved calibration data
     if (!imuPrefs.isKey("pitch")) {
-        Serial.println("IMU: No saved calibration in NVS, using defaults (0,0,0,0,0)");
+        Serial.println("IMU: No saved calibration in NVS, using defaults");
         imuPrefs.end();
         return;
     }
     
     // Load calibration offsets
-    imuCalibrationPitch = imuPrefs.getFloat("pitch", 0.0f);
-    imuCalibrationRoll = imuPrefs.getFloat("roll", 0.0f);
     imuCalibrationAccelX = imuPrefs.getFloat("accelX", 0.0f);
     imuCalibrationAccelY = imuPrefs.getFloat("accelY", 0.0f);
     imuCalibrationAccelZ = imuPrefs.getFloat("accelZ", 0.0f);
+
+    // The legacy pitch/roll offsets are deliberately ignored. The accelerometer offsets
+    // already make the calibration pose read level, so subtracting these as well applied
+    // the correction twice.
+    imuCalibrationPitch = 0;
+    imuCalibrationRoll = 0;
+
+    // A device calibrated before the gyro bias existed has no gyro keys, and will read 0.
+    // That still works, it just drifts more slowly than a fresh calibration does, so say
+    // so and let the user re-zero from the G-force screen.
+    imuCalibrationGyroX = imuPrefs.getFloat("gyroX", 0.0f);
+    imuCalibrationGyroY = imuPrefs.getFloat("gyroY", 0.0f);
+    imuCalibrationGyroZ = imuPrefs.getFloat("gyroZ", 0.0f);
+    bool hasGyroBias = imuPrefs.isKey("gyroX");
     
     imuPrefs.end();
     
     Serial.println("IMU: Loaded calibration from NVS");
-    Serial.printf("IMU: Offsets - Pitch:%.2f Roll:%.2f AccelX:%.3f AccelY:%.3f AccelZ:%.3f\n",
-                  imuCalibrationPitch, imuCalibrationRoll,
-                  imuCalibrationAccelX, imuCalibrationAccelY, imuCalibrationAccelZ);
+    Serial.printf("IMU: Offsets - AccelX:%.3f AccelY:%.3f AccelZ:%.3f "
+                  "GyroX:%.2f GyroY:%.2f GyroZ:%.2f\n",
+                  imuCalibrationAccelX, imuCalibrationAccelY, imuCalibrationAccelZ,
+                  imuCalibrationGyroX, imuCalibrationGyroY, imuCalibrationGyroZ);
+    if (!hasGyroBias) {
+        Serial.println("IMU: No gyro bias stored yet - re-zero from the G-force screen");
+    }
 }

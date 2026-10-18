@@ -57,8 +57,16 @@ public class MainActivity extends Activity implements Screen.Host {
     private static final String DEFAULT_ADDRESS = "192.168.42.100:5000";    private static final int POLL_MS = 250;
     private static final int STATUS_EVERY = 8;
     private static final int ROOF_EVERY = 12;
-    /** Fixed height of a vertical rail row, so the rows are uniform and bounded. */
-    private static final int RAIL_ROW_DP = 32;
+    /**
+     * Fixed height of a vertical rail row, so the rows are uniform and bounded.
+     *
+     * The car display reports 919x480 at 209dpi, which is about 700x367dp. After the
+     * header, the footer and the root padding the middle row is roughly 270dp, and nine
+     * rows of 28dp plus a 2dp gap come to exactly 270dp. At the old 32dp row the list
+     * needed 324dp, so the last destinations were pushed past the bottom edge, where a
+     * LinearLayout does not lay them out at all and they could not be tapped.
+     */
+    private static final int RAIL_ROW_DP = 28;
 
     /** Request code for the one-off Nearby devices prompt. */
     private static final int REQ_BLUETOOTH = 1001;
@@ -221,7 +229,15 @@ public class MainActivity extends Activity implements Screen.Host {
             middle.addView(contentHost, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         } else {
-            middle.addView(rail, new LinearLayout.LayoutParams(
+            // Scrollable even though the rows are sized to fit: the header can grow (the
+            // link pill gets longer reasons) and any overflow would otherwise put the last
+            // destinations off the bottom edge where they cannot be reached at all.
+            android.widget.ScrollView railScroll = new android.widget.ScrollView(this);
+            railScroll.setFillViewport(true);
+            railScroll.setVerticalScrollBarEnabled(false);
+            railScroll.setClipToPadding(false);
+            railScroll.addView(rail);
+            middle.addView(railScroll, new LinearLayout.LayoutParams(
                     Ui.dp(this, 136), ViewGroup.LayoutParams.MATCH_PARENT));
             middle.addView(contentHost, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
@@ -705,7 +721,7 @@ public class MainActivity extends Activity implements Screen.Host {
                     ViewGroup.LayoutParams.WRAP_CONTENT)
                     : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                     Ui.dp(this, RAIL_ROW_DP));
-            ip.bottomMargin = Ui.dp(this, narrow ? 0 : Ui.S2);
+            ip.bottomMargin = Ui.dp(this, narrow ? 0 : Ui.S1);
             ip.leftMargin = Ui.dp(this, narrow ? Ui.S1 : 0);
             ip.rightMargin = Ui.dp(this, narrow ? Ui.S1 : 0);
             rail.addView(item, ip);
