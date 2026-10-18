@@ -203,8 +203,26 @@ void formatTimestamp(unsigned long millis_time, char* buf, size_t bufSize) {
     snprintf(buf, bufSize, "%02lu:%02lu:%02lu", hours, mins, secs);
 }
 
+// ---------------------------------------------------------------------------
+// Serial writes must never block the UI
+// ---------------------------------------------------------------------------
+// USBCDC::write() drains the port in an unbounded loop: if the host stops reading it
+// spins on `continue` for ever, and only the mutex wait honours a timeout. So a single
+// print can stall the whole loop for as long as the Pi is not draining the port, which
+// is what the 1.2-2.0 second MaxMs readings were. availableForWrite() reports free space
+// without blocking, so high-rate output is checked first and skipped rather than
+// blocking. A dropped debug line is always cheaper than a frozen display.
+static uint32_t serialDrops = 0;
+
+static inline bool serialHasRoom(int bytes) {
+    return Serial.availableForWrite() >= bytes;
+}
+
 void setup() {
     Serial.begin(115200);
+    // The mutex wait defaults to 250ms. Keep it tiny: a stalled port should give up at
+    // once rather than stall the first write of every frame.
+    Serial.setTxTimeoutMs(1);
     delay(100);
     
     Serial.println("MX5 Telemetry Display Starting...");
@@ -291,7 +309,10 @@ void loop() {
     static unsigned long loopCount = 0;
     static unsigned long lastPerfReport = 0;
     static unsigned long maxLoopTime = 0;
+    // Per-section worst cases, so a stall can be attributed instead of guessed at.
+    static unsigned long maxSerial = 0, maxTouch = 0, maxBle = 0, maxDraw = 0;
     unsigned long loopStart = millis();
+    unsigned long sectionMark = loopStart;
     
     // Update ambient temp from ESP32 internal sensor (every 5 seconds)
     static unsigned long lastTempUpdate = 0;
@@ -309,10 +330,14 @@ void loop() {
     
     // Handle serial commands FIRST - highest priority for Pi sync
     handleSerialCommands();
+    unsigned long tSerial = millis() - sectionMark;
+    sectionMark = millis();
     
     // Handle touch input
     Touch_Loop();
     handleTouch();
+    unsigned long tTouch = millis() - sectionMark;
+    sectionMark = millis();
     
     // BLE TPMS scanning - short scans when on TPMS or Overview screen
     if (currentScreen == SCREEN_TPMS || currentScreen == SCREEN_OVERVIEW) {
@@ -333,6 +358,8 @@ void loop() {
             stopBLEScan();
         }
     }
+    unsigned long tBle = millis() - sectionMark;
+    sectionMark = millis();
     
     // IMU updates - only when on G-Force screen to avoid conflicts with BLE
     if (currentScreen == SCREEN_GFORCE) {
@@ -425,20 +452,35 @@ void loop() {
         // Process serial again after drawing in case commands arrived
         handleSerialCommands();
     }
+    unsigned long tDraw = millis() - sectionMark;
     
     // Performance monitoring
     loopCount++;
     unsigned long loopTime = millis() - loopStart;
     if (loopTime > maxLoopTime) maxLoopTime = loopTime;
+    if (tSerial > maxSerial) maxSerial = tSerial;
+    if (tTouch > maxTouch) maxTouch = tTouch;
+    if (tBle > maxBle) maxBle = tBle;
+    if (tDraw > maxDraw) maxDraw = tDraw;
     
     // Report performance every 2 seconds
     if (millis() - lastPerfReport > 2000) {
         float avgHz = loopCount * 1000.0 / (millis() - lastPerfReport);
-        Serial.printf("PERF: Screen=%d (%s) LoopHz=%.0f MaxMs=%lu\n", 
-                      currentScreen, SCREEN_NAMES[currentScreen], avgHz, maxLoopTime);
+        // Gated: this is a diagnostic, so it must never be the thing that blocks.
+        if (serialHasRoom(160)) {
+            Serial.printf("PERF: Screen=%d (%s) LoopHz=%.0f MaxMs=%lu "
+                          "ser=%lu touch=%lu ble=%lu draw=%lu drops=%lu\n",
+                          currentScreen, SCREEN_NAMES[currentScreen], avgHz, maxLoopTime,
+                          maxSerial, maxTouch, maxBle, maxDraw,
+                          (unsigned long)serialDrops);
+        }
         lastPerfReport = millis();
         loopCount = 0;
         maxLoopTime = 0;
+        maxSerial = 0;
+        maxTouch = 0;
+        maxBle = 0;
+        maxDraw = 0;
     }
     
     delay(5);  // ~200Hz loop rate for responsive touch
@@ -679,6 +721,11 @@ void updateIMU() {
 }
 
 void sendIMUData() {
+    // Gated: a dropped frame is replaced 33ms later, a blocked loop is not.
+    if (!serialHasRoom(96)) {
+        serialDrops++;
+        return;
+    }
     // Send full IMU data to Pi for display sync
     // Format: IMU:accelX,accelY,accelZ,gyroX,gyroY,gyroZ,linearX,linearY,pitch,roll
     Serial.printf("IMU:%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.3f,%.3f,%.1f,%.1f\n",
@@ -800,7 +847,8 @@ void parseCommand(String cmd) {
     cmd.trim();
     
     // Only log screen-related commands for debugging
-    if (cmd.startsWith("SCREEN") || cmd == "LEFT" || cmd == "RIGHT" || cmd == "UP" || cmd == "DOWN") {
+    if ((cmd.startsWith("SCREEN") || cmd == "LEFT" || cmd == "RIGHT" || cmd == "UP" || cmd == "DOWN")
+        && serialHasRoom(64)) {
         Serial.printf("CMD: '%s'\n", cmd.c_str());
     }
     

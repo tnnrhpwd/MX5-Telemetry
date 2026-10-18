@@ -127,9 +127,8 @@ uint8_t Touch_Read_Data(void) {
     touch_data.x = x;               
     touch_data.y = y;
     interrupts();
-    
-    // Debug: Print valid touches
-    Serial.printf("Touch: X=%u Y=%u gesture=%d\r\n", touch_data.x, touch_data.y, (int)touch_data.gesture);
+    // No per-sample print here. This ran for every touch report, and a print on a stalled
+    // USB CDC port blocks the whole loop (see serialHasRoom in main.cpp).
   }
   return true;
 }
