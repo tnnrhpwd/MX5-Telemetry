@@ -170,6 +170,12 @@ void sendIMUData();
 void initBLETPMS();
 void startContinuousBLEScan();
 void stopBLEScan();
+
+// TPMS scanning lives on its own task. Instrumenting the loop showed the BLE section
+// costing about a second per window while every other section was 0-1ms, so touch,
+// redraw and serial were all queueing behind a background radio scan.
+static TaskHandle_t tpmsScanTaskHandle = NULL;
+static void tpmsScanTask(void *arg);
 void decodeTPMSData(NimBLEAdvertisedDevice* device, int sensorIndex);
 void sendTPMSDataToPi();
 void formatTimestamp(unsigned long millis_time, char* buf, size_t bufSize);
@@ -339,23 +345,15 @@ void loop() {
     unsigned long tTouch = millis() - sectionMark;
     sectionMark = millis();
     
-    // BLE TPMS scanning - short scans when on TPMS or Overview screen
+    // TPMS scanning is driven by tpmsScanTask, not from here: starting a scan cost about
+    // a second when it was done inline. Only the forwarding to the Pi stays, which is a
+    // short serial write every five seconds.
     if (currentScreen == SCREEN_TPMS || currentScreen == SCREEN_OVERVIEW) {
-        // Start scan if not already scanning (will auto-restart after each scan)
-        if (bleInitialized) {
-            startContinuousBLEScan();  // Only starts if not already scanning
-        }
-        
         // Send TPMS data to Pi every 5 seconds
         static unsigned long lastTPMSSend = 0;
         if (millis() - lastTPMSSend > 5000) {
             lastTPMSSend = millis();
             sendTPMSDataToPi();
-        }
-    } else {
-        // Stop scanning when not on TPMS/Overview screens to save power
-        if (bleScanRunning) {
-            stopBLEScan();
         }
     }
     unsigned long tBle = millis() - sectionMark;
@@ -1328,6 +1326,9 @@ void initBLETPMS() {
     
     bleInitialized = true;
     Serial.println("BLE TPMS scanner initialized!");
+
+    // Nothing about a background scan needs to be on the UI thread.
+    xTaskCreate(tpmsScanTask, "tpmsScan", 4096, NULL, 1, &tpmsScanTaskHandle);
     Serial.println("TPMS MAC addresses:");
     for (int i = 0; i < TPMS_SENSOR_COUNT; i++) {
         Serial.printf("  Sensor %d: %s\n", i, TPMS_MAC_ADDRESSES[i]);
@@ -1411,6 +1412,23 @@ void stopBLEScan() {
         pBLEScan->stop();
         bleScanRunning = false;
         Serial.println("BLE: Stopped TPMS scanning");
+    }
+}
+
+/**
+ * Owns the TPMS scan lifecycle.
+ *
+ * Runs off the UI thread on purpose. Whatever makes a scan start or stop expensive, it
+ * must not be paid by the loop that draws the screen and reads touch.
+ */
+static void tpmsScanTask(void *arg) {
+    for (;;) {
+        if (currentScreen == SCREEN_TPMS || currentScreen == SCREEN_OVERVIEW) {
+            startContinuousBLEScan();
+        } else if (bleScanRunning) {
+            stopBLEScan();
+        }
+        vTaskDelay(pdMS_TO_TICKS(150));
     }
 }
 
