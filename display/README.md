@@ -8,6 +8,24 @@ This module provides a visual dashboard for the MX5 Telemetry system using the *
 
 **The ESP32-S3 round display is mounted in the stock oil gauge hole.** The 1.85" form factor fits perfectly in the original gauge opening, providing a clean OEM-like appearance.
 
+### Gear Indicator Typography
+
+The large gear character (`R`, `N`, `1`–`6`, `-`) is drawn by a small monoline
+typeface in [`ui_core.cpp`](src/ui_core/ui_core.cpp), not by the bitmap text fonts:
+
+- Each glyph is a set of rounded strokes defined in a normalised box (`buildGearGlyph`),
+  including elliptical arcs and Beziers for the round letterforms.
+- A pixel's coverage is its distance to the nearest stroke, so the stems have even
+  optical weight, the terminals are round, and the edges are antialiased.
+- The whole cell — ink *and* background — is composited into one buffer and pushed with
+  a single panel transaction, which also erases the previous gear cleanly.
+- The ink is inset by half a stroke width; without that, the top and bottom of the round
+  glyphs were clipped by the cell edge.
+
+Add or adjust a character in `buildGearGlyph`; geometry is in a 0–1 box with y down.
+The focused simulator (`tools/simulators/native`) renders the real code, so glyph
+changes can be checked on the desktop.
+
 ## G-Force Display Behavior
 
 The G-Force screen visualizes car dynamics using the QMI8658 IMU (gyroscope + accelerometer). The display is calibrated for the ESP32 mounted **vertically** in the oil gauge hole with the screen facing the driver and USB port pointing down.

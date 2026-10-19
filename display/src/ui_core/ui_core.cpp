@@ -544,169 +544,244 @@ void drawTransition() {
 // with the same bilinear 2x2 supersampling used by the text fonts, so the big
 // number matches the smooth look of the rest of the UI.
 // ============================================================================
-void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, uint16_t bgColor) {
-    const int charW = 44;
-    const int charH = 64;
-    const int stroke = 10;
+// A monoline geometric alphabet, not a stack of rectangles.
+//
+// Each glyph is a set of rounded strokes in a normalised 0..1 box; a pixel's
+// coverage is derived from its distance to the nearest stroke, so every stem
+// carries the same optical weight and the terminals are rounded and smoothly
+// antialiased. That is what makes the big digit read as a typeface on the panel
+// instead of as seven bars.
+#define GLYPH_W       46
+#define GLYPH_H       66
+#define GLYPH_STROKE  7.0f
+#define GLYPH_SEGS    44
 
-    static uint8_t glyphBits[charW * charH];
-    memset(glyphBits, 0, sizeof(glyphBits));
+struct GlyphSeg {
+    float x0, y0, x1, y1;
+    float minX, minY, maxX, maxY;   // pixel-space bounds, padded by the stroke
+};
 
-    // Fill a rectangle into the 1-bit glyph raster (clipped to the cell).
-    auto fill = [&](int fx, int fy, int fw, int fh) {
-        for (int yy = fy; yy < fy + fh; yy++) {
-            for (int xx = fx; xx < fx + fw; xx++) {
-                if (xx >= 0 && xx < charW && yy >= 0 && yy < charH) {
-                    glyphBits[yy * charW + xx] = 1;
-                }
-            }
+struct GlyphPath {
+    GlyphSeg segs[GLYPH_SEGS];
+    int n;
+
+    GlyphPath() : n(0) {}
+
+    void add(float x0, float y0, float x1, float y1) {
+        if (n >= GLYPH_SEGS) return;
+        GlyphSeg& s = segs[n++];
+        s.x0 = x0; s.y0 = y0; s.x1 = x1; s.y1 = y1;
+    }
+
+    void line(float x0, float y0, float x1, float y1) { add(x0, y0, x1, y1); }
+
+    // Elliptical arc. Angles are degrees, 0 = right and 90 = down (screen space),
+    // so 270 is up. a1 may be smaller than a0 to sweep the other way.
+    void arc(float cx, float cy, float rx, float ry, float a0, float a1, int steps) {
+        float px = 0, py = 0;
+        for (int i = 0; i <= steps; i++) {
+            float a = (a0 + (a1 - a0) * (float)i / (float)steps) * (float)PI / 180.0f;
+            float x = cx + rx * cosf(a);
+            float y = cy + ry * sinf(a);
+            if (i) add(px, py, x, y);
+            px = x; py = y;
         }
-    };
+    }
 
-    char c = str[0];
+    // Quadratic Bezier, for the strokes that are not circular (6, 9).
+    void quad(float x0, float y0, float cx, float cy, float x1, float y1, int steps) {
+        float px = x0, py = y0;
+        for (int i = 1; i <= steps; i++) {
+            float t = (float)i / (float)steps, u = 1.0f - t;
+            float x = u * u * x0 + 2.0f * u * t * cx + t * t * x1;
+            float y = u * u * y0 + 2.0f * u * t * cy + t * t * y1;
+            add(px, py, x, y);
+            px = x; py = y;
+        }
+    }
+
+    // Cubic Bezier. Used for strokes that must be one continuous curve (the 3),
+    // where joining two arcs leaves a visible cusp.
+    void cubic(float x0, float y0, float c1x, float c1y,
+               float c2x, float c2y, float x1, float y1, int steps) {
+        float px = x0, py = y0;
+        for (int i = 1; i <= steps; i++) {
+            float t = (float)i / (float)steps, u = 1.0f - t;
+            float x = u*u*u*x0 + 3.0f*u*u*t*c1x + 3.0f*u*t*t*c2x + t*t*t*x1;
+            float y = u*u*u*y0 + 3.0f*u*u*t*c1y + 3.0f*u*t*t*c2y + t*t*t*y1;
+            add(px, py, x, y);
+            px = x; py = y;
+        }
+    }
+
+    // Normalised -> cell pixels, and cache each segment's padded bounds so the
+    // rasteriser can reject most segments per pixel with four comparisons.
+    //
+    // The ink is inset by half a stroke: the strokes are centred on the path, so a
+    // path point at y=0 would otherwise paint 3.5 px above the cell and be clipped,
+    // which flattened the top and bottom of every round glyph.
+    void toPixels(float cellW, float cellH) {
+        const float inset = GLYPH_STROKE * 0.5f + 1.0f;
+        const float spanX = cellW - 2.0f * inset;
+        const float spanY = cellH - 2.0f * inset;
+        const float pad = GLYPH_STROKE * 0.5f + 1.5f;
+
+        for (int i = 0; i < n; i++) {
+            GlyphSeg& s = segs[i];
+            s.x0 = inset + s.x0 * spanX;
+            s.x1 = inset + s.x1 * spanX;
+            s.y0 = inset + s.y0 * spanY;
+            s.y1 = inset + s.y1 * spanY;
+            s.minX = min(s.x0, s.x1) - pad;
+            s.maxX = max(s.x0, s.x1) + pad;
+            s.minY = min(s.y0, s.y1) - pad;
+            s.maxY = max(s.y0, s.y1) + pad;
+        }
+    }
+};
+
+static void buildGearGlyph(char c, GlyphPath& p) {
     switch (c) {
-        case '1':
-            fill(charW / 2 - stroke / 2, 0, stroke, charH);
-            fill(charW / 2 - stroke / 2 - stroke, 0, stroke, stroke);
-            break;
-
-        case '2':
-            fill(0, 0, charW, stroke);                          // Top
-            fill(charW - stroke, 0, stroke, charH / 2);         // Top right
-            fill(0, charH / 2 - stroke / 2, charW, stroke);     // Middle
-            fill(0, charH / 2, stroke, charH / 2);              // Bottom left
-            fill(0, charH - stroke, charW, stroke);             // Bottom
-            break;
-
-        case '3':
-            fill(0, 0, charW, stroke);                          // Top
-            fill(charW - stroke, 0, stroke, charH);             // Right
-            fill(0, charH / 2 - stroke / 2, charW, stroke);     // Middle
-            fill(0, charH - stroke, charW, stroke);             // Bottom
-            break;
-
-        case '4':
-            fill(0, 0, stroke, charH / 2 + stroke);             // Left top
-            fill(0, charH / 2 - stroke / 2, charW, stroke);     // Middle
-            fill(charW - stroke, 0, stroke, charH);             // Right
-            break;
-
-        case '5':
-            fill(0, 0, charW, stroke);                          // Top
-            fill(0, 0, stroke, charH / 2);                      // Top left
-            fill(0, charH / 2 - stroke / 2, charW, stroke);     // Middle
-            fill(charW - stroke, charH / 2, stroke, charH / 2); // Bottom right
-            fill(0, charH - stroke, charW, stroke);             // Bottom
-            break;
-
-        case '6':
-            fill(0, 0, charW, stroke);                          // Top
-            fill(0, 0, stroke, charH);                          // Left
-            fill(0, charH / 2 - stroke / 2, charW, stroke);     // Middle
-            fill(charW - stroke, charH / 2, stroke, charH / 2); // Bottom right
-            fill(0, charH - stroke, charW, stroke);             // Bottom
-            break;
-
-        case 'N':
-            fill(0, 0, stroke, charH);                          // Left
-            fill(charW - stroke, 0, stroke, charH);             // Right
-            for (int i = 0; i < charH; i += 4) {                // Diagonal
-                int dx = (i * (charW - stroke)) / charH;
-                fill(dx, i, stroke + 2, 6);
-            }
-            break;
-
-        case 'R':
-            fill(0, 0, stroke, charH);                          // Left
-            fill(0, 0, charW - stroke / 2, stroke);             // Top
-            fill(charW - stroke, 0, stroke, charH / 2);         // Top right
-            fill(0, charH / 2 - stroke / 2, charW - stroke / 2, stroke);  // Middle
-            for (int i = 0; i < charH / 2; i += 4) {            // Diagonal leg
-                int dx = (i * (charW - stroke)) / (charH / 2);
-                fill(charW / 3 + dx, charH / 2 + i, stroke + 2, 6);
-            }
-            break;
-
-        case 'C':
-            fill(0, 0, charW, stroke);                          // Top
-            fill(0, 0, stroke, charH);                          // Left
-            fill(0, charH - stroke, charW, stroke);             // Bottom
-            break;
-
-        case 'G':
-            fill(0, 0, charW, stroke);                          // Top
-            fill(0, 0, stroke, charH);                          // Left
-            fill(0, charH - stroke, charW, stroke);             // Bottom
-            fill(charW - stroke, charH / 2, stroke, charH / 2); // Bottom right
-            fill(charW / 2, charH / 2 - stroke / 2, charW / 2, stroke);  // Middle bar
-            break;
-
         case '0':
-            fill(0, 0, charW, stroke);                          // Top
-            fill(0, 0, stroke, charH);                          // Left
-            fill(charW - stroke, 0, stroke, charH);             // Right
-            fill(0, charH - stroke, charW, stroke);             // Bottom
+            p.arc(0.50f, 0.50f, 0.38f, 0.49f, 0, 360, 22);
             break;
-
+        case '1':
+            p.line(0.54f, 0.12f, 0.54f, 1.00f);
+            p.line(0.31f, 0.34f, 0.54f, 0.12f);
+            p.line(0.31f, 1.00f, 0.77f, 1.00f);
+            break;
+        case '2':
+            p.arc(0.50f, 0.29f, 0.37f, 0.27f, 180, 360, 16);
+            p.line(0.87f, 0.29f, 0.16f, 1.00f);
+            p.line(0.16f, 1.00f, 0.88f, 1.00f);
+            break;
+        case '3':
+            // One continuous stroke: two arcs joined at a point left a cusp that
+            // read as a stylised "Ʒ" at this size. Beziers keep the waist smooth.
+            p.cubic(0.22f, 0.20f, 0.22f, 0.01f, 0.78f, 0.00f, 0.78f, 0.24f, 10);
+            p.cubic(0.78f, 0.24f, 0.78f, 0.40f, 0.56f, 0.42f, 0.56f, 0.50f, 8);
+            p.cubic(0.56f, 0.50f, 0.56f, 0.58f, 0.78f, 0.60f, 0.78f, 0.76f, 8);
+            p.cubic(0.78f, 0.76f, 0.78f, 0.99f, 0.22f, 1.00f, 0.22f, 0.80f, 10);
+            break;
+        case '4':
+            p.line(0.66f, 0.02f, 0.66f, 1.00f);
+            p.line(0.66f, 0.02f, 0.14f, 0.69f);
+            p.line(0.12f, 0.69f, 0.90f, 0.69f);
+            break;
+        case '5':
+            p.line(0.86f, 0.03f, 0.24f, 0.03f);
+            p.line(0.24f, 0.03f, 0.24f, 0.44f);
+            p.line(0.24f, 0.44f, 0.52f, 0.44f);
+            // 270 -> 520 sweeps down the right side and around the bottom; 270 -> 160
+            // would have drawn the bowl on the wrong side of the stem.
+            p.arc(0.52f, 0.70f, 0.34f, 0.27f, 270, 520, 18);
+            break;
+        case '6':
+            p.quad(0.80f, 0.05f, 0.24f, 0.18f, 0.22f, 0.70f, 12);
+            p.arc(0.50f, 0.72f, 0.30f, 0.26f, 180, 540, 22);
+            break;
+        case '7':
+            p.line(0.18f, 0.03f, 0.86f, 0.03f);
+            p.line(0.86f, 0.03f, 0.36f, 1.00f);
+            break;
+        case '8':
+            p.arc(0.50f, 0.25f, 0.28f, 0.235f, 0, 360, 20);
+            p.arc(0.50f, 0.75f, 0.33f, 0.24f, 0, 360, 20);
+            break;
+        case '9':
+            p.arc(0.50f, 0.26f, 0.32f, 0.25f, 0, 360, 22);
+            p.quad(0.82f, 0.27f, 0.82f, 0.84f, 0.26f, 0.95f, 12);
+            break;
+        case 'N':
+            p.line(0.18f, 0.00f, 0.18f, 1.00f);
+            p.line(0.18f, 0.00f, 0.82f, 1.00f);
+            p.line(0.82f, 0.00f, 0.82f, 1.00f);
+            break;
+        case 'R':
+            // A wide bowl: at 44 px with an 8 px stroke, a narrow one closes up and
+            // reads as a hook rather than a letter.
+            p.line(0.16f, 0.00f, 0.16f, 1.00f);
+            p.line(0.16f, 0.00f, 0.50f, 0.00f);
+            p.arc(0.50f, 0.25f, 0.34f, 0.24f, 270, 450, 16);
+            p.line(0.50f, 0.49f, 0.16f, 0.49f);
+            p.line(0.44f, 0.49f, 0.88f, 1.00f);
+            break;
+        case 'C':
+            p.arc(0.54f, 0.50f, 0.40f, 0.48f, 315, 45, 20);
+            break;
+        case 'G':
+            p.arc(0.54f, 0.50f, 0.40f, 0.48f, 315, 0, 20);
+            p.line(0.94f, 0.50f, 0.60f, 0.50f);
+            break;
+        case 'S':
+            // Two shallow bowls joined by a diagonal: the classic S skeleton.
+            p.arc(0.50f, 0.26f, 0.32f, 0.24f, -20, -180, 16);
+            p.line(0.18f, 0.26f, 0.82f, 0.74f);
+            p.arc(0.50f, 0.74f, 0.32f, 0.24f, 0, 180, 16);
+            break;
         case '-':
         default:
-            fill(4, charH / 2 - stroke / 2, charW - 8, stroke);
+            p.line(0.18f, 0.52f, 0.82f, 0.52f);
             break;
     }
-
-    auto gearBit = [&](int xx, int yy) -> int {
-        if (xx < 0 || xx >= charW || yy < 0 || yy >= charH) return 0;
-        return glyphBits[yy * charW + xx];
-    };
-
-    auto sample = [&](float fx, float fy) -> float {
-        int sx = (int)floorf(fx);
-        int sy = (int)floorf(fy);
-        float tx = fx - (float)sx;
-        float ty = fy - (float)sy;
-        float v00 = (float)gearBit(sx, sy);
-        float v10 = (float)gearBit(sx + 1, sy);
-        float v01 = (float)gearBit(sx, sy + 1);
-        float v11 = (float)gearBit(sx + 1, sy + 1);
-        return v00 * (1.0f - tx) * (1.0f - ty) + v10 * tx * (1.0f - ty)
-             + v01 * (1.0f - tx) * ty + v11 * tx * ty;
-    };
-
-    int x0 = centerX - charW / 2;
-    int y0 = centerY - charH / 2;
-
-    // Blend fg over bg at 0..15 coverage (same math as the driver's blitter).
-    auto mix = [](uint16_t bgc, uint16_t fgc, int cov) -> uint16_t {
-        if (cov <= 0) return bgc;
-        if (cov >= 15) return fgc;
-        int br = (bgc >> 11) & 0x1F, bg_ = (bgc >> 5) & 0x3F, bb = bgc & 0x1F;
-        int fr = (fgc >> 11) & 0x1F, fg_ = (fgc >> 5) & 0x3F, fb = fgc & 0x1F;
-        int r = br + ((fr - br) * cov) / 15;
-        int g = bg_ + ((fg_ - bg_) * cov) / 15;
-        int b = bb + ((fb - bb) * cov) / 15;
-        return (uint16_t)((r << 11) | (g << 5) | b);
-    };
-
-    // Composite the whole cell - foreground AND background - into one buffer and
-    // push it with a single panel transaction. Writing the uncovered pixels as
-    // the background also erases whatever glyph was there before; the old
-    // blend-only path skipped them and left the previous digit behind.
-    static uint16_t gearBuf[charW * charH];
-    for (int row = 0; row < charH; row++) {
-        uint16_t* dst = gearBuf + row * charW;
-        for (int col = 0; col < charW; col++) {
-            float sum = sample(col - 0.25f, row - 0.25f)
-                      + sample(col + 0.25f, row - 0.25f)
-                      + sample(col - 0.25f, row + 0.25f)
-                      + sample(col + 0.25f, row + 0.25f);
-            int cov = (int)(sum * 15.0f / 4.0f + 0.5f);
-            if (cov > 15) cov = 15;
-            dst[col] = mix(bgColor, color, cov);
-        }
-    }
-    LCD_DrawBuffer(x0, y0, charW, charH, gearBuf);
 }
 
+static inline uint16_t blend565(int alpha, uint16_t bg, uint16_t fg) {
+    if (alpha <= 0) return bg;
+    if (alpha >= 255) return fg;
+    int br = (bg >> 11) & 0x1F, bgc = (bg >> 5) & 0x3F, bb = bg & 0x1F;
+    int fr = (fg >> 11) & 0x1F, fgc = (fg >> 5) & 0x3F, fb = fg & 0x1F;
+    int r = br + ((fr - br) * alpha) / 255;
+    int g = bgc + ((fgc - bgc) * alpha) / 255;
+    int b = bb + ((fb - bb) * alpha) / 255;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static inline float segDistSq(float px, float py, const GlyphSeg& s) {
+    float dx = s.x1 - s.x0, dy = s.y1 - s.y0;
+    float l2 = dx * dx + dy * dy;
+    float t = (l2 > 0.0001f) ? ((px - s.x0) * dx + (py - s.y0) * dy) / l2 : 0.0f;
+    if (t < 0.0f) t = 0.0f;
+    else if (t > 1.0f) t = 1.0f;
+    float qx = s.x0 + t * dx - px;
+    float qy = s.y0 + t * dy - py;
+    return qx * qx + qy * qy;
+}
+
+void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, uint16_t bgColor) {
+    GlyphPath path;
+    buildGearGlyph(str[0], path);
+    path.toPixels((float)GLYPH_W, (float)GLYPH_H);
+
+    // One buffer for the whole cell - foreground AND background - pushed with a
+    // single panel transaction. Writing the uncovered pixels as the background
+    // also erases the previous glyph.
+    static uint16_t gearBuf[GLYPH_W * GLYPH_H];
+    const float halfStroke = GLYPH_STROKE * 0.5f;
+
+    for (int row = 0; row < GLYPH_H; row++) {
+        float py = (float)row + 0.5f;
+        for (int col = 0; col < GLYPH_W; col++) {
+            float px = (float)col + 0.5f;
+
+            float best = 1.0e9f;
+            for (int i = 0; i < path.n; i++) {
+                const GlyphSeg& s = path.segs[i];
+                if (px < s.minX || px > s.maxX || py < s.minY || py > s.maxY) continue;
+                float d2 = segDistSq(px, py, s);
+                if (d2 < best) best = d2;
+            }
+
+            // 1 px antialias band centred on the stroke edge.
+            float cov = (halfStroke + 0.5f) - sqrtf(best);
+            int alpha = cov <= 0.0f ? 0 : (cov >= 1.0f ? 255 : (int)(cov * 255.0f));
+            gearBuf[row * GLYPH_W + col] = blend565(alpha, bgColor, color);
+        }
+    }
+
+    LCD_DrawBuffer(centerX - GLYPH_W / 2, centerY - GLYPH_H / 2,
+                   GLYPH_W, GLYPH_H, gearBuf);
+}
 // ============================================================================
 // Overview screen
 // ============================================================================
