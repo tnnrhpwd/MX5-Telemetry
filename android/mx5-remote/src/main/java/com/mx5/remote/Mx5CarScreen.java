@@ -56,7 +56,12 @@ public class Mx5CarScreen extends Screen {
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         pi = PiLink.acquire();
-        pi.configure(prefs.getString("address", DEFAULT_ADDRESS), prefs.getString("token", ""));
+        // Only configure the shared client when nobody has yet. configure() rebuilds the
+        // transport chain, and the parked dashboard may be mid-request on the same client.
+        if (!pi.isConfigured()) {
+            pi.configure(prefs.getString("address", DEFAULT_ADDRESS),
+                    prefs.getString("token", ""));
+        }
 
         // Screen has no onDestroy() of its own in 1.4.0; its lifecycle is the hook.
         // Polling only runs while the screen is visible, and the shared client is
