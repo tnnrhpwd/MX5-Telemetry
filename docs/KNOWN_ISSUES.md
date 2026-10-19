@@ -121,6 +121,9 @@ and boots dark when the phone has never connected.
   loads it before the boot animation. No stored theme ⇒ dark aurora.
 - `MainActivity` pushes `theme_scheme` / `theme_dark` to the Pi on every change and at
   start-up; `link_service.update_setting` mirrors it and re-syncs the ESP32.
+- The Pi only forwards a theme it has actually received (`theme_scheme` starts empty).
+  A Pi restart therefore cannot overwrite the display's stored theme with a default —
+  the authority stays with the phone, and the display keeps its last known theme.
 - Light mode fills the background with the theme colour instead of the fixed dark carbon
   image, and the "unlit" stroke colour is a mid-grey, so page-indicator dots and unlit
   arc segments stay visible on a light background.
@@ -639,6 +642,9 @@ lift-off and drops under load, instead of `--`.
 - The current gear's row is elevated; RPM colour is green inside the band, blue below,
   red above.
 - `R` shows `REVERSE` and a stopped car shows `STOPPED` rather than a meaningless ladder.
+- **Layout:** the block starts at y=250, below the COOL/OIL/VOLT and MPG/FUEL/RANGE
+  cards (which end at y=244). It previously started at 242, so its first row sat under
+  "RANGE" and its background clear-rect erased the right card's bottom corner.
 - The full TPMS page and the BLE scanning code are untouched, ready for the 315 MHz
   sensors.
 
@@ -863,6 +869,16 @@ because it compiled.
 6. **Throttle source was unverifiable from the car.** A periodic
    `THR: engine(0x201)=…% legacy(0x200)=…%` log was added so the first drive settles the
    question without any extra tooling.
+7. **The Overview gear ladder overlapped the MPG/FUEL/RANGE card.** The block started at
+   y=242 while the cards end at y=244, and its background clear-rect wiped the right
+   card's bottom corner. It now starts at y=250 with a 24 px row height; verified by
+   cropping the rendered frame.
+8. **A Pi restart could clobber the display's theme.** The Pi's `theme_scheme` defaulted
+   to `aurora`, and the connect-time settings sync would push that (dark) over whatever
+   the ESP had stored. It now defaults to empty and is only forwarded once the phone has
+   actually sent one.
+9. **G-force trail could erase its own axis labels** at full deflection. Labels moved
+   outside the clamp radius and the clamp moved 4 px inside the ring.
 
 ### Remaining risks that only the car can settle
 
@@ -875,6 +891,9 @@ because it compiled.
   DRIVING service for an app also declared as a parked game can only be confirmed on the
   head unit.
 - The gear-ratio constants assume the 6-speed / 4.10 final drive.
+- `HSCanID.GEAR_POSITION` is read from `0x231`, while `docs/ARCHITECTURE.md` documents
+  gear on `0x228`. Gears 1-6 are estimated regardless, so this only affects **neutral**
+  detection — worth watching for whether `N` appears reliably at a standstill.
 
 ---
 

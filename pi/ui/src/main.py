@@ -257,9 +257,11 @@ class Settings:
     led_sequence: int = LED_SEQ_CENTER_OUT  # LED sequence mode (1-4)
     clutch_display_mode: int = 0  # 0=Gear#(colored), 1='C', 2='S', 3='-'
     # Theme mirrored from the phone app so the round display can match it.
-    # The phone is authoritative; when it has never connected, dark + the app's
-    # default scheme is used (see DEFAULT_THEME_SCHEME).
-    theme_scheme: str = "aurora"
+    # The phone is authoritative. Empty means "never received": the Pi then sends
+    # nothing, so a Pi restart cannot overwrite the display's own persisted theme
+    # (which is what a default would do) and a display that has never seen a phone
+    # keeps its dark default.
+    theme_scheme: str = ""
     theme_dark: bool = True
 
 

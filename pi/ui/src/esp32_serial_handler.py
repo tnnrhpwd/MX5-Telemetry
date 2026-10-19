@@ -637,7 +637,9 @@ class ESP32SerialHandler:
                 # :.0f yields "-0", and C++ compares -0.0 < 0 as false, so the ESP
                 # could never infer reverse from the speed field alone.
                 speed_for_wire = self.telemetry.speed_kmh
-                if speed_for_wire < 0:
+                if speed_for_wire <= 0:
+                    # `<= 0` rather than `< 0`: a -0.0 would format as "-0" and compare
+                    # false against zero at the far end.
                     speed_for_wire = 0
                 msg = f"TEL:{self.telemetry.rpm:.0f},{speed_for_wire:.0f},{self.telemetry.gear},"
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
@@ -881,8 +883,9 @@ class ESP32SerialHandler:
         if hasattr(settings, 'led_sequence'):
             self.send_setting("led_sequence", settings.led_sequence)
         # Theme mirrored from the phone app. Sent last so a slow serial link never
-        # delays the functional settings above.
-        if hasattr(settings, 'theme_scheme'):
+        # delays the functional settings above. An empty scheme means the phone has
+        # never sent one, in which case the display keeps whatever it has stored.
+        if getattr(settings, 'theme_scheme', ''):
             self.send_theme(settings.theme_scheme, settings.theme_dark)
 
     def send_theme(self, scheme: str, dark: bool):

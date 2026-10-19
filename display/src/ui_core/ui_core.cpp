@@ -729,23 +729,28 @@ static int predictedRpm(int gear, float speedKmh) {
 
 // Draws the three gears whose predicted RPM sits closest to the sweet-spot band,
 // with that RPM. Replaces the TPMS card while the Bluetooth sensors are offline.
+//
+// Geometry is deliberately tight to the bottom of the disc: the COOL/OIL/VOLT and
+// MPG/FUEL/RANGE cards end at y=244, so the block starts at 250 and the clear
+// rectangle begins below that edge. Starting any higher wiped the right card's
+// bottom corner and put the first row under "RANGE".
 static void drawGearLadder() {
-    const int rowW = 150;
-    const int rowH = 26;
-    const int rowGap = 4;
-    const int startY = 242;
+    const int rowW = 146;
+    const int rowH = 24;
+    const int rowGap = 2;
+    const int startY = 250;
+    const int blockH = rowH * 3 + rowGap * 2;
     const int x = CENTER_X - rowW / 2;
 
     // Clear the whole ladder area first: the rows are shorter than the block.
-    LCD_FillRect(x - 4, startY - 4, rowW + 8,
-                 rowH * 3 + rowGap * 2 + 8, COLOR_BG);
+    LCD_FillRect(x - 4, startY - 4, rowW + 8, blockH + 8, COLOR_BG);
 
     float speed = telemetry.speed;
     if (speed < 0) speed = 0;
 
     if (speed < 1.0f || telemetry.isInReverse) {
         LCD_FillRoundRect(x, startY, rowW, rowH, 8, COLOR_BG_CARD);
-        drawCentered(CENTER_X, startY + 7, telemetry.isInReverse ? "REVERSE" : "STOPPED",
+        drawCentered(CENTER_X, startY + 8, telemetry.isInReverse ? "REVERSE" : "STOPPED",
                      MX5_GRAY, COLOR_BG_CARD, 1);
         return;
     }
@@ -785,11 +790,11 @@ static void drawGearLadder() {
 
         char gearStr[6];
         snprintf(gearStr, sizeof(gearStr), "%d", gear);
-        LCD_DrawString(x + 14, y + 6, gearStr, isCurrent ? MX5_WHITE : MX5_GRAY, bg, 2);
+        LCD_DrawString(x + 14, y + 5, gearStr, isCurrent ? MX5_WHITE : MX5_GRAY, bg, 2);
 
         char rpmStr[10];
         snprintf(rpmStr, sizeof(rpmStr), "%d", rpm);
-        drawRightAligned(x + rowW - 12, y + 6, rpmStr, rpmColor, bg, 2);
+        drawRightAligned(x + rowW - 12, y + 5, rpmStr, rpmColor, bg, 2);
     }
 }
 
@@ -1592,10 +1597,12 @@ void drawGForceScreen() {
         LCD_FillCircle(GF_CX, GF_CY, 2, MX5_WHITE);
 
         // Axis labels, matching the Android pad: accel up, brake down, L/R across.
+        // Kept clear of the trail's clamped radius so a dot at full deflection cannot
+        // overwrite a label until the next full redraw.
         drawCentered(GF_CX, GF_CY - GF_TRAVEL - 14, "ACCEL", MX5_GRAY, COLOR_BG_CARD, 1);
-        drawCentered(GF_CX, GF_CY + GF_TRAVEL + 3, "BRAKE", MX5_GRAY, COLOR_BG_CARD, 1);
-        drawCentered(GF_CX - GF_TRAVEL - 2, GF_CY - 3, "L", MX5_GRAY, COLOR_BG_CARD, 1);
-        drawCentered(GF_CX + GF_TRAVEL + 2, GF_CY - 3, "R", MX5_GRAY, COLOR_BG_CARD, 1);
+        drawCentered(GF_CX, GF_CY + GF_TRAVEL + 14, "BRAKE", MX5_GRAY, COLOR_BG_CARD, 1);
+        drawCentered(GF_CX - GF_TRAVEL - 12, GF_CY - 3, "L", MX5_GRAY, COLOR_BG_CARD, 1);
+        drawCentered(GF_CX + GF_TRAVEL + 12, GF_CY - 3, "R", MX5_GRAY, COLOR_BG_CARD, 1);
 
         const char* labels[3] = {"MAG", "LAT", "LONG"};
         const int colX[3] = {108, CENTER_X, 252};
@@ -1634,12 +1641,14 @@ void drawGForceScreen() {
             int px = GF_CX + (int)(trailLat[index] * scale);
             int py = GF_CY - (int)(trailLong[index] * scale);
 
-            // Clamp to the outer ring: on a bumpy road a clamped dot is more useful
-            // than one that has left the dial.
+            // Clamp to just inside the outer ring: on a bumpy road a clamped dot is
+            // more useful than one that has left the dial, and stopping 4px short
+            // keeps it off the axis labels.
             int dx = px - GF_CX, dy = py - GF_CY;
             int d2 = dx * dx + dy * dy;
-            if (d2 > GF_TRAVEL * GF_TRAVEL) {
-                float k = (float)GF_TRAVEL / sqrtf((float)d2);
+            const int clampR = GF_TRAVEL - 4;
+            if (d2 > clampR * clampR) {
+                float k = (float)clampR / sqrtf((float)d2);
                 px = GF_CX + (int)(dx * k);
                 py = GF_CY + (int)(dy * k);
             }
