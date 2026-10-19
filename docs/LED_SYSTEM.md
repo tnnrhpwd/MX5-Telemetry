@@ -27,49 +27,43 @@ The Arduino Nano controls a WS2812B LED strip (20 LEDs) around the gauge cluster
 - Scanner head: bright white-red (255, 60, 30)
 - Update rate: 50ms per position
 
-### ⚪ Idle State (Stationary, RPM 1-1999)
-**Triggers:** Speed = 0, RPM 1-1999 (engine running, not moving)
+### 🔵 Idle / Pull-Away (0-1399 RPM)
+**Purpose:** Idle and just moving off
 
-**Visual:** Mirrored progress bar from edges → center
+**Visual:** Blue → cyan gradient, mirrored center-out fill
 - Shows engine "breathing" while stationary
-- White LEDs filling toward center based on RPM %
 - Useful for rev-matching, launch control
 
-### 🔵 Blue Zone (2000-2999 RPM)
-**Purpose:** Best fuel economy zone
+### 🟢 Cruise / Economical (1400-2799 RPM)
+**Purpose:** Best fuel economy and thermal efficiency band
 
-**Visual:** Blue LEDs, mirrored center-out fill
-- Optimal for cruising
+**Visual:** Cyan → green gradient
+- The band normal driving lives in
 - Encourages eco-friendly driving
 
-### 🟢 Green Zone (3000-4499 RPM)
-**Purpose:** Best thermal efficiency zone
-
-**Visual:** Green LEDs with smooth gradient from blue
-- Peak torque range for MX-5
-- Balance of power and efficiency
-
-### 🟡 Yellow Zone (4500-5499 RPM)
+### 🟡 Waking Up (2800-4499 RPM)
 **Purpose:** Spirited driving zone
 
-**Visual:** Yellow LEDs with smooth gradient from green
-- High performance range
-- Warning that redline is approaching
+**Visual:** Green → yellow gradient
+- Approaching peak torque use
+- Warning that the top of the range is coming
 
-### 🟠 Orange Zone (5500-6199 RPM)
+### 🟠 Spirited (4500-5799 RPM)
 **Purpose:** High RPM warning
 
-**Visual:** Orange LEDs with smooth gradient from yellow
-- Approaching redline
+**Visual:** Yellow → orange gradient
 - Prepare to shift
 
-### 🔴 Red Zone (6200+ RPM)
+### 🔴 Redline (5800-6800+ RPM)
 **Purpose:** Redline / shift light
 
-**Visual:** Solid red, all LEDs lit
-- Full strip flashes red
-- Time to shift!
+**Visual:** Orange → red gradient, fully red at 6800
+- The top of the strip is the shift light
 - Optional haptic feedback
+
+> **Zones are anchored to the engine, not to round numbers.** The strip only
+> reaches full red at the real redline (~6800 RPM). It used to saturate at 6200,
+> which left the last 600 RPM of the range showing nothing new.
 
 ---
 
@@ -133,12 +127,25 @@ Instead of discrete on/off steps, LEDs use sub-LED resolution:
 **Result:** 2x effective resolution (~40 visual steps from 20 LEDs)
 
 ### Smooth Color Gradients
-Colors interpolate continuously between RPM zones:
-- No sudden color jumps
-- Smooth transitions: Blue → Green → Yellow → Orange → Red
-- Infinite color resolution
+The strip is a **positional gradient**, not a single colour that changes hue:
+each LED is assigned the colour of its own place on the RPM scale
+(`scaleColorAt()` in `arduino/src/main.cpp`). As RPM rises, more of that fixed
+ramp lights up instead of the whole bar recolouring at once.
+
+- Blue → cyan → green → yellow → orange → red, continuously interpolated
+- The leading edge always shows the colour of the RPM it represents
+- The top of the strip is red at the redline, which is what makes it a shift light
 
 **Anti-Flicker Threshold:** 5% minimum brightness prevents LED flickering
+
+### Latency and frame pacing
+- LEDs are painted immediately after a CAN frame is decoded, not on a separate
+  10 ms timer, so there is no extra tick of delay.
+- Rising RPM is unfiltered (`RPM_ALPHA_RISING = 1.0`); falling RPM keeps a light
+  settle filter so the bar does not trail.
+- `strip.show()` is only called when a pixel actually changed
+  (`showIfChanged()`), because the transfer is the expensive, interrupt-masking
+  part of every frame.
 
 ---
 
@@ -243,14 +250,14 @@ MCP2515 CANL ──► OBD-II Pin 14 (HS-CAN Low)
 #define ENABLE_BRIGHTNESS   true    // Potentiometer control
 ```
 
-### RPM Thresholds (Color Zones)
+### RPM Thresholds (Colour Scale)
 
 ```cpp
-#define RPM_ZONE_BLUE       2000    // 0-1999: Blue
-#define RPM_ZONE_GREEN      3000    // 2000-2999: Green
-#define RPM_ZONE_YELLOW     4500    // 3000-4499: Yellow
-#define RPM_ZONE_ORANGE     5500    // 4500-5499: Orange
-#define RPM_MAX             6200    // 5500+: Red
+#define RPM_ZONE_CYAN       1400    // idle / moving off
+#define RPM_ZONE_GREEN      2800    // cruising - economical band
+#define RPM_ZONE_YELLOW     4500    // waking up
+#define RPM_ZONE_ORANGE     5800    // spirited
+#define RPM_MAX             6800    // redline - full red
 #define RPM_REDLINE         6800    // Optional haptic trigger
 ```
 

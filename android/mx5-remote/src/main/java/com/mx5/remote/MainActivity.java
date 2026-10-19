@@ -190,6 +190,10 @@ public class MainActivity extends Activity implements Screen.Host {
 
         rebuildUi();
 
+        // Tell the Pi which theme is active, so a display that was flashed or has
+        // just booted picks it up without waiting for the user to change anything.
+        pushThemeToPi();
+
         if (!narrow) {
             // Only the car. A phone has a system bar with both of these already on it, and a
             // second copy of a clock an inch from the real one is just noise.
@@ -334,6 +338,7 @@ public class MainActivity extends Activity implements Screen.Host {
                     % Palette.SCHEMES.length].id;
             prefs.edit().putString("scheme", schemeId).apply();
             rebuildUi();
+            pushThemeToPi();
         });
         panel.addView(scheme);
 
@@ -342,6 +347,7 @@ public class MainActivity extends Activity implements Screen.Host {
             dark = !dark;
             prefs.edit().putBoolean("dark", dark).apply();
             rebuildUi();
+            pushThemeToPi();
         });
         panel.addView(theme);
 
@@ -473,6 +479,7 @@ public class MainActivity extends Activity implements Screen.Host {
             schemeId = Palette.SCHEMES[(Palette.indexOf(schemeId) + 1) % Palette.SCHEMES.length].id;
             prefs.edit().putString("scheme", schemeId).apply();
             rebuildUi();
+            pushThemeToPi();
         });
 
         themeButton = topButton(dark ? "Light" : "Dark");
@@ -480,6 +487,7 @@ public class MainActivity extends Activity implements Screen.Host {
             dark = !dark;
             prefs.edit().putBoolean("dark", dark).apply();
             rebuildUi();
+            pushThemeToPi();
         });
 
         bar.addView(title);
@@ -825,6 +833,34 @@ public class MainActivity extends Activity implements Screen.Host {
                 handler.post(() -> toast("Pi did not accept the screen change", true));
             }
         }).start();
+    }
+
+    // ----------------------------------------------------------------- theme sync
+
+    /**
+     * Mirror the app's scheme and dark/light mode onto the Pi.
+     *
+     * The Pi caches settings for the ESP32, so this is what makes the round display
+     * follow the phone: the Pi forwards it as THEME:<scheme>,<0|1> and the ESP keeps
+     * it in NVS. Without a phone ever connecting, both default to dark aurora.
+     *
+     * Fire-and-forget on a worker thread - a theme change must never wait on the
+     * link, and a failed push simply means the ESP keeps its previous theme.
+     */
+    private void pushThemeToPi() {
+        final String scheme = schemeId;
+        final int darkFlag = dark ? 1 : 0;
+        new Thread(() -> {
+            try {
+                if (!pi.isConfigured()) {
+                    return;
+                }
+                pi.updateSetting("theme_scheme", scheme);
+                pi.updateSetting("theme_dark", darkFlag);
+            } catch (Exception ignored) {
+                // Offline: the Pi still holds whatever theme was last delivered.
+            }
+        }, "theme-sync").start();
     }
 
     // ----------------------------------------------------------------- polling

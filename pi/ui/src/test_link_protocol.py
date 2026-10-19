@@ -115,6 +115,7 @@ class FakeTelemetry:
         self.lap_time_ms = 0
         self.best_lap_ms = 0
         self.instant_mpg = 0.0
+        self.instant_mpg_valid = False
         self.average_mpg = 0.0
         self.range_miles = 0
         self.check_engine_light = False
@@ -149,6 +150,8 @@ class FakeSettings:
         self.coolant_warn_f = 220
         self.led_sequence = 1
         self.clutch_display_mode = 0
+        self.theme_scheme = 'aurora'
+        self.theme_dark = True
 
 
 class FakeSwc:

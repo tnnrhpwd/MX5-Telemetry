@@ -36,23 +36,58 @@
 #define BAR_RADIUS 4
 
 // ============================================================================
-// Colors - Modern dark theme
+// Colors
+//
+// Every colour is a runtime value so the display can follow the phone app's
+// theme (scheme + dark/light). The macros below keep every existing call site
+// unchanged while reading from the active palette.
+//
+// Defaults are the dark "aurora" scheme, which is also what the firmware uses
+// when the phone has never connected.
 // ============================================================================
-#define COLOR_BG          RGB565(12, 12, 18)
-#define COLOR_BG_CARD     RGB565(22, 22, 32)
-#define COLOR_BG_ELEVATED RGB565(32, 32, 45)
-#define MX5_RED       RGB565(255, 70, 85)
-#define MX5_ORANGE    RGB565(255, 140, 50)
-#define MX5_YELLOW    RGB565(255, 210, 60)
-#define MX5_GREEN     RGB565(50, 215, 130)
-#define MX5_BLUE      RGB565(65, 135, 255)
-#define MX5_CYAN      RGB565(50, 220, 255)
-#define MX5_PURPLE    RGB565(175, 130, 255)
-#define MX5_WHITE     RGB565(245, 245, 250)
-#define MX5_BLACK     COLOR_BG
-#define MX5_GRAY      RGB565(140, 140, 160)
-#define MX5_DARKGRAY  RGB565(55, 55, 70)
-#define MX5_ACCENT    RGB565(100, 140, 255)
+struct ThemePalette {
+    uint16_t bg;
+    uint16_t bgDark;
+    uint16_t bgCard;
+    uint16_t bgElevated;
+    uint16_t text;
+    uint16_t textDim;
+    uint16_t darkGray;
+    uint16_t red;
+    uint16_t orange;
+    uint16_t yellow;
+    uint16_t green;
+    uint16_t blue;
+    uint16_t cyan;
+    uint16_t purple;
+    uint16_t accent;
+};
+
+extern ThemePalette g_theme;
+
+// Active theme identity (mirrored from the phone app; persisted in NVS)
+extern char themeScheme[16];
+extern bool themeDark;
+
+void applyTheme(const char* scheme, bool dark);
+void applyDefaultTheme();
+
+#define COLOR_BG          (g_theme.bg)
+#define COLOR_BG_DARK     (g_theme.bgDark)
+#define COLOR_BG_CARD     (g_theme.bgCard)
+#define COLOR_BG_ELEVATED (g_theme.bgElevated)
+#define MX5_RED           (g_theme.red)
+#define MX5_ORANGE        (g_theme.orange)
+#define MX5_YELLOW        (g_theme.yellow)
+#define MX5_GREEN         (g_theme.green)
+#define MX5_BLUE          (g_theme.blue)
+#define MX5_CYAN          (g_theme.cyan)
+#define MX5_PURPLE        (g_theme.purple)
+#define MX5_WHITE         (g_theme.text)
+#define MX5_BLACK         COLOR_BG
+#define MX5_GRAY          (g_theme.textDim)
+#define MX5_DARKGRAY      (g_theme.darkGray)
+#define MX5_ACCENT        (g_theme.accent)
 
 // Arduino LED strip matching colors (pure RGB values)
 // These MUST match arduino/src/main.cpp getRPMColor() for visual consistency
@@ -95,6 +130,13 @@ struct TelemetryData {
     bool gearEstimated;       // True if gear was estimated from speed/RPM
     bool clutchEngaged;       // True if clutch appears to be pressed
     int gearColor;            // Gear color from Pi: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
+    // Reverse comes from the Pi as an explicit flag. It is never inferred from the
+    // speed sign: a small negative speed serialises as "-0", which compares false
+    // against zero on this side.
+    bool isInReverse;
+    // True when the Pi has a real instantaneous MPG reading. A false value is
+    // "unknown" (show --), which is not the same as 0 mpg.
+    bool instantMPGValid;
     // Diagnostics
     bool checkEngine;
     bool absWarning;
@@ -131,6 +173,8 @@ struct CachedTelemetry {
     float instantMPG;       // Cached instantaneous MPG value
     int rangeMiles;         // Cached range value
     bool engineRunning;
+    bool reverse;            // Cached reverse flag (from the Pi, not the speed sign)
+    bool instantMPGValid;    // Cached "instant MPG is a real reading" flag
     // RPM/Speed digit optimization - only redraw changed digits
     char rpmStr[8];          // Cached RPM string for per-digit comparison
     char speedStr[8];        // Cached Speed string for per-digit comparison

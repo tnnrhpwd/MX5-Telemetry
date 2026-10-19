@@ -58,6 +58,7 @@ class TelemetryData:
     # Fuel
     fuel_level_percent: float = 0.0
     instant_mpg: float = 0.0
+    instant_mpg_valid: bool = False  # False = no MAF/speed reading (show "--")
     average_mpg: float = 0.0
     range_miles: int = 0
     

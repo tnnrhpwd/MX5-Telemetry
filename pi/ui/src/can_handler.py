@@ -87,6 +87,7 @@ class OBD2:
     RESPONSE_ID = 0x7E8  # Engine ECU response
     MODE_CURRENT_DATA = 0x01
     PID_MAF = 0x10       # Mass Air Flow rate (g/s)
+    PID_INTAKE_AIR = 0x0F  # Intake air temperature (degC + 40)
 
 
 # =============================================================================
@@ -109,51 +110,68 @@ class CANParser:
     
     @staticmethod
     def parse_speed(data: bytes) -> int:
-        """Parse vehicle speed from engine message (ID 0x201)
-        Typically bytes 4-5 or similar, in km/h, converted to mph
-        
-        MX5 NC uses a 16-bit value in 0.01 km/h units with a 100 km/h offset.
-        This means:
+        """Parse vehicle speed from engine message (ID 0x201).
+
+        Returns **km/h** - the canonical speed unit for the whole system. The
+        Android app converts to mph for display, and the ESP32 does the same.
+
+        MX5 NC uses a 16-bit value in 0.01 km/h units with a 100 km/h offset:
         - 0 km/h actual = 10000 raw (100.00 km/h in raw units)
         - -5 km/h (reverse) = 9500 raw (95.00 km/h in raw units)
         - +50 km/h forward = 15000 raw (150.00 km/h in raw units)
-        
-        IMPORTANT: For negative speeds (reverse), we must ensure the sign is preserved
-        even for small values. Python's int() truncates toward zero, which would turn
-        -0.5 mph into 0, losing the reverse indicator. We use math.floor() for negative
-        values to ensure any reverse motion (even slow) is properly detected.
+
+        IMPORTANT: For negative speeds (reverse), the sign must be preserved even
+        for small values. int() truncates toward zero, which would turn -0.4 km/h
+        into 0 and lose the reverse indicator, so negatives are floored instead.
         """
         if len(data) >= 6:
             raw = (data[4] << 8) | data[5]
-            
+
             # Raw value is in 0.01 km/h units with +100 km/h offset
-            # Subtract 10000 (100 km/h * 100) to get true value in 0.01 km/h
-            true_kmh_times_100 = raw - 10000
-            
-            # Convert to km/h (float for accuracy)
-            true_kmh = true_kmh_times_100 / 100.0
-            
-            # Convert to mph (float first for proper sign handling)
-            mph_float = true_kmh * 0.621371
-            
-            # For negative speeds (reverse), use floor() to ensure any reverse motion
-            # is detected. For example: -0.5 mph should become -1, not 0.
-            # For positive speeds, int() works correctly.
-            if mph_float < 0:
-                # Floor for negative: -0.1 -> -1, ensuring reverse is detected
-                return int(math.floor(mph_float))
-            else:
-                return int(mph_float)
+            true_kmh = (raw - 10000) / 100.0
+
+            # Floor for negative: -0.4 -> -1, ensuring reverse is detected.
+            if true_kmh < 0:
+                return int(math.floor(true_kmh))
+            return int(true_kmh)
         return 0
-    
+
     @staticmethod
     def parse_throttle(data: bytes) -> int:
-        """Parse throttle position (ID 0x200)
-        Usually 0-255 -> 0-100%
+        """Parse throttle position (ID 0x200 byte 4, legacy 0-255 scale).
+
+        Kept as a fallback only: the NC broadcasts the pedal position in the
+        engine frame (0x201 byte 6, 0-200 = 0-100%), see parse_throttle_engine().
         """
         if len(data) >= 5:
             return int(data[4] * 100 / 255)
         return 0
+
+    @staticmethod
+    def parse_throttle_engine(data: bytes) -> Optional[int]:
+        """Parse throttle position from the engine frame (ID 0x201).
+
+        Byte 6 carries 0-200 where 200 = fully open. Returns None when the frame
+        is too short or the byte is outside that range, so the caller can fall
+        back to the legacy 0x200 decode instead of showing a garbage value.
+        """
+        if len(data) >= 7:
+            raw = data[6]
+            if raw <= 210:
+                return int(min(100, raw * 100 / 200))
+        return None
+
+    @staticmethod
+    def parse_intake_temp(data: bytes) -> Optional[int]:
+        """Parse intake air temperature from an OBD-II PID 0x0F response.
+
+        Response layout: [len=3, mode=0x41, pid=0x0F, A, ...]
+        A is degC + 40. Returns Fahrenheit, or None when this is not an IAT reply.
+        """
+        if len(data) >= 4 and data[1] == 0x41 and data[2] == OBD2.PID_INTAKE_AIR:
+            temp_c = data[3] - 40
+            return int(temp_c * 9 / 5 + 32)
+        return None
 
     @staticmethod
     def parse_maf(data: bytes) -> float:
@@ -495,8 +513,11 @@ class CANHandler:
     """Manages CAN bus communication with MCP2515 modules"""
     
     # Fuel level smoothing parameters
-    FUEL_EMA_ALPHA = 0.05  # EMA smoothing factor (lower = more smoothing, 0.05 = very smooth)
+    FUEL_AVERAGE_WINDOW_SEC = 60.0  # Average the last minute of RAW samples
     FUEL_HYSTERESIS = 1.5  # Only update displayed value if change > 1.5%
+
+    # A pedal reading that stops arriving is zeroed after this long
+    PEDAL_STALE_SEC = 0.75
     
     def __init__(self, telemetry_data, swc_handler=None):
         """
@@ -526,14 +547,23 @@ class CANHandler:
         self._reverse_hold_until = 0  # time.time() until which to keep showing reverse
         self._REVERSE_HOLD_SECONDS = 0.5  # Hold reverse for 500ms after speed goes to 0
         
-        # Fuel level smoothing state
-        self._fuel_ema = None  # EMA-smoothed raw fuel value
-        self._fuel_displayed = None  # Last displayed fuel value (with hysteresis)
+        # Fuel level smoothing state - a wall-clock rolling average, so the window
+        # length does not drift when the fuel frame rate changes or stalls.
+        self._fuel_samples = []          # [(timestamp, raw_pct), ...] newest last
+        self._fuel_displayed = None      # Last displayed integer (with hysteresis)
 
-        # OBD-II MAF polling state
-        self._last_maf_request = 0.0
-        self.maf_request_interval = 0.25  # Request MAF 4x per second
-        
+        # Pedal staleness: a value that stops arriving must decay, not freeze on
+        # the dash showing a throttle that is no longer applied.
+        self.throttle_timestamp = 0.0
+        self.brake_timestamp = 0.0
+
+        # OBD-II polling state. MAF and intake air share one request slot, so they
+        # alternate rather than doubling the request rate on the bus.
+        self._last_obd_request = 0.0
+        self.obd_request_interval = 0.25   # 4 requests/second, alternating PIDs
+        self._obd_pid_index = 0
+        self._obd_pids = (OBD2.PID_MAF, OBD2.PID_INTAKE_AIR)
+
     def start(self) -> bool:
         """Initialize and start CAN bus reading"""
         if not CAN_AVAILABLE:
@@ -616,60 +646,89 @@ class CANHandler:
         self.connected = False
     
     def _smooth_fuel_level(self, raw_fuel: float) -> float:
-        """Apply EMA smoothing and hysteresis to fuel level to reduce display flicker.
-        
-        Uses two-stage filtering:
-        1. EMA (Exponential Moving Average) to smooth out sensor noise
-        2. Hysteresis to prevent oscillation at value boundaries (e.g., 56% <-> 57%)
-        
+        """Average the fuel level over a wall-clock window to stop it flickering.
+
+        The fuel sender is coarse (roughly 1% steps) and the fuel in the tank
+        sloshes under braking and cornering, so a single frame is not trustworthy.
+        Averaging over a fixed *time* window - rather than an EMA whose time
+        constant depends on how often the frame happens to arrive - gives the same
+        smoothing whether the frame rate is stable, intermittent or stalled.
+
+        A short hysteresis is still applied to the displayed integer so it does not
+        twitch between adjacent values.
+
         Args:
             raw_fuel: Raw fuel percentage from CAN (0-100)
-            
+
         Returns:
-            Smoothed fuel percentage that only changes when delta exceeds hysteresis threshold
+            Smoothed, hysteresis-filtered fuel percentage.
         """
-        # Initialize on first reading
-        if self._fuel_ema is None:
-            self._fuel_ema = raw_fuel
-            self._fuel_displayed = round(raw_fuel)
+        now = time.time()
+        self._fuel_samples.append((now, raw_fuel))
+
+        # Drop samples older than the averaging window.
+        cutoff = now - self.FUEL_AVERAGE_WINDOW_SEC
+        while self._fuel_samples and self._fuel_samples[0][0] < cutoff:
+            self._fuel_samples.pop(0)
+
+        averaged = sum(v for _, v in self._fuel_samples) / len(self._fuel_samples)
+
+        if self._fuel_displayed is None:
+            self._fuel_displayed = float(round(averaged))
             return self._fuel_displayed
-        
-        # Apply EMA: new_ema = alpha * raw + (1 - alpha) * old_ema
-        # With alpha=0.05, this heavily smooths the signal (95% old value, 5% new)
-        self._fuel_ema = self.FUEL_EMA_ALPHA * raw_fuel + (1 - self.FUEL_EMA_ALPHA) * self._fuel_ema
-        
-        # Apply hysteresis: only update displayed value if EMA has changed significantly
-        # This prevents flip-flopping between adjacent integer values
-        ema_rounded = round(self._fuel_ema)
-        if abs(self._fuel_ema - self._fuel_displayed) >= self.FUEL_HYSTERESIS:
-            self._fuel_displayed = ema_rounded
-        
+
+        # Hysteresis: only move the displayed value once the average has moved
+        # far enough to be meaningful.
+        if abs(averaged - self._fuel_displayed) >= self.FUEL_HYSTERESIS:
+            self._fuel_displayed = float(round(averaged))
+
         return self._fuel_displayed
 
-    def _maybe_request_maf(self):
-        """Periodically request MAF (OBD-II PID 0x10) from the engine ECU."""
+    def _maybe_request_obd(self):
+        """Alternately request MAF (0x10) and intake air temp (0x0F) from the ECU.
+
+        Both PIDs share one request slot so the bus load stays the same as when
+        only MAF was polled.
+        """
         if not self.hs_can:
             return
         now = time.time()
-        if now - self._last_maf_request < self.maf_request_interval:
+        if now - self._last_obd_request < self.obd_request_interval:
             return
-        self._last_maf_request = now
+        self._last_obd_request = now
+
+        pid = self._obd_pids[self._obd_pid_index]
+        self._obd_pid_index = (self._obd_pid_index + 1) % len(self._obd_pids)
+
         try:
             msg = can.Message(
                 arbitration_id=OBD2.REQUEST_ID,
-                data=[0x02, OBD2.MODE_CURRENT_DATA, OBD2.PID_MAF, 0, 0, 0, 0, 0],
+                data=[0x02, OBD2.MODE_CURRENT_DATA, pid, 0, 0, 0, 0, 0],
                 is_extended_id=False,
             )
             self.hs_can.send(msg)
         except Exception as e:
             # Don't spam on transient send errors (bus off, listen-only, etc.)
-            print(f"MAF request error: {e}")
+            print(f"OBD-II request error (pid 0x{pid:02X}): {e}")
+
+    def _apply_pedal_staleness(self):
+        """Zero a pedal reading that has stopped arriving.
+
+        Without this, a dropped or intermittent frame leaves the last value frozen
+        on the dash - which reads as a stuck throttle.
+        """
+        now = time.time()
+        if self.throttle_timestamp and now - self.throttle_timestamp > self.PEDAL_STALE_SEC:
+            self.telemetry.throttle_percent = 0
+        if self.brake_timestamp and now - self.brake_timestamp > self.PEDAL_STALE_SEC:
+            self.telemetry.brake_percent = 0
 
     def _read_hs_can(self):
         """Read HS-CAN messages in background thread"""
         while self._running and self.hs_can:
             try:
-                self._maybe_request_maf()
+                self._maybe_request_obd()
+                self._apply_pedal_staleness()
                 msg = self.hs_can.recv(timeout=0.1)
                 if msg:
                     self.last_hs_msg_time = time.time()
@@ -696,13 +755,23 @@ class CANHandler:
         data = msg.data
 
         if can_id == OBD2.RESPONSE_ID:
+            now = time.time()
+
+            # Intake air temperature (PID 0x0F) shares the response ID with MAF.
+            intake_f = CANParser.parse_intake_temp(data)
+            if intake_f is not None:
+                self.telemetry.intake_temp_f = intake_f
+                if now - getattr(self, '_last_iat_log', 0.0) >= 10.0:
+                    self._last_iat_log = now
+                    print(f"IAT: {intake_f}F")
+                return
+
             maf = CANParser.parse_maf(data)
             if maf > 0:
-                # EMA-smooth MAF (polled at 4 Hz) to reduce instant-MPG flicker.
+                # EMA-smooth MAF (polled, alternating with IAT) to reduce inst-MPG flicker.
                 prev = self.telemetry.maf
                 self.telemetry.maf = (0.5 * maf + 0.5 * prev) if prev > 0 else maf
-                self.telemetry.maf_timestamp = time.time()
-                now = time.time()
+                self.telemetry.maf_timestamp = now
                 if now - getattr(self, '_last_maf_log', 0.0) >= 5.0:
                     self._last_maf_log = now
                     print(f"MAF: {maf:.1f} g/s (smoothed {self.telemetry.maf:.1f})")
@@ -711,13 +780,23 @@ class CANHandler:
         if can_id == HSCanID.ENGINE_RPM:
             self.telemetry.rpm = CANParser.parse_rpm(data)
             self.telemetry.speed_kmh = CANParser.parse_speed(data)
-            
+
+            # The pedal position rides in the same engine frame (byte 6). Prefer it:
+            # the legacy 0x200 decode is only a fallback for short/odd frames.
+            pedal = CANParser.parse_throttle_engine(data)
+            if pedal is not None:
+                self.telemetry.throttle_percent = pedal
+                self.throttle_timestamp = time.time()
+
             # Estimate gear and clutch status after we have RPM and speed
             self._update_gear_estimation()
-            
+
         elif can_id == HSCanID.THROTTLE:
-            self.telemetry.throttle_percent = CANParser.parse_throttle(data)
-            
+            # Fallback only - do not overwrite a fresh read from the engine frame.
+            if time.time() - self.throttle_timestamp > 0.5:
+                self.telemetry.throttle_percent = CANParser.parse_throttle(data)
+                self.throttle_timestamp = time.time()
+
         elif can_id == HSCanID.GEAR_POSITION:
             can_gear = CANParser.parse_gear(data)
             # Use CAN neutral signal directly - the neutral safety switch is reliable
@@ -746,6 +825,7 @@ class CANHandler:
             
         elif can_id == HSCanID.BRAKE_STATUS:
             self.telemetry.brake_percent = 100 if CANParser.parse_brake_status(data) else 0
+            self.brake_timestamp = time.time()
             # Oil presence switch (TRUE/FALSE only)
             self.telemetry.oil_status = CANParser.parse_oil_pressure(data)
             
@@ -844,8 +924,9 @@ class CANHandler:
             self.telemetry.is_in_reverse = False  # Not in reverse
             self._reverse_hold_until = 0  # Clear hold timer
         
-        # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
-        speed_mph = self.telemetry.speed_kmh
+        # speed_kmh is kilometres per hour everywhere in the system; the gear
+        # estimator's ratio table is in MPH, so convert here and nowhere else.
+        speed_mph = self.telemetry.speed_kmh * 0.621371
         
         # Get gear estimation with all new fields
         result = self.gear_estimator.estimate_gear(

@@ -60,5 +60,22 @@
                 <category android:name="android.intent.category.CAR_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The driving-category surface.
+
+             The activity above is a parked "game", so the host greys it out as soon as
+             the car moves. A CarAppService declaring androidx.car.app.category.DRIVING
+             is the supported way to stay available in motion: the host renders the
+             templates itself, so the content stays glanceable by construction.
+
+             Both surfaces ship in one APK. The launcher entry above remains the parked
+             dashboard; this service is what Android Auto offers while driving. -->
+        <service android:name=".Mx5CarAppService"
+                 android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.DRIVING" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

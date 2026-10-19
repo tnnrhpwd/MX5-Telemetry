@@ -75,7 +75,7 @@ public class EngineScreen extends Screen {
         fuel.set(String.valueOf(Math.round(t.fuelLevelPercent)));
         volts.set(String.format("%.2f", t.voltage),
                 t.voltage > 0 && t.voltage < 12.0 ? palette.warn : palette.text);
-        mpg.set(String.format("%.1f", t.instantMpg));
+        mpg.set(t.instantMpgValid ? String.format("%.1f", t.instantMpg) : "--");
         fuelBar.set((float) (t.fuelLevelPercent / 100.0), Math.round(t.fuelLevelPercent) + "%");
     }
 }

@@ -92,12 +92,17 @@
 #define MAZDA_RPM_CAN_ID    0x201   // Engine RPM broadcast ID
 #define MAZDA_SPEED_CAN_ID  0x201   // Vehicle speed (same frame as RPM)
 
-// RPM thresholds for LED color zones
-#define RPM_ZONE_BLUE       2000    // 0-1999: Blue (idle/low)
-#define RPM_ZONE_GREEN      3000    // 2000-2999: Green (eco)
-#define RPM_ZONE_YELLOW     4500    // 3000-4499: Yellow (normal)
-#define RPM_ZONE_ORANGE     5500    // 4500-5499: Orange (spirited)
-#define RPM_MAX             6200    // 5500+: Red (high RPM)
+// RPM thresholds for the LED colour scale.
+//
+// These are anchored to the engine, not to round numbers: the strip must be
+// fully red at the real redline (~6800) instead of saturating at 6200 and
+// showing nothing for the last 600 rpm. Idle sits just under RPM_ZONE_CYAN, so
+// a cold idle reads blue/cyan and a cruising engine reads green.
+#define RPM_ZONE_CYAN       1400    // idle / moving off
+#define RPM_ZONE_GREEN      2800    // cruising - the economical band
+#define RPM_ZONE_YELLOW     4500    // waking up
+#define RPM_ZONE_ORANGE     5800    // spirited
+#define RPM_MAX             6800    // redline - full red
 #define RPM_REDLINE         6800    // Trigger haptic pulse
 
 // Timing configuration (microseconds for precision)
@@ -146,12 +151,12 @@ bool errorMode = false;
 bool canInitialized = false;
 
 // RPM smoothing configuration - asymmetric + snap for maximum responsiveness.
-// - Rising revs track fast (instant shift-point / redline feedback)
-// - Falling revs settle smoothly (looks natural, no trailing flicker)
-// - Large deltas (gear changes) snap instantly with zero filter lag
-#define RPM_SNAP_DELTA     800     // RPM jump that bypasses the filter entirely
-#define RPM_ALPHA_RISING   0.70f   // Throttle-on: fast tracking
-#define RPM_ALPHA_FALLING  0.40f   // Lift-off: smooth settle
+// Rising revs track the engine one-to-one (no lag at the shift point); falling
+// revs keep a light filter so the strip does not trail pixels when the throttle
+// closes. Large deltas snap instantly.
+#define RPM_SNAP_DELTA     400     // RPM jump that bypasses the filter entirely
+#define RPM_ALPHA_RISING   1.00f   // Throttle-on: no filtering at all
+#define RPM_ALPHA_FALLING  0.60f   // Lift-off: light settle, still quick
 
 // LED sequence setting (persisted in EEPROM)
 uint8_t ledSequence = SEQ_CENTER_OUT;  // Default: center-out (mirrored)
@@ -399,6 +404,45 @@ inline void readCANMessages() {
 #define SET_LED(idx, r, g, b) strip.setPixelColor(idx, strip.Color(r, g, b))
 #define CLEAR_LED(idx) strip.setPixelColor(idx, 0)
 
+// ----------------------------------------------------------------------------
+// Frame pacing
+//
+// strip.show() is the slow part of every update: on a 16 MHz AVR it pushes the
+// whole strip out with interrupts disabled, so calling it when nothing changed
+// costs latency and masks the CAN interrupt for no benefit. Every renderer now
+// writes into the pixel buffer and calls showIfChanged(), which compares against
+// what was last transmitted and skips the transfer when the frame is identical.
+// ----------------------------------------------------------------------------
+static uint32_t lastShown[LED_COUNT] = {0};
+static bool stripForceShow = true;   // set when brightness changes, which pixel values don't show
+
+inline void showIfChanged() {
+    bool changed = stripForceShow;
+    stripForceShow = false;
+
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        uint32_t c = strip.getPixelColor(i);
+        if (c != lastShown[i]) {
+            lastShown[i] = c;
+            changed = true;
+        }
+    }
+
+    if (changed) strip.show();
+}
+
+// Light one LED from the shared ramp at scale position t (0..1) and brightness
+// level (0..1). This is what turns the strip into a gradient: each LED keeps the
+// colour of its own place on the RPM scale instead of the whole bar taking the
+// current RPM's single colour.
+inline void scaleColorAt(float t, uint8_t* r, uint8_t* g, uint8_t* b);  // defined below
+
+inline void setLedAtPos(uint8_t idx, float t, float level) {
+    uint8_t r, g, b;
+    scaleColorAt(t, &r, &g, &b);
+    SET_LED(idx, (uint8_t)(r * level), (uint8_t)(g * level), (uint8_t)(b * level));
+}
+
 // ============================================================================
 // SMOOTH LED TRANSITIONS - Fractional brightness & color gradients
 // ============================================================================
@@ -418,45 +462,51 @@ inline void interpolateColor(uint8_t r1, uint8_t g1, uint8_t b1,
     *outB = b1 + (uint8_t)((float)(b2 - b1) * position + 0.5f);
 }
 
-// Get smooth RPM color with gradient transitions between zones
-// Colors flow: Blue → Green → Yellow → Orange → Red
-inline void getRPMColor(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
-    if (rpm < RPM_ZONE_BLUE) {
-        // 0-1999 RPM: Pure Blue
-        *r = 0; *g = 0; *b = 255;
+// Get the colour for a position on the RPM scale.
+//
+// t is 0.0 at the bottom of the scale and 1.0 at the redline. This is the single
+// source of the strip's colour ramp: both the lit bar and the per-LED gradient
+// sample it, so the strip can never show two different ideas of "hot".
+// Colors flow: Blue -> Cyan -> Green -> Yellow -> Orange -> Red
+inline void scaleColorAt(float t, uint8_t* r, uint8_t* g, uint8_t* b) {
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    const float fCyan   = (float)RPM_ZONE_CYAN / RPM_MAX;
+    const float fGreen  = (float)RPM_ZONE_GREEN / RPM_MAX;
+    const float fYellow = (float)RPM_ZONE_YELLOW / RPM_MAX;
+    const float fOrange = (float)RPM_ZONE_ORANGE / RPM_MAX;
+
+    if (t < fCyan) {
+        // 0 -> idle: blue to cyan
+        interpolateColor(0, 0, 255,      0, 220, 255,
+                         t / fCyan, r, g, b);
     }
-    else if (rpm < RPM_ZONE_GREEN) {
-        // 2000-2999 RPM: Blue → Green gradient
-        float position = (float)(rpm - RPM_ZONE_BLUE) / (float)(RPM_ZONE_GREEN - RPM_ZONE_BLUE);
-        interpolateColor(0, 0, 255,      // Blue
-                        0, 255, 0,       // Green
-                        position, r, g, b);
+    else if (t < fGreen) {
+        // idle -> cruise: cyan to green
+        interpolateColor(0, 220, 255,    50, 215, 130,
+                         (t - fCyan) / (fGreen - fCyan), r, g, b);
     }
-    else if (rpm < RPM_ZONE_YELLOW) {
-        // 3000-4499 RPM: Green → Yellow gradient
-        float position = (float)(rpm - RPM_ZONE_GREEN) / (float)(RPM_ZONE_YELLOW - RPM_ZONE_GREEN);
-        interpolateColor(0, 255, 0,      // Green
-                        255, 255, 0,     // Yellow
-                        position, r, g, b);
+    else if (t < fYellow) {
+        // cruise -> waking: green to yellow
+        interpolateColor(50, 215, 130,   255, 210, 60,
+                         (t - fGreen) / (fYellow - fGreen), r, g, b);
     }
-    else if (rpm < RPM_ZONE_ORANGE) {
-        // 4500-5499 RPM: Yellow → Orange gradient
-        float position = (float)(rpm - RPM_ZONE_YELLOW) / (float)(RPM_ZONE_ORANGE - RPM_ZONE_YELLOW);
-        interpolateColor(255, 255, 0,    // Yellow
-                        255, 128, 0,     // Orange
-                        position, r, g, b);
-    }
-    else if (rpm < RPM_MAX) {
-        // 5500-6199 RPM: Orange → Red gradient
-        float position = (float)(rpm - RPM_ZONE_ORANGE) / (float)(RPM_MAX - RPM_ZONE_ORANGE);
-        interpolateColor(255, 128, 0,    // Orange
-                        255, 0, 0,       // Red
-                        position, r, g, b);
+    else if (t < fOrange) {
+        // waking -> spirited: yellow to orange
+        interpolateColor(255, 210, 60,   255, 128, 0,
+                         (t - fYellow) / (fOrange - fYellow), r, g, b);
     }
     else {
-        // 6200+ RPM: Pure Red (redline)
-        *r = 255; *g = 0; *b = 0;
+        // spirited -> redline: orange to red
+        interpolateColor(255, 128, 0,    255, 0, 0,
+                         (t - fOrange) / (1.0f - fOrange), r, g, b);
     }
+}
+
+// Colour for a given RPM on the shared scale.
+inline void getRPMColor(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
+    scaleColorAt((float)rpm / (float)RPM_MAX, r, g, b);
 }
 
 // Main LED update - inline for maximum speed
@@ -485,7 +535,7 @@ inline void updateLEDs() {
                 SET_LED(LED_COUNT - 1, 0, 0, 255);  // Both edges
                 break;
         }
-        strip.show();
+        showIfChanged();
         return;
     }
     
@@ -536,32 +586,25 @@ void updateLEDsCenterOut() {
     uint8_t fullLEDsPerSide = (uint8_t)ledPositionFloat;
     float fractionalPart = ledPositionFloat - fullLEDsPerSide;
     
-    // Get smooth gradient color for current RPM
-    uint8_t r, g, b;
-    getRPMColor(currentRPM, &r, &g, &b);
-    
-    // Draw mirrored bar from edges toward center with fractional brightness
+    // Per-LED gradient: each lit LED takes the colour of its own position on the
+    // scale, so the bar runs blue at the edges to red at the centre.
     for (uint8_t i = 0; i < LED_COUNT; i++) {
         bool isLeftSide = (i < maxPerSide);
         uint8_t sidePosition = isLeftSide ? i : (LED_COUNT - 1 - i);
-        
+        float t = (float)sidePosition / (float)(maxPerSide - 1);
+
         if (sidePosition < fullLEDsPerSide) {
-            // Fully lit LEDs (100% brightness)
-            SET_LED(i, r, g, b);
+            setLedAtPos(i, t, 1.0f);
         }
         else if (sidePosition == fullLEDsPerSide && fractionalPart > 0.05f) {
-            // Partially lit LED (fractional brightness) - threshold avoids flicker
-            uint8_t dimR = (uint8_t)(r * fractionalPart);
-            uint8_t dimG = (uint8_t)(g * fractionalPart);
-            uint8_t dimB = (uint8_t)(b * fractionalPart);
-            SET_LED(i, dimR, dimG, dimB);
+            setLedAtPos(i, t, fractionalPart);
         }
         else {
             CLEAR_LED(i);
         }
     }
     
-    strip.show();
+    showIfChanged();
 }
 
 // Sequence 2: Left-to-Right with smooth fractional LED brightness
@@ -578,29 +621,21 @@ void updateLEDsLeftToRight() {
     uint8_t fullLEDs = (uint8_t)ledPositionFloat;
     float fractionalPart = ledPositionFloat - fullLEDs;
     
-    // Get smooth gradient color for current RPM
-    uint8_t r, g, b;
-    getRPMColor(currentRPM, &r, &g, &b);
-    
     // Fill from left (LED 0) to right with fractional brightness
     for (uint8_t i = 0; i < LED_COUNT; i++) {
+        float t = (float)i / (float)(LED_COUNT - 1);
         if (i < fullLEDs) {
-            // Fully lit LEDs (100% brightness)
-            SET_LED(i, r, g, b);
+            setLedAtPos(i, t, 1.0f);
         }
         else if (i == fullLEDs && fractionalPart > 0.05f) {
-            // Partially lit LED (fractional brightness) - threshold avoids flicker
-            uint8_t dimR = (uint8_t)(r * fractionalPart);
-            uint8_t dimG = (uint8_t)(g * fractionalPart);
-            uint8_t dimB = (uint8_t)(b * fractionalPart);
-            SET_LED(i, dimR, dimG, dimB);
+            setLedAtPos(i, t, fractionalPart);
         }
         else {
             CLEAR_LED(i);
         }
     }
     
-    strip.show();
+    showIfChanged();
 }
 
 // Sequence 3: Right-to-Left with smooth fractional LED brightness
@@ -617,31 +652,23 @@ void updateLEDsRightToLeft() {
     uint8_t fullLEDs = (uint8_t)ledPositionFloat;
     float fractionalPart = ledPositionFloat - fullLEDs;
     
-    // Get smooth gradient color for current RPM
-    uint8_t r, g, b;
-    getRPMColor(currentRPM, &r, &g, &b);
-    
     // Fill from right (LED_COUNT-1) to left with fractional brightness
     for (uint8_t i = 0; i < LED_COUNT; i++) {
         uint8_t positionFromRight = LED_COUNT - 1 - i;
-        
+        float t = (float)positionFromRight / (float)(LED_COUNT - 1);
+
         if (positionFromRight < fullLEDs) {
-            // Fully lit LEDs (100% brightness)
-            SET_LED(i, r, g, b);
+            setLedAtPos(i, t, 1.0f);
         }
         else if (positionFromRight == fullLEDs && fractionalPart > 0.05f) {
-            // Partially lit LED (fractional brightness) - threshold avoids flicker
-            uint8_t dimR = (uint8_t)(r * fractionalPart);
-            uint8_t dimG = (uint8_t)(g * fractionalPart);
-            uint8_t dimB = (uint8_t)(b * fractionalPart);
-            SET_LED(i, dimR, dimG, dimB);
+            setLedAtPos(i, t, fractionalPart);
         }
         else {
             CLEAR_LED(i);
         }
     }
     
-    strip.show();
+    showIfChanged();
 }
 
 // Sequence 4: Center-In with smooth fractional LED brightness
@@ -660,33 +687,26 @@ void updateLEDsCenterIn() {
     uint8_t fullLEDsPerSide = (uint8_t)ledPositionFloat;
     float fractionalPart = ledPositionFloat - fullLEDsPerSide;
     
-    // Get smooth gradient color for current RPM
-    uint8_t r, g, b;
-    getRPMColor(currentRPM, &r, &g, &b);
-    
+    // Fill from center outward with fractional brightness. The centre is the
+    // bottom of the scale here and the edges are the top, so the leading edge of
+    // the bar is always the colour of the rpm it represents.
     uint8_t center = LED_COUNT / 2;
-    
-    // Fill from center outward with fractional brightness
     for (uint8_t i = 0; i < LED_COUNT; i++) {
         int distFromCenter = abs((int)i - (int)center);
-        
+        float t = (float)distFromCenter / (float)(maxPerSide - 1);
+
         if (distFromCenter < fullLEDsPerSide) {
-            // Fully lit LEDs (100% brightness)
-            SET_LED(i, r, g, b);
+            setLedAtPos(i, t, 1.0f);
         }
         else if (distFromCenter == fullLEDsPerSide && fractionalPart > 0.05f) {
-            // Partially lit LED (fractional brightness) - threshold avoids flicker
-            uint8_t dimR = (uint8_t)(r * fractionalPart);
-            uint8_t dimG = (uint8_t)(g * fractionalPart);
-            uint8_t dimB = (uint8_t)(b * fractionalPart);
-            SET_LED(i, dimR, dimG, dimB);
+            setLedAtPos(i, t, fractionalPart);
         }
         else {
             CLEAR_LED(i);
         }
     }
     
-    strip.show();
+    showIfChanged();
 }
 
 // Error animation - Cylon scanner effect
@@ -740,6 +760,7 @@ inline void updateBrightness() {
     if (abs((int16_t)newBrightness - (int16_t)currentBrightness) > 2) {
         currentBrightness = newBrightness;
         strip.setBrightness(currentBrightness);
+        stripForceShow = true;   // pixel values are unchanged, but the output is not
     }
 }
 #endif
@@ -879,6 +900,10 @@ void loop() {
         
         if (canInitialized) {
             readCANMessages();
+            // Paint as soon as the frame is decoded instead of waiting for the
+            // next LED timer tick. That removes up to 10 ms of the old latency.
+            updateLEDs();
+            lastLEDUpdate = now;
         }
     }
     

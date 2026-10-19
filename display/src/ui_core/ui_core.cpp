@@ -31,6 +31,156 @@ DisplaySettings settings;
 
 bool imuAvailable = false;
 
+// ============================================================================
+// Theme
+//
+// The phone app owns the theme; the Pi relays it and the firmware persists it,
+// so a display with no phone attached still matches the app (dark by default).
+// ============================================================================
+char themeScheme[16] = "aurora";
+bool themeDark = true;
+
+// Starts as the dark aurora scheme so the palette is never uninitialised, even
+// if nothing has applied a theme yet.
+ThemePalette g_theme = {
+    RGB565(10, 10, 16),   // bg
+    RGB565(6, 6, 10),     // bgDark
+    RGB565(9, 32, 37),    // bgCard      (bg mixed 12% toward aurora teal)
+    RGB565(8, 47, 51),    // bgElevated  (bg mixed 20% toward aurora teal)
+    RGB565(245, 245, 250),// text
+    RGB565(140, 140, 160),// textDim
+    RGB565(55, 55, 70),   // darkGray
+    RGB565(255, 70, 85),  // red
+    RGB565(255, 140, 50), // orange
+    RGB565(255, 210, 60), // yellow
+    RGB565(50, 215, 130), // green
+    RGB565(65, 135, 255), // blue
+    RGB565(50, 220, 255), // cyan
+    RGB565(255, 55, 155), // purple
+    RGB565(0, 193, 193),  // accent
+};
+
+namespace {
+
+struct ThemeSeed {
+    const char* id;
+    uint8_t aR, aG, aB;   // primary seed
+    uint8_t bR, bG, bB;   // secondary seed
+};
+
+// Mirrors Palette.SCHEMES in the Android app. Keep the two lists in step.
+const ThemeSeed THEME_SEEDS[] = {
+    {"aurora",    0x00, 0xC1, 0xC1, 0xFF, 0x37, 0x9B},
+    {"crimson",   0xDC, 0x26, 0x26, 0xF4, 0x72, 0xB6},
+    {"emerald",   0x10, 0xB9, 0x81, 0x06, 0xB6, 0xD4},
+    {"sakura",    0xEC, 0x48, 0x99, 0xA7, 0x8B, 0xFA},
+    {"midnight",  0x3B, 0x82, 0xF6, 0x8B, 0x5C, 0xF6},
+    {"sunset",    0xF9, 0x73, 0x16, 0xEC, 0x48, 0x99},
+    {"ocean",     0x06, 0xB6, 0xD4, 0x3B, 0x82, 0xF6},
+    {"cyberpunk", 0xF0, 0xE0, 0x30, 0xE0, 0x40, 0xFB},
+    {"monokai",   0xA6, 0xE2, 0x2E, 0x66, 0xD9, 0xEF},
+    {"usa",       0xB2, 0x22, 0x34, 0x3C, 0x3B, 0x6E},
+    {"forest",    0x4D, 0x8C, 0x57, 0x65, 0xA3, 0x0D},
+    {"neutral",   0x80, 0x80, 0x80, 0x80, 0x80, 0x80},
+};
+const int THEME_SEED_COUNT = (int)(sizeof(THEME_SEEDS) / sizeof(THEME_SEEDS[0]));
+
+inline uint16_t rgb565(int r, int g, int b) {
+    if (r < 0) r = 0; if (r > 255) r = 255;
+    if (g < 0) g = 0; if (g > 255) g = 255;
+    if (b < 0) b = 0; if (b > 255) b = 255;
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+}
+
+// Blend two 8-bit channels, t=0 -> a, t=1 -> b.
+inline int mix8(int a, int b, float t) {
+    return (int)(a + (b - a) * t + 0.5f);
+}
+
+// Blend a colour toward a target RGB.
+inline uint16_t mixColor(uint16_t base, int tr, int tg, int tb, float t) {
+    int r = (base >> 11) & 0x1F, g = (base >> 5) & 0x3F, b = base & 0x1F;
+    // Expand to 8-bit so the blend happens in sRGB, not in the packed 565 fields.
+    int r8 = (r << 3) | (r >> 2);
+    int g8 = (g << 2) | (g >> 4);
+    int b8 = (b << 3) | (b >> 2);
+    return rgb565(mix8(r8, tr, t), mix8(g8, tg, t), mix8(b8, tb, t));
+}
+
+// Scale a colour's brightness. f<1 darkens, f>1 lightens.
+inline uint16_t scaleColor(uint16_t base, float f) {
+    int r = (base >> 11) & 0x1F, g = (base >> 5) & 0x3F, b = base & 0x1F;
+    int r8 = (r << 3) | (r >> 2);
+    int g8 = (g << 2) | (g >> 4);
+    int b8 = (b << 3) | (b >> 2);
+    return rgb565((int)(r8 * f), (int)(g8 * f), (int)(b8 * f));
+}
+
+const ThemeSeed* findSeed(const char* id) {
+    for (int i = 0; i < THEME_SEED_COUNT; i++) {
+        if (strcmp(THEME_SEEDS[i].id, id) == 0) return &THEME_SEEDS[i];
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+void applyTheme(const char* scheme, bool dark) {
+    const ThemeSeed* seed = findSeed(scheme ? scheme : "");
+    if (!seed) seed = &THEME_SEEDS[0];  // aurora is the app's default
+
+    strncpy(themeScheme, seed->id, sizeof(themeScheme) - 1);
+    themeScheme[sizeof(themeScheme) - 1] = '\0';
+    themeDark = dark;
+
+    if (dark) {
+        g_theme.bg         = rgb565(10, 10, 16);
+        g_theme.bgDark     = rgb565(6, 6, 10);
+        g_theme.bgCard     = mixColor(g_theme.bg, seed->aR, seed->aG, seed->aB, 0.12f);
+        g_theme.bgElevated = mixColor(g_theme.bg, seed->aR, seed->aG, seed->aB, 0.20f);
+        g_theme.text       = rgb565(245, 245, 250);
+        g_theme.textDim    = rgb565(140, 140, 160);
+        g_theme.darkGray   = rgb565(55, 55, 70);
+        g_theme.accent     = rgb565(seed->aR, seed->aG, seed->aB);
+        g_theme.purple     = rgb565(seed->bR, seed->bG, seed->bB);
+    } else {
+        g_theme.bg         = rgb565(246, 247, 251);
+        g_theme.bgDark     = rgb565(232, 234, 242);
+        g_theme.bgCard     = mixColor(rgb565(255, 255, 255), seed->aR, seed->aG, seed->aB, 0.08f);
+        g_theme.bgElevated = mixColor(rgb565(255, 255, 255), seed->aR, seed->aG, seed->aB, 0.14f);
+        g_theme.text       = rgb565(20, 20, 28);
+        g_theme.textDim    = rgb565(90, 90, 110);
+        g_theme.darkGray   = rgb565(201, 202, 214);
+        // The seed hues are tuned for dark backgrounds; on white they need to be
+        // sunk so text and accents keep their contrast.
+        g_theme.accent     = scaleColor(rgb565(seed->aR, seed->aG, seed->aB), 0.72f);
+        g_theme.purple     = scaleColor(rgb565(seed->bR, seed->bG, seed->bB), 0.72f);
+    }
+
+    // Status colours stay semantic in every scheme (red is always a warning), but
+    // light mode needs the darker variants to stay legible on white.
+    float f = dark ? 1.0f : 0.72f;
+    g_theme.red    = scaleColor(rgb565(255, 70, 85), f);
+    g_theme.orange = scaleColor(rgb565(255, 140, 50), f);
+    g_theme.yellow = scaleColor(rgb565(255, 210, 60), dark ? 1.0f : 0.86f);
+    g_theme.green  = scaleColor(rgb565(50, 215, 130), f);
+    g_theme.blue   = scaleColor(rgb565(65, 135, 255), f);
+    g_theme.cyan   = scaleColor(rgb565(50, 220, 255), f);
+}
+
+void applyDefaultTheme() {
+    // Used before the phone has ever connected, and at first boot.
+    applyTheme("aurora", true);
+}
+
+// Speed is km/h end-to-end; only the display converts.
+static inline int displaySpeedKmhOrMph() {
+    float s = telemetry.speed;
+    if (s < 0) s = 0;
+    return (int)(settings.useMPH ? s * 0.621371f + 0.5f : s + 0.5f);
+}
+
+
 // Orientation used by the G-Force screen
 float orientationPitch = 0;
 float orientationRoll = 0;
@@ -551,12 +701,95 @@ void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, ui
 // ============================================================================
 // Overview screen
 // ============================================================================
+
+// Road speed per 1000 rpm in each gear, in km/h. Derived from the NC 6-speed
+// ratios, 4.10 final drive and 24.3" tyre - the same numbers the Android
+// GearRpmView uses, converted from mph so the ladder needs no unit handling.
+static const float KMH_PER_1000_RPM[7] = {
+    0.0f, 7.92f, 13.13f, 18.11f, 25.09f, 29.79f, 35.32f
+};
+
+// The band a driver wants to be in. Gears predicted inside it are "most likely".
+#define GEAR_BAND_LOW   2400
+#define GEAR_BAND_HIGH  4500
+
+static int predictedRpm(int gear, float speedKmh) {
+    if (gear < 1 || gear > 6 || speedKmh <= 0.5f) return 0;
+    return (int)(speedKmh / KMH_PER_1000_RPM[gear] * 1000.0f + 0.5f);
+}
+
+// Draws the three gears whose predicted RPM sits closest to the sweet-spot band,
+// with that RPM. Replaces the TPMS card while the Bluetooth sensors are offline.
+static void drawGearLadder() {
+    const int rowW = 150;
+    const int rowH = 26;
+    const int rowGap = 4;
+    const int startY = 242;
+    const int x = CENTER_X - rowW / 2;
+
+    // Clear the whole ladder area first: the rows are shorter than the block.
+    LCD_FillRect(x - 4, startY - 4, rowW + 8,
+                 rowH * 3 + rowGap * 2 + 8, COLOR_BG);
+
+    float speed = telemetry.speed;
+    if (speed < 0) speed = 0;
+
+    if (speed < 1.0f || telemetry.isInReverse) {
+        LCD_FillRoundRect(x, startY, rowW, rowH, 8, COLOR_BG_CARD);
+        drawCentered(CENTER_X, startY + 7, telemetry.isInReverse ? "REVERSE" : "STOPPED",
+                     MX5_GRAY, COLOR_BG_CARD, 1);
+        return;
+    }
+
+    // Rank all six gears by how far their predicted RPM is from the band.
+    int order[6] = {1, 2, 3, 4, 5, 6};
+    int score[6];
+    for (int i = 0; i < 6; i++) {
+        int rpm = predictedRpm(order[i], speed);
+        if (rpm < GEAR_BAND_LOW)       score[i] = GEAR_BAND_LOW - rpm;
+        else if (rpm > GEAR_BAND_HIGH) score[i] = rpm - GEAR_BAND_HIGH;
+        else                           score[i] = 0;
+    }
+    for (int i = 0; i < 5; i++) {
+        for (int j = 0; j < 5 - i; j++) {
+            if (score[j] > score[j + 1]) {
+                int t = score[j]; score[j] = score[j + 1]; score[j + 1] = t;
+                t = order[j]; order[j] = order[j + 1]; order[j + 1] = t;
+            }
+        }
+    }
+
+    for (int row = 0; row < 3; row++) {
+        int gear = order[row];
+        int rpm = predictedRpm(gear, speed);
+        int y = startY + row * (rowH + rowGap);
+
+        bool isCurrent = (telemetry.gear == gear) && !telemetry.isInReverse;
+        uint16_t bg = isCurrent ? COLOR_BG_ELEVATED : COLOR_BG_CARD;
+
+        uint16_t rpmColor;
+        if (rpm >= GEAR_BAND_LOW && rpm <= GEAR_BAND_HIGH) rpmColor = MX5_GREEN;
+        else if (rpm > GEAR_BAND_HIGH)                    rpmColor = MX5_RED;
+        else                                              rpmColor = MX5_BLUE;
+
+        LCD_FillRoundRect(x, y, rowW, rowH, 8, bg);
+
+        char gearStr[6];
+        snprintf(gearStr, sizeof(gearStr), "%d", gear);
+        LCD_DrawString(x + 14, y + 6, gearStr, isCurrent ? MX5_WHITE : MX5_GRAY, bg, 2);
+
+        char rpmStr[10];
+        snprintf(rpmStr, sizeof(rpmStr), "%d", rpm);
+        drawRightAligned(x + rowW - 12, y + 6, rpmStr, rpmColor, bg, 2);
+    }
+}
+
 void drawOverviewScreen() {
     bool rpmChanged = !prevTelemetry.initialized || (int)telemetry.rpm != (int)prevTelemetry.rpm;
     bool speedChanged = !prevTelemetry.initialized || (int)telemetry.speed != (int)prevTelemetry.speed;
     bool gearChanged = !prevTelemetry.initialized || telemetry.gear != prevTelemetry.gear;
-    // Reverse-state transition: negative speed means reverse (R indicator)
-    bool reverseChanged = (telemetry.speed < 0) != (prevTelemetry.speed < 0);
+    // Reverse comes from the explicit Pi flag, not from the sign of the speed.
+    bool reverseChanged = !prevTelemetry.initialized || telemetry.isInReverse != prevTelemetry.reverse;
     bool coolantChanged = !prevTelemetry.initialized || (int)telemetry.coolantTemp != (int)prevTelemetry.coolantTemp;
     bool fuelChanged = !prevTelemetry.initialized || (int)telemetry.fuelLevel != (int)prevTelemetry.fuelLevel;
     bool ambientChanged = !prevTelemetry.initialized || (int)telemetry.ambientTemp != (int)prevTelemetry.ambientTemp;
@@ -728,7 +961,7 @@ void drawOverviewScreen() {
 
         char speedStr[8];
         if (!telemetry.hasReceivedTelemetry) snprintf(speedStr, sizeof(speedStr), "--");
-        else snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
+        else snprintf(speedStr, sizeof(speedStr), "%d", displaySpeedKmhOrMph());
         LCD_FillRect(mphChipX + 4, chipY + 6, chipW - 8, 27, COLOR_BG_CARD);
         drawCentered(mphChipCx, chipY + 9, speedStr, MX5_CYAN, COLOR_BG_CARD, 3);
     }
@@ -761,7 +994,7 @@ void drawOverviewScreen() {
 
             prevGearGlow = gearGlow;
         } else {
-        if (telemetry.speed < 0 || telemetry.gear == -1) {
+        if (telemetry.isInReverse || telemetry.gear == -1) {
             snprintf(gearStr, sizeof(gearStr), "R");
         } else if (!telemetry.engineRunning) {
             if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
@@ -867,7 +1100,7 @@ void drawOverviewScreen() {
 
     uint16_t instMpgColor = MX5_CYAN;
     float displayInstMPG = telemetry.instantMPG;
-    if (displayInstMPG <= 0.1f) instMpgColor = MX5_GRAY;   // no data / stopped
+    if (!telemetry.instantMPGValid) instMpgColor = MX5_GRAY;  // unknown (no MAF/speed)
     else if (displayInstMPG < 15) instMpgColor = MX5_RED;
     else if (displayInstMPG < 20) instMpgColor = MX5_ORANGE;
 
@@ -911,7 +1144,7 @@ void drawOverviewScreen() {
     if (needsFullRedraw || instMpgChanged) {
         LCD_FillRect(rightX + 8, cardY + 41, cardW - 16, 16, COLOR_BG_CARD);
         char instStr[10];
-        if (displayInstMPG > 0.1f) snprintf(instStr, sizeof(instStr), "%.0f", displayInstMPG);
+        if (telemetry.instantMPGValid) snprintf(instStr, sizeof(instStr), "%.0f", displayInstMPG);
         else snprintf(instStr, sizeof(instStr), "--");
         LCD_DrawString(rightX + 9, cardY + 41, instStr, instMpgColor, COLOR_BG_CARD, 2);
     }
@@ -937,31 +1170,11 @@ void drawOverviewScreen() {
         // drawPageIndicator); a badge in the corner does not fit the disc.
     }
 
-    if (needsFullRedraw || tpmsChanged) {
-        const int tireW = 56;
-        const int tireH = 32;
-        const int tireGap = 6;
-        const int tpmsStartX = CENTER_X - tireW - tireGap / 2;
-        const int tpmsStartY = 256;
-
-        const char* tireNames[] = {"FL", "FR", "RL", "RR"};
-
-        for (int i = 0; i < 4; i++) {
-            int col = i % 2;
-            int row = i / 2;
-            int tireX = tpmsStartX + col * (tireW + tireGap);
-            int tireY = tpmsStartY + row * (tireH + tireGap);
-
-            uint16_t tireColor = tireStatusColor(telemetry.tirePressure[i]);
-
-            LCD_FillRoundRect(tireX, tireY, tireW, tireH, 8, COLOR_BG_CARD);
-
-            drawCentered(tireX + tireW / 2, tireY + 4, tireNames[i], MX5_GRAY, COLOR_BG_CARD, 1);
-            char psiStr[8];
-            if (telemetry.tirePressure[i] > 0) snprintf(psiStr, sizeof(psiStr), "%.1f", telemetry.tirePressure[i]);
-            else snprintf(psiStr, sizeof(psiStr), "--");
-            drawCentered(tireX + tireW / 2, tireY + 14, psiStr, tireColor, COLOR_BG_CARD, 2);
-        }
+    // Gear ladder. This used to be the TPMS card; the Bluetooth sensors are out
+    // of service until the 315 MHz ones are fitted, so the space shows the three
+    // most likely gears for the current road speed and the RPM each would sit at.
+    if (needsFullRedraw || speedChanged || gearChanged || reverseChanged) {
+        drawGearLadder();
     }
 
     if (needsFullRedraw) {
@@ -979,6 +1192,8 @@ void drawOverviewScreen() {
     prevTelemetry.instantMPG = telemetry.instantMPG;
     prevTelemetry.rangeMiles = telemetry.rangeMiles;
     prevTelemetry.engineRunning = telemetry.engineRunning;
+    prevTelemetry.reverse = telemetry.isInReverse;
+    prevTelemetry.instantMPGValid = telemetry.instantMPGValid;
     prevTelemetry.connected = telemetry.connected;
     prevTelemetry.oilWarning = telemetry.oilWarning;
     prevTelemetry.headlightsOn = telemetry.headlightsOn;
@@ -1023,6 +1238,7 @@ void drawRPMScreen() {
     bool rpmChanged   = !prevTelemetry.initialized || (int)telemetry.rpm != (int)prevTelemetry.rpm;
     bool speedChanged = !prevTelemetry.initialized || (int)telemetry.speed != (int)prevTelemetry.speed;
     bool gearChanged  = !prevTelemetry.initialized || telemetry.gear != prevTelemetry.gear;
+    bool reverseChanged = !prevTelemetry.initialized || telemetry.isInReverse != prevTelemetry.reverse;
     bool thrChanged   = !prevTelemetry.initialized || (int)telemetry.throttle != (int)prevTelemetry.throttle;
     bool brkChanged   = !prevTelemetry.initialized || (int)telemetry.brake != (int)prevTelemetry.brake;
 
@@ -1058,11 +1274,11 @@ void drawRPMScreen() {
 
     // ---- gear ----
     char gearStr[4];
-    if (telemetry.speed < 0 || telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+    if (telemetry.isInReverse || telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
     else if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
     else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
 
-    if (needsFullRedraw || gearChanged) {
+    if (needsFullRedraw || gearChanged || reverseChanged) {
         LCD_FillCircle(CENTER_X, GEAR_CY, GEAR_R, MX5_WHITE);
         LCD_FillCircle(CENTER_X, GEAR_CY, GEAR_R - 3, COLOR_BG_CARD);
         drawLargeGear(CENTER_X, GEAR_CY, gearStr, MX5_WHITE, COLOR_BG_CARD);
@@ -1080,13 +1296,16 @@ void drawRPMScreen() {
     // ---- speed ----
     if (needsFullRedraw || speedChanged) {
         char speedStr[8];
-        snprintf(speedStr, sizeof(speedStr), "%d", (int)telemetry.speed);
+        snprintf(speedStr, sizeof(speedStr), "%d", displaySpeedKmhOrMph());
         LCD_FillRect(CENTER_X - 46, 248, 92, 38, COLOR_BG);
         drawCentered(CENTER_X, 250, speedStr, MX5_CYAN, COLOR_BG, 3);
         drawCentered(CENTER_X, 274, settings.useMPH ? "MPH" : "KMH", MX5_GRAY, COLOR_BG, 1);
     }
 
     // ---- throttle / brake ----
+    // Throttle is a real 0-100% position. Brake is only a pedal switch on this
+    // car, so it is drawn as an on/off indicator rather than a proportional bar -
+    // a bar that can only ever be empty or full reads as a broken gauge.
     if (needsFullRedraw || thrChanged) {
         LCD_FillRect(252, 250, 60, 30, COLOR_BG);
         LCD_DrawString(252, 252, "THR", MX5_GRAY, COLOR_BG, 1);
@@ -1097,12 +1316,13 @@ void drawRPMScreen() {
     }
 
     if (needsFullRedraw || brkChanged) {
+        bool pressed = telemetry.brake > 50.0f;
         LCD_FillRect(48, 250, 60, 30, COLOR_BG);
         LCD_DrawString(48, 252, "BRK", MX5_GRAY, COLOR_BG, 1);
-        drawMeter(48, 262, 56, 6, telemetry.brake / 100.0f, MX5_RED, COLOR_BG);
-        char brkPct[8];
-        snprintf(brkPct, sizeof(brkPct), "%d%%", (int)telemetry.brake);
-        LCD_DrawString(48, 272, brkPct, MX5_RED, COLOR_BG, 1);
+        const int ledX = 48, ledY = 262, ledW = 56, ledH = 8;
+        LCD_FillRoundRect(ledX, ledY, ledW, ledH, 4, pressed ? MX5_RED : MX5_DARKGRAY);
+        LCD_DrawString(48, 272, pressed ? "ON" : "OFF",
+                       pressed ? MX5_RED : MX5_GRAY, COLOR_BG, 1);
     }
 
     if (needsFullRedraw) {
@@ -1115,6 +1335,7 @@ void drawRPMScreen() {
     prevTelemetry.gearColor = telemetry.gearColor;
     prevTelemetry.throttle = telemetry.throttle;
     prevTelemetry.brake = telemetry.brake;
+    prevTelemetry.reverse = telemetry.isInReverse;
     prevTelemetry.initialized = true;
 }
 
@@ -1247,18 +1468,34 @@ void drawEngineScreen() {
 
 // ============================================================================
 // G-Force screen
+//
+// A g-scatter with a decaying trail, ported from the Android GForceView. Position
+// is the instantaneous lateral/longitudinal acceleration, colour and size are the
+// magnitude, and the last two seconds of points show the shape of the corner. A
+// single dot tells you almost nothing about a turn; the trail is the point.
+//
+// The face is rebuilt from code rather than erased with a black rectangle so the
+// dots can be restored without smearing over the carbon background.
 // ============================================================================
-// Static g-meter face: rings + crosshair on a dark disc. Rebuilding this from
-// code (rather than erasing the dot with a black rectangle) is what lets the
-// moving dot be restored without leaving smears over the carbon background.
 #define GF_CX          CENTER_X
 #define GF_CY          158
 #define GF_RIM_R       106
 #define GF_FACE_R      104
-#define GF_RING1       44
-#define GF_RING2       88
-#define GF_TRAVEL      88
+#define GF_TRAVEL      88          // outer ring radius in pixels = RANGE_G
+#define GF_RANGE_G     1.2f
+#define GF_RING1       ((int)(GF_TRAVEL * 0.4f / 1.2f))   // 0.4 g
+#define GF_RING2       ((int)(GF_TRAVEL * 0.8f / 1.2f))   // 0.8 g
 #define GF_RESTORE_MAX 44
+#define GF_TRAIL       24
+
+static uint16_t gfBlend(uint16_t a, uint16_t b, float t) {
+    int ar = (a >> 11) & 0x1F, ag = (a >> 5) & 0x3F, ab = a & 0x1F;
+    int br = (b >> 11) & 0x1F, bg = (b >> 5) & 0x3F, bb = b & 0x1F;
+    int r = ar + (int)((br - ar) * t + 0.5f);
+    int g = ag + (int)((bg - ag) * t + 0.5f);
+    int bl = ab + (int)((bb - ab) * t + 0.5f);
+    return (uint16_t)((r << 11) | (g << 5) | bl);
+}
 
 static uint16_t gfFaceAt(int x, int y) {
     int dx = x - GF_CX;
@@ -1282,9 +1519,8 @@ static void gfRestore(int bx, int by, int size) {
     LCD_DrawBuffer(bx, by, size, size, buf);
 }
 
-// Paint the dot by compositing it over the face into one buffer. A scanline
-// FillCircle costs ~13 panel transactions; this costs exactly one, which is
-// what keeps the 60Hz g-meter affordable.
+// Paint a dot by compositing it over the face into one buffer. A scanline
+// FillCircle costs ~13 panel transactions; this costs exactly one.
 static void gfDrawDot(int cx, int cy, int r, uint16_t color) {
     static uint16_t buf[GF_RESTORE_MAX * GF_RESTORE_MAX];
     int size = (r + 3) * 2 + 1;
@@ -1302,7 +1538,7 @@ static void gfDrawDot(int cx, int cy, int r, uint16_t color) {
             int d2 = dx * dx + dy * dy;
             uint16_t c;
             if (d2 <= rin)       c = color;
-            else if (d2 <= rout) c = MX5_WHITE;
+            else if (d2 <= rout) c = gfBlend(color, MX5_WHITE, 0.35f);
             else                 c = gfFaceAt(x, y);
             buf[row * size + col] = c;
         }
@@ -1310,39 +1546,27 @@ static void gfDrawDot(int cx, int cy, int r, uint16_t color) {
     LCD_DrawBuffer(bx, by, size, size, buf);
 }
 
+static uint16_t gfColorFor(float m) {
+    if (m >= 0.75f) return MX5_RED;
+    if (m >= 0.50f) return MX5_ORANGE;
+    if (m >= 0.25f) return MX5_YELLOW;
+    return MX5_GREEN;
+}
+
 void drawGForceScreen() {
-    static int prevGX = -9999;
-    static int prevGY = -9999;
-    static int prevDotR = -1;
-    static uint16_t prevDotColor = 0;
+    static float trailLat[GF_TRAIL];
+    static float trailLong[GF_TRAIL];
+    static int trailHead = 0;
+    static int trailCount = 0;
+    static int prevX[GF_TRAIL], prevY[GF_TRAIL], prevR[GF_TRAIL];
+    static int prevDrawn = 0;
+    static unsigned long lastSample = 0;
     static unsigned long lastValueUpdate = 0;
 
-    float forwardAccel = telemetry.linearAccelY;
-
-    const float pixelsPerDegree = (float)GF_TRAVEL / 10.0f;
-    int gX = GF_CX + (int)(orientationRoll * pixelsPerDegree);
-    int gY = GF_CY + (int)(orientationPitch * pixelsPerDegree);
-
-    int ddx = gX - GF_CX;
-    int ddy = gY - GF_CY;
-    int dist2 = ddx * ddx + ddy * ddy;
-    if (dist2 > GF_TRAVEL * GF_TRAVEL) {
-        float scale = (float)GF_TRAVEL / sqrtf((float)dist2);
-        gX = GF_CX + (int)(ddx * scale);
-        gY = GF_CY + (int)(ddy * scale);
-    }
-
-    int dotR = 6 + (int)(fabsf(forwardAccel) * 8.0f);
-    if (dotR < 6) dotR = 6;
-    if (dotR > 10) dotR = 10;
-
-    uint16_t dotColor = MX5_GREEN;
-    if (forwardAccel > 0.5) dotColor = MX5_RED;
-    else if (forwardAccel > 0.2) dotColor = MX5_ORANGE;
-    else if (forwardAccel < -0.5) dotColor = MX5_CYAN;
-    else if (forwardAccel < -0.2) dotColor = MX5_YELLOW;
-
-    const int colX[3] = {108, CENTER_X, 252};
+    // Lateral is X, longitudinal is Y; forward is up, so Y is negated on the way
+    // to the screen (same convention as the Android view).
+    float lat = telemetry.linearAccelX;
+    float lon = telemetry.linearAccelY;
 
     if (needsFullRedraw) {
         drawBackground();
@@ -1354,43 +1578,94 @@ void drawGForceScreen() {
         LCD_FillCircle(GF_CX, GF_CY, GF_RING2 - 2, COLOR_BG_CARD);
         LCD_FillCircle(GF_CX, GF_CY, GF_RING1, MX5_DARKGRAY);
         LCD_FillCircle(GF_CX, GF_CY, GF_RING1 - 2, COLOR_BG_CARD);
-        LCD_FillRect(GF_CX - GF_FACE_R, GF_CY, GF_FACE_R * 2, 1, MX5_DARKGRAY);
-        LCD_FillRect(GF_CX, GF_CY - GF_FACE_R, 1, GF_FACE_R * 2, MX5_DARKGRAY);
+        LCD_FillRect(GF_CX - GF_TRAVEL, GF_CY, GF_TRAVEL * 2, 1, MX5_DARKGRAY);
+        LCD_FillRect(GF_CX, GF_CY - GF_TRAVEL, 1, GF_TRAVEL * 2, MX5_DARKGRAY);
         LCD_FillCircle(GF_CX, GF_CY, 2, MX5_WHITE);
 
-        const char* labels[3] = {"PITCH", "ROLL", "ACCEL G"};
+        // Axis labels, matching the Android pad: accel up, brake down, L/R across.
+        drawCentered(GF_CX, GF_CY - GF_TRAVEL - 14, "ACCEL", MX5_GRAY, COLOR_BG_CARD, 1);
+        drawCentered(GF_CX, GF_CY + GF_TRAVEL + 3, "BRAKE", MX5_GRAY, COLOR_BG_CARD, 1);
+        drawCentered(GF_CX - GF_TRAVEL - 2, GF_CY - 3, "L", MX5_GRAY, COLOR_BG_CARD, 1);
+        drawCentered(GF_CX + GF_TRAVEL + 2, GF_CY - 3, "R", MX5_GRAY, COLOR_BG_CARD, 1);
+
+        const char* labels[3] = {"MAG", "LAT", "LONG"};
+        const int colX[3] = {108, CENTER_X, 252};
         for (int i = 0; i < 3; i++) drawCentered(colX[i], 274, labels[i], MX5_GRAY, COLOR_BG, 1);
 
         drawPageIndicator();
 
-        prevGX = -9999;   // force the dot to be painted
+        trailCount = 0;
+        trailHead = 0;
+        prevDrawn = 0;
     }
 
-    // Moving dot: rebuild what was underneath it, then paint the new one.
-    if (gX != prevGX || gY != prevGY || dotR != prevDotR || dotColor != prevDotColor) {
-        if (prevGX > -9999) {
-            int pad = prevDotR + 3;
-            gfRestore(prevGX - pad, prevGY - pad, pad * 2 + 1);
+    // Sample the trail at ~20 Hz. The IMU feeds this screen at 100 Hz; keeping every
+    // sample would make the trail only a fifth of a second long.
+    if (millis() - lastSample >= 50) {
+        lastSample = millis();
+        trailLat[trailHead] = lat;
+        trailLong[trailHead] = lon;
+        trailHead = (trailHead + 1) % GF_TRAIL;
+        if (trailCount < GF_TRAIL) trailCount++;
+
+        // Erase the previous frame's dots before painting the new ones.
+        for (int i = 0; i < prevDrawn; i++) {
+            int pad = prevR[i] + 3;
+            gfRestore(prevX[i] - pad, prevY[i] - pad, pad * 2 + 1);
         }
-        gfDrawDot(gX, gY, dotR, dotColor);
-        prevGX = gX;
-        prevGY = gY;
-        prevDotR = dotR;
-        prevDotColor = dotColor;
+
+        const float scale = (float)GF_TRAVEL / GF_RANGE_G;
+        prevDrawn = 0;
+
+        // Oldest first, so the newest dot ends up on top.
+        for (int i = 0; i < trailCount && prevDrawn < GF_TRAIL; i++) {
+            int index = (trailHead - trailCount + i + GF_TRAIL * 2) % GF_TRAIL;
+            float age = (i + 1) / (float)trailCount;   // 0 = oldest, 1 = newest
+
+            int px = GF_CX + (int)(trailLat[index] * scale);
+            int py = GF_CY - (int)(trailLong[index] * scale);
+
+            // Clamp to the outer ring: on a bumpy road a clamped dot is more useful
+            // than one that has left the dial.
+            int dx = px - GF_CX, dy = py - GF_CY;
+            int d2 = dx * dx + dy * dy;
+            if (d2 > GF_TRAVEL * GF_TRAVEL) {
+                float k = (float)GF_TRAVEL / sqrtf((float)d2);
+                px = GF_CX + (int)(dx * k);
+                py = GF_CY + (int)(dy * k);
+            }
+
+            float m = sqrtf(trailLat[index] * trailLat[index] +
+                            trailLong[index] * trailLong[index]);
+            uint16_t color = gfColorFor(m);
+            int r = 2 + (int)(age * 3.0f);
+
+            // Older points fade toward the panel surface instead of being drawn at
+            // full brightness, which is what makes the direction of travel readable.
+            uint16_t faded = gfBlend(COLOR_BG_CARD, color, 0.35f + 0.65f * age);
+
+            gfDrawDot(px, py, r, faded);
+
+            prevX[prevDrawn] = px;
+            prevY[prevDrawn] = py;
+            prevR[prevDrawn] = r;
+            prevDrawn++;
+        }
     }
 
-    // Numeric readouts at 10Hz - and only when the rendered text actually
-    // changed, so a steady car costs nothing.
+    // Numeric readouts at 10Hz, and only when the text actually changed.
     if (needsFullRedraw || millis() - lastValueUpdate >= 100) {
         lastValueUpdate = millis();
         static char lastV[3][12] = {"", "", ""};
         char v[3][12];
+        float mag = sqrtf(lat * lat + lon * lon);
 
-        snprintf(v[0], sizeof(v[0]), "%+.1f", orientationPitch);
-        snprintf(v[1], sizeof(v[1]), "%+.1f", orientationRoll);
-        snprintf(v[2], sizeof(v[2]), "%+.1f", forwardAccel);
+        snprintf(v[0], sizeof(v[0]), "%.2f", mag);
+        snprintf(v[1], sizeof(v[1]), "%+.2f", lat);
+        snprintf(v[2], sizeof(v[2]), "%+.2f", lon);
 
-        const uint16_t colors[3] = {MX5_CYAN, MX5_GREEN, dotColor};
+        const int colX[3] = {108, CENTER_X, 252};
+        const uint16_t colors[3] = {gfColorFor(mag), MX5_CYAN, MX5_GREEN};
         const int widths[3] = {56, 56, 64};
 
         for (int i = 0; i < 3; i++) {
@@ -1402,6 +1677,7 @@ void drawGForceScreen() {
         }
     }
 }
+
 
 // ============================================================================
 // Helper drawing functions

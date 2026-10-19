@@ -20,9 +20,10 @@ android {
     }
 }
 
-// Deliberately no dependencies.
-//
-// HTTP is HttpURLConnection and JSON is org.json, both in the platform, so there is
-// nothing to resolve and nothing that can clash. The Car App Library is not used
-// either: this is a parked-app "game" that draws its own UI full screen, which is
-// the mechanism that does not need Play approval.
+// The Car App Library is the one dependency, and it is load-bearing: the parked
+// "game" activity is hidden by Android Auto while the car is moving, so a
+// DRIVING-category CarAppService is the only supported way to stay visible in
+// motion. Everything else (HTTP, JSON) still comes from the platform.
+dependencies {
+    implementation 'androidx.car.app:app:1.4.0'
+}

@@ -181,6 +181,10 @@ void sendTPMSDataToPi();
 void formatTimestamp(unsigned long millis_time, char* buf, size_t bufSize);
 void saveTPMSToNVS();
 void loadTPMSFromNVS();
+
+// Theme persistence (mirrored from the phone app; dark when no phone has connected)
+void saveThemeToNVS();
+void loadThemeFromNVS();
 void saveIMUCalibrationToNVS();
 void loadIMUCalibrationFromNVS();
 
@@ -224,6 +228,93 @@ static inline bool serialHasRoom(int bytes) {
     return Serial.availableForWrite() >= bytes;
 }
 
+// ---------------------------------------------------------------------------
+// Boot animation
+// ---------------------------------------------------------------------------
+// Three beats, ~1.4 s total: the logo zooms in, a tach-style arc sweeps to full
+// and settles back to zero, then the title appears. Every frame is timed from a
+// single start stamp so the whole sequence has a fixed length regardless of how
+// long any individual draw takes.
+static void playStartupAnimation() {
+    const unsigned long t0 = millis();
+
+    // ---- 1. logo zoom-in (0 - 260 ms) ----
+    for (int step = 0; step <= 3; step++) {
+        float k = 0.40f + 0.20f * step;          // 40% -> 100%
+        int w = (int)(SCREEN_WIDTH * k);
+        int h = (int)(SCREEN_HEIGHT * k);
+        int x = (SCREEN_WIDTH - w) / 2;
+        int y = (SCREEN_HEIGHT - h) / 2;
+
+        LCD_Clear(COLOR_BG);
+        LCD_DrawImageScaled(BOOT_LOGO_DATA_WIDTH, BOOT_LOGO_DATA_HEIGHT, boot_logo_data,
+                            x, y, w, h);
+
+        unsigned long due = t0 + (step + 1) * 65;
+        while (millis() < due) { delay(1); }
+    }
+
+    // ---- 2. tach self-test sweep (260 - 940 ms) ----
+    // Same 135 deg start / 270 deg sweep as the RPM screen, so the boot gesture
+    // matches the gauge the driver is about to see.
+    const int cx = CENTER_X;
+    const int cy = CENTER_Y;
+    const int r  = 120;
+    const int segs = 36;
+
+    unsigned long sweepStart = t0 + 260;
+    for (int i = 0; i <= segs; i++) {
+        float t = (float)i / segs;
+        uint16_t col = (t >= 0.85f) ? MX5_RED
+                     : (t >= 0.60f) ? MX5_ORANGE
+                     : (t >= 0.35f) ? MX5_YELLOW : MX5_GREEN;
+        LCD_DrawThickArc(cx, cy, r, 5,
+                         (uint16_t)(135.0f + 270.0f * ((float)(i - 1) / segs)),
+                         (uint16_t)(135.0f + 270.0f * t), col);
+
+        // Pace the sweep over 400 ms, then hold at full for the remaining time.
+        unsigned long due = sweepStart + (unsigned long)(t * 400.0f);
+        while (millis() < due) { delay(1); }
+    }
+
+    // Settle: wipe the sweep back to empty, which is where the gauge starts.
+    unsigned long settle = millis();
+    while (millis() - settle < 140) {
+        float t = (millis() - settle) / 140.0f;
+        int active = (int)(segs * t);
+        for (int i = 0; i < active; i++) {
+            float tt = (float)i / segs;
+            LCD_DrawThickArc(cx, cy, r, 5,
+                             (uint16_t)(135.0f + 270.0f * tt - 7.0f),
+                             (uint16_t)(135.0f + 270.0f * tt + 7.0f), COLOR_BG);
+        }
+        delay(10);
+    }
+    LCD_DrawThickArc(cx, cy, r, 5, 135.0f, 405.0f, COLOR_BG);
+
+    // ---- 3. title (940 ms -> ~1.4 s) ----
+    LCD_FillRect(0, 40, SCREEN_WIDTH, 30, COLOR_BG);
+    LCD_FillRect(0, 290, SCREEN_WIDTH, 40, COLOR_BG);
+
+    // A short underline that grows outward from the centre.
+    for (int i = 0; i <= 12; i++) {
+        int w = i * 6;
+        LCD_FillRect(CENTER_X - w / 2, 72, w, 2, MX5_ACCENT);
+        delay(8);
+    }
+
+    unsigned long titleDue = t0 + 1180;
+    while (millis() < titleDue) { delay(1); }
+
+    LCD_DrawString(CENTER_X - 71, 250, "MX5 TELEMETRY", MX5_WHITE, COLOR_BG, 2);
+    LCD_DrawString(CENTER_X - 23, 272, "READY", MX5_GRAY, COLOR_BG, 1);
+
+    // Hold the finished frame just long enough to read, then hand over to the
+    // normal Overview screen. Capped so boot never feels slower than it used to.
+    unsigned long endDue = t0 + 1450;
+    while (millis() < endDue) { delay(1); }
+}
+
 void setup() {
     Serial.begin(115200);
     // The mutex wait defaults to 250ms. Keep it tiny: a stalled port should give up at
@@ -255,12 +346,12 @@ void setup() {
     Serial.println("Initializing LCD...");
     LCD_Init();
     Serial.println("Display initialized!");
-    
-    // Draw startup screen with boot logo - scaled to fill the entire screen
-    LCD_Clear(COLOR_BG);
-    LCD_DrawImageScaled(BOOT_LOGO_DATA_WIDTH, BOOT_LOGO_DATA_HEIGHT, boot_logo_data,
-                        0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-    delay(1500);  // Show logo for 1.5 seconds
+
+    // Restore the theme before anything is painted, so the boot animation is
+    // already in the phone's colours (or dark aurora on a first boot).
+    loadThemeFromNVS();
+
+    playStartupAnimation();
     
     // Initialize telemetry to zeros - will be populated by Pi
     telemetry.rpm = 0;
@@ -1075,14 +1166,15 @@ void parseCommand(String cmd) {
         telemetry.oilPressure = cmd.substring(7).toFloat();
         telemetry.connected = true;
     }
-    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage)
+    // Bulk telemetry update from Pi (format: TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage,inst_mpg,reverse,brake,inst_mpg_valid)
     // gear_color: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
+    // speed is km/h; reverse is its own flag rather than a negative speed.
     else if (cmd.startsWith("TEL:")) {
         String data = cmd.substring(4);
         int idx = 0;
-        float values[15] = {0};  // 15 fields including voltage and instant MPG
+        float values[18] = {0};  // 18 fields including the reverse/brake/valid flags
         int start = 0;
-        for (int i = 0; i <= data.length() && idx < 15; i++) {
+        for (int i = 0; i <= data.length() && idx < 18; i++) {
             if (i == data.length() || data[i] == ',') {
                 String field = data.substring(start, i);
                 values[idx] = field.toFloat();
@@ -1113,12 +1205,31 @@ void parseCommand(String cmd) {
             if (idx >= 14) telemetry.batteryVoltage = values[13];
             // Instantaneous MPG from MAF (Pi-calculated)
             if (idx >= 15) telemetry.instantMPG = values[14];
+            // Explicit reverse flag: never inferred from the rounded speed.
+            if (idx >= 16) telemetry.isInReverse = (values[15] > 0);
+            // Brake is a binary pedal switch on this car (0 or 100).
+            if (idx >= 17) telemetry.brake = values[16];
+            // Distinguishes "no reading" from a real 0 mpg.
+            if (idx >= 18) telemetry.instantMPGValid = (values[17] > 0);
             telemetry.connected = true;
             telemetry.hasReceivedTelemetry = true;  // Mark that we've received data
             needsRedraw = true;  // Update display with new data
         } else {
             Serial.printf("TEL: ERROR - Not enough fields (got %d, need 6)\n", idx);
         }
+    }
+    // Theme mirrored from the phone app (format: THEME:<scheme>,<0|1>)
+    else if (cmd.startsWith("THEME:")) {
+        String rest = cmd.substring(6);
+        int comma = rest.indexOf(',');
+        String scheme = (comma >= 0) ? rest.substring(0, comma) : rest;
+        bool dark = (comma >= 0) ? (rest.substring(comma + 1).toInt() != 0) : true;
+
+        applyTheme(scheme.c_str(), dark);
+        saveThemeToNVS();
+        needsFullRedraw = true;
+        needsRedraw = true;
+        Serial.printf("THEME applied: %s (%s)\n", themeScheme, themeDark ? "dark" : "light");
     }
     else if (cmd == "PING") {
         telemetry.connected = true;
@@ -1581,6 +1692,40 @@ void loadTPMSFromNVS() {
                       tpmsLastUpdateStr[0], tpmsLastUpdateStr[1],
                       tpmsLastUpdateStr[2], tpmsLastUpdateStr[3]);
     }
+}
+
+// ============================================================================
+// Theme NVS Persistence
+//
+// The phone app is the source of truth for the theme; whatever it last sent is
+// stored here so a cold boot with no phone attached comes up looking the same.
+// With nothing stored, the display uses dark aurora (the app's default).
+// ============================================================================
+
+static Preferences themePrefs;
+
+void saveThemeToNVS() {
+    themePrefs.begin("theme", false);
+    themePrefs.putString("scheme", themeScheme);
+    themePrefs.putBool("dark", themeDark);
+    themePrefs.end();
+}
+
+void loadThemeFromNVS() {
+    themePrefs.begin("theme", true);
+    String scheme = themePrefs.getString("scheme", "");
+    bool dark = themePrefs.getBool("dark", true);
+    themePrefs.end();
+
+    if (scheme.length() == 0) {
+        // Never received a theme: this is the phone-not-connected case.
+        applyDefaultTheme();
+        Serial.println("THEME: no saved theme, defaulting to dark aurora");
+        return;
+    }
+
+    applyTheme(scheme.c_str(), dark);
+    Serial.printf("THEME: loaded %s (%s) from NVS\n", themeScheme, themeDark ? "dark" : "light");
 }
 
 // ============================================================================

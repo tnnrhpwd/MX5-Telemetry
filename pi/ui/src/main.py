@@ -198,6 +198,7 @@ class TelemetryData:
     
     # MPG and range data (calculated by MPGCalculator)
     instant_mpg: float = 0.0
+    instant_mpg_valid: bool = False  # False = no MAF/speed reading (show "--")
     average_mpg: float = 0.0
     range_miles: int = 0
     
@@ -255,6 +256,11 @@ class Settings:
     demo_mode: bool = False  # False = use real CAN data, True = simulated data
     led_sequence: int = LED_SEQ_CENTER_OUT  # LED sequence mode (1-4)
     clutch_display_mode: int = 0  # 0=Gear#(colored), 1='C', 2='S', 3='-'
+    # Theme mirrored from the phone app so the round display can match it.
+    # The phone is authoritative; when it has never connected, dark + the app's
+    # default scheme is used (see DEFAULT_THEME_SCHEME).
+    theme_scheme: str = "aurora"
+    theme_dark: bool = True
 
 
 # =============================================================================
@@ -1024,9 +1030,8 @@ class PiDisplayApp:
             
             # Update MPG calculator with latest telemetry data
             if self.mpg_calculator:
-                # Note: speed_kmh is actually in MPH (parse_speed() already converts to MPH)
-                # Despite the misleading variable name, we use it directly
-                speed_mph = self.telemetry.speed_kmh
+                # speed_kmh is km/h throughout the system; this calculator works in MPH.
+                speed_mph = self.telemetry.speed_kmh * 0.621371
                 engine_running = self.telemetry.rpm > 0
                 
                 # Update calculator
@@ -1045,6 +1050,10 @@ class PiDisplayApp:
                 #                       = MAF * 3600 / (14.7 * 6.17 * 454)
                 #                       = MAF / 11.438
                 #   MPG = speed_mph / GPH = 11.438 * speed_mph / MAF
+                #
+                # "No reading" and "0 mpg" are different states: 0 is a real value
+                # (idling), while a missing MAF or a stopped car is unknown. The
+                # validity flag lets the UIs show "--" instead of a fake zero.
                 maf = self.telemetry.maf
                 maf_age = time.time() - self.telemetry.maf_timestamp
                 if speed_mph > 1.0 and maf > 0.5 and maf_age < 2.0:
@@ -1052,8 +1061,10 @@ class PiDisplayApp:
                     if inst > 99.0:
                         inst = 99.0  # clamp fuel-cut / coasting spikes
                     self.telemetry.instant_mpg = inst
+                    self.telemetry.instant_mpg_valid = True
                 else:
                     self.telemetry.instant_mpg = 0.0
+                    self.telemetry.instant_mpg_valid = False
             
             # Update lap timer if running (independent of demo mode)
             if self.lap_timer_running:

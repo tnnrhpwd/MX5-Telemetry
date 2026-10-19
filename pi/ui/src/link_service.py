@@ -21,6 +21,27 @@ logger = logging.getLogger(__name__)
 # replacement for those routes, not a new contract, so it stays 8 here too.
 SCREEN_COUNT = 8
 
+# Colour schemes offered by the phone app. Must stay in sync with
+# android/mx5-remote/Palette.SCHEMES and the ESP32 theme table.
+THEME_SCHEMES = (
+    'aurora', 'crimson', 'emerald', 'sakura', 'midnight', 'sunset',
+    'ocean', 'cyberpunk', 'monokai', 'usa', 'forest', 'neutral',
+)
+
+
+def _truthy(value):
+    """Interpret a setting value that may arrive as bool, int or string.
+
+    The same endpoint is driven by the web page (strings), the Bluetooth line
+    protocol (strings) and the phone app (JSON numbers), so a plain
+    ``value == '1'`` check silently treats a JSON ``1`` as false.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
 
 def screen_index(app):
     """The display app's current screen as a plain int.
@@ -73,6 +94,8 @@ class LinkService:
                 'coolant_warn_f': app.settings.coolant_warn_f,
                 'led_sequence': app.settings.led_sequence,
                 'clutch_display_mode': app.settings.clutch_display_mode,
+                'theme_scheme': app.settings.theme_scheme,
+                'theme_dark': app.settings.theme_dark,
             },
         }
 
@@ -114,6 +137,7 @@ class LinkService:
             'lap_time_ms': t.lap_time_ms,
             'best_lap_ms': t.best_lap_ms,
             'instant_mpg': t.instant_mpg,
+            'instant_mpg_valid': t.instant_mpg_valid,
             'average_mpg': t.average_mpg,
             'range_miles': t.range_miles,
             'check_engine_light': t.check_engine_light,
@@ -206,6 +230,15 @@ class LinkService:
                     app._send_led_sequence_to_arduino()
             elif name == 'clutch_display_mode':
                 app.settings.clutch_display_mode = int(value)
+            elif name == 'theme_scheme':
+                # The phone app owns the theme; the Pi only mirrors it so the
+                # round display can follow when the phone is not connected.
+                scheme = str(value)
+                if scheme not in THEME_SCHEMES:
+                    return {'success': False, 'error': 'Unknown theme scheme'}, 400
+                app.settings.theme_scheme = scheme
+            elif name == 'theme_dark':
+                app.settings.theme_dark = _truthy(value)
             else:
                 return {'success': False, 'error': 'Unknown setting'}, 400
 

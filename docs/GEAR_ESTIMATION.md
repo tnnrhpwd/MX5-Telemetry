@@ -128,7 +128,11 @@ The 30% ratio difference threshold works well for normal driving but may:
 `display/src/main.cpp` - `drawOverviewScreen()` gear display section
 
 **Serial Protocol**:  
-Pi → ESP32: `TEL:rpm,speed,gear,throttle,coolant,oil,voltage,fuel,engine,gear_est,clutch`
+Pi → ESP32: `TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage,inst_mpg,reverse,brake,inst_mpg_valid`
+
+`speed` is **km/h**. `reverse` is an explicit 0/1 flag (a rounded `-0` cannot be
+compared against zero at the far end), and `brake` is 0 or 100 because the car only
+exposes a pedal switch.
 
 ### Testing Recommendations
 

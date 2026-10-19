@@ -15,6 +15,9 @@ JDK 21, AGP 8.7.3, Gradle 8.11.1, compileSdk/targetSdk 35, minSdk 26.
 Gradle lives at `%LOCALAPPDATA%\Android\gradle-8.11.1` and the SDK at
 `%LOCALAPPDATA%\Android\Sdk`.
 
+The one dependency is `androidx.car.app:app:1.4.0` (Car App Library). It is what
+makes the driving-category surface possible — see below.
+
 ```powershell
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 & "$env:LOCALAPPDATA\Android\gradle-8.11.1\bin\gradle.bat" -p android :mx5-remote:assembleDebug
@@ -59,6 +62,15 @@ the UI on a car screen. The car is still the only real test on that point.
 
 ## Facts worth not rediscovering
 
+- **Two surfaces, one APK.** `MainActivity` is the parked dashboard (declared as a
+  game). `Mx5CarAppService` is a `androidx.car.app.CarAppService` declaring
+  `androidx.car.app.category.DRIVING`, which is what the host is willing to show while
+  the car is moving. The parked surface cannot be un-parked by any manifest flag.
+- **Driving means templates.** A DRIVING session may only return host-rendered
+  templates (`PaneTemplate` here). Custom `View` hierarchies — which is what the parked
+  dashboard is — are not available in motion. Anything added to the driving surface must
+  stay glanceable: a few labelled rows, no lists to scroll, no interaction needed to
+  reach a critical number.
 - **Parked categories.** Games work on Android Auto *and* Automotive OS. Video and
   Browsers are Automotive-only. Games are the only AA-supported parked category.
 - **The declaration** is two things: `android:appCategory="game"` on `<application>`,

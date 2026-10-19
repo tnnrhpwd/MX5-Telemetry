@@ -629,9 +629,17 @@ class ESP32SerialHandler:
             # Use lock to prevent collision with screen commands
             with self._write_lock:
                 # Combine all telemetry into fewer messages to reduce serial traffic
-                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage,inst_mpg
+                # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage,inst_mpg,reverse,brake,inst_mpg_valid
                 # gear_color: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
-                msg = f"TEL:{self.telemetry.rpm:.0f},{self.telemetry.speed_kmh:.0f},{self.telemetry.gear},"
+                #
+                # speed is km/h. Negative speeds are sent as 0 and the sign is carried
+                # by the dedicated `reverse` field: formatting a small negative with
+                # :.0f yields "-0", and C++ compares -0.0 < 0 as false, so the ESP
+                # could never infer reverse from the speed field alone.
+                speed_for_wire = self.telemetry.speed_kmh
+                if speed_for_wire < 0:
+                    speed_for_wire = 0
+                msg = f"TEL:{self.telemetry.rpm:.0f},{speed_for_wire:.0f},{self.telemetry.gear},"
                 msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
                 oil_val = 1 if self.telemetry.oil_status else 0
                 msg += f"{oil_val},"
@@ -655,7 +663,15 @@ class ESP32SerialHandler:
                 # Add gear color indicator (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
                 color_map = {'green': 0, 'red': 1, 'blue': 2, 'yellow': 3, 'cyan': 4}
                 gear_color_val = color_map.get(self.telemetry.gear_color, 0)
-                msg += f"{gear_color_val},{self.telemetry.voltage:.1f},{self.telemetry.instant_mpg:.1f}\n"
+                msg += f"{gear_color_val},{self.telemetry.voltage:.1f},{self.telemetry.instant_mpg:.1f}"
+                # Explicit reverse flag, so the ESP never has to guess from the sign
+                # of a rounded speed value.
+                msg += f",{1 if self.telemetry.is_in_reverse else 0}"
+                # Brake is a binary pedal switch on this car; the ESP renders it as
+                # an on/off indicator rather than a proportional bar.
+                msg += f",{self.telemetry.brake_percent:.0f}"
+                # Distinguishes "no MAF/speed reading" from a real 0 mpg.
+                msg += f",{1 if self.telemetry.instant_mpg_valid else 0}\n"
                 
                 # Debug: log fuel/MPG data periodically (every ~10 seconds)
                 if not hasattr(self, '_mpg_debug_counter'):
@@ -864,6 +880,28 @@ class ESP32SerialHandler:
         # LED sequence - syncs to ESP32 display settings
         if hasattr(settings, 'led_sequence'):
             self.send_setting("led_sequence", settings.led_sequence)
+        # Theme mirrored from the phone app. Sent last so a slow serial link never
+        # delays the functional settings above.
+        if hasattr(settings, 'theme_scheme'):
+            self.send_theme(settings.theme_scheme, settings.theme_dark)
+
+    def send_theme(self, scheme: str, dark: bool):
+        """Send the active theme to the ESP32 so it can match the phone app.
+
+        Format: THEME:<scheme>,<0|1>   (1 = dark)
+        The ESP persists this in NVS, so it survives a power cycle and is the
+        value used when the phone is not connected.
+        """
+        if not self.serial_conn or not self._running or not self.connected:
+            return
+
+        try:
+            msg = f"THEME:{scheme},{1 if dark else 0}\n"
+            self.serial_conn.write(msg.encode('utf-8'))
+            self.last_tx_time = time.time()
+            print(f"ESP32: Sent THEME:{scheme},{1 if dark else 0}")
+        except Exception as e:
+            print(f"ESP32 serial write error: {e}")
     
     def request_settings(self):
         """Request all current settings from ESP32"""

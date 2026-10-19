@@ -46,6 +46,8 @@ public final class Telemetry {
     public int lapTimeMs;
     public int bestLapMs;
     public double instantMpg;
+    /** False when the Pi has no MAF/speed reading: the UI shows "--", not 0.0. */
+    public boolean instantMpgValid;
     public double averageMpg;
     public int rangeMiles;
 
@@ -110,6 +112,7 @@ public final class Telemetry {
         t.lapTimeMs = o.optInt("lap_time_ms");
         t.bestLapMs = o.optInt("best_lap_ms");
         t.instantMpg = o.optDouble("instant_mpg");
+        t.instantMpgValid = o.optBoolean("instant_mpg_valid", t.instantMpg > 0.0);
         t.averageMpg = o.optDouble("average_mpg");
         t.rangeMiles = o.optInt("range_miles");
 

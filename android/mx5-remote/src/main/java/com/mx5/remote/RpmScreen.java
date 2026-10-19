@@ -11,8 +11,9 @@ public class RpmScreen extends Screen {
     private Host host;
     private GaugeView gauge;
     private Ui.Stat gear, speed, shift, redline;
-    private Ui.Bar throttle;
+    private Ui.Bar throttle, brake;
     private Ui.Panel panel;
+    private Palette palette;
 
     @Override
     public String title() {
@@ -37,6 +38,7 @@ public class RpmScreen extends Screen {
     @Override
     public View build(Context c, Palette p, Host h) {
         host = h;
+        palette = p;
         panel = new Ui.Panel(c, p, "DRIVE", "RPM / Speed", p.accent);
 
         LinearLayout body = Ui.row(c);
@@ -62,6 +64,12 @@ public class RpmScreen extends Screen {
         // The bar keeps its natural height: it is a gauge, not a readout, so it should not
         // grow to match the tiles beside it.
         side.addView(throttle, Ui.stack(c, 3));
+
+        // Brake is a pedal switch on this car, not a travel sensor, so it reads as
+        // ON/OFF. Drawing it as a proportional bar made a working switch look like a
+        // broken gauge, because the only two states were empty and full.
+        brake = new Ui.Bar(c, p, "Brake", p.alert);
+        side.addView(brake, Ui.stack(c, 3));
         body.addView(side, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 0.55f));
 
@@ -90,5 +98,9 @@ public class RpmScreen extends Screen {
         shift.set("6500");
         redline.set("7200");
         throttle.set(t.throttlePercent / 100f, t.throttlePercent + "%");
+
+        boolean braking = t.brakePercent > 50;
+        brake.set(braking ? 1f : 0f, braking ? "ON" : "OFF",
+                braking ? palette.alert : palette.textDim);
     }
 }
