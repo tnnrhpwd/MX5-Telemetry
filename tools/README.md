@@ -6,6 +6,7 @@ Loose scripts from the repository root `tools/` directory have been grouped into
 
 - `can/` — CAN bus, MCP2515, loopback, wiring, SWC, and other vehicle-bus diagnostics, fixes, and tests.
 - `display/` — HDMI, KMS, framebuffer, Pioneer display, and boot handoff troubleshooting tools.
+- `fonts/` — build-time generators for embedded display lettering (`make_gear_font.py` bakes the ESP32 gear glyphs from Arimo/Open Font License).
 - `hardware/` — Arduino, ESP32, serial-port, PlatformIO, sensor, and desktop shortcut helpers.
 - `network/` — Wi-Fi, hotspot, IP, and network-priority utilities.
 - `recovery/` — reboot, cache-clearing, service-restart, and emergency recovery helpers.

@@ -12,6 +12,7 @@
  */
 
 #include "ui_core.h"
+#include "gear_font.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -538,193 +539,15 @@ void drawTransition() {
 }
 
 // ============================================================================
-// Large gear indicator (anti-aliased)
+// Large gear indicator
 // ============================================================================
-// The large gear glyph is rasterized into a 1-bit buffer, then edge-smoothed
-// with the same bilinear 2x2 supersampling used by the text fonts, so the big
-// number matches the smooth look of the rest of the UI.
+// The big gear character is drawn from gear_font.h: coverage masks baked from
+// Arimo, the OFL-licensed design that is metric-compatible with Arial. No font
+// engine and no outline code ship in the firmware - one glyph is a cropped
+// alpha map that is blended into a cell-sized buffer and pushed to the panel in
+// a single transaction, so the ink is genuinely typeface-shaped at zero runtime
+// cost.
 // ============================================================================
-// A monoline geometric alphabet, not a stack of rectangles.
-//
-// Each glyph is a set of rounded strokes in a normalised 0..1 box; a pixel's
-// coverage is derived from its distance to the nearest stroke, so every stem
-// carries the same optical weight and the terminals are rounded and smoothly
-// antialiased. That is what makes the big digit read as a typeface on the panel
-// instead of as seven bars.
-#define GLYPH_W       46
-#define GLYPH_H       66
-#define GLYPH_STROKE  7.0f
-#define GLYPH_SEGS    44
-
-struct GlyphSeg {
-    float x0, y0, x1, y1;
-    float minX, minY, maxX, maxY;   // pixel-space bounds, padded by the stroke
-};
-
-struct GlyphPath {
-    GlyphSeg segs[GLYPH_SEGS];
-    int n;
-
-    GlyphPath() : n(0) {}
-
-    void add(float x0, float y0, float x1, float y1) {
-        if (n >= GLYPH_SEGS) return;
-        GlyphSeg& s = segs[n++];
-        s.x0 = x0; s.y0 = y0; s.x1 = x1; s.y1 = y1;
-    }
-
-    void line(float x0, float y0, float x1, float y1) { add(x0, y0, x1, y1); }
-
-    // Elliptical arc. Angles are degrees, 0 = right and 90 = down (screen space),
-    // so 270 is up. a1 may be smaller than a0 to sweep the other way.
-    void arc(float cx, float cy, float rx, float ry, float a0, float a1, int steps) {
-        float px = 0, py = 0;
-        for (int i = 0; i <= steps; i++) {
-            float a = (a0 + (a1 - a0) * (float)i / (float)steps) * (float)PI / 180.0f;
-            float x = cx + rx * cosf(a);
-            float y = cy + ry * sinf(a);
-            if (i) add(px, py, x, y);
-            px = x; py = y;
-        }
-    }
-
-    // Quadratic Bezier, for the strokes that are not circular (6, 9).
-    void quad(float x0, float y0, float cx, float cy, float x1, float y1, int steps) {
-        float px = x0, py = y0;
-        for (int i = 1; i <= steps; i++) {
-            float t = (float)i / (float)steps, u = 1.0f - t;
-            float x = u * u * x0 + 2.0f * u * t * cx + t * t * x1;
-            float y = u * u * y0 + 2.0f * u * t * cy + t * t * y1;
-            add(px, py, x, y);
-            px = x; py = y;
-        }
-    }
-
-    // Cubic Bezier. Used for strokes that must be one continuous curve (the 3),
-    // where joining two arcs leaves a visible cusp.
-    void cubic(float x0, float y0, float c1x, float c1y,
-               float c2x, float c2y, float x1, float y1, int steps) {
-        float px = x0, py = y0;
-        for (int i = 1; i <= steps; i++) {
-            float t = (float)i / (float)steps, u = 1.0f - t;
-            float x = u*u*u*x0 + 3.0f*u*u*t*c1x + 3.0f*u*t*t*c2x + t*t*t*x1;
-            float y = u*u*u*y0 + 3.0f*u*u*t*c1y + 3.0f*u*t*t*c2y + t*t*t*y1;
-            add(px, py, x, y);
-            px = x; py = y;
-        }
-    }
-
-    // Normalised -> cell pixels, and cache each segment's padded bounds so the
-    // rasteriser can reject most segments per pixel with four comparisons.
-    //
-    // The ink is inset by half a stroke: the strokes are centred on the path, so a
-    // path point at y=0 would otherwise paint 3.5 px above the cell and be clipped,
-    // which flattened the top and bottom of every round glyph.
-    void toPixels(float cellW, float cellH) {
-        const float inset = GLYPH_STROKE * 0.5f + 1.0f;
-        const float spanX = cellW - 2.0f * inset;
-        const float spanY = cellH - 2.0f * inset;
-        const float pad = GLYPH_STROKE * 0.5f + 1.5f;
-
-        for (int i = 0; i < n; i++) {
-            GlyphSeg& s = segs[i];
-            s.x0 = inset + s.x0 * spanX;
-            s.x1 = inset + s.x1 * spanX;
-            s.y0 = inset + s.y0 * spanY;
-            s.y1 = inset + s.y1 * spanY;
-            s.minX = min(s.x0, s.x1) - pad;
-            s.maxX = max(s.x0, s.x1) + pad;
-            s.minY = min(s.y0, s.y1) - pad;
-            s.maxY = max(s.y0, s.y1) + pad;
-        }
-    }
-};
-
-static void buildGearGlyph(char c, GlyphPath& p) {
-    switch (c) {
-        case '0':
-            p.arc(0.50f, 0.50f, 0.38f, 0.49f, 0, 360, 22);
-            break;
-        case '1':
-            p.line(0.54f, 0.12f, 0.54f, 1.00f);
-            p.line(0.31f, 0.34f, 0.54f, 0.12f);
-            p.line(0.31f, 1.00f, 0.77f, 1.00f);
-            break;
-        case '2':
-            p.arc(0.50f, 0.29f, 0.37f, 0.27f, 180, 360, 16);
-            p.line(0.87f, 0.29f, 0.16f, 1.00f);
-            p.line(0.16f, 1.00f, 0.88f, 1.00f);
-            break;
-        case '3':
-            // One continuous stroke: two arcs joined at a point left a cusp that
-            // read as a stylised "Ʒ" at this size. Beziers keep the waist smooth.
-            p.cubic(0.22f, 0.20f, 0.22f, 0.01f, 0.78f, 0.00f, 0.78f, 0.24f, 10);
-            p.cubic(0.78f, 0.24f, 0.78f, 0.40f, 0.56f, 0.42f, 0.56f, 0.50f, 8);
-            p.cubic(0.56f, 0.50f, 0.56f, 0.58f, 0.78f, 0.60f, 0.78f, 0.76f, 8);
-            p.cubic(0.78f, 0.76f, 0.78f, 0.99f, 0.22f, 1.00f, 0.22f, 0.80f, 10);
-            break;
-        case '4':
-            p.line(0.66f, 0.02f, 0.66f, 1.00f);
-            p.line(0.66f, 0.02f, 0.14f, 0.69f);
-            p.line(0.12f, 0.69f, 0.90f, 0.69f);
-            break;
-        case '5':
-            p.line(0.86f, 0.03f, 0.24f, 0.03f);
-            p.line(0.24f, 0.03f, 0.24f, 0.44f);
-            p.line(0.24f, 0.44f, 0.52f, 0.44f);
-            // 270 -> 520 sweeps down the right side and around the bottom; 270 -> 160
-            // would have drawn the bowl on the wrong side of the stem.
-            p.arc(0.52f, 0.70f, 0.34f, 0.27f, 270, 520, 18);
-            break;
-        case '6':
-            p.quad(0.80f, 0.05f, 0.24f, 0.18f, 0.22f, 0.70f, 12);
-            p.arc(0.50f, 0.72f, 0.30f, 0.26f, 180, 540, 22);
-            break;
-        case '7':
-            p.line(0.18f, 0.03f, 0.86f, 0.03f);
-            p.line(0.86f, 0.03f, 0.36f, 1.00f);
-            break;
-        case '8':
-            p.arc(0.50f, 0.25f, 0.28f, 0.235f, 0, 360, 20);
-            p.arc(0.50f, 0.75f, 0.33f, 0.24f, 0, 360, 20);
-            break;
-        case '9':
-            p.arc(0.50f, 0.26f, 0.32f, 0.25f, 0, 360, 22);
-            p.quad(0.82f, 0.27f, 0.82f, 0.84f, 0.26f, 0.95f, 12);
-            break;
-        case 'N':
-            p.line(0.18f, 0.00f, 0.18f, 1.00f);
-            p.line(0.18f, 0.00f, 0.82f, 1.00f);
-            p.line(0.82f, 0.00f, 0.82f, 1.00f);
-            break;
-        case 'R':
-            // A wide bowl: at 44 px with an 8 px stroke, a narrow one closes up and
-            // reads as a hook rather than a letter.
-            p.line(0.16f, 0.00f, 0.16f, 1.00f);
-            p.line(0.16f, 0.00f, 0.50f, 0.00f);
-            p.arc(0.50f, 0.25f, 0.34f, 0.24f, 270, 450, 16);
-            p.line(0.50f, 0.49f, 0.16f, 0.49f);
-            p.line(0.44f, 0.49f, 0.88f, 1.00f);
-            break;
-        case 'C':
-            p.arc(0.54f, 0.50f, 0.40f, 0.48f, 315, 45, 20);
-            break;
-        case 'G':
-            p.arc(0.54f, 0.50f, 0.40f, 0.48f, 315, 0, 20);
-            p.line(0.94f, 0.50f, 0.60f, 0.50f);
-            break;
-        case 'S':
-            // Two shallow bowls joined by a diagonal: the classic S skeleton.
-            p.arc(0.50f, 0.26f, 0.32f, 0.24f, -20, -180, 16);
-            p.line(0.18f, 0.26f, 0.82f, 0.74f);
-            p.arc(0.50f, 0.74f, 0.32f, 0.24f, 0, 180, 16);
-            break;
-        case '-':
-        default:
-            p.line(0.18f, 0.52f, 0.82f, 0.52f);
-            break;
-    }
-}
 
 static inline uint16_t blend565(int alpha, uint16_t bg, uint16_t fg) {
     if (alpha <= 0) return bg;
@@ -737,51 +560,37 @@ static inline uint16_t blend565(int alpha, uint16_t bg, uint16_t fg) {
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
-static inline float segDistSq(float px, float py, const GlyphSeg& s) {
-    float dx = s.x1 - s.x0, dy = s.y1 - s.y0;
-    float l2 = dx * dx + dy * dy;
-    float t = (l2 > 0.0001f) ? ((px - s.x0) * dx + (py - s.y0) * dy) / l2 : 0.0f;
-    if (t < 0.0f) t = 0.0f;
-    else if (t > 1.0f) t = 1.0f;
-    float qx = s.x0 + t * dx - px;
-    float qy = s.y0 + t * dy - py;
-    return qx * qx + qy * qy;
-}
-
 void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, uint16_t bgColor) {
-    GlyphPath path;
-    buildGearGlyph(str[0], path);
-    path.toPixels((float)GLYPH_W, (float)GLYPH_H);
-
     // One buffer for the whole cell - foreground AND background - pushed with a
-    // single panel transaction. Writing the uncovered pixels as the background
-    // also erases the previous glyph.
-    static uint16_t gearBuf[GLYPH_W * GLYPH_H];
-    const float halfStroke = GLYPH_STROKE * 0.5f;
+    // single panel transaction. Filling with the background also erases the
+    // previous glyph.
+    static uint16_t gearBuf[GEAR_GLYPH_CELL_W * GEAR_GLYPH_CELL_H];
 
-    for (int row = 0; row < GLYPH_H; row++) {
-        float py = (float)row + 0.5f;
-        for (int col = 0; col < GLYPH_W; col++) {
-            float px = (float)col + 0.5f;
+    const GearGlyphBitmap* glyph = 0;
+    const GearGlyphBitmap* dash = 0;
+    for (unsigned i = 0; i < GEAR_GLYPH_COUNT; i++) {
+        if (GEAR_GLYPHS[i].ch == str[0]) { glyph = &GEAR_GLYPHS[i]; break; }
+        if (GEAR_GLYPHS[i].ch == '-')    dash  = &GEAR_GLYPHS[i];
+    }
+    if (!glyph) glyph = dash;   // unknown character degrades to a dash
 
-            float best = 1.0e9f;
-            for (int i = 0; i < path.n; i++) {
-                const GlyphSeg& s = path.segs[i];
-                if (px < s.minX || px > s.maxX || py < s.minY || py > s.maxY) continue;
-                float d2 = segDistSq(px, py, s);
-                if (d2 < best) best = d2;
+    for (int i = 0; i < GEAR_GLYPH_CELL_W * GEAR_GLYPH_CELL_H; i++) gearBuf[i] = bgColor;
+
+    // The generator guarantees the ink box lands inside the cell.
+    if (glyph) {
+        for (int row = 0; row < glyph->h; row++) {
+            uint16_t* dst = gearBuf + (glyph->top + row) * GEAR_GLYPH_CELL_W + glyph->left;
+            const uint8_t* src = glyph->alpha + row * glyph->w;
+            for (int col = 0; col < glyph->w; col++) {
+                dst[col] = blend565(src[col], bgColor, color);
             }
-
-            // 1 px antialias band centred on the stroke edge.
-            float cov = (halfStroke + 0.5f) - sqrtf(best);
-            int alpha = cov <= 0.0f ? 0 : (cov >= 1.0f ? 255 : (int)(cov * 255.0f));
-            gearBuf[row * GLYPH_W + col] = blend565(alpha, bgColor, color);
         }
     }
 
-    LCD_DrawBuffer(centerX - GLYPH_W / 2, centerY - GLYPH_H / 2,
-                   GLYPH_W, GLYPH_H, gearBuf);
+    LCD_DrawBuffer(centerX - GEAR_GLYPH_CELL_W / 2, centerY - GEAR_GLYPH_CELL_H / 2,
+                   GEAR_GLYPH_CELL_W, GEAR_GLYPH_CELL_H, gearBuf);
 }
+
 // ============================================================================
 // Overview screen
 // ============================================================================
