@@ -13,6 +13,11 @@
 > Changes are staged in the repository but **not deployed**. See
 > [Staging & deployment](#staging--deployment) for what has to be flashed/installed and
 > in what order.
+>
+> The **Status** line at the top of each issue is authoritative. The *Working theory* and
+> *Proposed approach* sections below it are the investigation notes from before the fix
+> and are kept for context; line-number links point at the code as it was then, so the
+> file links still work but the `#L…` anchors may have drifted.
 
 ---
 
@@ -775,47 +780,102 @@ at the true redline rather than 1000 RPM early.
 
 ---
 
-## Suggested work order
+## Resolution order (as implemented)
 
-Grouped so that shared plumbing lands once and each group can be validated on the bench
-before the car is needed.
+Shared plumbing landed once, then each device, so every group could be built before the
+next depended on it. All groups are now done.
 
-**Group A — data correctness (no hardware required to start)**
-- [ISSUE-06](#issue-06--android-speed-reads-about-two-thirds-of-actual) — units; everything
-  else that compares speed depends on this.
-- [ISSUE-03](#issue-03--intake-air-temperature-always-zero-on-android) — add the missing
-  decode.
-- [ISSUE-08](#issue-08--fuel-percentage-is-not-stable) — rolling average feeds range.
+**Group A — data correctness** ✅
+- [ISSUE-06](#issue-06--android-speed-reads-about-two-thirds-of-actual) — speed is km/h
+  everywhere; the double conversion is gone.
+- [ISSUE-03](#issue-03--intake-air-temperature-always-zero-on-android) — IAT is decoded
+  from OBD-II PID `0x0F`.
+- [ISSUE-08](#issue-08--fuel-percentage-is-not-stable) — 60 s wall-clock rolling average.
 
-**Group B — link protocol**
+**Group B — link protocol** ✅
 - [ISSUE-01](#issue-01--reverse-gear-not-detected-on-esp32) — explicit reverse flag.
-- [ISSUE-04](#issue-04--throttle-and-brake-wrong-on-the-rpm-page) — brake field, staleness.
-- [ISSUE-10](#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder) — unknown vs
-  zero.
+- [ISSUE-04](#issue-04--throttle-and-brake-wrong-on-the-rpm-page) — brake in the payload,
+  engine-frame throttle, staleness guard.
+- [ISSUE-10](#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder) — validity
+  flag separates "unknown" from `0` (reading still depends on a MAF reply).
 
-**Group C — ESP rendering**
-- [ISSUE-02](#issue-02--esp32-theme-does-not-match-the-android-app) — theme plumbing first,
+**Group C — ESP rendering** ✅
+- [ISSUE-02](#issue-02--esp32-theme-does-not-match-the-android-app) — runtime theme first,
   since it touches every screen.
 - [ISSUE-11](#issue-11--tpms-card-should-become-a-gear--rpm-card) — Overview gear ladder.
 - [ISSUE-05](#issue-05--esp32-gyro-screen-still-uses-the-old-visualization) — G-force port.
-- [ISSUE-07](#issue-07--startup-animation-is-plain) — polish last; it is the only item with
-  no functional risk.
+- [ISSUE-07](#issue-07--startup-animation-is-plain) — boot animation.
 
-**Group D — independent**
+**Group D — independent** ✅
 - [ISSUE-12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient) — Arduino only.
-- [ISSUE-09](#issue-09--app-is-not-available-while-driving) — needs a design decision before any
-  code.
+- [ISSUE-09](#issue-09--app-is-not-available-while-driving) — Car App Library driving
+  surface.
 
 ---
 
-## Open questions
+## Build verification
 
-1. **ISSUE-09:** Is the goal a full driving-mode UI (Car App Library templates), or is
-   "parked only, documented" acceptable? This decides whether it is a manifest tweak or a
-   new subsystem.
-2. **ISSUE-11:** For "three most likely gears" — current gear ±1, or the three gears
-   whose RPM lands in the sweet spot at this speed?
-3. **ISSUE-06:** Should the canonical speed unit inside the Pi be km/h (fixing the field
-   name) or mph (renaming the field)? Either is fine; it just has to be one.
-4. **ISSUE-04:** Should brake stay a binary pedal switch, or is there a real pressure /
-   travel value available on this car?
+What was actually run after the changes (no car, no phone):
+
+| Component | Command | Result |
+|-----------|---------|--------|
+| ESP32-S3 UI (native sim) | `tools\simulators\native\build.bat` | ✅ builds; screens rendered to `shot_0..7.bmp` |
+| ESP32-S3 firmware | `pio run -d display` | ✅ SUCCESS — RAM 30.0%, flash 34.3% |
+| Arduino Nano firmware | `pio run -d arduino -e nano` (after clean) | ✅ SUCCESS — RAM 20.2%, flash 41.9% |
+| Android app | `gradle -p android :mx5-remote:assembleDebug` | ✅ BUILD SUCCESSFUL |
+| Pi Python + link protocol | `python pi/ui/src/test_link_protocol.py` | ✅ 50/50 passed |
+| Pi CAN parsing | ad-hoc checks | ✅ speed km/h, negative flooring, throttle `0x201`, IAT `0x0F`, 60 s fuel window, reverse flag |
+
+`pio run -d arduino` also reports the `native_sim` environment as FAILED on this machine
+because it compiles for the host and no `g++` is installed. That is an environment
+limitation, not a code failure; `nano` — the environment that ships — succeeds.
+
+---
+
+## Staging & deployment
+
+Nothing has been flashed or installed. The changes are committed in the repository and
+ready to deploy in this order; the order matters because the link protocol changed on
+both ends.
+
+| Step | Target | Command / action | Why this order |
+|------|--------|------------------|----------------|
+| 1 | **Pi** | `ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'` | The Pi is the source of every value. The new `TEL:` fields are appended, so an old ESP still parses fields 0-14 correctly. |
+| 2 | **ESP32-S3** | `ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'` | Adds the reverse/brake/MPG-valid fields, theme support, gear ladder, G-force port and boot animation. Works against a new Pi; against an old Pi it just keeps the defaults. |
+| 3 | **Android phone** | `adb install -r android\mx5-remote\build\outputs\apk\debug\mx5-remote-debug.apk` | The app now pushes the theme and reads `instant_mpg_valid`. |
+| 4 | **Arduino Nano** | Plug into the PC, then `pio run -d arduino --target upload` | Independent of the link protocol; can be done any time. |
+
+Then, with the car:
+
+1. Ignition on, engine running: confirm the ESP boots to dark aurora, then change scheme
+   in the phone app and confirm the ESP follows within ~1 s.
+2. Reverse: `R` on both the ESP Overview and RPM pages.
+3. Stationary: press each pedal; throttle % and the brake ON/OFF indicator must track.
+   Capture a `0x200`/`0x201`/`0x212` log if throttle still looks wrong.
+4. Steady 40 mph: phone, ESP and the car's speedometer agree.
+5. Check the `MAF:` log line. If it never appears, instant MPG will correctly show `--`
+   until the listen-only question is resolved.
+6. Drive: fuel % and range hold steady; the LED strip tracks a blip with no visible lag.
+
+---
+
+## Decisions taken
+
+1. **ISSUE-09:** a reading-glanceable Car App Library driving UI (not "parked only").
+2. **ISSUE-11:** the three gears whose predicted RPM is closest to the 2400–4500 band.
+3. **ISSUE-06:** km/h is the canonical unit inside the Pi; mph is a display conversion.
+4. **ISSUE-04:** brake stays a binary pedal switch and is displayed as ON/OFF. If a real
+   travel/pressure value is ever found on the bus, it should become a bar.
+
+---
+
+## Still open
+
+- **ISSUE-04:** confirm the `0x201` byte-6 throttle layout with a pedal log.
+- **ISSUE-03:** confirm the ECU answers PID `0x0F`; otherwise find the MS-CAN IAT frame.
+- **ISSUE-10:** determine whether the CAN interface is listen-only, which would explain
+  the missing MAF reply. Until then instant MPG shows `--` rather than a false zero.
+- **ISSUE-02:** the light theme is an sRGB approximation of the app's OKLCH derivation.
+- **ISSUE-12:** the zones are anchored to a 6800 redline; adjust if the real limiter
+  differs.
+

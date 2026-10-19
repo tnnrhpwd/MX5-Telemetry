@@ -18,7 +18,12 @@
 #define CENTER (DISPLAY_SIZE / 2)
 
 // =============================================================================
-// Modern Color Palette (RGB565 format for LovyanGFX)
+// LEGACY - not included by the firmware or the simulator.
+//
+// The live palette now lives in display/src/ui_core/ui_core.h as the runtime
+// ThemePalette (so the display can follow the phone app's scheme). These copies
+// are kept only for old references; do not add colour to this file, or the
+// display will end up with two ideas of what the theme is.
 // =============================================================================
 // Helper macro to convert RGB888 to RGB565
 #define RGB565(r, g, b) ((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
