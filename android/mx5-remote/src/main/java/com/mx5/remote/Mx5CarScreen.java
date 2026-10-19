@@ -40,8 +40,10 @@ public class Mx5CarScreen extends Screen {
     /** Last successful reading, or null before the first one arrives. */
     private volatile Telemetry latest;
 
-    /** True while a fetch is in flight, so a slow link cannot pile up requests. */
-    private boolean fetching;
+    /** True while a fetch is in flight, so a slow link cannot pile up requests.
+     *  Volatile: written by the worker thread and read by the main-thread poll, and a
+     *  stale `true` here would stop polling for the rest of the session. */
+    private volatile boolean fetching;
 
     private final Runnable poll = new Runnable() {
         @Override

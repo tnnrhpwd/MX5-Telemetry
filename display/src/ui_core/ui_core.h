@@ -89,13 +89,15 @@ void applyDefaultTheme();
 #define MX5_DARKGRAY      (g_theme.darkGray)
 #define MX5_ACCENT        (g_theme.accent)
 
-// Arduino LED strip matching colors (pure RGB values)
-// These MUST match arduino/src/main.cpp getRPMColor() for visual consistency
-#define LED_BLUE      RGB565(0, 0, 255)       // 0-1999 RPM
-#define LED_GREEN     RGB565(0, 255, 0)       // 2000-2999 RPM
-#define LED_YELLOW    RGB565(255, 255, 0)     // 3000-4499 RPM
-#define LED_ORANGE    RGB565(255, 128, 0)     // 4500-5499 RPM
-#define LED_RED       RGB565(255, 0, 0)       // 5500+ RPM
+// The LED strip's own ramp (pure RGB, matches arduino/src/main.cpp). The display
+// no longer paints with these: arcs and halos use the theme's semantic colours so
+// they stay legible in light mode. Kept as documentation of the hardware ramp -
+// the gesture and the ordering are intentionally the same.
+#define LED_BLUE      RGB565(0, 0, 255)       // 0 - idle
+#define LED_GREEN     RGB565(0, 255, 0)       // cruise
+#define LED_YELLOW    RGB565(255, 255, 0)     // waking
+#define LED_ORANGE    RGB565(255, 128, 0)     // spirited
+#define LED_RED       RGB565(255, 0, 0)       // redline
 
 // ============================================================================
 // Telemetry data structure

@@ -125,8 +125,9 @@ and boots dark when the phone has never connected.
   A Pi restart therefore cannot overwrite the display's stored theme with a default —
   the authority stays with the phone, and the display keeps its last known theme.
 - Light mode fills the background with the theme colour instead of the fixed dark carbon
-  image, and the "unlit" stroke colour is a mid-grey, so page-indicator dots and unlit
-  arc segments stay visible on a light background.
+  image, the "unlit" stroke colour is a mid-grey, and the RPM arcs/halos now use the
+  theme's semantic colours instead of the strip's pure RGB ramp — so page-indicator dots,
+  unlit arc segments and the yellow segment all stay visible on a light background.
 
 **Remaining:** visual check on the device. Note the light theme is a deliberate
 approximation of the app's OKLCH derivation (sRGB blends), not a pixel match.

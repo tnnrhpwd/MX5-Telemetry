@@ -374,11 +374,11 @@ static void drawDotArcSeg(int cx, int cy, int r, float startDeg, float sweepDeg,
     uint16_t color = MX5_DARKGRAY;
     if (active) {
         float rpmAt = (index / (float)segCount) * 8000.0f;
-        if (rpmAt >= 5500)      color = LED_RED;
-        else if (rpmAt >= 4500) color = LED_ORANGE;
-        else if (rpmAt >= 3000) color = LED_YELLOW;
-        else if (rpmAt >= 2000) color = LED_GREEN;
-        else                    color = LED_BLUE;
+        if (rpmAt >= 5500)      color = MX5_RED;
+        else if (rpmAt >= 4500) color = MX5_ORANGE;
+        else if (rpmAt >= 3000) color = MX5_YELLOW;
+        else if (rpmAt >= 2000) color = MX5_GREEN;
+        else                    color = MX5_BLUE;
     }
     LCD_FillCircle(px, py, dotR, color);
 }
@@ -866,11 +866,11 @@ void drawOverviewScreen() {
 
     bool hideTopDuringBoot = !piDataReceived && currentBootCountdown > 0;
 
-    uint16_t rpmColor = LED_BLUE;
-    if (telemetry.rpm >= 5500) rpmColor = LED_RED;
-    else if (telemetry.rpm >= 4500) rpmColor = LED_ORANGE;
-    else if (telemetry.rpm >= 3000) rpmColor = LED_YELLOW;
-    else if (telemetry.rpm >= 2000) rpmColor = LED_GREEN;
+    uint16_t rpmColor = MX5_BLUE;
+    if (telemetry.rpm >= 5500) rpmColor = MX5_RED;
+    else if (telemetry.rpm >= 4500) rpmColor = MX5_ORANGE;
+    else if (telemetry.rpm >= 3000) rpmColor = MX5_YELLOW;
+    else if (telemetry.rpm >= 2000) rpmColor = MX5_GREEN;
 
     if (!hideTopDuringBoot) {
     // Tach halo: one dot per segment, only the dots that changed are repainted.
@@ -1233,11 +1233,11 @@ void drawOverviewScreen() {
 
 static uint16_t rpmSegColor(int index) {
     float rpmAt = (index / (float)RPM_SEGS) * 8000.0f;
-    if (rpmAt >= 5500) return LED_RED;
-    if (rpmAt >= 4500) return LED_ORANGE;
-    if (rpmAt >= 3000) return LED_YELLOW;
-    if (rpmAt >= 2000) return LED_GREEN;
-    return LED_BLUE;
+    if (rpmAt >= 5500) return MX5_RED;
+    if (rpmAt >= 4500) return MX5_ORANGE;
+    if (rpmAt >= 3000) return MX5_YELLOW;
+    if (rpmAt >= 2000) return MX5_GREEN;
+    return MX5_BLUE;
 }
 
 static void drawRpmArcSeg(int index, bool active) {
