@@ -18,12 +18,38 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    // Two car surfaces, two apps.
+    //
+    // Android Auto decides what may stay on screen from the app's category, and
+    // android:appCategory is application-wide: a package declared as a "game" is
+    // greyed out the moment the car moves, and nothing inside that package can
+    // opt out of it. So the parked dashboard and the driving dashboard cannot be
+    // the same package - they have to be separate APKs that share this source
+    // set and differ only in applicationId and manifest:
+    //
+    //   parked -> com.mx5.remote        "MX5 Remote"  game + CAR_LAUNCHER, full dashboard
+    //   drive  -> com.mx5.remote.drive  "MX5 Drive"   CarAppService (IOT), host-drawn templates
+    //
+    // Android Auto lists one launcher tile per car entry point, so installing
+    // both gives "MX5 Remote" while stopped and "MX5 Drive" in motion.
+    flavorDimensions "surface"
+    productFlavors {
+        parked {
+            dimension "surface"
+        }
+        drive {
+            dimension "surface"
+            applicationIdSuffix ".drive"
+            versionNameSuffix "-drive"
+        }
+    }
 }
 
-// The Car App Library is the one dependency, and it is load-bearing: the parked
-// "game" activity is hidden by Android Auto while the car is moving, so a
-// DRIVING-category CarAppService is the only supported way to stay visible in
-// motion. Everything else (HTTP, JSON) still comes from the platform.
+// The Car App Library is the one dependency, and it is load-bearing: it is what
+// lets the drive flavor draw through host-rendered templates while the car is
+// moving. The parked flavor could build without it, but keeping one dependency
+// set means one source set. Everything else (HTTP, JSON) comes from the platform.
 dependencies {
     implementation 'androidx.car.app:app:1.4.0'
 }

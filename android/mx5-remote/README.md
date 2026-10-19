@@ -111,11 +111,19 @@ shows the nodes are simply missing.
 
 ## Build and install
 
+Two apps come out of this module. Install whichever the car needs — both, usually.
+
 ```powershell
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
-& "$env:LOCALAPPDATA\Android\gradle-8.11.1\bin\gradle.bat" -p android :mx5-remote:assembleDebug
+& "$env:LOCALAPPDATA\Android\gradle-8.11.1\bin\gradle.bat" -p android :mx5-remote:assembleParkedDebug :mx5-remote:assembleDriveDebug
+
+# MX5 Remote - parked dashboard (game, CAR_LAUNCHER)
 & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r `
-    android\mx5-remote\build\outputs\apk\debug\mx5-remote-debug.apk
+    android\mx5-remote\build\outputs\apk\parked\debug\mx5-remote-parked-debug.apk
+
+# MX5 Drive - templated, stays visible while driving (CarAppService, category.IOT)
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r `
+    android\mx5-remote\build\outputs\apk\drive\debug\mx5-remote-drive-debug.apk
 ```
 
 ## Checking it without a car

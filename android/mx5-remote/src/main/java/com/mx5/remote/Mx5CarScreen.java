@@ -20,13 +20,15 @@ import androidx.lifecycle.LifecycleEventObserver;
  * The in-motion view.
  *
  * This exists because a parked "game" app is hidden by Android Auto as soon as the car
- * moves. A DRIVING-category session is allowed to stay up, but only through host-rendered
+ * moves. A templated session is allowed to stay up, but only through host-rendered
  * templates: the app supplies text, the host decides the layout, the font sizes and how
  * much may be shown at once. That is deliberate - it is what keeps the screen glanceable
  * instead of turning the head unit into a second instrument cluster.
  *
- * Four values, one pane. Anything that needs more than a glance belongs on the parked
- * screen, where the driver is stopped.
+ * The content mirrors the Android app's Overview page, minus the things that need
+ * looking at rather than glancing at (the shift ladder, the fuel bar). Values come first
+ * and labels second because the host draws the row title large: at a red light the eye
+ * should land on "42 mph", not on the word "Speed".
  */
 public class Mx5CarScreen extends Screen {
 
@@ -35,6 +37,7 @@ public class Mx5CarScreen extends Screen {
     private static final long POLL_MS = 1000;
 
     private final PiClient pi;
+    private final SharedPreferences prefs;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     /** Last successful reading, or null before the first one arrives. */
@@ -57,6 +60,7 @@ public class Mx5CarScreen extends Screen {
         super(context);
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        this.prefs = prefs;
         pi = PiLink.acquire();
         // Only configure the shared client when nobody has yet. configure() rebuilds the
         // transport chain, and the parked dashboard may be mid-request on the same client.
@@ -106,12 +110,22 @@ public class Mx5CarScreen extends Screen {
     @Override
     public Template onGetTemplate() {
         Telemetry t = latest;
+        // Re-read every time rather than caching at session start: the units toggle
+        // lives on the phone, and a stale copy here would show mph until the car
+        // session is restarted. SharedPreferences reads are served from memory.
+        boolean mph = prefs.getBoolean("use_mph", true);
+        String unit = mph ? "mph" : "km/h";
 
         Pane pane = new Pane.Builder()
-                .addRow(row("Speed", t == null ? "--" : Math.round(t.speedFor(1)) + " mph"))
-                .addRow(row("Gear", t == null ? "--" : gearText(t)))
-                .addRow(row("RPM", t == null ? "--" : String.valueOf(t.rpm)))
-                .addRow(row("Fuel", t == null ? "--" : Math.round(t.fuelLevelPercent) + "%"))
+                .addRow(row(value(t == null ? null : Math.round(t.speedFor(mph ? 1 : 0)) + " " + unit),
+                           "Speed"))
+                .addRow(row(value(t == null ? null : String.valueOf(t.rpm)), "RPM"))
+                .addRow(row(value(t == null ? null : gearText(t)), "Gear"))
+                .addRow(row(value(t == null ? null : t.coolantTempF + " \u00b0F"), "Coolant"))
+                .addRow(row(value(t == null ? null : Math.round(t.fuelLevelPercent) + "%"), "Fuel"))
+                .addRow(row(value(t == null ? null : t.rangeMiles + " mi"), "Range"))
+                .addRow(row(value(t == null ? null : String.format("%.1f V", t.voltage)), "Battery"))
+                .addRow(row(value(t == null ? null : Math.round(t.averageMpg) + " mpg"), "Average"))
                 .build();
 
         return new PaneTemplate.Builder(pane)
@@ -120,10 +134,15 @@ public class Mx5CarScreen extends Screen {
                 .build();
     }
 
-    private static Row row(String label, String value) {
+    private static String value(String v) {
+        return v == null ? "--" : v;
+    }
+
+    /** Value first, label second: the host draws the title large. */
+    private static Row row(String value, String label) {
         return new Row.Builder()
-                .setTitle(label)
-                .addText(value)
+                .setTitle(value)
+                .addText(label)
                 .build();
     }
 

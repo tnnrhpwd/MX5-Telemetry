@@ -1,6 +1,15 @@
 # Android Auto control for the Pi: plan
 
-Status: **proposed, nothing built yet.** Written 2026-10-13.
+Status: **superseded in part — see the outcome notes below.** Written 2026-10-13.
+
+> **Outcome (2026-10-18).** The plan's Phase 1 probes answered the go/no-go: the test
+> head unit enumerated *both* a parked `CAR_LAUNCHER` activity and a templated
+> `category.IOT` `CarAppService`, each from its own package. Both paths now ship, as two
+> apps built from one module — "MX5 Remote" (parked, game, full dashboard) and "MX5
+> Drive" (templated overview, stays visible in motion). The plan's assumption that a
+> templated app cannot be sideloaded did not hold on this device.
+> See [KNOWN_ISSUES.md](KNOWN_ISSUES.md#issue-09--app-is-not-available-while-driving)
+> and [android/README.md](../android/README.md).
 
 ## 1. Goal
 

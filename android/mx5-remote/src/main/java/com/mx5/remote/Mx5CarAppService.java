@@ -6,14 +6,18 @@ import androidx.car.app.Session;
 import androidx.car.app.validation.HostValidator;
 
 /**
- * The driving-category entry point.
+ * The drive-flavor entry point.
  *
- * The parked activity (MainActivity) is declared as a "game", which Android Auto
- * deliberately greys out while the car is moving. This service is the supported way to
- * be usable in motion: the Car App Library renders its UI with templates that the host
- * already knows how to keep glanceable, instead of the app drawing a full dashboard.
+ * The parked build is declared as a "game", which Android Auto deliberately greys out
+ * while the car is moving, and android:appCategory applies to the whole package - so the
+ * two surfaces cannot share an APK. This service only exists in the "drive" build
+ * (src/drive/AndroidManifest.xml), where the package has no appCategory at all and the
+ * host is therefore willing to keep it on screen at speed.
  *
- * Both mechanisms can live in one APK. The host picks whichever surface the user opens.
+ * The category in that manifest is androidx.car.app.category.IOT. That is not a
+ * preference: IOT, NAVIGATION, POI, WEATHER and the messaging/media categories are the
+ * only documented values, and an app declaring anything else is not listed by the host.
+ * A telemetry reader fits IOT - it reports the state of a connected device.
  */
 public class Mx5CarAppService extends CarAppService {
 

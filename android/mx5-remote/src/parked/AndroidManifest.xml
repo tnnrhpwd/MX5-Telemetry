@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "MX5 Remote" - the parked app.
+
+  android:appCategory="game" plus android.intent.category.CAR_LAUNCHER is the
+  documented way to put a full custom dashboard on the head unit. Android Auto
+  greys it out as soon as the car moves, which is the whole reason the drive
+  flavor exists as a separate package. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Optional per the car games guidance, and required=false because not every
+         head unit or phone has one. OEMs read this to decide what to offer. -->
+    <uses-feature android:name="android.hardware.gamepad"
+                  android:required="false" />
+
+    <application android:appCategory="game"
+                 android:label="@string/app_name">
+        <activity android:name=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- this line is what makes Android Auto list it -->
+                <category android:name="android.intent.category.CAR_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The drive build is a separate app so that Android Auto can keep it on
+         screen while the car moves. The name has to be different from
+         "MX5 Remote" or the two tiles are indistinguishable in the launcher. -->
+    <string name="app_name">MX5 Drive</string>
+    <string name="drive_app_name">MX5 Drive</string>
+</resources>

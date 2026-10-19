@@ -33,7 +33,7 @@
 | [ISSUE-06](#issue-06--android-speed-reads-about-two-thirds-of-actual) | Speed reads ~⅔ of actual | Android | Bug | 🔴 Critical | ✅ Fixed (unverified in car) |
 | [ISSUE-07](#issue-07--startup-animation-is-plain) | Startup animation needs polish | ESP32-S3 | Polish | ⚪ Low | ✅ Fixed (unverified in car) |
 | [ISSUE-08](#issue-08--fuel-percentage-is-not-stable) | Fuel % jumps around; needs averaging | Pi / all UIs | Bug | 🟡 Medium | ✅ Fixed (unverified in car) |
-| [ISSUE-09](#issue-09--app-is-not-available-while-driving) | App not viewable while driving | Android Auto | Feature | 🟠 High | ✅ Implemented (needs head unit) |
+| [ISSUE-09](#issue-09--app-is-not-available-while-driving) | App not viewable while driving | Android Auto | Feature | 🟠 High | ✅ Implemented as two apps (needs head unit) |
 | [ISSUE-10](#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder) | Instantaneous MPG always shows `---` | ESP32-S3 / Pi | Bug | 🟡 Medium | ⚠️ Partial — needs MAF reply |
 | [ISSUE-11](#issue-11--tpms-card-should-become-a-gear--rpm-card) | TPMS card on Overview → 3-gear RPM view | ESP32-S3 | Feature | 🟡 Medium | ✅ Fixed (unverified in car) |
 | [ISSUE-12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient) | LED strip laggy; flat colours, no gradient | Arduino Nano | Bug / Polish | 🟠 High | ✅ Fixed (needs car to judge feel) |
@@ -510,28 +510,44 @@ when the tank actually changes, with no jump larger than a percent or two after 
 
 ## ISSUE-09 — App is not available while driving
 
-**Status:** ✅ **Implemented** as option 1 (Car App Library, Driving category).
+**Status:** ✅ **Implemented** — as **two separate apps** built from one module.
 
-- New `Mx5CarAppService` (`CarAppService`) declared in the manifest with
-  `<category android:name="androidx.car.app.category.DRIVING" />`.
-- `Mx5CarSession` → `Mx5CarScreen`, a `PaneTemplate` showing Speed, Gear, RPM and Fuel,
-  polled once a second from the shared `PiLink` client.
-- `androidx.car.app:app:1.4.0` is now the module's only dependency.
-- The parked dashboard is untouched: the host offers whichever surface the user opens.
+The first attempt was wrong in a way worth recording: it declared
+`androidx.car.app.category.DRIVING` on a `CarAppService` inside the same APK as the
+parked game. **That category does not exist.** The documented set is `NAVIGATION`,
+`POI`, `IOT`, `WEATHER` plus the messaging/media categories, and the AOSP
+`androidx.car.app` artifact has no `category` package at all — so the host had no
+reason to list the service, and a package classified `appCategory="game"` stays
+game-classified no matter which component is opened.
 
-The template is deliberately four rows and read-only — that is what keeps it compliant
-with the driving rules, and it is also why the parked dashboard's custom views cannot be
-reused in motion.
+What ships now:
 
-**Remaining:** test on the head unit with the car moving. Note that
-`HostValidator.ALLOW_ALL_HOSTS_VALIDATOR` is used because the app is sideloaded.
+| Flavor | applicationId | Launcher name | Car entry point |
+| --- | --- | --- | --- |
+| `parked` | `com.mx5.remote` | MX5 Remote | `CAR_LAUNCHER` activity, `appCategory=game`, full dashboard |
+| `drive` | `com.mx5.remote.drive` | MX5 Drive | `CarAppService` with `category.IOT`, templates, no `appCategory` |
+
+- `Mx5CarService` → `Mx5CarSession` → `Mx5CarScreen`: one `PaneTemplate` carrying the
+  Overview page's readings — speed, RPM, gear, coolant, fuel, range, battery, average
+  MPG — polled once a second from the shared `PiLink` client. Value first, label
+  second, because the host draws the row title large.
+- `IOT` is the only documented category that fits: the app reports the state of a
+  connected device. The probe notes in [android/README.md](../android/README.md)
+  record a real AA app (Tuya) being enumerated with exactly that category.
+- The parked dashboard is untouched and remains the in-depth surface.
+
+**Remaining:** test both tiles on the head unit with the car moving. Two apps also means
+two installs and separate settings (`use_mph`, Pi address) per app.
 
 **Reported:** The app cannot be opened in Android Auto while the car is moving. That was
 expected, but the app should be viewable during driving.
 
 **Where it lives:**
-- [AndroidManifest.xml](../android/mx5-remote/src/main/AndroidManifest.xml#L1) —
-  `android:appCategory="game"` + `category.CAR_LAUNCHER`
+- [android/mx5-remote/build.gradle](../android/mx5-remote/build.gradle) — the flavor split
+- [android/mx5-remote/src/parked/AndroidManifest.xml](../android/mx5-remote/src/parked/AndroidManifest.xml)
+  — `android:appCategory="game"` + `category.CAR_LAUNCHER`
+- [android/mx5-remote/src/drive/AndroidManifest.xml](../android/mx5-remote/src/drive/AndroidManifest.xml)
+  — `CarAppService` + `category.IOT`
 - [android/README.md](../android/README.md#L31) — the "parked-app gate" findings
 - [docs/ANDROID_AUTO_PLAN.md](ANDROID_AUTO_PLAN.md) — the original phasing
 
@@ -541,25 +557,26 @@ Auto deliberately greys it out while the vehicle is in motion, and games are the
 AA-supported *parked* category. No manifest flag lifts that restriction.
 
 There are only two honest paths:
-1. **Car App Library with the Driving category.** A `CarAppService` declaring
-   `androidx.car.app.category.DRIVING` gets template-rendered UI that *is* allowed while
-   moving. The catch is that the UI must be built from AA templates (`NavigationTemplate`,
+1. **Car App Library with a driving-capable category.** A `CarAppService` in one of the
+   documented categories gets template-rendered UI that *is* allowed while moving. The
+   catch is that the UI must be built from AA templates (`NavigationTemplate`,
    `PaneTemplate`, `MessageTemplate`, …) — the current custom dashboard views cannot be
    reused directly, and everything shown while driving must be distraction-optimised.
 2. **Keep the parked app** and accept that it is only usable stationary.
 
 The research in [android/README.md](../android/README.md) already established that
-**both** mechanisms were accepted by the test head unit, so the driving category is not a
+**both** mechanisms were accepted by the test head unit, so the templated path is not a
 blind alley — but its UI model is different enough that this is a significant piece of
 work, not a manifest tweak.
 
 ⚠️ **Safety note.** Driver-distraction rules exist for a reason. Whatever is added under
-the Driving category must be glanceable, must not require scrolling to find critical data,
-and must not add interaction-heavy surfaces. Prefer read-only templates.
+a driving-capable category must be glanceable, must not require scrolling to find critical
+data, and must not add interaction-heavy surfaces. Prefer read-only templates.
 
-**Proposed approach:** Decide explicitly between "template UI while driving" and "parked
-only", then either add a `CarAppService` + `CarAppExtender` alongside the existing
-activity (both can ship in one APK) or accept the limitation. Do not attempt to defeat the
+**Proposed approach (as shipped):** Both, as two apps. The parked dashboard keeps its
+`game` classification, and a second package carries the templated overview in a
+documented category. They cannot share an APK — `android:appCategory` is application-wide
+— so the module builds two flavors from one source set. Do not attempt to defeat the
 parked gate.
 
 **Needs hardware:** Yes — the head unit is the only real test for driving-category
@@ -823,8 +840,8 @@ next depended on it. All groups are now done.
 
 **Group D — independent** ✅
 - [ISSUE-12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient) — Arduino only.
-- [ISSUE-09](#issue-09--app-is-not-available-while-driving) — Car App Library driving
-  surface.
+- [ISSUE-09](#issue-09--app-is-not-available-while-driving) — Android only: the
+  `drive` flavor's templated surface, alongside the parked app.
 
 ---
 
@@ -843,7 +860,7 @@ because it compiled.
 | 06 speed | `parse_speed` → telemetry → HTTP `speed_kmh` → `speedFor()`; `TEL` → `displaySpeedKmhOrMph()` | ✅ Confirmed numerically (km/h in, km/h out, sign preserved) |
 | 07 boot | NVS theme → logo zoom → arc sweep → title | ✅ Builds; pacing is a hardware judgement |
 | 08 fuel | raw frame → 60 s deque average → hysteresis → telemetry → all three UIs and the MPG calculator | ✅ Confirmed; running sum matches a brute-force recompute |
-| 09 driving | `Mx5CarAppService` → session → `PaneTemplate` → shared `PiLink` | ✅ Service + DRIVING category present in the built APK |
+| 09 driving | flavor split → `Mx5CarAppService` → session → `PaneTemplate` → shared `PiLink` | ✅ Two APKs verified: parked = game + `CAR_LAUNCHER`; drive = `category.IOT` service, no `appCategory` |
 | 10 instant MPG | MAF reply → guards → `instant_mpg_valid` → `TEL` field 18 / HTTP → `--` | ✅ Confirmed; still depends on a MAF reply |
 | 11 ladder | speed → six predicted RPMs → band distance → top three | ✅ Confirmed against the screenshot values |
 | 12 LEDs | CAN frame → immediate render → per-LED ramp → changed-only transfer | ✅ Ramp table checked; build clean |
@@ -889,8 +906,9 @@ because it compiled.
 - PID `0x0F` may go unanswered.
 - MAF (`0x10`) may never be received if the interface is listen-only.
 - `android:appCategory="game"` is application-wide; whether a head unit offers the
-  DRIVING service for an app also declared as a parked game can only be confirmed on the
-  head unit.
+  drive package's `IOT` service as a launcher tile, and keeps it available in motion, can
+  only be confirmed on the head unit. The split removes the package-level conflict, but
+  the host still has the final say.
 - The gear-ratio constants assume the 6-speed / 4.10 final drive.
 - `HSCanID.GEAR_POSITION` is read from `0x231`, while `docs/ARCHITECTURE.md` documents
   gear on `0x228`. Gears 1-6 are estimated regardless, so this only affects **neutral**
@@ -907,7 +925,7 @@ What was actually run after the changes (no car, no phone):
 | ESP32-S3 UI (native sim) | `tools\simulators\native\build.bat` | ✅ builds; screens rendered to `shot_0..7.bmp` |
 | ESP32-S3 firmware | `pio run -d display` | ✅ SUCCESS — RAM 30.0%, flash 34.3% |
 | Arduino Nano firmware | `pio run -d arduino -e nano` (after clean) | ✅ SUCCESS — RAM 20.3%, flash 42.5% |
-| Android app | `gradle -p android :mx5-remote:assembleDebug` | ✅ BUILD SUCCESSFUL |
+| Android app | `gradle -p android :mx5-remote:assembleParkedDebug :mx5-remote:assembleDriveDebug` | ✅ BUILD SUCCESSFUL — `com.mx5.remote` (game, `CAR_LAUNCHER`) and `com.mx5.remote.drive` (`category.IOT`) verified with `aapt2 dump xmltree` |
 | Pi Python + link protocol | `python pi/ui/src/test_link_protocol.py` | ✅ 50/50 passed |
 | Pi CAN parsing | ad-hoc checks | ✅ speed km/h, negative flooring, throttle `0x201`, IAT `0x0F`, 60 s fuel window, reverse flag |
 
@@ -927,7 +945,7 @@ both ends.
 |------|--------|------------------|----------------|
 | 1 | **Pi** | `ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'` | The Pi is the source of every value. The new `TEL:` fields are appended, so an old ESP still parses fields 0-14 correctly. |
 | 2 | **ESP32-S3** | `ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'` | Adds the reverse/brake/MPG-valid fields, theme support, gear ladder, G-force port and boot animation. Works against a new Pi; against an old Pi it just keeps the defaults. |
-| 3 | **Android phone** | `adb install -r android\mx5-remote\build\outputs\apk\debug\mx5-remote-debug.apk` | The app now pushes the theme and reads `instant_mpg_valid`. |
+| 3 | **Android phone** | `adb install -r android\mx5-remote\build\outputs\apk\parked\debug\mx5-remote-parked-debug.apk` and `...\apk\drive\debug\mx5-remote-drive-debug.apk` | The parked app now pushes the theme; the drive app is the templated surface. Both are needed for the two launcher tiles. |
 | 4 | **Arduino Nano** | Plug into the PC, then `pio run -d arduino --target upload` | Independent of the link protocol; can be done any time. |
 
 Then, with the car:

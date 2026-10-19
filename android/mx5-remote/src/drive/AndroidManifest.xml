@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "MX5 Drive" - the app that stays available in motion.
+
+  No android:appCategory anywhere in this package: it must not inherit the
+  parked build's "game" classification, or Android Auto would hide it whenever
+  the car is moving - the exact problem this app exists to solve.
+
+  The car screen comes from the CarAppService, not from an activity. The host
+  renders the templates itself, so the content stays glanceable by construction
+  and the app is allowed on screen at speed. MainActivity is kept only as the
+  phone-side dashboard and settings screen, and deliberately does not claim
+  CAR_LAUNCHER: two car entry points in one package would show as two identical
+  tiles. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="@string/app_name">
+        <activity android:name=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- androidx.car.app.category.IOT is the only documented category that fits:
+             the point of the app is to read the state of a connected device from the
+             car. There is no generic "driving" category - declaring one means the host
+             never lists the app at all. The label and icon on the service are what the
+             host shows on the launcher tile, so this is where "MX5 Drive" comes from. -->
+        <service android:name=".Mx5CarAppService"
+                 android:exported="true"
+                 android:label="@string/drive_app_name"
+                 android:icon="@mipmap/ic_launcher">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.IOT" />
+            </intent-filter>
+        </service>
+
+        <!-- Template API level 1 is all this app uses. -->
+        <meta-data android:name="androidx.car.app.minCarApiLevel"
+                   android:value="1" />
+    </application>
+</manifest>
