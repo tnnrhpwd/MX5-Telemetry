@@ -50,17 +50,8 @@
 // ESP32 internal temperature sensor for ambient temp fallback
 temperature_sensor_handle_t temp_sensor = NULL;
 
-// MX5 NC gear ratios for rev-match calculation
-// MPH per 1000 RPM for each gear (calculated from gear ratios, final drive, tire size)
-const float MPH_PER_1000_RPM[] = {
-    0.0f,    // Gear 0 (neutral) - not used
-    4.92f,   // Gear 1: 3.760 ratio
-    8.16f,   // Gear 2: 2.269 ratio
-    11.25f,  // Gear 3: 1.645 ratio
-    15.59f,  // Gear 4: 1.187 ratio
-    18.51f,  // Gear 5: 1.000 ratio
-    21.95f   // Gear 6: 0.843 ratio
-};
+// Gear prediction tables live in ui_core.cpp (KMH_PER_1000_RPM), because that is
+// where the Overview gear ladder draws them and `telemetry.speed` is km/h.
 
 // IMU instance
 QMI8658 imu;
