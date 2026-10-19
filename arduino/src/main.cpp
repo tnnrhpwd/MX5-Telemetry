@@ -161,6 +161,11 @@ bool canInitialized = false;
 // LED sequence setting (persisted in EEPROM)
 uint8_t ledSequence = SEQ_CENTER_OUT;  // Default: center-out (mirrored)
 
+// Last RPM actually painted onto the strip. updateLEDs() runs after every CAN
+// read, but the bar can only change when the RPM does; this lets it skip the
+// per-LED maths entirely otherwise.
+static uint16_t lastRenderedRPM = 0xFFFF;
+
 // Serial command buffer
 #if ENABLE_SERIAL_CMD
 char cmdBuffer[32];
@@ -251,6 +256,9 @@ void saveSettingsToEEPROM() {
 void setLEDSequence(uint8_t seq) {
     if (seq >= 1 && seq <= SEQ_COUNT) {
         ledSequence = seq;
+        // The whole strip is laid out differently, so repaint from scratch even if
+        // the RPM has not changed.
+        lastRenderedRPM = 0xFFFF;
         saveSettingsToEEPROM();
         
         #if ENABLE_SERIAL_CMD
@@ -451,15 +459,21 @@ inline void setLedAtPos(uint8_t idx, float t, float level) {
 // 2. Smooth color gradients between RPM zones - no jarring color jumps
 // ============================================================================
 
-// Helper: Linear interpolation between two colors with proper rounding
+// Helper: Linear interpolation between two colors.
+//
+// The float result is rounded, then cast once. The previous form cast the
+// *delta* (which is negative on any ramp that runs downwards, e.g. yellow's
+// green 210 -> orange's 128) and added it to a uint8_t. That is technically
+// undefined (a negative float converted to an unsigned type); it happens to
+// land on the right byte on AVR because the arithmetic wraps mod 256, but it is
+// not something to rely on.
 inline void interpolateColor(uint8_t r1, uint8_t g1, uint8_t b1,
                              uint8_t r2, uint8_t g2, uint8_t b2,
                              float position,
                              uint8_t* outR, uint8_t* outG, uint8_t* outB) {
-    // Use proper rounding instead of truncation for smoother transitions
-    *outR = r1 + (uint8_t)((float)(r2 - r1) * position + 0.5f);
-    *outG = g1 + (uint8_t)((float)(g2 - g1) * position + 0.5f);
-    *outB = b1 + (uint8_t)((float)(b2 - b1) * position + 0.5f);
+    *outR = (uint8_t)((float)r1 + ((float)((int)r2 - (int)r1) * position) + 0.5f);
+    *outG = (uint8_t)((float)g1 + ((float)((int)g2 - (int)g1) * position) + 0.5f);
+    *outB = (uint8_t)((float)b1 + ((float)((int)b2 - (int)b1) * position) + 0.5f);
 }
 
 // Get the colour for a position on the RPM scale.
@@ -513,8 +527,19 @@ inline void getRPMColor(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
 inline void updateLEDs() {
     if (displayErrorMode) {
         updateErrorAnimation();
+        // Force a repaint when error mode ends: the scanner pattern must not be
+        // mistaken for "already rendered this RPM".
+        lastRenderedRPM = 0xFFFF;
         return;
     }
+
+    // Recomputing 20 LED colours is not free on a 16 MHz AVR, and this runs after
+    // every CAN read - which happens at the frame rate, not at the LED rate. The
+    // bar can only change when the RPM changes, so that is the gate.
+    if (currentRPM == lastRenderedRPM && !stripForceShow) {
+        return;
+    }
+    lastRenderedRPM = currentRPM;
     
     // RPM = 0: Show single blue LED based on sequence mode
     if (currentRPM == 0) {

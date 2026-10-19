@@ -35,6 +35,7 @@ Load CAN modules:
 import math
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Callable
 from enum import Enum
@@ -516,8 +517,12 @@ class CANHandler:
     FUEL_AVERAGE_WINDOW_SEC = 60.0  # Average the last minute of RAW samples
     FUEL_HYSTERESIS = 1.5  # Only update displayed value if change > 1.5%
 
-    # A pedal reading that stops arriving is zeroed after this long
+    # A pedal reading that stops arriving is zeroed after this long. Brake gets a
+    # longer window because 0x212 is a body-status frame: it is not certain to be
+    # broadcast as often as the engine frame, and a brake indicator that flickers
+    # off while the pedal is held is worse than one that clears late.
     PEDAL_STALE_SEC = 0.75
+    BRAKE_STALE_SEC = 2.5
     
     def __init__(self, telemetry_data, swc_handler=None):
         """
@@ -547,15 +552,19 @@ class CANHandler:
         self._reverse_hold_until = 0  # time.time() until which to keep showing reverse
         self._REVERSE_HOLD_SECONDS = 0.5  # Hold reverse for 500ms after speed goes to 0
         
+        self._last_thr_log = 0.0
+
         # Fuel level smoothing state - a wall-clock rolling average, so the window
         # length does not drift when the fuel frame rate changes or stalls.
-        self._fuel_samples = []          # [(timestamp, raw_pct), ...] newest last
+        self._fuel_samples = deque()     # (timestamp, raw_pct), oldest first
+        self._fuel_sum = 0.0             # running sum, so each frame is O(1)
         self._fuel_displayed = None      # Last displayed integer (with hysteresis)
 
         # Pedal staleness: a value that stops arriving must decay, not freeze on
         # the dash showing a throttle that is no longer applied.
         self.throttle_timestamp = 0.0
         self.brake_timestamp = 0.0
+        self._engine_throttle_pct = -1   # last decode from 0x201, for the cross-check log
 
         # OBD-II polling state. MAF and intake air share one request slot, so they
         # alternate rather than doubling the request rate on the bus.
@@ -665,13 +674,17 @@ class CANHandler:
         """
         now = time.time()
         self._fuel_samples.append((now, raw_fuel))
+        self._fuel_sum += raw_fuel
 
-        # Drop samples older than the averaging window.
+        # Drop samples older than the averaging window. The running sum keeps this
+        # O(1) per frame: recomputing sum() over a whole minute of samples on every
+        # fuel frame would be pointless work at 10-20 Hz.
         cutoff = now - self.FUEL_AVERAGE_WINDOW_SEC
         while self._fuel_samples and self._fuel_samples[0][0] < cutoff:
-            self._fuel_samples.pop(0)
+            _, old = self._fuel_samples.popleft()
+            self._fuel_sum -= old
 
-        averaged = sum(v for _, v in self._fuel_samples) / len(self._fuel_samples)
+        averaged = self._fuel_sum / len(self._fuel_samples)
 
         if self._fuel_displayed is None:
             self._fuel_displayed = float(round(averaged))
@@ -720,7 +733,7 @@ class CANHandler:
         now = time.time()
         if self.throttle_timestamp and now - self.throttle_timestamp > self.PEDAL_STALE_SEC:
             self.telemetry.throttle_percent = 0
-        if self.brake_timestamp and now - self.brake_timestamp > self.PEDAL_STALE_SEC:
+        if self.brake_timestamp and now - self.brake_timestamp > self.BRAKE_STALE_SEC:
             self.telemetry.brake_percent = 0
 
     def _read_hs_can(self):
@@ -786,6 +799,7 @@ class CANHandler:
             pedal = CANParser.parse_throttle_engine(data)
             if pedal is not None:
                 self.telemetry.throttle_percent = pedal
+                self._engine_throttle_pct = pedal
                 self.throttle_timestamp = time.time()
 
             # Estimate gear and clutch status after we have RPM and speed
@@ -796,6 +810,14 @@ class CANHandler:
             if time.time() - self.throttle_timestamp > 0.5:
                 self.telemetry.throttle_percent = CANParser.parse_throttle(data)
                 self.throttle_timestamp = time.time()
+
+            # Cross-check log while the pedal source is being confirmed on the car:
+            # both decodes side by side make a wrong assumption obvious in seconds.
+            now = time.time()
+            if now - getattr(self, '_last_thr_log', 0.0) >= 5.0:
+                self._last_thr_log = now
+                print(f"THR: engine(0x201)={self._engine_throttle_pct}% "
+                      f"legacy(0x200)={CANParser.parse_throttle(data)}%")
 
         elif can_id == HSCanID.GEAR_POSITION:
             can_gear = CANParser.parse_gear(data)

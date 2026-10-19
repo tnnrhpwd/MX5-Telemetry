@@ -150,7 +150,9 @@ void applyTheme(const char* scheme, bool dark) {
         g_theme.bgElevated = mixColor(rgb565(255, 255, 255), seed->aR, seed->aG, seed->aB, 0.14f);
         g_theme.text       = rgb565(20, 20, 28);
         g_theme.textDim    = rgb565(90, 90, 110);
-        g_theme.darkGray   = rgb565(201, 202, 214);
+        // Mid-grey, not near-white: this is the "unlit / subtle stroke" colour, and
+        // page-indicator dots at (201,202,214) were invisible on the light background.
+        g_theme.darkGray   = rgb565(150, 152, 168);
         // The seed hues are tuned for dark backgrounds; on white they need to be
         // sunk so text and accents keep their contrast.
         g_theme.accent     = scaleColor(rgb565(seed->aR, seed->aG, seed->aB), 0.72f);
@@ -253,7 +255,14 @@ char tpmsLastUpdateStr[4][12] = {"--:--:--", "--:--:--", "--:--:--", "--:--:--"}
 // Background
 // ============================================================================
 void drawBackground() {
-    LCD_DrawImage(0, 0, BACKGROUND_DATA_WIDTH, BACKGROUND_DATA_HEIGHT, background_data);
+    // The backdrop is a fixed dark carbon image. Painting it under a light theme
+    // would leave dark gutters around light cards, which reads as a rendering bug
+    // rather than as a theme, so light mode fills with the theme's own background.
+    if (themeDark) {
+        LCD_DrawImage(0, 0, BACKGROUND_DATA_WIDTH, BACKGROUND_DATA_HEIGHT, background_data);
+    } else {
+        LCD_FillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG);
+    }
 }
 
 // ============================================================================

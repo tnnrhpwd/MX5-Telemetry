@@ -298,7 +298,7 @@ static void playStartupAnimation() {
     while (millis() < titleDue) { delay(1); }
 
     LCD_DrawString(CENTER_X - 71, 250, "MX5 TELEMETRY", MX5_WHITE, COLOR_BG, 2);
-    LCD_DrawString(CENTER_X - 23, 272, "READY", MX5_GRAY, COLOR_BG, 1);
+    LCD_DrawString(CENTER_X - 14, 272, "READY", MX5_GRAY, COLOR_BG, 1);
 
     // Hold the finished frame just long enough to read, then hand over to the
     // normal Overview screen. Capped so boot never feels slower than it used to.

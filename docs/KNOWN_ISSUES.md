@@ -121,6 +121,9 @@ and boots dark when the phone has never connected.
   loads it before the boot animation. No stored theme ⇒ dark aurora.
 - `MainActivity` pushes `theme_scheme` / `theme_dark` to the Pi on every change and at
   start-up; `link_service.update_setting` mirrors it and re-syncs the ESP32.
+- Light mode fills the background with the theme colour instead of the fixed dark carbon
+  image, and the "unlit" stroke colour is a mid-grey, so page-indicator dots and unlit
+  arc segments stay visible on a light background.
 
 **Remaining:** visual check on the device. Note the light theme is a deliberate
 approximation of the app's OKLCH derivation (sRGB blends), not a pixel match.
@@ -225,9 +228,13 @@ with engine bay heat, and the intake bar moves with it.
   empty or full was what made it look broken.
 - **The ESP now receives brake at all** — it was not in the `TEL:` payload, so its RPM
   page brake meter was permanently zero.
-- **Staleness:** a pedal value that stops arriving is zeroed after 750 ms instead of
-  freezing on the dash (`PEDAL_STALE_SEC`).
+- **Staleness:** a pedal value that stops arriving is zeroed instead of freezing on
+  the dash. Throttle uses 750 ms (`PEDAL_STALE_SEC`); brake uses 2.5 s
+  (`BRAKE_STALE_SEC`) because `0x212` is a body-status frame that may not be broadcast
+  as often, and a brake light that flickers off mid-stop is worse than one that clears late.
 - The Android RPM page gained the missing brake row.
+- A `THR: engine(0x201)=…% legacy(0x200)=…%` line is printed every 5 s so the two decodes
+  can be compared on the first drive without any extra tooling.
 
 **Remaining:** a stationary pedal log to confirm the `0x201` byte-6 assumption and to
 check whether a real brake travel/pressure value exists. If it does, the ON/OFF
@@ -691,7 +698,8 @@ current gear is visually obvious, and nothing regresses on the dedicated TPMS pa
 - **Lag:** LEDs are painted immediately after a CAN frame is decoded (the separate 10 ms
   timer no longer gates it); rising RPM is unfiltered (`RPM_ALPHA_RISING = 1.0`) and the
   snap threshold halved to 400; `strip.show()` is skipped when no pixel changed
-  (`showIfChanged()`).
+  (`showIfChanged()`); and the per-LED maths is skipped entirely when the RPM has not
+  changed, because this runs at CAN frame rate rather than at the LED rate.
 - **Zones:** rebalanced to the engine — blue/cyan at idle, green through the economical
   band, yellow/orange building, and full red at the real 6800 redline. `RPM_MAX` was
   6200, which saturated the strip ~600 RPM early.
@@ -813,6 +821,63 @@ next depended on it. All groups are now done.
 
 ---
 
+## Second-pass audit (before in-car testing)
+
+Each fix was re-read end-to-end — producer → wire → consumer — rather than trusted
+because it compiled.
+
+| Issue | Traced path | Result |
+|-------|-------------|--------|
+| 01 reverse | `0x201` decode → estimator → `TEL` field 16 → ESP `isInReverse` → Overview/RPM gear text | ✅ Confirmed; wire line verified field-by-field |
+| 02 theme | phone toggle → `PiClient.updateSetting` → `/api/settings/update` → Pi settings → `send_all_settings`/`send_theme` → ESP `THEME:` → NVS → repaint | ✅ Confirmed; dark **and light** rendered in the simulator |
+| 03 IAT | OBD request rotation → `0x7E8` reply → `parse_intake_temp` → telemetry → HTTP → Engine tile+bar | ✅ Confirmed; needs an ECU reply |
+| 04 pedals | `0x201` b6 / `0x200` b4 fallback → staleness → `TEL` field 3/17 → ESP meter + Android bar | ✅ Confirmed; source choice still needs a log |
+| 05 gyro | local IMU → `linearAccelX/Y` → scatter/trail → restore-then-draw | ✅ Confirmed; rings, labels and trail render |
+| 06 speed | `parse_speed` → telemetry → HTTP `speed_kmh` → `speedFor()`; `TEL` → `displaySpeedKmhOrMph()` | ✅ Confirmed numerically (km/h in, km/h out, sign preserved) |
+| 07 boot | NVS theme → logo zoom → arc sweep → title | ✅ Builds; pacing is a hardware judgement |
+| 08 fuel | raw frame → 60 s deque average → hysteresis → telemetry → all three UIs and the MPG calculator | ✅ Confirmed; running sum matches a brute-force recompute |
+| 09 driving | `Mx5CarAppService` → session → `PaneTemplate` → shared `PiLink` | ✅ Service + DRIVING category present in the built APK |
+| 10 instant MPG | MAF reply → guards → `instant_mpg_valid` → `TEL` field 18 / HTTP → `--` | ✅ Confirmed; still depends on a MAF reply |
+| 11 ladder | speed → six predicted RPMs → band distance → top three | ✅ Confirmed against the screenshot values |
+| 12 LEDs | CAN frame → immediate render → per-LED ramp → changed-only transfer | ✅ Ramp table checked; build clean |
+
+### Defects the audit found and fixed
+
+1. **Brake staleness was tuned for the wrong frame.** Using the 750 ms throttle window on
+   `0x212` could blink the brake indicator off during a long stop if that body frame is
+   slower than the engine frame. Brake now has its own 2.5 s window.
+2. **Light mode had two invisible elements.** The dark carbon background image stayed
+   behind light cards, and the "unlit" stroke colour (201,202,214) vanished on a near-white
+   page. Light mode now fills a themed background and uses a mid-grey stroke; verified by
+   rendering the simulator in light mode.
+3. **LED update ran at CAN frame rate.** Painting after every CAN read is what removes the
+   lag, but it also recomputed 20 LED colours hundreds of times a second for an unchanged
+   RPM. A `lastRenderedRPM` gate now skips both the maths and the transfer, and is
+   invalidated on sequence change and when error mode ends.
+4. **`interpolateColor` cast a negative delta to `uint8_t`.** Undefined behaviour on any
+   descending ramp (yellow's green 210 → orange's 128). It happened to land correctly on
+   AVR because the arithmetic wraps mod 256, but it is now done in float and cast once.
+5. **Fuel averaging did O(n) work per frame.** A minute of samples at 10-20 Hz is fine, but
+   `sum()` over the window on every frame is avoidable; a running total over a `deque`
+   makes it O(1) and bounded.
+6. **Throttle source was unverifiable from the car.** A periodic
+   `THR: engine(0x201)=…% legacy(0x200)=…%` log was added so the first drive settles the
+   question without any extra tooling.
+
+### Remaining risks that only the car can settle
+
+- `0x201` byte 6 may not be throttle on this particular car; the fallback and the log are
+  the mitigation.
+- `0x212` may not carry a brake bit at all on this model year.
+- PID `0x0F` may go unanswered.
+- MAF (`0x10`) may never be received if the interface is listen-only.
+- `android:appCategory="game"` is application-wide; whether a head unit offers the
+  DRIVING service for an app also declared as a parked game can only be confirmed on the
+  head unit.
+- The gear-ratio constants assume the 6-speed / 4.10 final drive.
+
+---
+
 ## Build verification
 
 What was actually run after the changes (no car, no phone):
@@ -821,7 +886,7 @@ What was actually run after the changes (no car, no phone):
 |-----------|---------|--------|
 | ESP32-S3 UI (native sim) | `tools\simulators\native\build.bat` | ✅ builds; screens rendered to `shot_0..7.bmp` |
 | ESP32-S3 firmware | `pio run -d display` | ✅ SUCCESS — RAM 30.0%, flash 34.3% |
-| Arduino Nano firmware | `pio run -d arduino -e nano` (after clean) | ✅ SUCCESS — RAM 20.2%, flash 41.9% |
+| Arduino Nano firmware | `pio run -d arduino -e nano` (after clean) | ✅ SUCCESS — RAM 20.3%, flash 42.5% |
 | Android app | `gradle -p android :mx5-remote:assembleDebug` | ✅ BUILD SUCCESSFUL |
 | Pi Python + link protocol | `python pi/ui/src/test_link_protocol.py` | ✅ 50/50 passed |
 | Pi CAN parsing | ad-hoc checks | ✅ speed km/h, negative flooring, throttle `0x201`, IAT `0x0F`, 60 s fuel window, reverse flag |
