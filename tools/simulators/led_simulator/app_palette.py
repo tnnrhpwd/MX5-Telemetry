@@ -151,8 +151,9 @@ def ramp_colors(pal: Palette) -> List[int]:
 
     The bar belongs to the theme: it runs from the mode-corrected accent up through the
     primary to the vivid seed, so every one of the twelve schemes produces a different
-    ramp. None of the alarm colors (warn, bad, alert) appear - those stay fixed across
-    themes and are used by the indicators that flash.
+    ramp. None of the fixed alarm colors (warn, bad, alert) appear - those stay the same in
+    every scheme, because they report a fault. See `shift_color()` for the one alarm that
+    does follow the theme.
     """
     a, b, vivid = pal.accent, pal.primary, pal.seed_b
     return [a,
@@ -179,3 +180,21 @@ def ramp_text(scheme_id: str = "aurora", dark: bool = True) -> str:
     """The `RAMP:` payload the phone would send for this scheme."""
     return ",".join("%d:%02x%02x%02x" % (rpm, rgb[0], rgb[1], rgb[2])
                     for rpm, rgb in ramp_for(palette(scheme_id, dark)))
+
+
+def shift_color(pal: Palette) -> int:
+    """`Palette.shiftColor()`: the color the shift light flashes, for this scheme.
+
+    The shift flash is the one alarm that fires while everything is working, so it follows
+    the theme as well: the scheme's first hue, lifted toward white so the pulse is brighter
+    than the bar it interrupts, while the far end of that bar is the scheme's second hue.
+    The fault patterns (CAN offline, the error scanner) stay orange and red in every scheme,
+    because they mean the electronics are broken rather than that the engine is at the shift
+    point.
+    """
+    return lift(pal.accent, 0.30)
+
+
+def shift_text(scheme_id: str = "aurora", dark: bool = True) -> str:
+    """The `led_shift_color` payload the phone would send for this scheme."""
+    return "%06x" % (shift_color(palette(scheme_id, dark)) & 0xFFFFFF)

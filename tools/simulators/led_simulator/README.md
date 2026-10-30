@@ -34,7 +34,7 @@ Windows: double-click [`LED_Simulator.bat`](LED_Simulator.bat), or run
 | **Stop colors 1-6** | the ramp itself | `RAMP:` |
 | **Ramp source** | ROYGBIV (firmware default), App scheme (the phone's ramp), or Custom | `RAMP:` |
 | **Scheme / Dark-Light** | which of the phone's twelve themes, and which of its two palettes | `Palette.java`, `MainActivity.ledRampFor()` |
-| **Shift light** | start rpm, flash rate, color | `CFG:shift/hz/scol=` |
+| **Shift light** | start rpm, flash rate, color swatch | `CFG:shift/hz/scol=` |
 | **Self test / Identify** | the two bench patterns | `SELFTEST`, `IDENTIFY` |
 | **CAN: online / dead** | the CAN-offline pattern (two orange pixels at 1 Hz) | `!canInitialized` |
 | **No engine frames** | the error scanner | `displayErrorMode` |
@@ -80,11 +80,20 @@ Three sources, picked with the chips above the swatches:
 
 An App-scheme ramp is the theme's own two hues blended from the soft, mode-corrected accent
 up to the vivid seed, so all twelve themes produce visibly different bars. That is
-deliberate: the strip is part of the app, not a separate instrument, and the alarm colors
+deliberate: the strip is part of the app, not a separate instrument, and the *fault* colors
 (`bad` red, `alert` orange, `warn` amber) are kept out of it because they have to mean the
-same thing in every scheme. The things that flash — the shift light, the CAN-offline pair,
-the error scanner — keep their own fixed colors. Those are the emergency signals; the bar
-is decor that also happens to tell you the rpm.
+same thing in every scheme.
+
+The **shift light** follows the theme too. It is the one alarm that fires while everything
+is working, so it flashes the scheme's first hue lifted toward white — brighter than the bar
+it interrupts, and a different hue from the bar's far end. Picking an App scheme sets it, and
+the **Color** row under the shift sliders shows it; clicking that swatch and choosing
+something else switches you to Custom, exactly as the phone's LED screen drops "Follow theme"
+when you pick a shift color by hand.
+
+The **fault** patterns stay fixed: the CAN-offline pair is orange and the error scanner red
+in every scheme. They mean the electronics are broken rather than that the engine is at the
+shift point, so they must not depend on the decor.
 
 The App-scheme mode exists so the two color worlds can be compared from the driver's seat
 rather than in the source: the phone's schemes are a considered palette, and the firmware's
@@ -196,10 +205,10 @@ python tools/simulators/led_simulator/palette_parity.py
 [`app_palette.py`](app_palette.py) is a port of the phone's `Palette.java`, and a port of a
 color derivation is exactly the kind of thing that drifts silently — a blend in the wrong
 direction, a lift that stops at the top instead of stopping short of it. So `palette_parity.py` compiles the **real** `Palette.java` against a
-small `android.graphics.Color` stub and compares all **12 schemes × 2 modes = 24 ramps**,
-stop by stop, channel by channel. The harness calls the app's own `Palette.ramp()`, so the
-derivation is exercised rather than transcribed; `MainActivity.ledRampFor()` is separately
-checked to still take its colors from there.
+small `android.graphics.Color` stub and compares all **12 schemes × 2 modes = 24 ramps**
+plus the shift-light color, stop by stop, channel by channel. The harness calls the app's own
+`Palette.ramp()` and `shiftColor()`, so the derivation is exercised rather than transcribed;
+`MainActivity.ledRampFor()` is separately checked to still take its colors from there.
 
 Two mismatches in the first run, both real. Java's `Math.round(float)` is
 `floor(x + 0.5)`, not Python's round-half-to-even: `152.5` is `153` in the app and was `152`
@@ -210,11 +219,12 @@ a ramp built from `good`, `warn`, `bad` and `alert` would pass and still paint f
 six stops the same color in all twelve schemes — which is what it used to do. So the check
 also asserts, mechanically, that:
 
-- each of the twelve schemes produces a **different color at every stop** (per mode), and
-- **no stop is one of the fixed alarm colors** — those belong to the things that flash.
+- each of the twelve schemes produces a **different color at every stop** (per mode),
+- **no stop is one of the fixed alarm colors** — those belong to the fault patterns, and
+- the **shift-light color is the theme's**, not an alarm color and not the firmware's red.
 
-Both were confirmed to fail when the old mapping is put back (`stop 2 is 22c55e in 12 dark
-schemes — the ramp is not following the theme`).
+All three were confirmed to fail when the old behavior is put back (`stop 2 is 22c55e in 12
+dark schemes — the ramp is not following the theme`, `shift colour is the fixed red default`).
 
 Requires a JDK (`javac` and `java` on `PATH`). Without one it reports `SKIPPED` and exits
 0, like the compiler check above.

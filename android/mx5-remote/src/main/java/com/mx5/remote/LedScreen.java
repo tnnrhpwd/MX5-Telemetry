@@ -190,6 +190,9 @@ public class LedScreen extends Screen {
 
         shiftColour = new Swatches(c, p, SWATCHES, shiftHex, v -> {
             shiftHex = v;
+            // Same rule as a ramp stop: a hand-picked color means the theme no longer owns
+            // the strip, or the next scheme change would silently overwrite it.
+            stopEditingLocally(c);
             push("led_shift_color", v);
         });
         right.addView(stopRow(c, p, "Color", shiftColour));
@@ -469,46 +472,82 @@ public class LedScreen extends Screen {
         private final Palette palette;
         private final String[] colors;
         private final List<View> dots = new ArrayList<>();
+        private final ScreenHostCallback onPick;
+        /** A colour that is not one of the presets - a theme's own, say. */
+        private final View extra;
         private String selected;
+        private String extraHex;
 
         Swatches(Context c, Palette p, String[] colors, String selected,
                  ScreenHostCallback onPick) {
             super(c);
             this.palette = p;
             this.colors = colors;
+            this.onPick = onPick;
             setOrientation(HORIZONTAL);
             setGravity(Gravity.CENTER_VERTICAL);
 
             for (String hex : colors) {
                 final String value = hex;
                 View dot = new View(c);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
-                        Ui.dp(c, 18), 1f);
-                lp.setMargins(Ui.dp(c, 2), 0, Ui.dp(c, 2), 0);
                 dot.setClickable(true);
                 dot.setFocusable(true);
                 dot.setOnClickListener(v -> {
                     select(value);
                     onPick.onPick(value);
                 });
-                addView(dot, lp);
+                addView(dot, dotParams(c));
                 dots.add(dot);
             }
+
+            // The strip follows the theme by default, and a theme colour is not one of the
+            // eight presets. Highlighting nothing would read as "no colour chosen" when the
+            // strip is in fact using the scheme's, so a ninth dot appears for it.
+            extra = new View(c);
+            extra.setClickable(true);
+            extra.setFocusable(true);
+            extra.setVisibility(GONE);
+            extra.setOnClickListener(v -> {
+                if (extraHex != null) {
+                    select(extraHex);
+                    onPick.onPick(extraHex);
+                }
+            });
+            addView(extra, dotParams(c));
             select(selected);
         }
 
-        /** Highlight this color. An unknown color selects nothing rather than lying. */
+        private static LinearLayout.LayoutParams dotParams(Context c) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dp(c, 18), 1f);
+            lp.setMargins(Ui.dp(c, 2), 0, Ui.dp(c, 2), 0);
+            return lp;
+        }
+
+        /** Highlight this color. An unknown color becomes the extra dot rather than lying. */
         void select(String hex) {
             selected = hex == null ? null : hex.toLowerCase(Locale.US);
+            boolean preset = false;
             for (int i = 0; i < dots.size(); i++) {
                 boolean on = colors[i].equalsIgnoreCase(selected);
-                android.graphics.drawable.GradientDrawable bg =
-                        Ui.rounded(getContext(), colorOf(colors[i]), 5f);
-                if (on) {
-                    bg.setStroke(Ui.dp(getContext(), 2), palette.text);
-                }
-                dots.get(i).setBackground(bg);
+                preset = preset || on;
+                dots.get(i).setBackground(ring(colorOf(colors[i]), on));
             }
+            extraHex = preset || selected == null ? null : selected;
+            if (extraHex == null) {
+                extra.setVisibility(GONE);
+            } else {
+                extra.setBackground(ring(colorOf(extraHex), true));
+                extra.setVisibility(VISIBLE);
+            }
+        }
+
+        private android.graphics.drawable.GradientDrawable ring(int color, boolean on) {
+            android.graphics.drawable.GradientDrawable bg =
+                    Ui.rounded(getContext(), color, 5f);
+            if (on) {
+                bg.setStroke(Ui.dp(getContext(), 2), palette.text);
+            }
+            return bg;
         }
 
         private static int colorOf(String hex) {

@@ -619,6 +619,18 @@ class LedSimulator(tk.Tk):
                                on_change=self._on_shift_hz, color=BAD)
         self.shift_hz.pack(fill="x")
 
+        row = tk.Frame(section.body, bg=CARD)
+        row.pack(fill="x", pady=(6, 0))
+        tk.Label(row, text="Color", bg=CARD, fg=TEXT,
+                 font=("Segoe UI", 9)).pack(side="left")
+        # The flash the driver actually sees, and the one alarm that follows the theme:
+        # showing it here is how you check a scheme's choice without waiting for 6300 rpm.
+        self.shift_swatch = tk.Label(row, text="", bd=0, padx=10, pady=3,
+                                     font=("Segoe UI", 8, "bold"), cursor="hand2")
+        self.shift_swatch.pack(side="right")
+        self.shift_swatch.bind("<Button-1>", lambda _e: self._choose_shift_colour())
+        self._show_shift_colour()
+
         # -- bench
         section = Section(parent, "Bench")
         section.pack(pady=(10, 0))
@@ -759,22 +771,32 @@ class LedSimulator(tk.Tk):
         if value == 0:
             self.engine.cfg.ramp = engine.DEFAULT_RAMP
             self.engine.cfg.full_rpm = engine.DEFAULT_RAMP[-1][0]
+            # The firmware's own flash colour, since this source means "the strip's
+            # compiled-in defaults" and the theme that would have replaced it is off.
+            self.engine.cfg.shift_color = LedConfig().shift_color
+            self._show_shift_colour()
         elif value == 1:
             self._apply_app_scheme()
         self._show_scheme_controls(value == 1)
         self._show_ramp()
 
     def _apply_app_scheme(self) -> None:
-        """The ramp the phone would push for this scheme and mode.
+        """The ramp and shift flash the phone would push for this scheme and mode.
 
         `MainActivity.ledRampFor()` uses six fixed stops ending at 6800, so applying it
         also sets the strip's full-illumination rpm to 6800 - which is what happens in the
-        car, and worth seeing rather than hiding.
+        car, and worth seeing rather than hiding. `pushThemeToPi()` sends the scheme's
+        shift colour at the same time.
         """
         ident = app_palette.SCHEMES[self.scheme_index][0]
-        self.engine.cfg.ramp = app_palette.ramp_for(
-            app_palette.palette(ident, self.scheme_dark))
+        pal = app_palette.palette(ident, self.scheme_dark)
+        self.engine.cfg.ramp = app_palette.ramp_for(pal)
         self.engine.cfg.full_rpm = self.engine.cfg.ramp[-1][0]
+        color = app_palette.shift_color(pal)
+        self.engine.cfg.shift_color = (app_palette._red(color),
+                                       app_palette._green(color),
+                                       app_palette._blue(color))
+        self._show_shift_colour()
 
     def _on_scheme(self, index: int) -> None:
         self.scheme_index = index
@@ -829,6 +851,22 @@ class LedSimulator(tk.Tk):
 
     def _on_shift_hz(self, value: int) -> None:
         self.engine.cfg.shift_hz = max(1, value)
+
+    def _show_shift_colour(self) -> None:
+        color = self.engine.cfg.shift_color
+        self.shift_swatch.config(text=engine.hex_of(color), bg=_hex(color), fg="#101014")
+
+    def _choose_shift_colour(self) -> None:
+        current = _hex(self.engine.cfg.shift_color)
+        _rgb, chosen = colorchooser.askcolor(color=current, parent=self,
+                                             title="Shift light colour")
+        if not chosen:
+            return
+        self.engine.cfg.shift_color = engine.rgb_of_hex(chosen.lstrip("#"))
+        # A hand-picked flash colour is no longer the scheme's, exactly as in the phone's
+        # LED screen, where picking one switches "Follow theme" off.
+        self._note_custom()
+        self._show_shift_colour()
 
     def _on_full_at(self, value: int) -> None:
         """Re-derive the stop rpms exactly as LedScreen.pushRamp() would.

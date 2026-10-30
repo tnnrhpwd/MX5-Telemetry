@@ -14,7 +14,10 @@ import android.graphics.Color;
  * across the webapp and the car, which is the point.
  *
  * Alert stays orange in every scheme. That mirrors the standard's rule that the
- * alert hue must not follow the decor.
+ * alert hue must not follow the decor. That rule covers the things that report a
+ * fault - the alert, bad and warn roles, and the strip's CAN-offline and error
+ * patterns. It does not cover the shift light, which fires during normal driving
+ * and follows the scheme like the rest of the strip; see {@link #shiftColor()}.
  */
 public final class Palette {
 
@@ -136,9 +139,8 @@ public final class Palette {
      * color - that would leave most themes looking identical, which is what following the
      * theme is supposed to avoid.
      *
-     * The alarm colors ({@link #alert}, {@link #bad}) are deliberately absent. They mean
-     * "something is wrong" and have to read the same in every scheme, so they belong to
-     * the indicators that flash, not to a bar that is supposed to look like the theme.
+     * All six are the theme's; see {@link #shiftColor()} for the one alarm that follows it
+     * too, and why the fault patterns do not.
      */
     public int[] ramp() {
         return new int[]{
@@ -149,6 +151,23 @@ public final class Palette {
                 mix(primary, seedB, 0.55f),
                 seedB
         };
+    }
+
+    /**
+     * The color the shift light flashes, for this scheme.
+     *
+     * The shift flash is the one alarm that fires while everything is working, so it
+     * follows the theme as well - otherwise the strip would always flash a fixed red,
+     * whichever scheme is active. It flashes the scheme's first hue, lifted toward white so
+     * the pulse is brighter than the bar it interrupts, while the far end of that bar is
+     * the scheme's second hue.
+     *
+     * The *fault* patterns stay fixed: the CAN-offline pair is orange and the error
+     * scanner red in every scheme. They mean the electronics are broken rather than that
+     * the engine is at the shift point, so they must not depend on the decor.
+     */
+    public int shiftColor() {
+        return lift(accent, 0.30f);
     }
 
     public static Palette of(int schemeIndex, boolean dark) {

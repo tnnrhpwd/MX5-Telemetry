@@ -875,7 +875,9 @@ public class MainActivity extends Activity implements Screen.Host {
         // Following the theme is the default; the LED screen can switch it off, in which
         // case the strip keeps whatever hard colors the user picked.
         final boolean followTheme = prefs == null || prefs.getBoolean("led_follow_theme", true);
-        final String ramp = followTheme ? ledRampFor(Palette.of(scheme, dark)) : null;
+        final Palette palette = followTheme ? Palette.of(scheme, dark) : null;
+        final String ramp = palette == null ? null : ledRampFor(palette);
+        final String shift = palette == null ? null : hex(palette.shiftColor());
         new Thread(() -> {
             try {
                 if (!pi.isConfigured()) {
@@ -886,11 +888,18 @@ public class MainActivity extends Activity implements Screen.Host {
                 if (ramp != null) {
                     pi.updateSetting("led_ramp", ramp);
                     pi.updateSetting("led_theme_dim", darkFlag);
+                    // The shift flash follows the scheme too, so it is pushed here rather
+                    // than left on whichever color the strip was last given.
+                    pi.updateSetting("led_shift_color", shift);
                 }
             } catch (Exception ignored) {
                 // Offline: the Pi still holds whatever theme was last delivered.
             }
         }, "theme-sync").start();
+    }
+
+    private static String hex(int color) {
+        return String.format("%06X", color & 0xFFFFFF);
     }
 
     /**
@@ -905,14 +914,12 @@ public class MainActivity extends Activity implements Screen.Host {
      */
     private static String ledRampFor(Palette p) {
         int[] colors = p.ramp();
-        int[] rpms = Palette.RAMP_RPMS;
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < colors.length; i++) {
             if (i > 0) {
                 sb.append(',');
             }
-            sb.append(rpms[i]).append(':')
-              .append(String.format("%06X", colors[i] & 0xFFFFFF));
+            sb.append(Palette.RAMP_RPMS[i]).append(':').append(hex(colors[i]));
         }
         return sb.toString();
     }

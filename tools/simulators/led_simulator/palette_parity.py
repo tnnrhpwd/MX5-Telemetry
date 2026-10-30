@@ -77,6 +77,7 @@ public final class PrintRamps {
                     line.append(' ').append(rpms[i]).append(':');
                     line.append(String.format("%06x", colors[i] & 0xFFFFFF));
                 }
+                line.append(" shift:").append(String.format("%06x", p.shiftColor() & 0xFFFFFF));
                 System.out.println(line);
             }
         }
@@ -176,15 +177,22 @@ def main() -> int:
             scheme_id, dark_flag = parts[0], parts[1] == "1"
             seen.add((scheme_id, dark_flag))
             java_stops = parts[2:]
+            java_shift = java_stops[-1].split(":", 1)[1]
+            java_stops = java_stops[:-1]
 
             pal = app_palette.palette(scheme_id, dark_flag)
             py_stops = ["%d:%02x%02x%02x" % (rpm, rgb[0], rgb[1], rgb[2])
                         for rpm, rgb in app_palette.ramp_for(pal)]
+            py_shift = app_palette.shift_text(scheme_id, dark_flag)
 
             if java_stops != py_stops:
                 problems.append("%s (%s):\n    java   %s\n    python %s"
                                 % (scheme_id, "dark" if dark_flag else "light",
                                    " ".join(java_stops), " ".join(py_stops)))
+            if java_shift != py_shift:
+                problems.append("%s (%s) shift colour: java %s, python %s"
+                                % (scheme_id, "dark" if dark_flag else "light",
+                                   java_shift, py_shift))
 
         expected = {(ident, dark) for ident, _n, _a, _b in app_palette.SCHEMES
                     for dark in (True, False)}
@@ -263,6 +271,21 @@ def check_theme_follows() -> List[str]:
                     problems.append("%s/%s stop %d is the fixed %s alarm color - alarm colors "
                                     "must not appear in the theme ramp"
                                     % (ident, "dark" if dark else "light", index, name))
+
+    # The shift flash follows the theme too, so it must not be an alarm color either, and
+    # every scheme must actually differ.
+    shift = {(ident, dark): app_palette.shift_text(ident, dark)
+             for ident, _n, _a, _b in app_palette.SCHEMES for dark in (True, False)}
+    for (ident, dark), value in shift.items():
+        packed = int(value, 16)
+        for name, alarm in ALARM_COLORS.items():
+            if packed == alarm:
+                problems.append("%s/%s shift colour is the fixed %s alarm color - the flash "
+                                "follows the theme"
+                                % (ident, "dark" if dark else "light", name))
+        if value == "ff0000":
+            problems.append("%s/%s shift colour is the fixed red default - the flash is not "
+                            "following the theme" % (ident, "dark" if dark else "light"))
     return problems
 
 
