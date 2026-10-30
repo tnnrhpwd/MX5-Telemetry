@@ -157,8 +157,9 @@ Done and verified on the car:
 | Pi→Nano config forwarding: `led_ramp`, `led_theme_dim`, `led_brightness` settings → `RAMP:`/`CFG:` | ✅ in `main.py` + `link_service.py`, verified through the API |
 | Phone pushes a theme-derived ramp (`Palette.accent → primary → good → warn → bad → alert`) and the dark/light dim flag | ✅ in `MainActivity.pushThemeToPi()`; fires once the app has a link |
 | A 128-byte serial command buffer (the old 32 truncated a full `RAMP:` line and silently produced a 2-stop ramp capped at 1400 rpm) | ✅ fixed |
-| `LED STRIP` settings screen in the app | ⏳ Phase 3, still to build |
-| EEPROM persistence of the ramp/brightness | ⏳ Phase 2, still to do (a power cycle returns to firmware defaults) |
+| `CFG:save` / `CFG?` / `CFG:reset` — ramp, dim, brightness and full-illumination rpm survive a power cycle (EEPROM block behind a magic byte + CRC) | ✅ in firmware, **verified across a watchdog reboot**: `full=4200,dim=1,bright=200` + a 3-stop ramp came back identical |
+| The Pi reads the strip's `STATUS:` line and exposes it as `led` in `/api/telemetry` | ✅ live: `{"connected":true,"can":true,"fps":300,"last_id":"0x201","full_rpm":6800,"dim":false,"error":false,"rpm":0}` |
+| `LED STRIP` settings screen in the app | ⏳ Phase 3, still to build — the API it needs now exists |
 
 
 ---
@@ -174,6 +175,9 @@ The Nano's UART (`D3`/`D4`, 9600 8N1, line-terminated) currently accepts three c
 |---|---|---|
 | `RAMP:<rpm>:<rrggbb>,…` | `RAMP:0:0000FF,1400:00DCFF,2800:32D782` | 2–6 stops, applied atomically. **The last stop is the full-illumination rpm**, so "fully lit at X rpm" is one number. Replies `OK:RAMP` / `ERR:RAMP` |
 | `CFG:<k>=<v>,…` | `CFG:bright=180,theme=1,full=4000` | `bright` 0-255 (also disables the pot), `theme` 0/1 (dark mode = 70 % ramp), `full` 2000-8000, `pot` 0/1. Replies `OK:CFG` |
+| `CFG:save` | — | Writes the ramp/dim/brightness/full block to EEPROM (magic byte + CRC). Replies `OK:SAVE`. Deliberately explicit so a slider drag cannot wear the EEPROM |
+| `CFG?` | — | Replies with the live configuration as one `CFG:seq=…,full=…,dim=…,bright=…,stops=…,ramp=…` line |
+| `CFG:reset` | — | Watchdog soft reboot, used to prove a save survives a power cycle. Replies `OK:RESET` first |
 | `DEMO:<rpm>` / `DEMO:OFF` | `DEMO:2500` | Bench override: renders that rpm without touching CAN. **Self-clears after 60 s** so a forgotten command cannot leave a fake tacho. Replies `OK:DEMO:<rpm>` / `OK:DEMO_OFF` |
 | `SEQ:<1-4>` | `SEQ:2` | Fill pattern, kept from the original protocol |
 | `SEQ?` | — | Replies `SEQ:<n>` |
@@ -187,9 +191,8 @@ The Nano's UART (`D3`/`D4`, 9600 8N1, line-terminated) currently accepts three c
 | `OK:CFG` / `ERR:CFG`, `OK:RAMP` / `ERR:RAMP`, `OK:DEMO:<rpm>` | command results |
 | `STATUS:CAN=1,RPM=812,SEQ=1,ERR=0,FPS=320,LAST=0x201,FULL=6800,DIM=0` | once a second. `CAN` = controller came up, `ERR` = no data for 3 s, `FPS` = frames in the last second, `LAST` = last arbitration id decoded, `FULL` = full-illumination rpm, `DIM` = dark-mode dimming |
 
-**Not yet done:** the Pi still does not *read* this port, so `STATUS` is only useful from a
-bench script (`tools`snippets) today. Phase 2 adds a reader thread that exposes
-`led_ok`/`led_rpm` in `/api/telemetry` for the app's diagnostics row.
+**Not yet done:** the Pi reads these lines (`STATUS:` → `led` block in `/api/telemetry`) but
+the app does not display them yet — that is the diagnostics row on the `LED STRIP` screen.
 
 > **Buffer size matters.** `cmdBuffer` was 32 bytes; a full six-stop `RAMP:` line is ~76
 > characters, so it was silently truncated and the firmware accepted a two-stop ramp that

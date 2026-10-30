@@ -57,6 +57,7 @@
 #include <mcp_can.h>
 #include <Adafruit_NeoPixel.h>
 #include <EEPROM.h>
+#include <avr/wdt.h>
 
 // ============================================================================
 // CONFIGURATION - Tune these for your setup
@@ -253,6 +254,27 @@ bool displayErrorMode = false;  // Actually show error animation
 unsigned long errorStartTime = 0;  // When error condition started
 #define ERROR_DEBOUNCE_MS 3000  // 3 seconds before showing error animation
 
+// ---------------------------------------------------------------------------
+// Persistent LED configuration
+//
+// The ramp, brightness and dim flag used to vanish on every power cycle because only
+// the fill sequence was stored. They now live in EEPROM behind a magic byte and a CRC,
+// so a half-written block (brown-out while saving) is rejected and the firmware keeps
+// its compiled-in defaults instead of showing garbage.
+//
+// EEPROM is rated ~100k writes and is only written on an explicit CFG:save, so dragging
+// a brightness slider on the phone cannot wear it out.
+// ---------------------------------------------------------------------------
+#define EEPROM_CFG_MAGIC_ADDR   2
+#define EEPROM_CFG_MAGIC_VALUE  0x5A
+#define EEPROM_CFG_ADDR         3
+#define EEPROM_CFG_STOP_BYTES   5                       // rpm lo, rpm hi, r, g, b
+#define EEPROM_CFG_BODY_BYTES   (5 + RAMP_STOP_COUNT * EEPROM_CFG_STOP_BYTES)  // 5 header + 30
+#define EEPROM_CFG_CRC_ADDR     (EEPROM_CFG_ADDR + EEPROM_CFG_BODY_BYTES)
+
+void saveLedConfig();
+bool loadLedConfig();
+
 // ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
@@ -312,6 +334,97 @@ void saveSettingsToEEPROM() {
         Serial.println(ledSequence);
         #endif
     }
+}
+
+void saveLedConfig() {
+    uint8_t crc = 0;
+    EEPROM.update(EEPROM_CFG_ADDR + 0, rampStopCount);   crc ^= rampStopCount;
+    EEPROM.update(EEPROM_CFG_ADDR + 1, themeDim);        crc ^= themeDim;
+    EEPROM.update(EEPROM_CFG_ADDR + 2, currentBrightness); crc ^= currentBrightness;
+    EEPROM.update(EEPROM_CFG_ADDR + 3, lowByte(rpmFull));  crc ^= lowByte(rpmFull);
+    EEPROM.update(EEPROM_CFG_ADDR + 4, highByte(rpmFull)); crc ^= highByte(rpmFull);
+
+    for (uint8_t i = 0; i < RAMP_STOP_COUNT; i++) {
+        const uint8_t base = EEPROM_CFG_ADDR + 5 + i * EEPROM_CFG_STOP_BYTES;
+        const uint8_t vals[EEPROM_CFG_STOP_BYTES] = {
+            lowByte(rampStops[i].rpm), highByte(rampStops[i].rpm),
+            rampStops[i].r, rampStops[i].g, rampStops[i].b
+        };
+        for (uint8_t k = 0; k < EEPROM_CFG_STOP_BYTES; k++) {
+            EEPROM.update(base + k, vals[k]);
+            crc ^= vals[k];
+        }
+    }
+
+    EEPROM.update(EEPROM_CFG_CRC_ADDR, crc);
+    EEPROM.update(EEPROM_CFG_MAGIC_ADDR, EEPROM_CFG_MAGIC_VALUE);
+}
+
+bool loadLedConfig() {
+    if (EEPROM.read(EEPROM_CFG_MAGIC_ADDR) != EEPROM_CFG_MAGIC_VALUE) {
+        return false;   // never saved
+    }
+
+    uint8_t crc = 0;
+    for (uint8_t a = EEPROM_CFG_ADDR; a < EEPROM_CFG_CRC_ADDR; a++) {
+        crc ^= EEPROM.read(a);
+    }
+    if (crc != EEPROM.read(EEPROM_CFG_CRC_ADDR)) {
+        return false;   // torn or corrupted write
+    }
+
+    const uint8_t count = EEPROM.read(EEPROM_CFG_ADDR + 0);
+    if (count < 2 || count > RAMP_STOP_COUNT) return false;
+
+    const uint16_t full = (uint16_t)EEPROM.read(EEPROM_CFG_ADDR + 3)
+                        | ((uint16_t)EEPROM.read(EEPROM_CFG_ADDR + 4) << 8);
+    if (full < 2000 || full > 8000) return false;
+
+    // Everything checks out, so commit. Validation happens before any assignment so a
+    // rejected block cannot leave the live configuration half-updated.
+    rampStopCount = count;
+    themeDim = EEPROM.read(EEPROM_CFG_ADDR + 1) ? 1 : 0;
+    currentBrightness = EEPROM.read(EEPROM_CFG_ADDR + 2);
+    rpmFull = full;
+    for (uint8_t i = 0; i < RAMP_STOP_COUNT; i++) {
+        const uint8_t base = EEPROM_CFG_ADDR + 5 + i * EEPROM_CFG_STOP_BYTES;
+        rampStops[i].rpm = (uint16_t)EEPROM.read(base)
+                         | ((uint16_t)EEPROM.read(base + 1) << 8);
+        rampStops[i].r = EEPROM.read(base + 2);
+        rampStops[i].g = EEPROM.read(base + 3);
+        rampStops[i].b = EEPROM.read(base + 4);
+    }
+    return true;
+}
+
+// Print the live configuration so the Pi (or a person with a terminal) can see exactly
+// what the strip is using, including whether it survived a power cycle.
+inline void printHex2(uint8_t value) {
+    if (value < 0x10) cmdSerial.print('0');
+    cmdSerial.print(value, HEX);
+}
+
+void printLedConfig() {
+    cmdSerial.print(F("CFG:seq="));
+    cmdSerial.print(ledSequence);
+    cmdSerial.print(F(",full="));
+    cmdSerial.print(rpmFull);
+    cmdSerial.print(F(",dim="));
+    cmdSerial.print(themeDim);
+    cmdSerial.print(F(",bright="));
+    cmdSerial.print(currentBrightness);
+    cmdSerial.print(F(",stops="));
+    cmdSerial.print(rampStopCount);
+    cmdSerial.print(F(",ramp="));
+    for (uint8_t i = 0; i < rampStopCount; i++) {
+        if (i) cmdSerial.print(',');
+        cmdSerial.print(rampStops[i].rpm);
+        cmdSerial.print(':');
+        printHex2(rampStops[i].r);
+        printHex2(rampStops[i].g);
+        printHex2(rampStops[i].b);
+    }
+    cmdSerial.println();
 }
 
 void setLEDSequence(uint8_t seq) {
@@ -432,12 +545,27 @@ void handleSerialCommands() {
                             lastRenderedRPM = 0xFFFF;
                         } else if (strncmp(p, "pot=", 4) == 0) {
                             potEnabled = (atoi(p + 4) != 0);
+                        } else if (strncmp(p, "save", 4) == 0) {
+                            // Explicit, not automatic: a brightness slider drag must not
+                            // burn EEPROM write cycles.
+                            saveLedConfig();
+                            cmdSerial.println(F("OK:SAVE"));
+                        } else if (strncmp(p, "reset", 5) == 0) {
+                            // Soft reboot, so a save can be proved to survive one.
+                            cmdSerial.println(F("OK:RESET"));
+                            cmdSerial.flush();
+                            delay(50);
+                            wdt_enable(WDTO_15MS);
+                            for (;;) { }
                         }
                         char* comma = strchr(p, ',');
                         if (!comma) break;
                         p = comma + 1;
                     }
                     cmdSerial.println(F("OK:CFG"));
+                }
+                else if (strcmp(cmdBuffer, "CFG?") == 0) {
+                    printLedConfig();
                 }
                 else if (strncmp(cmdBuffer, "DEMO:", 5) == 0) {
                     // Bench override, see demoForced. "DEMO:OFF" hands control back to CAN.
@@ -877,6 +1005,12 @@ void setup() {
     Serial.begin(9600);
     #endif
     
+    // Clear any watchdog reset flag left by CFG:reset, and make sure the watchdog is off:
+    // the bootloader does not always clear WDRF, and an armed watchdog would reboot the
+    // strip mid-drive.
+    MCUSR = 0;
+    wdt_disable();
+    
     // Load LED sequence from EEPROM
     loadSettingsFromEEPROM();
     
@@ -884,6 +1018,14 @@ void setup() {
     Serial.print(F("LED Seq: "));
     Serial.println(ledSequence);
     #endif
+    
+    // Restore the ramp / brightness / dim flag if a complete, CRC-valid block is stored.
+    if (loadLedConfig()) {
+        potEnabled = false;   // the saved brightness is authoritative, not the floating pot
+        #if ENABLE_SERIAL_DEBUG
+        Serial.println(F("EEPROM load: LED config restored"));
+        #endif
+    }
     
     // Initialize serial for LED sequence commands from Pi/ESP32
     #if ENABLE_SERIAL_CMD && !defined(ENABLE_SERIAL_DEBUG)
@@ -898,7 +1040,7 @@ void setup() {
     
     // Initialize LED strip
     strip.begin();
-    strip.setBrightness(255);
+    strip.setBrightness(currentBrightness);
     strip.clear();
     strip.show();
     

@@ -1037,12 +1037,13 @@ the gear ladder shows `REVERSE`. Neutral must not flicker between `R` and `1`.
 ## ISSUE-15 — The LED control surface is one chip row
 
 **Status:** 🟡 **In progress.** The firmware half is done and on the car: a runtime colour
-ramp (`RAMP:`), `CFG:bright/theme/full`, theme dimming, a flowing colour mapping, and a
-`DEMO:` bench override used to validate it. The Pi forwards `led_ramp` / `led_theme_dim` /
-`led_brightness` settings to the strip, and the phone already pushes a theme-derived ramp
-from its own palette. **Still missing:** the dedicated `LED STRIP` screen in the app (the
-chip row is all there is today), EEPROM persistence of the ramp, and the Pi reading the
-strip's `STATUS` line back for a diagnostics row.
+ramp (`RAMP:`), `CFG:bright/theme/full`, theme dimming, a flowing colour mapping, a
+`DEMO:` bench override used to validate it, and EEPROM persistence (`CFG:save`, verified
+across a reboot). The Pi forwards `led_ramp` / `led_theme_dim` / `led_brightness` to the
+strip, reads its `STATUS:` line back into `/api/telemetry` as a `led` block, and the phone
+already pushes a theme-derived ramp from its own palette. **Still missing:** the dedicated
+`LED STRIP` screen in the app (the chip row is all there is today) — the API and health
+data it needs now exist.
 
 **Reported:** "I want to totally revamp the LED logic, but need to develop the plan more,
 specifically improving the Android MX5 app settings menu for the LEDs."

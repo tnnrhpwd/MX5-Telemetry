@@ -42,6 +42,7 @@ import math
 import sys
 import os
 import time
+import threading
 import argparse
 from enum import Enum, auto
 from dataclasses import dataclass, field
@@ -560,6 +561,10 @@ class PiDisplayApp:
         
         # Arduino serial handler (for LED sequence commands)
         self.arduino_serial = None
+        # Last STATUS line reported by the LED strip, for /api/telemetry. None until the
+        # strip has answered once.
+        self.led_status = None
+        self.led_config_line = ""
         
         # Web remote server (for phone control)
         self.web_server = None
@@ -727,12 +732,72 @@ class PiDisplayApp:
             # Send current LED sequence setting on connect
             self._send_led_sequence_to_arduino()
             self._send_led_config()
+            self._start_led_reader(conn)
             return
         
         # Not fatal - the strip keeps its own stored sequence - but the cause matters,
         # because a silent failure here looks exactly like "the setting did nothing".
         if failures:
             print("  ✗ Arduino/LED link unavailable - " + "; ".join(failures))
+
+    def _start_led_reader(self, conn):
+        """Read the Nano's status lines on a background thread.
+
+        The link was write-only, so the strip could not report anything: no health, no
+        version, no error. The firmware now emits `STATUS:` once a second, and this turns
+        it into `self.led_status` for `/api/telemetry` and the app's diagnostics row.
+        """
+        self.led_status = {'connected': True}
+        stop = getattr(self, '_led_reader_stop', None)
+        if stop is not None:
+            stop.set()
+        stop = threading.Event()
+        self._led_reader_stop = stop
+
+        def run():
+            buf = b""
+            while not stop.is_set():
+                try:
+                    chunk = conn.read(64)
+                except Exception:
+                    break
+                if not chunk:
+                    continue
+                buf += chunk
+                while b"\n" in buf:
+                    raw, buf = buf.split(b"\n", 1)
+                    line = raw.decode('ascii', 'replace').strip()
+                    self._handle_led_line(line)
+            self.led_status = {'connected': False}
+
+        threading.Thread(target=run, name="arduino-reader", daemon=True).start()
+
+    def _handle_led_line(self, line: str):
+        """Parse one line from the Nano into the status dict."""
+        if line.startswith("STATUS:"):
+            fields = {}
+            for part in line[7:].split(','):
+                key, _, value = part.partition('=')
+                if key:
+                    fields[key.strip()] = value.strip()
+            try:
+                self.led_status = {
+                    'connected': True,
+                    'can': fields.get('CAN') == '1',
+                    'rpm': int(fields.get('RPM', 0)),
+                    'sequence': int(fields.get('SEQ', 0)),
+                    'error': fields.get('ERR') == '1',
+                    'fps': int(fields.get('FPS', 0)),
+                    'last_id': fields.get('LAST', ''),
+                    'full_rpm': int(fields.get('FULL', 0)),
+                    'dim': fields.get('DIM') == '1',
+                    'demo_rpm': int(fields['DEMO']) if 'DEMO' in fields else None,
+                    'updated': time.time(),
+                }
+            except ValueError:
+                pass  # a partial line during a reset: keep the previous reading
+        elif line.startswith("CFG:"):
+            self.led_config_line = line
 
     @staticmethod
     def _arduino_answers(conn, timeout: float = 3.0) -> bool:

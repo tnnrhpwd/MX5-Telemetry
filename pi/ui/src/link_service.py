@@ -160,6 +160,10 @@ class LinkService:
             'can_connected': getattr(app, 'can_handler', None) is not None,
             'demo_mode': app.settings.demo_mode,
             'sleeping': app.sleeping,
+            # LED strip health, reported by the Nano itself over its serial link. The
+            # strip used to be a black box: a dead CAN link and a real 0 rpm looked the
+            # same on the panel and in the app.
+            'led': getattr(app, 'led_status', None) or {'connected': False},
         }
 
     def roof_status(self):
