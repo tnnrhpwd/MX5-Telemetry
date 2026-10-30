@@ -301,9 +301,27 @@ def test_a_falling_engine_is_drawn_ahead_downwards():
     assert engine.predict_rpm(1012, 3000, 3200, 1000, 980, True) == 2880
 
 
-def test_prediction_stops_at_the_horizon():
-    """Past 12 ms the sample is stale: hold it rather than extrapolate forever."""
-    assert engine.predict_rpm(1013, 3200, 3000, 1000, 980, True) == 3200
+def test_prediction_stops_at_one_sample_period():
+    """The horizon is the measured sample gap: at 21 ms with a 20 ms period, it is stale."""
+    assert engine.predict_rpm(1021, 3200, 3000, 1000, 980, True) == 3200
+
+
+def test_the_bar_is_still_moving_when_the_next_frame_is_due():
+    """The whole point: at exactly one period the bar must have travelled, not stopped.
+
+    3000 -> 3200 over 20 ms is 10 rpm/ms, and 20 ms of it is the full +200.
+    """
+    assert engine.predict_rpm(1020, 3200, 3000, 1000, 980, True) == 3400
+
+
+def test_a_slower_broadcast_stretches_the_horizon():
+    """3000 -> 3200 over 60 ms is 3.3 rpm/ms; 30 ms of it is +99, and 30 < 40 cap."""
+    assert engine.predict_rpm(1030, 3200, 3000, 1000, 940, True) == 3299
+
+
+def test_the_horizon_is_capped_even_when_the_broadcast_is_slower():
+    """A 60 ms period would allow 60 ms of lead; the ceiling is 40, so 41 ms holds."""
+    assert engine.predict_rpm(1041, 3200, 3000, 1000, 940, True) == 3200
 
 
 def test_a_stalled_link_does_not_get_a_slope():
@@ -317,8 +335,8 @@ def test_samples_too_close_together_are_ignored():
 
 
 def test_an_impossible_slope_is_clamped():
-    """6000 rpm in 4 ms is 1500 rpm/ms; clamped to MAX_SLOPE, so 12 ms of it is 240."""
-    assert engine.predict_rpm(1012, 6000, 0, 1000, 996, True) == 6240
+    """6000 rpm in 20 ms is 300 rpm/ms; clamped to MAX_SLOPE, so 12 ms of it is +240."""
+    assert engine.predict_rpm(1012, 6000, 0, 1000, 980, True) == 6240
 
 
 def test_prediction_cannot_exceed_full_scale_or_go_negative():

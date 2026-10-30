@@ -229,19 +229,26 @@ bool canInitialized = false;
 #define RPM_ALPHA_FALLING  0.75f   // Lift-off: light settle, still quick
 #define DIM_SCALE          170     // dark-mode brightness, 170/255 of full
 
-// How far ahead the bar may be drawn from the last two engine samples, in milliseconds.
+// How far ahead the bar may be drawn from the last two engine samples.
 //
 // The ECU broadcasts 0x201 far slower than the strip can repaint, so holding the last
 // reading makes the bar a staircase of one step per broadcast. Carrying the slope forward
-// for a fraction of a broadcast period turns that into continuous motion, and since the
-// bar otherwise lags by about half a period on average, half a period of lead cancels it.
-// It is bounded twice: the horizon (this value) and the slope itself, so a shift or a
-// missed frame cannot send the bar somewhere the engine never was. 0 disables it and the
-// bar simply holds the last reading.
-#define RPM_EXTRAPOLATE_MS 12
+// turns that into continuous motion, and since the bar otherwise lags by about half a
+// period on average, that much lead cancels it.
+//
+// The horizon is *one measured sample period*, not this number: predicting for less than
+// the inter-sample gap leaves the bar frozen at the end of every period, which reads as a
+// stutter followed by a jump. RPM_EXTRAPOLATE_MS is only the ceiling, and RPM_MAX_SLOPE is
+// the second bound, so a shift or a stalled link cannot send the bar somewhere the engine
+// never was. 0 disables prediction and the bar simply holds the last reading.
+#define RPM_EXTRAPOLATE_MS 40      // ceiling on the horizon, in ms
 
 // Bars faster than this are not an engine: it caps how far the prediction may run.
 #define RPM_MAX_SLOPE      20      // rpm per millisecond (20,000 rpm per second)
+
+// A sample gap this short is quantisation, not a rate; this long means the link stalled.
+#define RPM_MIN_SAMPLE_GAP 4
+#define RPM_MAX_SAMPLE_GAP 100
 
 static uint16_t rpmLast = 0;          // most recent filtered sample
 static uint16_t rpmPrev = 0;          // the one before it, for the slope
@@ -945,13 +952,19 @@ inline uint16_t predictRPM(unsigned long now_ms, uint16_t last, uint16_t prev,
     if (!have_history || now_ms < last_ms) {
         return last;
     }
-    const unsigned long gap = now_ms - last_ms;
-    if (gap > (unsigned long)RPM_EXTRAPOLATE_MS) {
-        return last;                       // stale: hold, do not run away
-    }
     const unsigned long sample_gap = last_ms - prev_ms;
-    if (sample_gap < 4UL || sample_gap > 100UL) {
+    if (sample_gap < RPM_MIN_SAMPLE_GAP || sample_gap > RPM_MAX_SAMPLE_GAP) {
         return last;                       // too close to trust, or the link stalled
+    }
+    // One period of lead, never more: short of it the bar stalls at the end of every
+    // period, longer than it and the lead outlives the evidence.
+    unsigned long horizon = sample_gap;
+    if (horizon > (unsigned long)RPM_EXTRAPOLATE_MS) {
+        horizon = (unsigned long)RPM_EXTRAPOLATE_MS;
+    }
+    const unsigned long gap = now_ms - last_ms;
+    if (gap > horizon) {
+        return last;                       // stale: hold, do not run away
     }
     // rpm per millisecond, in 1/16ths so the integer division does not round it to zero.
     int32_t slope16 = ((int32_t)last - (int32_t)prev) * 16L / (int32_t)sample_gap;

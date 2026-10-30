@@ -200,9 +200,12 @@ Two things were worth fixing, both now done:
    waited for the 10 ms fallback poll. The flag is now cleared *before* the drain, and the
    fallback poll is down to 2 ms. Worst case goes from ~10 ms of extra staleness to ~2 ms.
 3. **The bar only moved on a broadcast.** Holding the newest sample makes the bar a 20 ms
-   staircase; `predictRPM()` now carries the slope of the last two samples forward for at
-   most 12 ms, so it sweeps. See §4.3 for the guards, and `wire_check`'s sibling
-   `parity_check` for the 784-case comparison of the firmware against the port.
+   staircase; `predictRPM()` carries the slope of the last two samples forward, for at most
+   *one measured sample period* (capped at 40 ms), so it sweeps. The horizon matters: a fixed
+   12 ms against a 20 ms broadcast leaves the bar frozen for 8 ms of every period, which
+   reads as a stutter followed by a jump. `test_latency.py` measures the result — the drawn
+   rpm is 4 rpm (mean) from the truth against 27 rpm unpredicted, and 15 rpm worst case
+   in the steady state, which is 1/50 of an LED step.
 
 Still on the table, deliberately not done yet (they change what the driver sees, so they want
 the car, not a bench):
@@ -211,8 +214,12 @@ the car, not a bench):
   closed throttle. `RPM_SNAP_DELTA` 250 already bypasses it for gear changes.
 - **Resolution.** A 20-LED centre-out strip has 10 ranks, so each rank is 680 rpm at a 6800
   `full`. The fractional tip is what softens that; more LEDs is the only real fix.
-- **Predictor horizon.** `RPM_EXTRAPOLATE_MS` is 12 ms, roughly half a broadcast period. It is
-  a compile-time constant and the honest value is whichever feels right in the seat.
+- **Predictor horizon.** `RPM_EXTRAPOLATE_MS` (40 ms) is only the ceiling; the horizon is one
+  measured sample period, so a slower broadcast is covered without the lead outliving the
+  evidence. The remaining tuning is the slope limit, `RPM_MAX_SLOPE` = 20 rpm/ms.
+- **Repaint cadence.** 4 ms. Measured: 1 ms and 4 ms both land at ~4 rpm mean error, so it
+  could be halved with nothing to show for it — `test_latency.py` fails if a change pushes it
+  out of the flat region.
 
 ### 4.3 The CAN side of the chain
 
@@ -231,6 +238,22 @@ CAN side was doing to the latency:
 
 Verified by the parity harness now that it drives `DEMO` through the same cases as everything
 else: **1608 cases / 2892 frames**, and reverting the DEMO precedence makes 42 of them differ.
+
+### 4.4 What the loop is worth now
+
+`test_latency.py` simulates the whole path and reports the error between the painted rpm and
+the engine's actual rpm. On a 50 Hz broadcast with the 4 ms cadence:
+
+| case | mean | steady-state worst |
+|---|---|---|
+| no prediction, interrupt working | 27 rpm | 114 rpm |
+| prediction, interrupt working | **4 rpm** | **15 rpm** |
+| prediction, 10 ms late (a dead interrupt) | 34 rpm | 74 rpm |
+| prediction, 2 ms late (a missed edge only) | 10 rpm | 20 rpm |
+
+1 LED step is 756 rpm at a 6800 full, so the steady-state error is 1/50 of a pixel. The two
+receive-path fixes are worth 24 rpm of mean error between them, which is more than the
+renderer ever cost.
 
 
 ---

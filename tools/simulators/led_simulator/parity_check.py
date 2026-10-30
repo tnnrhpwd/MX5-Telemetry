@@ -816,6 +816,8 @@ PREDICT_PROBE = r"""
 
 #define RPM_EXTRAPOLATE_MS @EXTRAPOLATE@
 #define RPM_MAX_SLOPE @MAXSLOPE@
+#define RPM_MIN_SAMPLE_GAP @MINGAP@
+#define RPM_MAX_SAMPLE_GAP @MAXGAP@
 static uint16_t rpmFull = @FULL@;
 
 @PREDICT_FN@
@@ -842,16 +844,25 @@ def check_prediction(work: str, compiler: str, source: str) -> List[str]:
     """
     extrapolate = extract_define(source, "RPM_EXTRAPOLATE_MS").split()[0]
     max_slope = extract_define(source, "RPM_MAX_SLOPE").split()[0]
+    min_gap = extract_define(source, "RPM_MIN_SAMPLE_GAP").split()[0]
+    max_gap = extract_define(source, "RPM_MAX_SAMPLE_GAP").split()[0]
     full = 6800
     problems = []
-    if engine.EXTRAPOLATE_MS != int(extrapolate) or engine.MAX_SLOPE != int(max_slope):
-        problems.append("prediction constants: firmware says %s ms / %s rpm per ms, port "
-                        "says %s / %s" % (extrapolate, max_slope,
-                                          engine.EXTRAPOLATE_MS, engine.MAX_SLOPE))
+    if (engine.EXTRAPOLATE_MS != int(extrapolate)
+            or engine.MAX_SLOPE != int(max_slope)
+            or engine.MIN_SAMPLE_GAP != int(min_gap)
+            or engine.MAX_SAMPLE_GAP != int(max_gap)):
+        problems.append("prediction constants: firmware says %s/%s/%s/%s, port says %s/%s/"
+                        "%s/%s (horizon, slope, min gap, max gap)"
+                        % (extrapolate, max_slope, min_gap, max_gap,
+                           engine.EXTRAPOLATE_MS, engine.MAX_SLOPE,
+                           engine.MIN_SAMPLE_GAP, engine.MAX_SAMPLE_GAP))
 
     body = (PREDICT_PROBE
             .replace("@EXTRAPOLATE@", extrapolate)
             .replace("@MAXSLOPE@", max_slope)
+            .replace("@MINGAP@", min_gap)
+            .replace("@MAXGAP@", max_gap)
             .replace("@FULL@", str(full))
             .replace("@PREDICT_FN@", extract_function(source, "predictRPM")))
     with open(os.path.join(work, "predict.cpp"), "w", encoding="utf-8") as handle:

@@ -259,7 +259,37 @@ Proven not vacuous the same way: deleting the `'A'`–`'F'` branch from the firm
 app's uppercase hex stops parsing — makes every one of the 48 fail with the strip's old table
 still in place.
 
-### 5. What is deliberately *not* modeled
+### 5. The responsiveness: the whole loop is simulated against a known engine curve
+
+```bash
+python tools/simulators/led_simulator/test_latency.py
+```
+
+Correct pieces can still make a slow instrument. This runs the entire path — a 50 Hz
+broadcast, the strip reading what arrives, the predictor drawing between samples, the 4 ms
+repaint — against an engine curve that idles, pulls to 6500, holds, lifts hard and coasts,
+and reports the error between what the strip *paints* and what the engine *had* at that
+instant:
+
+| case | mean error | steady-state worst |
+|---|---|---|
+| no prediction, interrupt working | 27 rpm | 114 rpm |
+| **prediction, interrupt working** | **4 rpm** | **15 rpm** (1/50 of an LED step) |
+| prediction, 10 ms late (the old poll) | 34 rpm | 74 rpm |
+| prediction, 2 ms late (the new poll) | 10 rpm | 20 rpm |
+
+Which settles three arguments with numbers rather than taste: prediction is what makes the
+bar track, it is **not** a substitute for the interrupt (a late sample scores worse than no
+prediction at all), and the repaint cadence is inside the flat region — 1 ms and 4 ms both
+land at ~4 rpm, so `LED_UPDATE_INTERVAL` could be halved with nothing to show for it. The
+test fails if a future change pushes the cadence out of that region, or makes the delay
+cases stop mattering.
+
+The worst case overall is a *corner* — a hard lift drops 4100 rpm inside one sample period.
+Nothing can know that before sampling past it, so it is reported separately: it is
+information the strip does not have, not latency.
+
+### 6. What is deliberately *not* modeled
 
 Nothing here changes a pixel, but claiming "identical" without saying this would be
 overclaiming:

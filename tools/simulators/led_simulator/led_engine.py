@@ -82,8 +82,10 @@ RPM_ALPHA_FALLING = 0.75
 
 # Sub-frame prediction between CAN broadcasts, and the slope an engine could plausibly
 # produce. `EXTRAPOLATE_MS = 0` reproduces "hold the last reading".
-EXTRAPOLATE_MS = 12
-MAX_SLOPE = 20        # rpm per millisecond
+EXTRAPOLATE_MS = 40       # ceiling on the horizon; one measured sample period is the norm
+MAX_SLOPE = 20            # rpm per millisecond
+MIN_SAMPLE_GAP = 4        # shorter than this is quantisation, not a rate
+MAX_SAMPLE_GAP = 100      # longer than this and the link stalled
 
 
 def _f32(value: float) -> float:
@@ -220,23 +222,25 @@ def predict_rpm(now_ms: int, last: int, prev: int, last_ms: int, prev_ms: int,
                 have_history: bool, full_rpm: int = 6800) -> int:
     """Mirror of `predictRPM()`: where to draw the bar now, not where the engine last was.
 
-    The strip carries the last sample's slope forward for at most `EXTRAPOLATE_MS` so the
-    bar sweeps between CAN broadcasts instead of stepping once per frame. Every guard in
-    the firmware is here too, because the interesting behaviour is all in the guards: no
-    history, a stale sample, a gap too short to trust, or a slope no engine could produce
-    all fall back to simply holding the last reading.
+    The strip carries the last sample's slope forward for at most one measured sample
+    period so the bar sweeps between CAN broadcasts instead of stepping once per frame.
+    Every guard in the firmware is here too, because the interesting behaviour is all in
+    the guards: no history, a stale sample, a gap too short to trust, a stalled link, or a
+    slope no engine could produce all fall back to holding the last reading.
     """
     if EXTRAPOLATE_MS <= 0:
         return last
     if not have_history or now_ms < last_ms:
         return last
 
-    gap = now_ms - last_ms
-    if gap > EXTRAPOLATE_MS:
+    sample_gap = last_ms - prev_ms
+    if sample_gap < MIN_SAMPLE_GAP or sample_gap > MAX_SAMPLE_GAP:
         return last
 
-    sample_gap = last_ms - prev_ms
-    if sample_gap < 4 or sample_gap > 100:
+    # One period of lead, never more than the ceiling.
+    horizon = min(sample_gap, EXTRAPOLATE_MS)
+    gap = now_ms - last_ms
+    if gap > horizon:
         return last
 
     # rpm per millisecond, in 1/16ths so the integer division keeps its resolution
