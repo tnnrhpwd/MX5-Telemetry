@@ -502,6 +502,45 @@ def test_demo_mode_setting_reinitialises_the_data_sources():
     assert app.data_source_inits == 1
 
 
+def test_the_boolean_settings_accept_the_integers_the_app_sends():
+    """The app posts `{"name":"use_mph","value":1}` - a JSON number.
+
+    The web page posts the string '1', so comparing against '1' and True passed every
+    test and still turned both pill toggles into one-way switches on the phone: switching
+    mph ON stored False, and demo mode could never be switched ON at all.
+    """
+    app, _, _, session = build()
+    hello(session)
+    app.settings.use_mph = False
+    app.settings.demo_mode = False
+
+    ask(session, id=61, op='setting', name='use_mph', value=1)
+    assert app.settings.use_mph is True
+    ask(session, id=62, op='setting', name='demo_mode', value=1)
+    assert app.settings.demo_mode is True
+
+    ask(session, id=63, op='setting', name='use_mph', value=0)
+    assert app.settings.use_mph is False
+    ask(session, id=64, op='setting', name='demo_mode', value=0)
+    assert app.settings.demo_mode is False
+
+    # The strings the web page and the line protocol send still work.
+    ask(session, id=65, op='setting', name='use_mph', value='1')
+    assert app.settings.use_mph is True
+    ask(session, id=66, op='setting', name='use_mph', value='0')
+    assert app.settings.use_mph is False
+
+
+def test_false_booleans_from_a_json_client_are_not_read_as_true():
+    """JSON false and the string 'false' must switch the setting off, not on."""
+    app, _, _, session = build()
+    hello(session)
+    ask(session, id=67, op='setting', name='use_mph', value=False)
+    assert app.settings.use_mph is False
+    ask(session, id=68, op='setting', name='use_mph', value='false')
+    assert app.settings.use_mph is False
+
+
 def test_settings_are_synced_to_the_esp32():
     app, _, _, session = build()
     hello(session)

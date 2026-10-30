@@ -246,7 +246,7 @@ class LinkService:
         try:
             # Handle each setting type appropriately
             if name == 'demo_mode':
-                app.settings.demo_mode = (value == '1' or value is True)
+                app.settings.demo_mode = _truthy(value)
                 # Reinitialize data sources if demo mode changed
                 app._init_data_sources()
             elif name == 'brightness':
@@ -259,7 +259,7 @@ class LinkService:
             elif name == 'redline_rpm':
                 app.settings.redline_rpm = int(value)
             elif name == 'use_mph':
-                app.settings.use_mph = (value == '1' or value is True)
+                app.settings.use_mph = _truthy(value)
             elif name == 'tire_low_psi':
                 app.settings.tire_low_psi = float(value)
             elif name == 'tire_high_psi':
