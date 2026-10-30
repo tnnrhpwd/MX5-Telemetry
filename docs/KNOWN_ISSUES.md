@@ -57,8 +57,8 @@
 | [ISSUE-11](#issue-11--tpms-card-should-become-a-gear--rpm-card) | TPMS card on Overview → 3-gear RPM view | ESP32-S3 | Feature | 🟡 Medium | ✅ Fixed — numeric order, see ISSUE-13 |
 | [ISSUE-12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient) | LED strip laggy; flat colours, no gradient | Arduino Nano | Bug / Polish | 🟠 High | ✅ **Verified working on the strip** — full gradient at 6500 rpm |
 | **ISSUE-13** | Overview gear ladder is not in numeric order | ESP32-S3 | Bug | 🟡 Medium | ✅ **Fixed, flashed** — 2 × 3 grid |
-| **ISSUE-14** | Reverse shows a **positive** speed and gear 1, never `R` | Pi → ESP32-S3 | Bug | 🟠 High | ⏳ Open — probe tool ready, capture pending |
-| **ISSUE-15** | LED control surface is one chip row; needs a real settings screen | Android + Arduino | Feature | 🟠 High | 🟡 In progress — firmware + Pi forwarding done, app screen to build |
+| **ISSUE-14** | Reverse shows a **positive** speed and gear 1, never `R` | Pi → ESP32-S3 | Bug | 🟠 High | ⏳ Open — probe tool ready and analysed offline, capture pending |
+| **ISSUE-15** | LED control surface is one chip row; needs a real settings screen | Android + Arduino | Feature | 🟠 High | ✅ **Built** — screen, firmware keys and Pi API; needs a device pass |
 
 **Status key:** ✅ code complete and building · ❌ **verified still broken in the car** ·
 🟡 works but wrong/misleading · ⚠️ partially addressed, see the issue · ⏳ open.
@@ -76,7 +76,7 @@ fix that did not survive contact with the car.
 
 | # | Item | Next action | Effort |
 |---|------|-------------|--------|
-| 1 | **LED strip** ([12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient), [15](#issue-15--the-led-control-surface-is-one-chip-row)) | ✅ diagnosed and the firmware half is done on the car. Next: the `LED STRIP` app screen and EEPROM persistence ([LED_REVAMP_PLAN.md](LED_REVAMP_PLAN.md) Phases 2–3). | M |
+| 1 | **LED strip** ([12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient), [15](#issue-15--the-led-control-surface-is-one-chip-row)) | ✅ firmware, Pi API and the `LED STRIP` app screen are all built. Next: one pass on the car, then power-cycle both ends. | done → verify |
 | 2 | **Instant MPG never shows a number** ([10](#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder)) | ✅ fixed on the Pi (`listen-only off` on `can1`) and verified: the ECU answers MAF and IAT. | done |
 | 3 | **Drive app not reachable** ([09](#issue-09--app-is-not-available-while-driving)) | ✅ descriptor added, APK rebuilt and installed, service enumerates. Remaining: check it on the head unit, and a Play internal test track if AA still refuses sideloaded templated apps. | S → L |
 | 4 | **Gear ladder order** ([11](#issue-11--tpms-card-should-become-a-gear--rpm-card), [13](#issue-13--overview-gear-ladder-is-not-in-numeric-order)) | ✅ numeric 2 × 3 grid implemented and flashed. | done |
@@ -672,42 +672,28 @@ mechanism*, or the limitation is documented and accepted.
 
 ## ISSUE-10 — Instantaneous MPG always shows the empty placeholder
 
-**Status:** ❌ **Still `---` in the car (2026-10-30). Root cause confirmed, one-line fix
-pending.**
+**Status:** ✅ **Fixed, verified live (2026-10-30) — plus one Android bug found afterwards.**
 
-`pi/mx5-can-setup.sh` line 13:
+Root cause, confirmed on the car: `pi/mx5-can-setup.sh` brought the HS-CAN interface up
+with `listen-only on`, so the kernel dropped every `0x7DF` request and no ECU reply could
+ever arrive. `ip -details link show can1` reported `LISTEN-ONLY` with `TX packets 0`.
 
-```bash
-ip link set can1 up type can bitrate 500000 restart-ms 100 listen-only on
-```
+- The bring-up script now transmits on **can1 only** and keeps **can0 (MS-CAN)
+  listen-only** — that bus is body-bus and read-only by design:
+  `ip link set can1 up type can bitrate 500000 restart-ms 100 listen-only off`.
+- With TX enabled the ECU answers: `04 41 10 00 …` to `7DF#020110…`, and `IAT: 87F` in
+  the journal. MAF (`0x10`) and intake air (`0x0F`) share one rotating poll slot.
+- "Unknown" is distinct from "0 mpg": `instant_mpg_valid` travels in `TEL:` and in the
+  HTTP snapshot, and both the ESP and the Android Engine page show `--` only when it is
+  false.
 
-`can1` is the HS-CAN interface the handler uses. With `listen-only on` the kernel **does
-not transmit** `0x7DF`, so `_maybe_request_obd()` writes into a black hole: no ECU reply,
-no `MAF: x g/s` log line, `telemetry.maf` stays 0, the `maf > 0.5` guard fails, and
-`instant_mpg_valid` is false forever. This is not a suspicion any more — the project's own
-bring-up script does it, and it explains why ISSUE-03 (IAT, the other PID on that slot) is
-equally dead.
-
-- "Unknown" is now distinct from "0 mpg": `instant_mpg_valid` travels in `TEL:` and in
-  the HTTP snapshot, and both the ESP and the Android Engine page show `--` only when it
-  is false.
-- OBD-II requests now rotate MAF (`0x10`) and intake air (`0x0F`) on one slot.
-
-**Fix (proposed approach, step 1):** bring only the HS-CAN interface out of listen-only,
-keep MS-CAN listen-only (it is body-bus and read-only by design):
-
-```bash
-ip link set can1 up type can bitrate 500000 restart-ms 100 listen-only off
-```
-
-An OBD-II Mode 01 read is a benign, standard request; the Nano stays listen-only, so
-nothing else starts talking on the car. Then verify with the existing `MAF:` log line.
-
-**Step 2 (if the ECU still does not answer):** run a supported-PID scan
-(Mode 01 PIDs `0x00`/`0x20`/`0x40` bitmaps) and log it once at startup — that answers
-definitively whether this ECU exposes MAF (`0x10`), fuel rate (`0x5E`, Mazda-specific) or
-neither. If neither: derive fuel flow from RPM + calculated load (`0x04`) with a
-speed-density estimate, clearly labelled as an estimate in the UI.
+**Found afterwards, in code (2026-10-30, no car needed):** the Android page would still
+have shown `--` even with a working MAF. The shell keeps one long-lived `Telemetry` and
+copied every field by hand on each poll — and `instantMpgValid` was not in that list. The
+Engine page therefore read the default `false` forever. The copy now lives in
+`Telemetry.copyFrom()` next to the fields, so a new field cannot be forgotten again. This
+is the second time a hand-maintained copy list caused a "no data" symptom, and it is the
+reason the symptom survived the Pi-side fix.
 
 **Reported:** Instantaneous fuel economy is always `---` (the ESP draws `--`).
 
@@ -947,45 +933,47 @@ at the true redline rather than 1000 RPM early.
 
 ## ISSUE-13 — Overview gear ladder is not in numeric order
 
-**Status:** ⏳ **Open** (found in the car 2026-10-30).
+**Status:** ✅ **Fixed and flashed (2026-10-30).**
+
+`drawGearLadder()` now draws all six gears in numeric order on a 2 × 3 grid — `1 2` /
+`3 4` / `5 6` — with the current gear's cell elevated and the sweet-spot information
+carried only by the colour of each RPM figure (green inside 2400–4500, blue below, red
+above). The rows are painted only when their own value changes, so the ladder no longer
+flashes as the speed changes.
+
+**Where it lives:** [ui_core.cpp](../display/src/ui_core/ui_core.cpp) — `drawGearLadder()`.
 
 **Reported:** "On the overview ESP32 screen where it shows gears and the associated RPM, it
 should order the gears from 1-6 numerically rather than random order."
 
-**What it does today:** `drawGearLadder()`
-([ui_core.cpp](../display/src/ui_core/ui_core.cpp#L621)) scores all six gears by how far
-their predicted RPM is from the 2400–4500 band and prints the three lowest scores in score
-order. That is *by design* ("the three most likely"), but the visible result is a list
-whose numbers jump around (`4, 3, 5`), which reads as broken rather than helpful.
-
-**Proposed approach — show all six, in order:**
-
-- Replace the three-row "most likely" list with a **2 × 3 grid in numeric order**:
-  row 1 = `1 2`, row 2 = `3 4`, row 3 = `5 6`. Reading order is left-to-right,
-  top-to-bottom, so the eye sees 1→6.
-- Each cell keeps both pieces of information: the gear number (scale 2) and the predicted
-  RPM at the current speed (scale 1, right-aligned). Cell ≈ 71 px wide inside the existing
-  146 px block, so `1234` at scale 1 fits with room to spare.
-- Keep the sweet-spot colour code on the RPM text (green inside 2400–4500, blue below, red
-  above) — that is what actually tells the driver something; the ordering carries the
-  "which gear is which" job.
-- Keep the current gear's cell elevated, and keep the `REVERSE` / `STOPPED` placeholders.
-- Geometry: 3 rows × 24 px + 2 × 2 px gaps = 76 px, starting at y=250 → ends at 326. The
-  360 px circle is ≥ 210 px wide at that height, so the block fits without touching the
-  disc edge.
-- Cost: `drawGearLadder()` is gated on `speedChanged || gearChanged || reverseChanged`
-  already, and six cells is fewer `LCD_FillRoundRect` calls than three wide rows plus
-  text, so the redraw budget does not grow.
+**What it did before:** the old code scored all six gears by how far their predicted RPM
+was from the 2400–4500 band and printed the three lowest scores in score order. That is
+*by design* ("the three most likely"), but the visible result was a list whose numbers
+jumped around (`4, 3, 5`), which reads as broken rather than helpful.
 
 **Done when:** At 60 km/h in 4th the ladder reads `1 2 / 3 4 / 5 6` with 4 highlighted,
-and the numbers never reorder as speed changes.
+and the numbers never reorder as speed changes. — *believe met; confirm on the next drive.*
 
 ---
 
 ## ISSUE-14 — Reverse reports a positive speed and gear 1
 
-**Status:** ⏳ **Open** (found in the car 2026-10-30, supersedes the "fixed" claim in
-ISSUE-01).
+**Status:** ⏳ **Open — blocked on one capture** (found in the car 2026-10-30, supersedes
+the "fixed" claim in ISSUE-01).
+
+`tools/can/reverse_probe.py` captures both buses in two states and diffs them. The
+*analysis* half is now verified without the car: `tools/can/test_reverse_probe.py` pins
+down what "the signal" looks like against synthetic captures (7/7 pass), and two real
+defects were fixed while doing it:
+
+1. **The tool refused to run without `python-can`**, even for `diff`, which only needs the
+   saved JSON. Captures are taken on the Pi and read wherever it is comfortable; the import
+   is now inside `capture()`.
+2. **One noisy byte demoted an entire frame.** `0x201` carries the engine speed, so most of
+   it changes constantly — which meant a clean reverse bit sitting in byte 5 of `0x201`
+   was reported as a weak candidate, exactly the frame most likely to hold the answer. A
+   frame is now a strong candidate when *at least one* changed byte is stable in each
+   capture and takes different values in each, and the report names that byte.
 
 **Reported:** "When driving in reverse, the ESP32 shown speed is still positive, meaning
 the translated gear is still first rather than reverse."
@@ -1036,14 +1024,32 @@ the gear ladder shows `REVERSE`. Neutral must not flicker between `R` and `1`.
 
 ## ISSUE-15 — The LED control surface is one chip row
 
-**Status:** 🟡 **In progress.** The firmware half is done and on the car: a runtime colour
-ramp (`RAMP:`), `CFG:bright/theme/full`, theme dimming, a flowing colour mapping, a
-`DEMO:` bench override used to validate it, and EEPROM persistence (`CFG:save`, verified
-across a reboot). The Pi forwards `led_ramp` / `led_theme_dim` / `led_brightness` to the
-strip, reads its `STATUS:` line back into `/api/telemetry` as a `led` block, and the phone
-already pushes a theme-derived ramp from its own palette. **Still missing:** the dedicated
-`LED STRIP` screen in the app (the chip row is all there is today) — the API and health
-data it needs now exist.
+**Status:** ✅ **Built end to end (2026-10-30, no car needed) — needs one device pass.**
+
+- **Firmware:** besides the ramp/`CFG:bright|theme|full`/`DEMO:` work already on the
+  strip, the Nano now takes `en=`, `mode=`, `shift=`, `hz=` and `scol=` in `CFG:`, plus
+  `SELFTEST` and `IDENTIFY`. Those five used to be compile-time constants, so "switch the
+  strip off" and "set the shift point" both needed a reflash. They persist in the EEPROM
+  block, whose magic byte is now a layout version (`0x5B`) so an older block is rejected
+  instead of half-read.
+- **Pi:** `led_enabled`, `led_color_mode`, `led_shift_rpm`, `led_shift_hz` and
+  `led_shift_color` are validated in `update_setting()` (an out-of-range value is a 400,
+  not a silently-clamped surprise), exposed in `/api/status`, forwarded to the strip, and
+  persisted to `state/led_settings.json` so a Pi restart no longer undoes the app's
+  choices. `POST /api/led/command` forwards `SELFTEST`/`IDENTIFY`/`DEMO:` from an
+  allow-list — `CFG:reset` is deliberately not in it, because that reboots the board.
+- **App:** `LedScreen` (phone-only, `piScreen() == -1`) replaces the single chip row.
+  Strip group (enable, brightness, fill pattern, colour mode), colour-ramp group
+  (follow-theme switch, a "Full at" rpm scale, six colour swatches), shift-light group
+  (on/off, start rpm, flash rate, colour) and a diagnostics group that renders the Nano's
+  live `STATUS:` line, with self-test and identify buttons. Settings keeps a one-line
+  summary that opens it.
+- **Latency:** the sliders push on release, not per tick, and both the serial write and
+  the JSON save skip identical payloads. A drag would otherwise queue more commands than
+  9600 baud can carry.
+
+**Remaining:** one pass on the car — change each control and watch the strip, then power
+cycle the Nano and the Pi and confirm the values come back.
 
 **Reported:** "I want to totally revamp the LED logic, but need to develop the plan more,
 specifically improving the Android MX5 app settings menu for the LEDs."
@@ -1188,15 +1194,25 @@ because it compiled.
 
 ## Build verification
 
-What was actually run after the changes (no car, no phone):
+What was actually run after the LED-screen round (2026-10-30, no car, no phone, and
+**nothing uploaded**):
+
+| Component | Command | Result |
+|-----------|---------|--------|
+| Arduino Nano firmware | `pio run -d arduino -e nano` | ✅ SUCCESS — RAM 33.6%, flash **52.4%** (16 KB free; the CFG keys, shift light and bench commands cost ~1.4 KB) |
+| ESP32-S3 firmware | `pio run -d display` | ✅ SUCCESS — RAM 30.0%, flash 35.2% |
+| Android app (both flavors) | `gradlew --offline :mx5-remote:assembleParkedDebug :mx5-remote:assembleDriveDebug` | ✅ BUILD SUCCESSFUL |
+| Pi link protocol + LED keys | `python pi/ui/src/test_link_protocol.py` | ✅ **58/58** passed (was 50; +8 for the new settings and the LED command allow-list) |
+| Reverse probe analysis | `python tools/can/test_reverse_probe.py` | ✅ **7/7** passed |
+| Pi LED persistence | ad-hoc round trip | ✅ save → load identical; missing file and corrupt JSON both fall back to defaults without raising |
+| Pi modules | `python -m py_compile main.py link_service.py web_server.py link_protocol.py` | ✅ clean |
+
+Earlier round, for the record:
 
 | Component | Command | Result |
 |-----------|---------|--------|
 | ESP32-S3 UI (native sim) | `tools\simulators\native\build.bat` | ✅ builds; screens rendered to `shot_0..7.bmp` |
-| ESP32-S3 firmware | `pio run -d display` | ✅ SUCCESS — RAM 30.0%, flash 34.3% |
-| Arduino Nano firmware | `pio run -d arduino -e nano` (after clean) | ✅ SUCCESS — RAM 20.3%, flash 42.5% |
-| Android app | `gradle -p android :mx5-remote:assembleParkedDebug :mx5-remote:assembleDriveDebug` | ✅ BUILD SUCCESSFUL — `com.mx5.remote` (game, `CAR_LAUNCHER`) and `com.mx5.remote.drive` (`category.IOT`) verified with `aapt2 dump xmltree` |
-| Pi Python + link protocol | `python pi/ui/src/test_link_protocol.py` | ✅ 50/50 passed |
+| Android manifests | `aapt2 dump xmltree` | ✅ parked = `game` + `CAR_LAUNCHER`; drive = `category.IOT` service |
 | Pi CAN parsing | ad-hoc checks | ✅ speed km/h, negative flooring, throttle `0x201`, IAT `0x0F`, 60 s fuel window, reverse flag |
 
 `pio run -d arduino` also reports the `native_sim` environment as FAILED on this machine
@@ -1214,21 +1230,28 @@ limitation, not a code failure; `nano` — the environment that ships — succee
 | Step | Target | Command / action | Why this order |
 |------|--------|------------------|----------------|
 | 1 | **Pi** | `ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx5-display'` | The Pi is the source of every value. The new `TEL:` fields are appended, so an old ESP still parses fields 0-14 correctly. |
-| 2 | **ESP32-S3** | `ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'` | Adds the reverse/brake/MPG-valid fields, theme support, gear ladder, G-force port and boot animation. Works against a new Pi; against an old Pi it just keeps the defaults. |
-| 3 | **Android phone** | `adb install -r android\mx5-remote\build\outputs\apk\parked\debug\mx5-remote-parked-debug.apk` and `...\apk\drive\debug\mx5-remote-drive-debug.apk` | The parked app now pushes the theme; the drive app is the templated surface. Both are needed for the two launcher tiles. |
-| 4 | **Arduino Nano** | Plug into the PC, then `pio run -d arduino --target upload` | Independent of the link protocol; can be done any time. |
+| 2 | **Arduino Nano** | Plug into the PC, then `pio run -d arduino -e nano --target upload` | **Not protocol-order-dependent, but do it with the phone work:** the new `CFG:en/mode/shift/hz/scol` keys and `SELFTEST`/`IDENTIFY` only exist in this build. An old Nano answers `OK:CFG` to keys it ignores, so the app would look like it worked while nothing changed. |
+| 3 | **ESP32-S3** | `ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && ~/.local/bin/pio run -d display --target upload'` | Adds the reverse/brake/MPG-valid fields, theme support, gear ladder, G-force port and boot animation. Works against a new Pi; against an old Pi it just keeps the defaults. |
+| 4 | **Android phone** | `adb install -r android\mx5-remote\build\outputs\apk\parked\debug\mx5-remote-parked-debug.apk` and `...\apk\drive\debug\mx5-remote-drive-debug.apk` | The parked app now pushes the theme and carries the `LED STRIP` screen; the drive app is the templated surface. Both are needed for the two launcher tiles. |
 
 Then, with the car:
 
 1. Ignition on, engine running: confirm the ESP boots to dark aurora, then change scheme
    in the phone app and confirm the ESP follows within ~1 s.
-2. Reverse: `R` on both the ESP Overview and RPM pages.
+2. Reverse: `R` on both the ESP Overview and RPM pages, and a **negative** or `0` speed.
+   If it still shows gear 1, run the two-state capture
+   (`python3 tools/can/reverse_probe.py capture park` / `capture reverse`, then
+   `diff park reverse` — the diff runs anywhere, no `python-can` needed).
 3. Stationary: press each pedal; throttle % and the brake ON/OFF indicator must track.
    Capture a `0x200`/`0x201`/`0x212` log if throttle still looks wrong.
-4. Steady 40 mph: phone, ESP and the car's speedometer agree.
-5. Check the `MAF:` log line. If it never appears, instant MPG will correctly show `--`
-   until the listen-only question is resolved.
+4. Steady 40 mph: phone, ESP and the car's speedometer agree, and the Engine page shows a
+   real instantaneous MPG rather than `--`.
+5. `LED STRIP` screen: toggle enable (strip goes dark), move each slider, pick a colour,
+   set "Full at" to ~4000 and watch the bar fill sooner, then `Self test` and `Identify`.
+   Power-cycle the Nano **and** the Pi and confirm every value comes back.
 6. Drive: fuel % and range hold steady; the LED strip tracks a blip with no visible lag.
+
+### Result of that run (2026-10-30)
 
 ### Result of that run (2026-10-30)
 
@@ -1274,16 +1297,20 @@ impressive enough yet (ISSUE-07).
 
 ## Still open
 
-- **ISSUE-14:** find the real reverse signal (probe log first). The sign of the `0x201`
-  speed field does not carry it on this car.
-- **ISSUE-13:** implement the numeric 2 × 3 gear grid.
-- **ISSUE-12/15:** Phase 0 diagnosis, then the LED rewrite
-  ([LED_REVAMP_PLAN.md](LED_REVAMP_PLAN.md)).
-- **ISSUE-09:** add `automotive_app_desc.xml` + meta-data to the drive flavor, then decide
-  on a Play internal test track.
+- **ISSUE-14:** find the real reverse signal. The sign of the `0x201` speed field does not
+  carry it on this car. The probe tool now diffs two captures offline
+  (`tools/can/reverse_probe.py diff park reverse`, no `python-can` needed) and picks the
+  byte that actually discriminates; what is missing is the one 8-second capture in each
+  state.
+- **ISSUE-15 / 12:** built end to end — one device pass to confirm every control moves the
+  strip and survives a power cycle on both ends.
+- **ISSUE-09:** check the drive package on the head unit; a Play internal test track if the
+  host refuses sideloaded templated apps.
 - **ISSUE-04:** confirm the `0x201` byte-6 throttle layout with a pedal log.
-- **ISSUE-03 / ISSUE-10:** ✅ *answered* — the HS-CAN interface is brought up `listen-only`
-  in `pi/mx5-can-setup.sh`, so no OBD-II request is ever transmitted. Fix the interface
-  mode, then confirm the ECU answers PID `0x0F`/`0x10`.
+- **ISSUE-03 / 10:** ✅ *answered* — HS-CAN now transmits (`listen-only off` on `can1`,
+  MS-CAN stays listen-only), the ECU answers `0x0F` and `0x10`, and the Android page's
+  lost validity flag is fixed.
+- **ISSUE-07:** a proper startup animation. Design pass, then implement; only the car can
+  judge the pacing.
 - **ISSUE-02:** the light theme is an sRGB approximation of the app's OKLCH derivation.
 

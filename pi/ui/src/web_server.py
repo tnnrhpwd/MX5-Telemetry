@@ -233,6 +233,14 @@ class WebRemoteServer:
                                    {payload['name']: payload['value']})
             return jsonify(payload), status
         
+        @self.app.route('/api/led/command', methods=['POST'])
+        @self._require_auth
+        def led_command():
+            """Forward a bench command to the LED strip (self-test, identify, demo rpm)."""
+            data = request.json or {}
+            payload, status = self.link.led_command(data.get('command'))
+            return jsonify(payload), status
+
         @self.app.route('/api/wake', methods=['POST'])
         @self._require_auth
         def wake_display():

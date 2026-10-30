@@ -41,6 +41,7 @@ import pygame.sndarray
 import math
 import sys
 import os
+import json
 import time
 import threading
 import argparse
@@ -264,6 +265,13 @@ class Settings:
     led_ramp: str = ""              # "<rpm>:<rrggbb>,..." ending at the full-illumination rpm
     led_theme_dim: int = -1         # -1 = unset, 1 = dimmer (dark mode), 0 = full brightness
     led_brightness: int = -1        # -1 = leave the strip alone, else 0-255
+    # Behaviour that used to be compiled into the Nano. Kept here as well so the phone can
+    # read back what it set, and so state/led_settings.json can restore it after a reboot.
+    led_enabled: int = 1            # 0 = strip dark
+    led_color_mode: int = 0         # 0 = position (flowing gradient), 1 = rpm (one wash)
+    led_shift_rpm: int = 6300       # 0 disables the shift light
+    led_shift_hz: int = 8           # flashes per second while shifting
+    led_shift_color: str = "ff0000"  # rrggbb
     clutch_display_mode: int = 0  # 0=Gear#(colored), 1='C', 2='S', 3='-'
     # Theme mirrored from the phone app so the round display can match it.
     # The phone is authoritative. Empty means "never received": the Pi then sends
@@ -729,9 +737,14 @@ class PiDisplayApp:
             
             self.arduino_serial = conn
             print(f"  ✓ Arduino serial connected on {port} (LED sequence control)")
-            # Send current LED sequence setting on connect
-            self._send_led_sequence_to_arduino()
-            self._send_led_config()
+            # Send current LED sequence setting on connect. The caches are cleared first:
+            # the board may have rebooted into its own stored defaults, so an unchanged
+            # setting still has to be pushed.
+            self._led_config_last = None
+            self._led_config_ramp_last = None
+            self._led_settings_last = None
+            self._load_led_settings()
+            self.apply_led_settings(persist=False)
             self._start_led_reader(conn)
             return
         
@@ -791,6 +804,10 @@ class PiDisplayApp:
                     'last_id': fields.get('LAST', ''),
                     'full_rpm': int(fields.get('FULL', 0)),
                     'dim': fields.get('DIM') == '1',
+                    'enabled': fields.get('EN', '1') == '1',
+                    'color_mode': int(fields.get('MODE', 0)),
+                    'shift_rpm': int(fields.get('SHIFT', 0)),
+                    'shift_hz': int(fields.get('HZ', 0)),
                     'demo_rpm': int(fields['DEMO']) if 'DEMO' in fields else None,
                     'updated': time.time(),
                 }
@@ -1018,7 +1035,7 @@ class PiDisplayApp:
             print(f"Pi: Failed to send LED sequence to Arduino: {e}")
     
     def _send_led_config(self):
-        """Send the ramp / brightness / dimming configuration to the Arduino.
+        """Send the ramp / brightness / dimming / behaviour configuration to the Arduino.
 
         The strip's colours used to be compiled in. They are now runtime settings so it
         can follow the phone's theme, which means the Pi has to forward them on connect
@@ -1033,15 +1050,105 @@ class PiDisplayApp:
                 cfg.append(f"theme={self.settings.led_theme_dim}")
             if self.settings.led_brightness >= 0:
                 cfg.append(f"bright={self.settings.led_brightness}")
-            if cfg:
-                self.arduino_serial.write(("CFG:" + ",".join(cfg) + "\n").encode())
-            if self.settings.led_ramp:
-                self.arduino_serial.write(f"RAMP:{self.settings.led_ramp}\n".encode())
+            cfg.append(f"en={1 if self.settings.led_enabled else 0}")
+            cfg.append(f"mode={1 if self.settings.led_color_mode else 0}")
+            cfg.append(f"shift={self.settings.led_shift_rpm}")
+            cfg.append(f"hz={self.settings.led_shift_hz}")
+            cfg.append(f"scol={self.settings.led_shift_color}")
+            line = "CFG:" + ",".join(cfg)
+            # 9600 baud carries about 960 bytes a second, and a drag produces far more
+            # updates than that. Re-sending an identical line is pure queueing delay.
+            ramp_line = f"RAMP:{self.settings.led_ramp}" if self.settings.led_ramp else None
+            if (line == getattr(self, '_led_config_last', None)
+                    and ramp_line == getattr(self, '_led_config_ramp_last', None)):
+                return
+            self.arduino_serial.write((line + "\n").encode())
+            if ramp_line:
+                self.arduino_serial.write((ramp_line + "\n").encode())
+            self._led_config_last = line
+            self._led_config_ramp_last = ramp_line
             print("Pi: Sent LED configuration to Arduino "
                   f"(ramp={'yes' if self.settings.led_ramp else 'default'}, "
-                  f"theme={self.settings.led_theme_dim})")
+                  f"theme={self.settings.led_theme_dim}, "
+                  f"en={self.settings.led_enabled}, "
+                  f"shift={self.settings.led_shift_rpm}@{self.settings.led_shift_hz}Hz)")
         except Exception as e:
             print(f"Pi: Failed to send LED configuration: {e}")
+
+    # -- LED settings persistence --------------------------------------------
+    #
+    # The Pi had no settings file at all, so every restart reverted the strip to whatever
+    # the Nano's EEPROM said and the phone's choices looked like they had been ignored.
+    # The Nano still persists its own copy; this one restores what the *Pi* should send,
+    # so the two agree after a Pi-only reboot.
+
+    @staticmethod
+    def _led_settings_path() -> str:
+        state_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 '..', '..', '..', 'state')
+        return os.path.abspath(os.path.join(state_dir, 'led_settings.json'))
+
+    LED_PERSISTED_KEYS = (
+        'led_enabled', 'led_color_mode', 'led_sequence', 'led_brightness',
+        'led_theme_dim', 'led_ramp', 'led_shift_rpm', 'led_shift_hz', 'led_shift_color',
+    )
+
+    def _load_led_settings(self):
+        """Restore the LED settings from disk, if a previous run wrote any."""
+        path = self._led_settings_path()
+        try:
+            with open(path, 'r') as f:
+                stored = json.load(f)
+        except FileNotFoundError:
+            return
+        except Exception as e:
+            print(f"Pi: Could not read {path}: {e}")
+            return
+        applied = []
+        for key in self.LED_PERSISTED_KEYS:
+            if key in stored:
+                setattr(self.settings, key, stored[key])
+                applied.append(key)
+        if applied:
+            print(f"Pi: Restored {len(applied)} LED settings from {os.path.basename(path)}")
+
+    def _save_led_settings(self):
+        """Write the LED settings so a Pi restart does not undo the app's choices."""
+        payload = {k: getattr(self.settings, k) for k in self.LED_PERSISTED_KEYS}
+        # A slider drag calls this on every tick; identical payloads are already on disk.
+        if payload == getattr(self, '_led_settings_last', None):
+            return
+        path = self._led_settings_path()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w') as f:
+                json.dump(payload, f, indent=2)
+            self._led_settings_last = payload
+        except Exception as e:
+            print(f"Pi: Could not save LED settings: {e}")
+
+    def apply_led_settings(self, persist: bool = True):
+        """Push every LED setting to the strip, and remember it for the next boot."""
+        self._send_led_sequence_to_arduino()
+        self._send_led_config()
+        if persist:
+            self._save_led_settings()
+
+    def send_led_command(self, command: str) -> bool:
+        """Write one already-validated command line to the strip.
+
+        Used by the bench commands (SELFTEST, IDENTIFY, DEMO) that the app's diagnostics
+        group exposes. The reply comes back asynchronously on the reader thread, so this
+        only reports whether the bytes reached the port.
+        """
+        if not (hasattr(self, 'arduino_serial') and self.arduino_serial and self.arduino_serial.is_open):
+            return False
+        try:
+            self.arduino_serial.write((command + "\n").encode())
+            return True
+        except Exception as e:
+            print(f"Pi: Failed to send {command!r} to the strip: {e}")
+            return False
     
     def _on_esp32_settings_sync(self, settings_dict: dict):
         """Callback when ESP32 sends all settings - full sync to Pi"""

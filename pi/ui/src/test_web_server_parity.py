@@ -99,6 +99,11 @@ SETTINGS = [
     ('tire_high_psi', 38),
     ('coolant_warn', 210),
     ('led_sequence', 3),
+    ('led_enabled', 0),
+    ('led_color_mode', 1),
+    ('led_shift_rpm', 5800),
+    ('led_shift_hz', 12),
+    ('led_shift_color', '00ff88'),
     ('clutch_display_mode', 2),
     ('unknown_setting', 1),
 ]
@@ -107,6 +112,18 @@ for _name, _value in SETTINGS:
                   {'json': {'name': _name, 'value': _value}}, None))
 CASES.append(('setting_missing_name', 'post', '/api/settings/update',
               {'json': {'value': 1}}, None))
+
+# LED bench commands: one accepted, one refused, and the allow-list's job of keeping
+# CFG:reset (a watchdog reboot) out of the app's reach.
+CASES.append(('led_selftest', 'post', '/api/led/command',
+              {'json': {'command': 'SELFTEST'}}, None))
+CASES.append(('led_identify', 'post', '/api/led/command',
+              {'json': {'command': 'identify'}}, None))
+CASES.append(('led_demo_rpm', 'post', '/api/led/command',
+              {'json': {'command': 'DEMO:2500'}}, None))
+CASES.append(('led_reset_refused', 'post', '/api/led/command',
+              {'json': {'command': 'CFG:reset'}}, None))
+CASES.append(('led_missing_command', 'post', '/api/led/command', {'json': {}}, None))
 
 
 def run_case(name, method, path, kwargs, prep):

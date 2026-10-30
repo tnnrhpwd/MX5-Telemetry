@@ -188,3 +188,9 @@ secrets-patterns.txt
 # Keep these on your own machine/drive, not in version control.
 # ============================================================================
 backups/
+
+# ============================================================================
+# Runtime state written by the Pi (e.g. state/led_settings.json, which restores the
+# strip's settings after a restart). Machine-specific, never source.
+# ============================================================================
+state/

@@ -161,6 +161,9 @@ class LinkProtocol:
         if op == 'calibrate_imu':
             payload, _ = s.calibrate_imu()
             return payload
+        if op == 'led.command':
+            payload, _ = s.led_command(request.get('value'))
+            return payload
 
         # -- roof controller
         if op in ('roof.speed', 'roof.auto', 'roof.mode'):

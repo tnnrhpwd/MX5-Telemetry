@@ -15,11 +15,10 @@ public class SettingsScreen extends Screen {
     private Ui.Panel panel;
 
     private SliderRow brightness, volume, shiftRpm, redlineRpm, tireLow, tireHigh, coolantWarn;
-    private Chips ledSequence, clutchMode;
+    private Chips clutchMode;
     private Ui.Pill useMph, demoMode;
+    private TextView ledSummary;
 
-    private static final String[] LED_NAMES = {"Center out", "Left to right", "Right to left", "Center in"};
-    private static final int[] LED_VALUES = {1, 2, 3, 4};
     private static final String[] CLUTCH_NAMES = {"Gear", "C for clutch", "S for shifting", "Dash"};
     private static final int[] CLUTCH_VALUES = {0, 1, 2, 3};
 
@@ -113,9 +112,16 @@ public class SettingsScreen extends Screen {
         right.addView(coolantWarn);
 
         right.addView(sectionGap(c, p, "LED STRIP", 1));
-        ledSequence = new Chips(c, p, LED_NAMES, LED_VALUES, p.accent,
-                v -> push("led_sequence", v));
-        right.addView(ledSequence, wrap(c));
+        // One line that says what the strip is doing and gets out of the way. Everything
+        // that used to be edited here - pattern, colours, brightness, shift point - moved
+        // to its own screen, because eleven controls in a settings column is not a control
+        // surface, and the strip's own health had nowhere to appear at all.
+        ledSummary = Ui.label(c, 11f, p.accent);
+        ledSummary.setPadding(0, Ui.dp(c, 4), 0, Ui.dp(c, 4));
+        ledSummary.setClickable(true);
+        ledSummary.setFocusable(true);
+        ledSummary.setOnClickListener(v -> host.openScreen(LedScreen.class));
+        right.addView(ledSummary, wrap(c));
 
         right.addView(sectionGap(c, p, "CLUTCH DISPLAY", 1));
         clutchMode = new Chips(c, p, CLUTCH_NAMES, CLUTCH_VALUES, p.primary,
@@ -230,9 +236,16 @@ public class SettingsScreen extends Screen {
         tireLow.setValue((int) Math.round(s.optDouble("tire_low_psi", 28)));
         tireHigh.setValue((int) Math.round(s.optDouble("tire_high_psi", 36)));
         coolantWarn.setValue(s.optInt("coolant_warn_f", 220));
-        ledSequence.select(s.optInt("led_sequence", 1));
         clutchMode.select(s.optInt("clutch_display_mode", 0));
         useMph.setOn(s.optBoolean("use_mph", true));
         demoMode.setOn(s.optBoolean("demo_mode", false));
+        if (ledSummary != null) {
+            int seq = s.optInt("led_sequence", 1);
+            String pattern = LedScreen.SEQ_NAMES[Math.max(0, Math.min(seq, 4) - 1)];
+            // The strip's own health lives in the telemetry block, not here, so the
+            // summary only claims what the Pi settings actually say.
+            String on = s.optInt("led_enabled", 1) != 0 ? "on" : "off";
+            ledSummary.setText("LED strip: " + pattern + " \u00b7 " + on + " \u203a");
+        }
     }
 }

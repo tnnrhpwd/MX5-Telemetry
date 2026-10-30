@@ -33,6 +33,12 @@ public abstract class Screen {
 
         /** Ask the shell to step the Pi's own display. */
         void stepPiScreen(boolean forward);
+
+        /** Open another page, e.g. Settings linking through to the LED strip screen. */
+        void openScreen(Class<? extends Screen> type);
+
+        /** Re-push the active theme, after a screen has started following it again. */
+        void reapplyTheme();
     }
 
     public abstract String title();

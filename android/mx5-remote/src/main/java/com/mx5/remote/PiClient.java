@@ -275,6 +275,13 @@ public final class PiClient {
         return new JSONObject(request("POST", "/api/settings/update", body.toString()));
     }
 
+    /** Forward a bench command to the LED strip: SELFTEST, IDENTIFY, DEMO:&lt;rpm&gt;, DEMO:OFF. */
+    public JSONObject ledCommand(String command) throws IOException, JSONException {
+        JSONObject body = new JSONObject();
+        body.put("command", command);
+        return new JSONObject(request("POST", "/api/led/command", body.toString()));
+    }
+
     public JSONObject roofSpeed(int mph) throws IOException, JSONException {
         return roofCommand("/api/roof/speed", mph);
     }

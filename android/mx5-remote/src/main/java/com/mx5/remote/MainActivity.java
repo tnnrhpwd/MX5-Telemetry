@@ -65,8 +65,17 @@ public class MainActivity extends Activity implements Screen.Host {
      * rows of 28dp plus a 2dp gap come to exactly 270dp. At the old 32dp row the list
      * needed 324dp, so the last destinations were pushed past the bottom edge, where a
      * LinearLayout does not lay them out at all and they could not be tapped.
+     *
+     * This is the *preferred* height: {@link #railRowDp()} shrinks it when a tenth
+     * destination would otherwise need a scroll to reach.
      */
     private static final int RAIL_ROW_DP = 28;
+
+    /** The middle row's height budget, in dp, after the header and footer. */
+    private static final int RAIL_BUDGET_DP = 270;
+
+    /** Never shrink a row below this, or the label stops being a usable target. */
+    private static final int RAIL_ROW_MIN_DP = 21;
 
     /** Request code for the one-off Nearby devices prompt. */
     private static final int REQ_BLUETOOTH = 1001;
@@ -145,7 +154,7 @@ public class MainActivity extends Activity implements Screen.Host {
     private static final int[][] DRAWER_GROUPS = {
             {0, 1, 2, 3, 4},
             {5, 6},
-            {7, 8}
+            {7, 8, 9}
     };
     private static final String[] DRAWER_GROUP_NAMES = {"Live", "Status", "Control"};
 
@@ -185,7 +194,8 @@ public class MainActivity extends Activity implements Screen.Host {
                 new DiagnosticsScreen(),
                 new SystemScreen(),
                 new RoofScreen(),
-                new SettingsScreen()
+                new SettingsScreen(),
+                new LedScreen()
         };
 
         rebuildUi();
@@ -667,8 +677,20 @@ public class MainActivity extends Activity implements Screen.Host {
         }
     };
 
-    private void buildRail() {
-        railChips.clear();
+    /**
+     * Row height that fits every destination in the panel without scrolling.
+     *
+     * Nine rows still get the preferred 28dp; a tenth divides the same budget instead of
+     * pushing the last row into a scroll, which on a car screen means it may as well not
+     * be there.
+     */
+    private int railRowDp() {
+        int count = Math.max(1, screens.length);
+        int budget = RAIL_BUDGET_DP - (count - 1) * Ui.S1;
+        return Math.max(RAIL_ROW_MIN_DP, Math.min(RAIL_ROW_DP, budget / count));
+    }
+
+    private void buildRail() {        railChips.clear();
         railItems.clear();
         railMarkers.clear();
         rail.removeAllViews();
@@ -728,7 +750,7 @@ public class MainActivity extends Activity implements Screen.Host {
                     ? new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT)
                     : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    Ui.dp(this, RAIL_ROW_DP));
+                    Ui.dp(this, railRowDp()));
             ip.bottomMargin = Ui.dp(this, narrow ? 0 : Ui.S1);
             ip.leftMargin = Ui.dp(this, narrow ? Ui.S1 : 0);
             ip.rightMargin = Ui.dp(this, narrow ? Ui.S1 : 0);
@@ -988,56 +1010,7 @@ public class MainActivity extends Activity implements Screen.Host {
 
     /** Telemetry is a fresh object per poll, so copy it into the long-lived one. */
     private void copyInto(Telemetry t) {
-        latest.rpm = t.rpm;
-        latest.speedKmh = t.speedKmh;
-        latest.gear = t.gear;
-        latest.gearEstimated = t.gearEstimated;
-        latest.clutchEngaged = t.clutchEngaged;
-        latest.recommendedGear = t.recommendedGear;
-        latest.gearColor = t.gearColor;
-        latest.inNeutral = t.inNeutral;
-        latest.inReverse = t.inReverse;
-        latest.throttlePercent = t.throttlePercent;
-        latest.brakePercent = t.brakePercent;
-        latest.coolantTempF = t.coolantTempF;
-        latest.intakeTempF = t.intakeTempF;
-        latest.ambientTempF = t.ambientTempF;
-        latest.maf = t.maf;
-        latest.fuelLevelPercent = t.fuelLevelPercent;
-        latest.voltage = t.voltage;
-        latest.tirePressure.clear();
-        latest.tirePressure.addAll(t.tirePressure);
-        latest.tireTemp.clear();
-        latest.tireTemp.addAll(t.tireTemp);
-        latest.tpmsUpdated.clear();
-        latest.tpmsUpdated.addAll(t.tpmsUpdated);
-        latest.tpmsConnected = t.tpmsConnected;
-        latest.gLateral = t.gLateral;
-        latest.gLongitudinal = t.gLongitudinal;
-        latest.lapTimeMs = t.lapTimeMs;
-        latest.bestLapMs = t.bestLapMs;
-        latest.instantMpg = t.instantMpg;
-        latest.averageMpg = t.averageMpg;
-        latest.rangeMiles = t.rangeMiles;
-        latest.checkEngine = t.checkEngine;
-        latest.absWarning = t.absWarning;
-        latest.tractionControlActive = t.tractionControlActive;
-        latest.tractionControlOff = t.tractionControlOff;
-        latest.oilWarning = t.oilWarning;
-        latest.batteryWarning = t.batteryWarning;
-        latest.doorAjar = t.doorAjar;
-        latest.seatbeltWarning = t.seatbeltWarning;
-        latest.airbagWarning = t.airbagWarning;
-        latest.brakeWarning = t.brakeWarning;
-        latest.headlightsOn = t.headlightsOn;
-        latest.highBeamsOn = t.highBeamsOn;
-        latest.fogLightOn = t.fogLightOn;
-        latest.dtcCodes.clear();
-        latest.dtcCodes.addAll(t.dtcCodes);
-        latest.dtcCount = t.dtcCount;
-        latest.canConnected = t.canConnected;
-        latest.demoMode = t.demoMode;
-        latest.sleeping = t.sleeping;
+        latest.copyFrom(t);
     }
 
     private void applyStatus(JSONObject status) {
@@ -1166,6 +1139,21 @@ public class MainActivity extends Activity implements Screen.Host {
             }
             refreshNow();
         }).start();
+    }
+
+    @Override
+    public void openScreen(Class<? extends Screen> type) {
+        for (int i = 0; i < screens.length; i++) {
+            if (type.isInstance(screens[i])) {
+                showScreen(i, true);
+                return;
+            }
+        }
+    }
+
+    @Override
+    public void reapplyTheme() {
+        pushThemeToPi();
     }
 
     // ---------------------------------------------------------------- lifecycle

@@ -149,6 +149,14 @@ class FakeSettings:
         self.tire_high_psi = 36.0
         self.coolant_warn_f = 220
         self.led_sequence = 1
+        self.led_enabled = 1
+        self.led_color_mode = 0
+        self.led_brightness = -1
+        self.led_theme_dim = -1
+        self.led_ramp = ''
+        self.led_shift_rpm = 6300
+        self.led_shift_hz = 8
+        self.led_shift_color = 'ff0000'
         self.clutch_display_mode = 0
         self.theme_scheme = 'aurora'
         self.theme_dark = True
@@ -191,6 +199,8 @@ class FakeDisplayApp:
         self.data_source_inits = 0
         self.esp32_syncs = 0
         self.led_sends = 0
+        self.led_config_sends = 0
+        self.led_commands = []
 
     def change_screen(self, n):
         self.current_screen = n
@@ -204,6 +214,13 @@ class FakeDisplayApp:
 
     def _send_led_sequence_to_arduino(self):
         self.led_sends += 1
+
+    def _send_led_config(self):
+        self.led_config_sends += 1
+
+    def send_led_command(self, command):
+        self.led_commands.append(command)
+        return True
 
 
 TOKEN = 'test-token-abc123'
@@ -359,6 +376,100 @@ def test_led_sequence_setting_pushes_to_the_arduino():
     ask(session, id=13, op='setting', name='led_sequence', value=3)
     assert app.settings.led_sequence == 3
     assert app.led_sends == 1
+
+
+def test_led_behaviour_settings_are_stored_and_forwarded():
+    """Every key the LED STRIP screen owns must reach the hardware, not just the Pi."""
+    app, _, _, session = build()
+    hello(session)
+    cases = [
+        ('led_enabled', 0, 'led_enabled', 0),
+        ('led_color_mode', 1, 'led_color_mode', 1),
+        ('led_shift_rpm', 5800, 'led_shift_rpm', 5800),
+        ('led_shift_hz', 12, 'led_shift_hz', 12),
+        ('led_shift_color', '00FF88', 'led_shift_color', '00ff88'),
+    ]
+    for request_id, (name, value, attr, expected) in enumerate(cases, start=100):
+        reply = ask(session, id=request_id, op='setting', name=name, value=value)
+        assert reply['data']['success'] is True, reply
+        assert getattr(app.settings, attr) == expected
+    # One push per accepted key, each carrying both the sequence and the config.
+    assert app.led_sends == len(cases)
+    assert app.led_config_sends == len(cases)
+
+
+def test_led_shifting_can_be_switched_off_with_zero():
+    app, _, _, session = build()
+    hello(session)
+    assert ask(session, id=20, op='setting', name='led_shift_rpm', value=0)['data']['success']
+    assert app.settings.led_shift_rpm == 0
+
+
+def test_led_settings_are_validated_before_they_reach_the_firmware():
+    app, _, _, session = build()
+    hello(session)
+    rejected = [
+        ('led_color_mode', 2),
+        ('led_shift_rpm', 1200),
+        ('led_shift_hz', 40),
+        ('led_shift_color', 'zzzzzz'),
+        ('led_shift_color', 'fff'),
+        ('led_sequence', 9),
+    ]
+    for request_id, (name, value) in enumerate(rejected, start=30):
+        reply = ask(session, id=request_id, op='setting', name=name, value=value)
+        assert reply['data']['success'] is False, (name, value)
+    # Nothing was pushed, so nothing on the strip changed either.
+    assert app.led_sends == 0
+    assert app.led_config_sends == 0
+
+
+def test_status_reports_the_led_settings_block():
+    app, _, _, session = build()
+    hello(session)
+    settings = ask(session, id=40, op='status')['data']['settings']
+    for key in ('led_enabled', 'led_color_mode', 'led_brightness', 'led_theme_dim',
+                'led_ramp', 'led_shift_rpm', 'led_shift_hz', 'led_shift_color'):
+        assert key in settings, "missing setting %r" % key
+
+
+def test_led_command_forwards_a_bench_command():
+    app, _, _, session = build()
+    hello(session)
+    reply = ask(session, id=41, op='led.command', value='selftest')
+    assert reply['data']['success'] is True
+    assert app.led_commands == ['SELFTEST']
+
+
+def test_led_command_hands_the_strip_back_to_can():
+    """DEMO:OFF has no rpm in it, and parsing it as one used to blow up into a 500."""
+    app, _, _, session = build()
+    hello(session)
+    reply = ask(session, id=42, op='led.command', value='DEMO:OFF')
+    assert reply['data']['success'] is True, reply
+    assert app.led_commands == ['DEMO:OFF']
+
+
+def test_led_command_refuses_anything_not_on_the_allow_list():
+    app, _, _, session = build()
+    hello(session)
+    for request_id, command in enumerate(['CFG:reset', 'RAMP:0:ff0000', 'DEMO:9999', ''], start=50):
+        reply = ask(session, id=request_id, op='led.command', value=command)
+        assert reply['data']['success'] is False, command
+    assert app.led_commands == []
+
+
+def test_led_command_reports_an_unavailable_strip():
+    app, _, _, session = build()
+    hello(session)
+
+    def no_link(_command):
+        return False
+
+    app.send_led_command = no_link
+    reply = ask(session, id=60, op='led.command', value='IDENTIFY')
+    assert reply['data']['success'] is False
+    assert 'not answering' in reply['data']['error']
 
 
 def test_demo_mode_setting_reinitialises_the_data_sources():

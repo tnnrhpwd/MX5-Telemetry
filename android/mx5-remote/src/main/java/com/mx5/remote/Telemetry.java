@@ -14,7 +14,6 @@ import java.util.List;
  * populated frame, degrades to zeros instead of killing the poll loop.
  */
 public final class Telemetry {
-
     public int rpm;
     public int speedKmh;
     public int gear;
@@ -70,6 +69,92 @@ public final class Telemetry {
     public boolean canConnected;
     public boolean demoMode;
     public boolean sleeping;
+
+    /**
+     * The LED strip's own health, as reported by the Nano's STATUS: line.
+     *
+     * It exists because the strip used to be a black box: a dead CAN link, a strip that
+     * had been switched off and a genuine 0 rpm all looked identical from the phone.
+     */
+    public static final class Led {
+        public boolean connected;
+        public boolean can;
+        public boolean error;
+        public boolean dim;
+        public boolean enabled = true;
+        public int rpm;
+        public int fps;
+        public int sequence;
+        public int fullRpm;
+        public int colorMode;
+        public int shiftRpm;
+        public int shiftHz;
+        public String lastId = "";
+    }
+
+    public Led led = new Led();
+
+    /**
+     * Copy every field from a freshly parsed snapshot into this one.
+     *
+     * The shell keeps a long-lived Telemetry and copied the fields by hand, which is how
+     * instantMpgValid came to be missed: the Engine page then showed "--" no matter what
+     * the car sent. One method next to the fields cannot miss one.
+     */
+    public void copyFrom(Telemetry t) {
+        rpm = t.rpm;
+        speedKmh = t.speedKmh;
+        gear = t.gear;
+        gearEstimated = t.gearEstimated;
+        clutchEngaged = t.clutchEngaged;
+        recommendedGear = t.recommendedGear;
+        gearColor = t.gearColor;
+        inNeutral = t.inNeutral;
+        inReverse = t.inReverse;
+        throttlePercent = t.throttlePercent;
+        brakePercent = t.brakePercent;
+        coolantTempF = t.coolantTempF;
+        intakeTempF = t.intakeTempF;
+        ambientTempF = t.ambientTempF;
+        maf = t.maf;
+        fuelLevelPercent = t.fuelLevelPercent;
+        voltage = t.voltage;
+        tirePressure.clear();
+        tirePressure.addAll(t.tirePressure);
+        tireTemp.clear();
+        tireTemp.addAll(t.tireTemp);
+        tpmsUpdated.clear();
+        tpmsUpdated.addAll(t.tpmsUpdated);
+        tpmsConnected = t.tpmsConnected;
+        gLateral = t.gLateral;
+        gLongitudinal = t.gLongitudinal;
+        lapTimeMs = t.lapTimeMs;
+        bestLapMs = t.bestLapMs;
+        instantMpg = t.instantMpg;
+        instantMpgValid = t.instantMpgValid;
+        averageMpg = t.averageMpg;
+        rangeMiles = t.rangeMiles;
+        checkEngine = t.checkEngine;
+        absWarning = t.absWarning;
+        tractionControlActive = t.tractionControlActive;
+        tractionControlOff = t.tractionControlOff;
+        oilWarning = t.oilWarning;
+        batteryWarning = t.batteryWarning;
+        doorAjar = t.doorAjar;
+        seatbeltWarning = t.seatbeltWarning;
+        airbagWarning = t.airbagWarning;
+        brakeWarning = t.brakeWarning;
+        headlightsOn = t.headlightsOn;
+        highBeamsOn = t.highBeamsOn;
+        fogLightOn = t.fogLightOn;
+        dtcCodes.clear();
+        dtcCodes.addAll(t.dtcCodes);
+        dtcCount = t.dtcCount;
+        canConnected = t.canConnected;
+        demoMode = t.demoMode;
+        sleeping = t.sleeping;
+        led = t.led;
+    }
 
     public static Telemetry from(JSONObject o) {
         Telemetry t = new Telemetry();
@@ -142,7 +227,29 @@ public final class Telemetry {
         t.canConnected = o.optBoolean("can_connected");
         t.demoMode = o.optBoolean("demo_mode");
         t.sleeping = o.optBoolean("sleeping");
+        t.led = ledFrom(o.optJSONObject("led"));
         return t;
+    }
+
+    private static Led ledFrom(JSONObject o) {
+        Led led = new Led();
+        if (o == null) {
+            return led;
+        }
+        led.connected = o.optBoolean("connected");
+        led.can = o.optBoolean("can");
+        led.error = o.optBoolean("error");
+        led.dim = o.optBoolean("dim");
+        led.enabled = o.optBoolean("enabled", true);
+        led.rpm = o.optInt("rpm");
+        led.fps = o.optInt("fps");
+        led.sequence = o.optInt("sequence");
+        led.fullRpm = o.optInt("full_rpm");
+        led.colorMode = o.optInt("color_mode");
+        led.shiftRpm = o.optInt("shift_rpm");
+        led.shiftHz = o.optInt("shift_hz");
+        led.lastId = o.optString("last_id", "");
+        return led;
     }
 
     private static void fillDoubles(JSONArray src, List<Double> out) {

@@ -36,12 +36,19 @@ import os
 import sys
 import time
 
+# python-can is only needed to *capture*. Diffing two saved captures needs nothing but
+# the standard library, and that is the half you run somewhere comfortable with the JSON
+# copied off the Pi - so the import happens in capture() rather than at module level.
 try:
     import can
 except ImportError:
-    sys.exit("python-can is required: pip install python-can")
+    can = None
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
+# Overridable so the desk test can point at a temporary directory.
+DATA_DIR = os.environ.get(
+    "MX5_PROBE_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data"),
+)
 BUSES = (("can1", "HS-CAN 500k"), ("can0", "MS-CAN 125k"))
 
 
@@ -51,6 +58,9 @@ def _capture_path(label: str) -> str:
 
 def capture(label: str, seconds: float) -> None:
     """Record per-byte value histograms for every id on both buses."""
+    if can is None:
+        sys.exit("python-can is required to capture: pip install python-can "
+                 "(diffing saved captures does not need it)")
     result: dict[str, dict[str, dict[str, int]]] = {}
     listeners = []
     for channel, pretty in BUSES:
@@ -94,17 +104,24 @@ def capture(label: str, seconds: float) -> None:
 
 
 def _diff_one(first: dict, second: dict) -> tuple[bool, list[dict]]:
-    """Return (candidate, detail) for one id's byte histograms."""
+    """Return (candidate, detail) for one id's byte histograms.
+
+    The id is a candidate when *at least one* changed byte is clean, not when all of them
+    are. A frame can carry a perfect reverse bit in byte 5 while bytes 0-1 are a live
+    counter or the engine speed; requiring every byte to be clean demoted exactly the
+    frames worth looking at. The per-byte flags stay in the detail so the report can name
+    the byte that actually carries the signal.
+    """
     detail = []
-    candidate = True
+    candidate = False
     for byte in sorted(set(first) | set(second)):
         a = first.get(byte, {})
         b = second.get(byte, {})
         set_a, set_b = set(a), set(b)
         changed = set_a != set_b
-        # A real signal is *stable* in each capture; noise is not. A byte that
-        # flickers through many values in both captures is not a candidate even if
-        # the sets differ.
+        # A real signal is *stable* in each capture and takes a different value in each.
+        # A byte that flickers through many values, or passes through the same ones, is
+        # not evidence either way.
         stable = max(len(set_a), len(set_b)) <= 4 and not (set_a & set_b)
         detail.append({
             "byte": int(byte),
@@ -113,8 +130,8 @@ def _diff_one(first: dict, second: dict) -> tuple[bool, list[dict]]:
             "changed": changed,
             "clean": stable,
         })
-        if not stable:
-            candidate = False
+        if changed and stable:
+            candidate = True
     return candidate, detail
 
 
@@ -174,9 +191,13 @@ def diff(label_a: str, label_b: str, as_json: bool) -> None:
                     print(f"  {f['bus']} {f['id']} byte {d['byte']}: "
                           f"{label_a}={d['park']} {label_b}={d['reverse']}")
     if weak:
-        print("\nWEAK (differs, but at least one byte is noisy in one state):")
+        print("\nWEAK (differs, but at least one changed byte is noisy in a state):")
         for f in weak[:20]:
-            print(f"  {f['bus']} {f['id']} bytes {f['bytes']}")
+            print(f"  {f['bus']} {f['id']}")
+            for d in f["detail"]:
+                if d["changed"]:
+                    print(f"      byte {d['byte']}: {label_a}={d['park']} "
+                          f"{label_b}={d['reverse']}")
     if other:
         print("\nPRESENT IN ONLY ONE CAPTURE:")
         for f in other[:20]:

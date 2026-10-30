@@ -1,8 +1,8 @@
 # LED strip revamp — plan
 
-**Status:** **Phase 0 and most of Phase 1 are done on the car (2026-10-30); Phases 2–3 are
-partial.** See [§4.1](#41-what-is-already-implemented) for exactly what is in the firmware
-and the Pi right now.
+**Status:** **Phases 0–3 are done; Phase 4 is partially in (shift light, colour mode).**
+See [§4.1](#41-what-is-already-implemented) for exactly what is in the firmware, the Pi
+and the app right now.
 **Supersedes:** the "Fixed" verdict on
 [KNOWN_ISSUES.md › ISSUE-12](KNOWN_ISSUES.md#issue-12--led-strip-is-laggy-and-lacks-a-gradient).
 
@@ -159,7 +159,15 @@ Done and verified on the car:
 | A 128-byte serial command buffer (the old 32 truncated a full `RAMP:` line and silently produced a 2-stop ramp capped at 1400 rpm) | ✅ fixed |
 | `CFG:save` / `CFG?` / `CFG:reset` — ramp, dim, brightness and full-illumination rpm survive a power cycle (EEPROM block behind a magic byte + CRC) | ✅ in firmware, **verified across a watchdog reboot**: `full=4200,dim=1,bright=200` + a 3-stop ramp came back identical |
 | The Pi reads the strip's `STATUS:` line and exposes it as `led` in `/api/telemetry` | ✅ live: `{"connected":true,"can":true,"fps":300,"last_id":"0x201","full_rpm":6800,"dim":false,"error":false,"rpm":0}` |
-| `LED STRIP` settings screen in the app | ⏳ Phase 3, still to build — the API it needs now exists |
+| `CFG:en=`, `CFG:mode=`, `CFG:shift=`, `CFG:hz=`, `CFG:scol=` — strip enable, colour mode, shift point/rate/colour | ✅ firmware; EEPROM block extended (magic byte bumped to `0x5B`, so an older block is rejected rather than half-read) |
+| `SELFTEST` / `IDENTIFY` bench commands | ✅ firmware; 4 s white sweep / 3 s magenta blink, both self-clearing |
+| Shift light (whole strip flashes at the configured rpm, rate and colour) and colour mode (per-LED gradient vs single wash) | ✅ firmware — the shift overlay deliberately bypasses the "same rpm, nothing to do" repaint gate because it changes with time, not with rpm |
+| Pi keys `led_enabled`, `led_color_mode`, `led_shift_rpm`, `led_shift_hz`, `led_shift_color` | ✅ `LinkService.update_setting()` validates each (a 400, not a clamp), `/api/status` exposes them, `/api/telemetry.led` carries them back from the strip |
+| `POST /api/led/command` (+ the `led.command` op over Bluetooth) | ✅ allow-list: `SELFTEST`, `IDENTIFY`, `PING`, `CFG?`, `DEMO:<rpm>`, `DEMO:OFF`. `CFG:reset` is deliberately absent — it reboots the board |
+| Pi persistence: `state/led_settings.json` | ✅ written on change, restored on connect; identical payloads are skipped so a drag cannot hammer the disk. `state/` is gitignored |
+| `LED STRIP` settings screen in the app | ✅ `LedScreen.java` — strip / ramp / shift-light / diagnostics groups, phone-only (`piScreen() == -1`), reached from a one-line summary on Settings |
+| Slider latency discipline | ✅ sliders push **on release** (`SliderRow.onRelease`), and the Pi skips identical `CFG:`/`RAMP:` writes — 9600 baud cannot absorb a per-tick drag |
+| Verification | ✅ `tools/can/test_reverse_probe.py` style desk tests for the Pi contract (`test_link_protocol.py`, 57/57); both APK flavors and both firmwares build |
 
 
 ---
@@ -174,7 +182,7 @@ The Nano's UART (`D3`/`D4`, 9600 8N1, line-terminated) currently accepts three c
 | Command | Example | Notes |
 |---|---|---|
 | `RAMP:<rpm>:<rrggbb>,…` | `RAMP:0:0000FF,1400:00DCFF,2800:32D782` | 2–6 stops, applied atomically. **The last stop is the full-illumination rpm**, so "fully lit at X rpm" is one number. Replies `OK:RAMP` / `ERR:RAMP` |
-| `CFG:<k>=<v>,…` | `CFG:bright=180,theme=1,full=4000` | `bright` 0-255 (also disables the pot), `theme` 0/1 (dark mode = 70 % ramp), `full` 2000-8000, `pot` 0/1. Replies `OK:CFG` |
+| `CFG:<k>=<v>,…` | `CFG:bright=180,theme=1,full=4000` | `bright` 0-255 (also disables the pot), `theme` 0/1 (dark mode = 70 % ramp), `full` 2000-8000, `pot` 0/1, `en` 0/1 (strip off = dark), `mode` 0/1 (gradient / single wash), `shift` 0 or 2000-8000 (0 = no shift light), `hz` 2-15, `scol` rrggbb. Replies `OK:CFG` |
 | `CFG:save` | — | Writes the ramp/dim/brightness/full block to EEPROM (magic byte + CRC). Replies `OK:SAVE`. Deliberately explicit so a slider drag cannot wear the EEPROM |
 | `CFG?` | — | Replies with the live configuration as one `CFG:seq=…,full=…,dim=…,bright=…,stops=…,ramp=…` line |
 | `CFG:reset` | — | Watchdog soft reboot, used to prove a save survives a power cycle. Replies `OK:RESET` first |
@@ -189,10 +197,10 @@ The Nano's UART (`D3`/`D4`, 9600 8N1, line-terminated) currently accepts three c
 |---|---|
 | `PONG` | liveness |
 | `OK:CFG` / `ERR:CFG`, `OK:RAMP` / `ERR:RAMP`, `OK:DEMO:<rpm>` | command results |
-| `STATUS:CAN=1,RPM=812,SEQ=1,ERR=0,FPS=320,LAST=0x201,FULL=6800,DIM=0` | once a second. `CAN` = controller came up, `ERR` = no data for 3 s, `FPS` = frames in the last second, `LAST` = last arbitration id decoded, `FULL` = full-illumination rpm, `DIM` = dark-mode dimming |
+| `STATUS:CAN=1,RPM=812,SEQ=1,ERR=0,FPS=320,LAST=0x201,FULL=6800,DIM=0` | once a second. `CAN` = controller came up, `ERR` = no data for 3 s, `FPS` = frames in the last second, `LAST` = last arbitration id decoded, `FULL` = full-illumination rpm, `DIM` = dark-mode dimming, plus `EN`/`MODE`/`SHIFT`/`HZ` |
 
-**Not yet done:** the Pi reads these lines (`STATUS:` → `led` block in `/api/telemetry`) but
-the app does not display them yet — that is the diagnostics row on the `LED STRIP` screen.
+**Done:** the Pi parses these into `led_status` (`/api/telemetry` → `led`), and the app's
+`LED STRIP` screen renders them as its diagnostics row.
 
 > **Buffer size matters.** `cmdBuffer` was 32 bytes; a full six-stop `RAMP:` line is ~76
 > characters, so it was silently truncated and the firmware accepted a two-stop ramp that
@@ -260,7 +268,8 @@ Same numbers as today, but now editable without reflashing.
 Today `SettingsScreen` exposes exactly one LED control — a 4-way *Sequence* chip row — in
 the right-hand column. That is the whole surface. The revamp replaces it with its own
 screen, reached from Settings; the Settings page keeps a one-line summary ("LED strip:
-Center-out · 70% · live") that opens it.
+Center out · on ›") that opens it. **Both are now built** (see §4.1); what remains is the
+device pass in §9.
 
 New `LedScreen extends Screen` with `piScreen() == -1` (phone-only, like the existing
 convention), added to the screen list in `MainActivity` next to `new SettingsScreen()`.
@@ -316,13 +325,13 @@ screen and the strip fight.
 
 ## 8. Phases and order
 
-| Phase | Scope | Depends on | Size |
-|---|---|---|---|
-| 0 | Diagnosis: `nano_debug` build, confirm whether `0x201` is decoded in-car | — | S |
-| 1 | Visible failures: watchdog ungate, boot code, heartbeat, `STATUS:` line, pot off | 0 | S |
-| 2 | Config protocol + EEPROM block + Pi reader thread + `state/led_settings.json` | 1 | M |
-| 3 | `LedScreen` in the Android app, keys wired end to end, diagnostics row | 2 | M |
-| 4 | Polish: shift-light overlay, per-sequence animations, `mode=1` legacy ramp | 3 | S |
+| Phase | Scope | Depends on | Size | Status |
+|---|---|---|---|---|
+| 0 | Diagnosis: `nano_debug` build, confirm whether `0x201` is decoded in-car | — | S | ✅ done on the car |
+| 1 | Visible failures: watchdog ungate, boot code, heartbeat, `STATUS:` line, pot off | 0 | S | ✅ done on the car |
+| 2 | Config protocol + EEPROM block + Pi reader thread + `state/led_settings.json` | 1 | M | ✅ done (`en`/`mode`/`shift`/`hz`/`scol` included) |
+| 3 | `LedScreen` in the Android app, keys wired end to end, diagnostics row | 2 | M | ✅ built — needs the device pass |
+| 4 | Polish: shift-light overlay, per-sequence animations, `mode=1` legacy ramp | 3 | S | 🟡 shift light and `mode=1` are in; per-sequence animations are not |
 
 Phase 1 alone fixes the reported symptom *as a symptom* — the strip will tell you what it
 is doing instead of lying in blue — so it is worth shipping before the rest.

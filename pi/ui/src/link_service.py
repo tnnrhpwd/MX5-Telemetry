@@ -93,6 +93,14 @@ class LinkService:
                 'tire_high_psi': app.settings.tire_high_psi,
                 'coolant_warn_f': app.settings.coolant_warn_f,
                 'led_sequence': app.settings.led_sequence,
+                'led_enabled': app.settings.led_enabled,
+                'led_color_mode': app.settings.led_color_mode,
+                'led_brightness': app.settings.led_brightness,
+                'led_theme_dim': app.settings.led_theme_dim,
+                'led_ramp': app.settings.led_ramp,
+                'led_shift_rpm': app.settings.led_shift_rpm,
+                'led_shift_hz': app.settings.led_shift_hz,
+                'led_shift_color': app.settings.led_shift_color,
                 'clutch_display_mode': app.settings.clutch_display_mode,
                 'theme_scheme': app.settings.theme_scheme,
                 'theme_dark': app.settings.theme_dark,
@@ -228,10 +236,44 @@ class LinkService:
             elif name == 'coolant_warn':
                 app.settings.coolant_warn_f = int(value)
             elif name == 'led_sequence':
-                app.settings.led_sequence = int(value)
-                # Send LED sequence change to Arduino using the app's method
-                if hasattr(app, '_send_led_sequence_to_arduino'):
-                    app._send_led_sequence_to_arduino()
+                seq = int(value)
+                if not 1 <= seq <= 4:
+                    return {'success': False, 'error': 'led_sequence must be 1-4'}, 400
+                app.settings.led_sequence = seq
+                self._push_led(app)
+            elif name == 'led_enabled':
+                app.settings.led_enabled = 1 if _truthy(value) else 0
+                self._push_led(app)
+            elif name == 'led_color_mode':
+                mode = int(value)
+                if mode not in (0, 1):
+                    return {'success': False, 'error': 'led_color_mode must be 0 or 1'}, 400
+                app.settings.led_color_mode = mode
+                self._push_led(app)
+            elif name == 'led_shift_rpm':
+                rpm = int(value)
+                # 0 is a legitimate value: it switches the shift light off. Any other
+                # number has to be a real engine speed, or the strip would never reach it.
+                if rpm != 0 and not 2000 <= rpm <= 8000:
+                    return {'success': False, 'error': 'led_shift_rpm must be 0 or 2000-8000'}, 400
+                app.settings.led_shift_rpm = rpm
+                self._push_led(app)
+            elif name == 'led_shift_hz':
+                hz = int(value)
+                if not 2 <= hz <= 15:
+                    return {'success': False, 'error': 'led_shift_hz must be 2-15'}, 400
+                app.settings.led_shift_hz = hz
+                self._push_led(app)
+            elif name == 'led_shift_color':
+                colour = str(value).strip().lower()
+                if len(colour) != 6:
+                    return {'success': False, 'error': 'led_shift_color must be rrggbb'}, 400
+                try:
+                    int(colour, 16)
+                except ValueError:
+                    return {'success': False, 'error': 'led_shift_color is not hex'}, 400
+                app.settings.led_shift_color = colour
+                self._push_led(app)
             elif name == 'led_ramp':
                 # "<rpm>:<rrggbb>,..." from the phone, forwarded to the strip as-is.
                 # Reject anything that is not that shape rather than letting a malformed
@@ -249,19 +291,16 @@ class LinkService:
                     except ValueError:
                         return {'success': False, 'error': 'led_ramp colour is not hex'}, 400
                 app.settings.led_ramp = text
-                if hasattr(app, '_send_led_config'):
-                    app._send_led_config()
+                self._push_led(app)
             elif name == 'led_theme_dim':
                 app.settings.led_theme_dim = 1 if _truthy(value) else 0
-                if hasattr(app, '_send_led_config'):
-                    app._send_led_config()
+                self._push_led(app)
             elif name == 'led_brightness':
                 level = int(value)
                 if not 0 <= level <= 255:
                     return {'success': False, 'error': 'led_brightness must be 0-255'}, 400
                 app.settings.led_brightness = level
-                if hasattr(app, '_send_led_config'):
-                    app._send_led_config()
+                self._push_led(app)
             elif name == 'clutch_display_mode':
                 app.settings.clutch_display_mode = int(value)
             elif name == 'theme_scheme':
@@ -285,6 +324,43 @@ class LinkService:
         except Exception:
             logger.exception("Failed to update setting %r", name)
             return {'success': False, 'error': 'Internal error'}, 500
+
+    def _push_led(self, app):
+        """Push the LED settings to the strip and persist them on the Pi.
+
+        Every LED key takes the same path: validate, store, send, save. Keeping it in one
+        place is what stops a new key from being applied to the setting but never reaching
+        the hardware.
+        """
+        if hasattr(app, 'apply_led_settings'):
+            app.apply_led_settings()
+            return
+        # Desk-test fakes only record the sequence push.
+        if hasattr(app, '_send_led_sequence_to_arduino'):
+            app._send_led_sequence_to_arduino()
+        if hasattr(app, '_send_led_config'):
+            app._send_led_config()
+
+    def led_command(self, command):
+        """Forward a bench command (SELFTEST / IDENTIFY / DEMO) to the strip.
+
+        An allow-list rather than a passthrough: this reaches firmware that parses byte by
+        byte, and the app is the only caller that should ever be able to send `CFG:reset`.
+        """
+        app = self.display_app
+        text = str(command or '').strip().upper()
+        allowed = ('SELFTEST', 'IDENTIFY', 'PING', 'CFG?', 'DEMO:OFF')
+        if text not in allowed and not (text.startswith('DEMO:') and text[5:].isdigit()):
+            return {'success': False, 'error': 'Unknown LED command'}, 400
+        if text.startswith('DEMO:') and text != 'DEMO:OFF':
+            rpm = int(text[5:])
+            if not 0 <= rpm <= 8000:
+                return {'success': False, 'error': 'demo rpm must be 0-8000'}, 400
+        if not hasattr(app, 'send_led_command'):
+            return {'success': False, 'error': 'LED strip link unavailable'}, 503
+        if not app.send_led_command(text):
+            return {'success': False, 'error': 'LED strip not answering'}, 503
+        return {'success': True, 'command': text}, 200
 
     def wake(self):
         """Wake display from sleep."""

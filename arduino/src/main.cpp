@@ -178,6 +178,27 @@ uint8_t  rampStopCount = RAMP_STOP_COUNT;
 uint16_t rpmFull = 6800;          // rpm at which the strip is completely full
 uint8_t  themeDim = 0;            // 0 = full brightness ramp, 1 = dark-mode (dimmed)
 
+// Behaviour the phone can change at runtime. These were compile-time constants, so
+// changing any of them meant a reflash - and there was no way at all to switch the strip
+// off, which is the first thing anyone wants when the LEDs are distracting at night.
+bool     stripEnabled = true;     // false = strip dark; CAN decoding and settings untouched
+uint8_t  colorMode    = 0;        // 0 = position (flowing ramp), 1 = rpm (one wash of colour)
+uint16_t shiftRpm     = 6300;     // 0 disables the shift light
+uint8_t  shiftHz      = 8;        // flashes per second while shifting
+uint8_t  shiftR = 255, shiftG = 0, shiftB = 0;
+
+// Bench helpers: SELFTEST walks the strip a pixel at a time so a dead LED or a broken
+// data line shows up as a gap, and IDENTIFY blinks the whole strip so you can tell which
+// one you are editing. Both time out on their own, so a forgotten command cannot leave
+// the strip stuck in a test pattern.
+#define SELF_TEST_NONE      0
+#define SELF_TEST_SWEEP     1
+#define SELF_TEST_IDENTIFY  2
+#define SELF_TEST_MS        4000UL
+#define IDENTIFY_MS         3000UL
+uint8_t  selfTestMode = SELF_TEST_NONE;
+unsigned long selfTestStart = 0;
+
 // Use USB Serial for commands from Pi
 #if ENABLE_SERIAL_CMD
 #define cmdSerial Serial
@@ -265,11 +286,17 @@ unsigned long errorStartTime = 0;  // When error condition started
 // EEPROM is rated ~100k writes and is only written on an explicit CFG:save, so dragging
 // a brightness slider on the phone cannot wear it out.
 // ---------------------------------------------------------------------------
+// The magic value is also the layout version. It is bumped whenever the block changes
+// shape, so a block written by an older firmware is rejected outright rather than being
+// read with the wrong offsets.
 #define EEPROM_CFG_MAGIC_ADDR   2
-#define EEPROM_CFG_MAGIC_VALUE  0x5A
+#define EEPROM_CFG_MAGIC_VALUE  0x5B
 #define EEPROM_CFG_ADDR         3
 #define EEPROM_CFG_STOP_BYTES   5                       // rpm lo, rpm hi, r, g, b
-#define EEPROM_CFG_BODY_BYTES   (5 + RAMP_STOP_COUNT * EEPROM_CFG_STOP_BYTES)  // 5 header + 30
+#define EEPROM_CFG_EXT_ADDR     (EEPROM_CFG_ADDR + 5 + RAMP_STOP_COUNT * EEPROM_CFG_STOP_BYTES)
+#define EEPROM_CFG_EXT_BYTES    8                       // en, mode, shift lo/hi, hz, scol rgb
+#define EEPROM_CFG_BODY_BYTES   (5 + RAMP_STOP_COUNT * EEPROM_CFG_STOP_BYTES \
+                                 + EEPROM_CFG_EXT_BYTES)  // 5 header + 30 stops + 8
 #define EEPROM_CFG_CRC_ADDR     (EEPROM_CFG_ADDR + EEPROM_CFG_BODY_BYTES)
 
 void saveLedConfig();
@@ -356,6 +383,16 @@ void saveLedConfig() {
         }
     }
 
+    const uint8_t ext[EEPROM_CFG_EXT_BYTES] = {
+        (uint8_t)(stripEnabled ? 1 : 0), colorMode,
+        lowByte(shiftRpm), highByte(shiftRpm),
+        shiftHz, shiftR, shiftG, shiftB
+    };
+    for (uint8_t k = 0; k < EEPROM_CFG_EXT_BYTES; k++) {
+        EEPROM.update(EEPROM_CFG_EXT_ADDR + k, ext[k]);
+        crc ^= ext[k];
+    }
+
     EEPROM.update(EEPROM_CFG_CRC_ADDR, crc);
     EEPROM.update(EEPROM_CFG_MAGIC_ADDR, EEPROM_CFG_MAGIC_VALUE);
 }
@@ -380,12 +417,25 @@ bool loadLedConfig() {
                         | ((uint16_t)EEPROM.read(EEPROM_CFG_ADDR + 4) << 8);
     if (full < 2000 || full > 8000) return false;
 
+    const uint16_t shift = (uint16_t)EEPROM.read(EEPROM_CFG_EXT_ADDR + 2)
+                         | ((uint16_t)EEPROM.read(EEPROM_CFG_EXT_ADDR + 3) << 8);
+    if (shift != 0 && (shift < 2000 || shift > 8000)) return false;
+    const uint8_t hz = EEPROM.read(EEPROM_CFG_EXT_ADDR + 4);
+    if (hz < 2 || hz > 15) return false;
+
     // Everything checks out, so commit. Validation happens before any assignment so a
     // rejected block cannot leave the live configuration half-updated.
     rampStopCount = count;
     themeDim = EEPROM.read(EEPROM_CFG_ADDR + 1) ? 1 : 0;
     currentBrightness = EEPROM.read(EEPROM_CFG_ADDR + 2);
     rpmFull = full;
+    stripEnabled = EEPROM.read(EEPROM_CFG_EXT_ADDR + 0) != 0;
+    colorMode = EEPROM.read(EEPROM_CFG_EXT_ADDR + 1) ? 1 : 0;
+    shiftRpm = shift;
+    shiftHz = hz;
+    shiftR = EEPROM.read(EEPROM_CFG_EXT_ADDR + 5);
+    shiftG = EEPROM.read(EEPROM_CFG_EXT_ADDR + 6);
+    shiftB = EEPROM.read(EEPROM_CFG_EXT_ADDR + 7);
     for (uint8_t i = 0; i < RAMP_STOP_COUNT; i++) {
         const uint8_t base = EEPROM_CFG_ADDR + 5 + i * EEPROM_CFG_STOP_BYTES;
         rampStops[i].rpm = (uint16_t)EEPROM.read(base)
@@ -424,6 +474,18 @@ void printLedConfig() {
         printHex2(rampStops[i].g);
         printHex2(rampStops[i].b);
     }
+    cmdSerial.print(F(",en="));
+    cmdSerial.print(stripEnabled ? 1 : 0);
+    cmdSerial.print(F(",mode="));
+    cmdSerial.print(colorMode);
+    cmdSerial.print(F(",shift="));
+    cmdSerial.print(shiftRpm);
+    cmdSerial.print(F(",hz="));
+    cmdSerial.print(shiftHz);
+    cmdSerial.print(F(",scol="));
+    printHex2(shiftR);
+    printHex2(shiftG);
+    printHex2(shiftB);
     cmdSerial.println();
 }
 
@@ -545,6 +607,44 @@ void handleSerialCommands() {
                             lastRenderedRPM = 0xFFFF;
                         } else if (strncmp(p, "pot=", 4) == 0) {
                             potEnabled = (atoi(p + 4) != 0);
+                        } else if (strncmp(p, "en=", 3) == 0) {
+                            stripEnabled = (atoi(p + 3) != 0);
+                            lastRenderedRPM = 0xFFFF;
+                        } else if (strncmp(p, "mode=", 5) == 0) {
+                            colorMode = (atoi(p + 5) != 0) ? 1 : 0;
+                            lastRenderedRPM = 0xFFFF;
+                        } else if (strncmp(p, "shift=", 6) == 0) {
+                            int v = atoi(p + 6);
+                            if (v != 0 && v < 2000) v = 2000;
+                            if (v > 8000) v = 8000;
+                            shiftRpm = (uint16_t)v;
+                            lastRenderedRPM = 0xFFFF;
+                        } else if (strncmp(p, "hz=", 3) == 0) {
+                            int v = atoi(p + 3);
+                            if (v < 2) v = 2;
+                            if (v > 15) v = 15;
+                            shiftHz = (uint8_t)v;
+                        } else if (strncmp(p, "scol=", 5) == 0) {
+                            uint32_t rgb = 0;
+                            uint8_t digits = 0;
+                            char* q = p + 5;
+                            while (digits < 6 && *q) {
+                                char c = *q;
+                                uint8_t d;
+                                if (c >= '0' && c <= '9')      d = (uint8_t)(c - '0');
+                                else if (c >= 'A' && c <= 'F') d = (uint8_t)(c - 'A' + 10);
+                                else if (c >= 'a' && c <= 'f') d = (uint8_t)(c - 'a' + 10);
+                                else break;
+                                rgb = (rgb << 4) | d;
+                                q++;
+                                digits++;
+                            }
+                            if (digits == 6) {
+                                shiftR = (uint8_t)(rgb >> 16);
+                                shiftG = (uint8_t)(rgb >> 8);
+                                shiftB = (uint8_t)rgb;
+                                lastRenderedRPM = 0xFFFF;
+                            }
                         } else if (strncmp(p, "save", 4) == 0) {
                             // Explicit, not automatic: a brightness slider drag must not
                             // burn EEPROM write cycles.
@@ -581,6 +681,16 @@ void handleSerialCommands() {
                         cmdSerial.print(F("OK:DEMO:"));
                         cmdSerial.println(demoRPM);
                     }
+                }
+                else if (strcmp(cmdBuffer, "SELFTEST") == 0) {
+                    selfTestMode = SELF_TEST_SWEEP;
+                    selfTestStart = millis();
+                    cmdSerial.println(F("OK:SELFTEST"));
+                }
+                else if (strcmp(cmdBuffer, "IDENTIFY") == 0) {
+                    selfTestMode = SELF_TEST_IDENTIFY;
+                    selfTestStart = millis();
+                    cmdSerial.println(F("OK:IDENTIFY"));
                 }
                 
                 cmdIndex = 0;
@@ -774,7 +884,10 @@ inline void renderBar(uint16_t rpm) {
         if (p > 1.0f) p = 1.0f;
 
         uint8_t r, g, b;
-        rampColorAtRpm((uint16_t)(p * (float)rpm), &r, &g, &b);
+        // Position mode samples each LED's share of the current rpm, so the gradient flows
+        // along the bar. Rpm mode paints the whole bar the colour of the present rpm - the
+        // legacy look, kept because some people prefer one wash instead of a gradient.
+        rampColorAtRpm(colorMode ? rpm : (uint16_t)(p * (float)rpm), &r, &g, &b);
 
         uint8_t scale = themeDim ? 170 : 255;   // dark mode is dimmer by design
         SET_LED(i,
@@ -801,8 +914,57 @@ inline void drawCanOffline() {
     showIfChanged();
 }
 
+// Bench test patterns, driven by SELFTEST and IDENTIFY. Returns false when the pattern
+// has finished, so updateLEDs() falls back to the normal renderer.
+inline bool drawSelfTest(unsigned long now) {
+    const unsigned long elapsed = now - selfTestStart;
+
+    if (selfTestMode == SELF_TEST_IDENTIFY) {
+        if (elapsed > IDENTIFY_MS) {
+            selfTestMode = SELF_TEST_NONE;
+            lastRenderedRPM = 0xFFFF;
+            return false;
+        }
+        bool on = ((elapsed / 125) & 1) == 0;
+        for (uint8_t i = 0; i < LED_COUNT; i++) {
+            if (on) SET_LED(i, 255, 0, 255); else CLEAR_LED(i);
+        }
+        showIfChanged();
+        return true;
+    }
+
+    // Sweep: fill in white one pixel at a time. A pixel that never lights is a dead LED or
+    // a broken data line, which is the one thing no amount of config can work around.
+    if (elapsed > SELF_TEST_MS) {
+        selfTestMode = SELF_TEST_NONE;
+        lastRenderedRPM = 0xFFFF;
+        return false;
+    }
+    const uint8_t lit = (uint8_t)((elapsed * LED_COUNT) / SELF_TEST_MS) + 1;
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        if (i < lit) SET_LED(i, 255, 255, 255); else CLEAR_LED(i);
+    }
+    showIfChanged();
+    return true;
+}
+
 // Main LED update - inline for maximum speed
 inline void updateLEDs() {
+    // Test patterns outrank everything: they are only ever running because someone asked
+    // for them, including when the strip is switched off.
+    if (selfTestMode != SELF_TEST_NONE && drawSelfTest(millis())) {
+        return;
+    }
+
+    // Switched off from the phone. The strip is cleared once (showIfChanged() then sees no
+    // difference) and re-enabling forces a full repaint through lastRenderedRPM.
+    if (!stripEnabled) {
+        strip.clear();
+        lastRenderedRPM = 0xFFFF;
+        showIfChanged();
+        return;
+    }
+
     // Checked before the error animation: a controller that never initialised is a
     // different fault from a bus that went quiet, and they get different patterns.
     if (!canInitialized) {
@@ -831,11 +993,24 @@ inline void updateLEDs() {
 
     // Recomputing 20 LED colours is not free on a 16 MHz AVR, and this runs after
     // every CAN read - which happens at the frame rate, not at the LED rate. The
-    // bar can only change when the RPM changes, so that is the gate.
-    if (currentRPM == lastRenderedRPM && !stripForceShow) {
+    // bar can only change when the RPM changes, so that is the gate. The shift light is
+    // the exception: it flashes with time, not with rpm, so it must repaint regardless.
+    const bool shifting = shiftRpm != 0 && currentRPM >= shiftRpm;
+    if (currentRPM == lastRenderedRPM && !stripForceShow && !shifting) {
         return;
     }
     lastRenderedRPM = currentRPM;
+
+    // Shift light: the whole strip flashes the configured colour at the configured rate.
+    if (shifting) {
+        const uint16_t halfPeriod = 500 / (shiftHz ? shiftHz : 1);
+        const bool on = ((millis() / halfPeriod) & 1) == 0;
+        for (uint8_t i = 0; i < LED_COUNT; i++) {
+            if (on) SET_LED(i, shiftR, shiftG, shiftB); else CLEAR_LED(i);
+        }
+        showIfChanged();
+        return;
+    }
     
     // RPM = 0: Show single blue LED based on sequence mode
     if (currentRPM == 0) {
@@ -1168,6 +1343,14 @@ void loop() {
         cmdSerial.print(rpmFull);
         cmdSerial.print(F(",DIM="));
         cmdSerial.print(themeDim);
+        cmdSerial.print(F(",EN="));
+        cmdSerial.print(stripEnabled ? 1 : 0);
+        cmdSerial.print(F(",MODE="));
+        cmdSerial.print(colorMode);
+        cmdSerial.print(F(",SHIFT="));
+        cmdSerial.print(shiftRpm);
+        cmdSerial.print(F(",HZ="));
+        cmdSerial.print(shiftHz);
         if (demoForced) {
             cmdSerial.print(F(",DEMO="));
             cmdSerial.print(demoRPM);

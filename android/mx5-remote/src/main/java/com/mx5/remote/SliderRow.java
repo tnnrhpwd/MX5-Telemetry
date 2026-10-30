@@ -27,6 +27,18 @@ public class SliderRow extends LinearLayout {
     private final int step;
     private final String unit;
     private final OnChange listener;
+    private Runnable onRelease;
+
+    /**
+     * Run this when the thumb is released.
+     *
+     * A slider that posts on every tick is fine for a local setting, but the LED strip is
+     * on a 9600 baud link: one drag would queue more commands than the port can carry.
+     */
+    public SliderRow onRelease(Runnable action) {
+        onRelease = action;
+        return this;
+    }
 
     public SliderRow(Context c, Palette p, String label, int min, int max, int step,
                      int initial, String unit, int color, OnChange listener) {
@@ -81,6 +93,9 @@ public class SliderRow extends LinearLayout {
 
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
+                if (onRelease != null) {
+                    onRelease.run();
+                }
             }
         });
     }
@@ -99,5 +114,10 @@ public class SliderRow extends LinearLayout {
         int progress = Math.round((clamped - min) / (float) step);
         bar.setProgress(progress);
         render(current());
+    }
+
+    /** The value currently shown, after min/step mapping. */
+    public int value() {
+        return current();
     }
 }

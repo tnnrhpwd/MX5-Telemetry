@@ -227,23 +227,38 @@ MCP2515 CANL ──► OBD-II Pin 14 (HS-CAN Low)
 
 ## Serial Protocol (Pi ↔ Arduino)
 
+The full command set is specified in
+[LED_REVAMP_PLAN.md §5](LED_REVAMP_PLAN.md#5-phase-2--settings-protocol-pi--nano); this
+table is the quick reference. Every line is `\n`-terminated and every command replies.
+
 ### Commands (Pi → Arduino)
 
 | Command | Format | Description | Example |
 |---------|--------|-------------|---------|
-| **Set Sequence** | `SEQ:n\n` | Select LED pattern (1-4) | `SEQ:2\n` |
-| **Query Sequence** | `SEQ?\n` | Get current pattern | `SEQ?\n` |
-| **Ping** | `PING\n` | Connection test | `PING\n` |
+| **Set Sequence** | `SEQ:n` | Select LED pattern (1-4) | `SEQ:2` |
+| **Query Sequence** | `SEQ?` | Get current pattern | `SEQ?` |
+| **Ping** | `PING` | Connection test and identity check | `PING` |
+| **Colour ramp** | `RAMP:<rpm>:<rrggbb>,…` | 2–6 stops; the last stop is also the rpm at which the strip is full | `RAMP:0:0000ff,2800:32d782,6800:ff0000` |
+| **Configuration** | `CFG:<k>=<v>,…` | `bright` 0-255, `theme` 0/1, `full` rpm, `pot` 0/1, `en` 0/1, `mode` 0/1, `shift` rpm (0 = off), `hz` 2-15, `scol` rrggbb | `CFG:en=1,mode=0,shift=6300,hz=8,scol=ff0000` |
+| **Query config** | `CFG?` | Prints the live configuration as one `CFG:` line | `CFG?` |
+| **Persist** | `CFG:save` | Writes the config block to EEPROM (explicit, so a slider drag cannot wear it) | `CFG:save` |
+| **Reset** | `CFG:reset` | Watchdog reboot, proves a save survived a power cycle | `CFG:reset` |
+| **Bench rpm** | `DEMO:<rpm>` / `DEMO:OFF` | Render this rpm without CAN; self-clears after 60 s | `DEMO:2500` |
+| **Self test** | `SELFTEST` | Lights every pixel in turn, so a dead LED shows as a gap | `SELFTEST` |
+| **Identify** | `IDENTIFY` | Blinks the whole strip for 3 s | `IDENTIFY` |
 
 ### Responses (Arduino → Pi)
 
 | Response | Format | Description | Example |
 |----------|--------|-------------|---------|
-| **Acknowledge** | `OK:n\n` | Sequence changed | `OK:2\n` |
-| **Status** | `SEQ:n\n` | Current sequence | `SEQ:1\n` |
-| **Pong** | `PONG\n` | Alive response | `PONG\n` |
+| **Acknowledge** | `OK:<what>` / `ERR:<what>` | Command result | `OK:CFG`, `ERR:RAMP` |
+| **Sequence** | `SEQ:n` | Current sequence | `SEQ:1` |
+| **Pong** | `PONG` | Alive response | `PONG` |
+| **Config** | `CFG:seq=…,full=…,dim=…,bright=…,stops=…,ramp=…,en=…,mode=…,shift=…,hz=…,scol=…` | Live configuration | see `CFG?` |
+| **Status** | `STATUS:CAN=1,RPM=812,SEQ=1,ERR=0,FPS=320,LAST=0x201,FULL=6800,DIM=0,EN=1,MODE=0,SHIFT=6300,HZ=8` | Once a second; the only way to tell a dead strip from a real 0 rpm | |
 
-**Baud Rate:** 9600 bps (low speed for reliability over long wires)
+**Baud Rate:** 9600 bps (low speed for reliability over long wires). This carries settings
+only — rpm is decoded by the Nano from CAN, so it never goes over this link.
 
 ---
 
@@ -259,14 +274,26 @@ MCP2515 CANL ──► OBD-II Pin 14 (HS-CAN Low)
 
 ### RPM Thresholds (Colour Scale)
 
+The zone boundaries are **not** compile-time constants any more: they live in the runtime
+ramp table (`rampStops[]`), which the Pi replaces with `RAMP:` — that is what lets the
+strip follow the phone's theme, or six hand-picked colours, without a reflash.
+
 ```cpp
-#define RPM_ZONE_CYAN       1400    // idle / moving off
-#define RPM_ZONE_GREEN      2800    // cruising - economical band
-#define RPM_ZONE_YELLOW     4500    // waking up
-#define RPM_ZONE_ORANGE     5800    // spirited
-#define RPM_MAX             6800    // redline - full red
+#define RPM_MAX             6800    // default rpm at which the strip is completely full
 #define RPM_REDLINE         6800    // Optional haptic trigger
 ```
+
+The defaults below are what the firmware boots with, and they are also what the app's
+`LED STRIP` screen starts from:
+
+| RPM | Default colour | Why |
+|-----|----------------|-----|
+| 0 | `#0000ff` | idle |
+| 1400 | `#00dcff` | pulling away |
+| 2800 | `#32d782` | economical cruise |
+| 4500 | `#ffd23c` | waking up |
+| 5800 | `#ff8000` | spirited |
+| 6800 | `#ff0000` | redline |
 
 ### CAN Configuration
 
