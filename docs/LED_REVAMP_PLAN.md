@@ -167,8 +167,8 @@ Done and verified on the car:
 | Pi persistence: `state/led_settings.json` | ✅ written on change, restored on connect; identical payloads are skipped so a drag cannot hammer the disk. `state/` is gitignored |
 | `LED STRIP` settings screen in the app | ✅ `LedScreen.java` — strip / ramp / shift-light / diagnostics groups, phone-only (`piScreen() == -1`), reached from a one-line summary on Settings |
 | Slider latency discipline | ✅ sliders push **on release** (`SliderRow.onRelease`), and the Pi skips identical `CFG:`/`RAMP:` writes — 9600 baud cannot absorb a per-tick drag |
-| Bench simulator | ✅ `tools/simulators/led_simulator/led_simulator_v3.py` — an rpm slider over `led_engine.py`, a port of the firmware. `parity_check.py` proves the port: the firmware's own functions are extracted from `main.cpp`, compiled, and 371 frames match pixel for pixel |
-| Verification | ✅ `parity_check.py` (371/371 frames, rpm filter, brightness; sensitivity proved), `test_settings_parity.py` (51/51 settings), `test_led_engine.py` (43/43), `test_link_protocol.py` (58/58); both APK flavors and both firmwares build |
+| Bench simulator | ✅ `tools/simulators/led_simulator/led_simulator_v3.py` — an rpm slider over `led_engine.py`, a port of the firmware. `parity_check.py` proves the port: the firmware's own functions are extracted from `main.cpp`, compiled, and 1524 cases across three strip widths match pixel for pixel |
+| Verification | ✅ `parity_check.py` (2724 frames, rpm filter, brightness; sensitivity proved at every width), `test_settings_parity.py` (63/63 settings), `test_led_engine.py` (43/43), `test_link_protocol.py` (58/58); both APK flavors and both firmwares build |
 
 
 ---
@@ -360,9 +360,9 @@ is doing instead of lying in blue — so it is worth shipping before the rest.
 - **Simulator first:** `tools/simulators/led_simulator/` renders the new states —
   `led_engine.py` is a port of the firmware's rendering, `led_simulator_v3.py` drives it with
   an rpm slider, and `parity_check.py` compiles the firmware's own functions and requires
-  every pixel of every frame to match (371 cases). Keep the port in step with
-  `arduino/src/main.cpp`; `test_settings_parity.py` covers the numbers and `parity_check.py`
-  the logic.
+  every pixel of every frame to match (1524 cases, 2724 frames, at three strip widths).
+  Keep the port in step with `arduino/src/main.cpp`; `test_settings_parity.py` covers the
+  numbers and `parity_check.py` the logic.
 - **Unit-ish:** move the ramp/geometry maths into a header that the `native_sim` env can
   compile ([test/test_telemetry.cpp](../test/test_telemetry.cpp) already runs on the host).
   Assert: bar length is monotonic in rpm, colour at a stop equals the stop colour,

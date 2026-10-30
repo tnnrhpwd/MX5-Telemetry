@@ -80,11 +80,24 @@ python tools/simulators/led_simulator/parity_check.py --mutate-check
 `arduino/src/main.cpp` — `rampColorAtRpm`, `barRank`, `barSlots`, `renderBar`,
 `drawCanOffline`, `drawSelfTest`, `updateErrorAnimation`, `updateLEDs`, and
 `readCANMessages` — drops them into a small C++ program with stubs for the Arduino bits, and
-compiles it with MSVC. Then it runs 371 cases (every fill pattern, both colour modes, dim on
-and off, five "full at" scales, four ramps, the idle/shift/offline/error/self-test states,
-the frame boundaries and 120 random combinations) through both that binary and the port, and
-requires **every pixel of every frame to match exactly**. It also compares the rpm decode
-and smoothing filter reading-for-reading, and the NeoPixel brightness scale value-for-value.
+compiles it with MSVC. Then it drives both that binary and the port and requires **every
+pixel of every frame to match exactly**:
+
+- **1524 cases, 2724 frames**, at **LED counts 5, 20 and 21**. Odd widths matter: at 21 the
+  centre pixel has no partner, and the firmware's mirrored geometry leaves it dark at full
+  rpm — a quirk the port has to reproduce, not fix.
+- Every fill pattern, both colour modes, dim on and off, five "full at" scales, and **eight
+  ramps** including out-of-order and duplicated stops. A descending table makes the later
+  stops unreachable (the lookup returns at the first stop at or above the request), and the
+  Pi accepts any order, so that is reachable in the car.
+- **Runs of frames rather than single frames**, so the time-driven patterns are covered
+  frame by frame: the error scanner's 30 ms walk, the shift light's blink across half
+  periods, the self-test sweep and identify blink, and the repaint gate holding an
+  unchanged bar still.
+- The `0x201` decode and the smoothing filter reading-for-reading, and the NeoPixel
+  brightness scale value-for-value — that last one checked *and* cross-checked against the
+  installed `Adafruit_NeoPixel.cpp`, because the probe is a transcription and a
+  transcription is the thing this exercise distrusts.
 
 Because the C++ side is extracted rather than copied, editing the firmware without touching
 the port makes it fail.
@@ -104,16 +117,25 @@ Python-only machine. Point `MX5_CL` at a `cl.exe` if MSVC is somewhere unusual.
 python tools/simulators/led_simulator/test_settings_parity.py
 ```
 
-**51 settings** are parsed out of the four places that hold a copy and compared: the
+**63 settings** are parsed out of the four places that hold a copy and compared: the
 firmware's constants and `CFG:` clamps, the Pi's `Settings` defaults and its validation
 ranges, the phone's sliders and ramp fractions, and the simulator's own defaults and slider
-ranges. It found three real disagreements, all now fixed:
+ranges. The `RAMP:` contract is also *exercised* — the simulator's parser must accept and
+reject exactly what the Pi's validator does (2-6 stops, digit rpm, six hex digits; any
+order).
+
+It found three real disagreements in the first pass, all now fixed:
 
 | Disagreement | Was | Now |
 |---|---|---|
 | Simulator shift-light slider | 3000-8000 | **2000-8000**, the firmware's clamp |
 | Phone shift-light slider | 3000-7500 | **2000-8000**, the firmware's clamp |
 | Phone brightness fallback | 180 (invented) | **255**, the strip's boot value |
+
+A second pass found a further set in how the simulator *handles* a loaded configuration,
+all now fixed: an out-of-range "Full at" was clamped to the slider's 2000 floor instead of
+being shown; a ramp that arrived with fewer than six stops silently ignored edits to stops
+4-6; and the parser accepted a signed rpm the Pi would have rejected.
 
 It is not vacuous: drifting `DIM_SCALE` to 169 makes it exit 1 and name the firmware line.
 
@@ -128,7 +150,8 @@ overclaiming:
 | The 3 s error debounce (`ERROR_DEBOUNCE_MS`) | "No engine frames" switches the scanner on immediately, because that is what you want on a bench. The firmware waits 3 s first. |
 | `DEMO:<rpm>` and its 60 s self-clear | The rpm slider is the override; there is no second one to expire. |
 | The brightness pot on `A6` | `ENABLE_BRIGHTNESS` is on and the pin floats on this build, so until the Pi sends `CFG:bright` the real strip's brightness can disagree with any slider. The simulator shows the value the strip is *told*. |
-| `showIfChanged()` and the repaint gate | Performance only: they skip work, not pixels. |
+| `CFG:pot=`, `CFG:save`, `CFG:reset`, `CFG?` | The pot switch, EEPROM persistence and the config query. None of them change a pixel; the simulator's settings are the live ones. |
+| `showIfChanged()` and the repaint gate | Performance only: they skip work, not pixels. Both are exercised anyway by the multi-frame cases. |
 | `LED_COUNT` as a build flag | Defaults to 20; the **LEDs** slider covers 5-60 for a strip that was cut or extended. |
 
 ## Reading the screen
@@ -154,3 +177,8 @@ read `lib/Config/LEDStates.h`, which nothing builds any more.
 
 Use `led_simulator_v3.py`. If you need the physics model back for a different purpose, it is
 still there — but do not trust its LED output.
+
+`parse_arduino_led_config.py` and `test_parser.py` belong to that same generation: they read
+`lib/Config/LEDStates.h`, which nothing builds. `test_parser.py` looks for it at a path that
+no longer exists and so reports `✗ LEDStates.h NOT found` — expected, and unrelated to the
+current simulator.

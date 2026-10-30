@@ -135,10 +135,18 @@ def rgb_of_hex(text: str) -> RGB:
 
 
 def parse_ramp(text: str) -> Tuple[Tuple[int, RGB], ...]:
-    """Parse the firmware's `RAMP:<rpm>:<rrggbb>,...` payload."""
+    """Parse the firmware's `RAMP:<rpm>:<rrggbb>,...` payload.
+
+    The same rules the Pi enforces before forwarding: 2-6 stops, a run of digits for the
+    rpm, six hex digits for the colour. Ordering is *not* checked, because neither the Pi
+    nor the firmware checks it - a descending table is legal, just mostly unreachable
+    (see `ramp_color_at_rpm`).
+    """
     stops = []
     for part in (piece for piece in text.split(",") if piece.strip()):
         rpm_text, _, colour = part.strip().partition(":")
+        if not rpm_text.isdigit():
+            raise ValueError("ramp rpm %r is not a run of digits" % rpm_text)
         stops.append((int(rpm_text), rgb_of_hex(colour)))
     if not 2 <= len(stops) <= 6:
         raise ValueError("a ramp needs 2-6 stops, got %d" % len(stops))

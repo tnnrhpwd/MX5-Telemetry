@@ -211,10 +211,17 @@ static int read_ints(long* out, int count) {
     return 1;
 }
 
+static void print_frame(void) {
+    for (int i = 0; i < LED_COUNT; i++) {
+        printf("%02x%02x%02x%c", strip.r[i], strip.g[i], strip.b[i],
+               i == LED_COUNT - 1 ? '\n' : ' ');
+    }
+}
+
 int main(void) {
     long v[32];
     for (;;) {
-        if (!read_ints(v, 17)) return 0;
+        if (!read_ints(v, 18)) return 0;
         currentRPM        = (uint16_t)v[0];
         ledSequence       = (uint8_t)v[1];
         colorMode         = (uint8_t)v[2];
@@ -232,7 +239,8 @@ int main(void) {
         demoForced        = v[13] != 0;
         demoRPM           = (uint16_t)v[14];
         selfTestMode      = (uint8_t)v[15];
-        millis_value      = (unsigned long)v[16];
+        selfTestStart     = (unsigned long)v[16];
+        long frames       = v[17];
 
         if (!read_ints(v, 1)) return 0;
         int stops = (int)v[0];
@@ -246,22 +254,23 @@ int main(void) {
         }
         rampStopCount = (uint8_t)stops;
 
-        // A fresh frame: the firmware's repaint gate is a performance hack, and starting
-        // every case from "something changed" is what makes the frame comparable.
+        // Deterministic animation state, set up once per case so a run of frames is a
+        // continuous animation rather than N independent ones.
         lastRenderedRPM = 0xFFFF;
         stripForceShow  = true;
-        // Deterministic animation state.
-        selfTestStart       = 0;
         errorScanPosition   = 0;
         errorScanDirection  = 1;
         lastErrorAnimation  = 0;
         strip.clear();
 
-        updateLEDs();
-
-        for (int i = 0; i < LED_COUNT; i++) {
-            printf("%02x%02x%02x%c", strip.r[i], strip.g[i], strip.b[i],
-                   i == LED_COUNT - 1 ? '\n' : ' ');
+        // A case is a run of frames: updateLEDs() is called once per timestamp and the
+        // buffer printed after each. That is what exercises the repaint gate and the
+        // time-driven patterns (scanner, shift blink) instead of only their first frame.
+        for (long f = 0; f < frames; f++) {
+            if (!read_ints(v, 1)) return 0;
+            millis_value = (unsigned long)v[0];
+            updateLEDs();
+            print_frame();
         }
     }
 }
@@ -362,76 +371,102 @@ def compile_harness(work: str, compiler: str) -> str:
 
 def _ramp_variants() -> List[Tuple[Tuple[int, engine.RGB], ...]]:
     variants = [engine.DEFAULT_RAMP]
-    # Uneven, out-of-order-ish and two-stop ramps: the piecewise lookup is where a port is
-    # most likely to disagree, so exercise gaps and a short table.
+    # Uneven and short tables: the piecewise lookup is where a port is most likely to
+    # disagree, so exercise gaps and a two-stop ramp.
     variants.append(((0, (10, 20, 30)), (4000, (200, 100, 50))))
     variants.append(((0, (0, 0, 255)), (500, (255, 0, 0)), (8000, (0, 255, 0))))
     variants.append(((1000, (1, 2, 3)), (1200, (4, 5, 6)), (1300, (7, 8, 9)),
                      (7000, (250, 251, 252))))
+    # Out-of-order and duplicated stops. `rampColorAtRpm` returns at the first stop whose
+    # rpm is >= the request, so a descending table makes the later stops unreachable and a
+    # duplicate pair collapses span to 0 (t = 1, so the later colour wins). The Pi accepts
+    # any order, so this is reachable in the car and worth pinning.
+    variants.append(((0, (0, 0, 255)), (3000, (0, 255, 0)), (1500, (255, 0, 0))))
+    variants.append(((0, (9, 9, 9)), (2000, (10, 20, 30)), (2000, (200, 100, 50))))
+    variants.append(((500, (1, 1, 1)), (500, (2, 2, 2))))
+    variants.append(((0, (255, 255, 255)), (1, (0, 0, 0)), (2, (255, 0, 0)),
+                     (3, (0, 255, 0)), (4, (0, 0, 255)), (65535, (128, 128, 128))))
     return variants
+
+
+def _case(nows=None, **kwargs) -> dict:
+    """One case: a fixed configuration plus the timestamps to run it at."""
+    case = dict(rpm=0, sequence=engine.SEQ_CENTER_OUT, color_mode=0, theme_dim=False,
+                full_rpm=6800, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
+                enabled=True, can=True, error=False, self_test=0, self_test_start=0,
+                ramp=engine.DEFAULT_RAMP)
+    case.update(kwargs)
+    case["nows"] = list(nows) if nows is not None else [kwargs.get("now", 0)]
+    case.pop("now", None)
+    return case
 
 
 def build_cases(count: int, rng: random.Random) -> List[dict]:
     cases: List[dict] = []
     ramps = _ramp_variants()
 
-    def add(**kwargs):
-        cases.append(kwargs)
+    for case in cases:
+        pass
 
-    # Hand-picked edge cases first.
+    # Hand-picked edges: every fill pattern, both colour modes, dim on and off, across the
+    # rpm range including the frame boundaries.
     for sequence in (engine.SEQ_CENTER_OUT, engine.SEQ_LEFT_TO_RIGHT,
                      engine.SEQ_RIGHT_TO_LEFT, engine.SEQ_CENTER_IN):
         for mode in (0, 1):
             for dim in (False, True):
                 for rpm in (0, 1, 10, 679, 680, 760, 3400, 6799, 6800, 8000):
-                    add(rpm=rpm, sequence=sequence, color_mode=mode, theme_dim=dim,
-                        full_rpm=6800, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
-                        enabled=True, can=True, error=False, self_test=0, now=0,
-                        ramp=engine.DEFAULT_RAMP)
+                    cases.append(_case(rpm=rpm, sequence=sequence, color_mode=mode,
+                                       theme_dim=dim))
 
     # Different "full at" scales, including one below the test rpm.
     for full in (2000, 3500, 4200, 8000):
         for rpm in (0, 500, 1000, 2000, 3000, 4199, 4200, 6800):
-            add(rpm=rpm, sequence=engine.SEQ_CENTER_OUT, color_mode=0, theme_dim=False,
-                full_rpm=full, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
-                enabled=True, can=True, error=False, self_test=0, now=0,
-                ramp=engine.DEFAULT_RAMP)
+            cases.append(_case(rpm=rpm, full_rpm=full))
 
-    # Shift light, at several rates, plus the boundary either side of the trigger.
-    for rpm in (6299, 6300, 6301, 6800):
-        for now in (0, 31, 62, 63, 124, 125):
-            add(rpm=rpm, sequence=engine.SEQ_CENTER_OUT, color_mode=0, theme_dim=False,
-                full_rpm=6800, shift_rpm=6300, shift_hz=8, shift_color=(0, 255, 0),
-                enabled=True, can=True, error=False, self_test=0, now=now,
-                ramp=engine.DEFAULT_RAMP)
+    # Every ramp variant, at several rpms and both modes.
+    for ramp in ramps:
+        for mode in (0, 1):
+            for rpm in (0, 400, 1200, 2000, 2600, 3400, 5000, 7000, 9000):
+                cases.append(_case(rpm=rpm, color_mode=mode, ramp=ramp,
+                                   full_rpm=ramp[-1][0] if ramp[-1][0] > 0 else 6800))
 
-    # The non-bar states.
+    # Shift light: the trigger boundary and a full blink cycle, sampled over time.
+    for rpm in (6299, 6300, 6301):
+        for hz in (2, 8, 15):
+            cases.append(_case(rpm=rpm, shift_rpm=6300, shift_hz=hz,
+                               shift_color=(0, 255, 0),
+                               nows=[0, 15, 31, 62, 63, 124, 125, 200]))
+
+    # Time-driven patterns: the scanner walks the strip, the shift light blinks, the
+    # self-test sweeps, and an unchanged bar must stay put through the repaint gate.
+    cases.append(_case(error=True, rpm=5000, nows=list(range(0, 400, 17))))
+    cases.append(_case(rpm=6500, shift_rpm=6300, nows=list(range(0, 200, 15))))
+    cases.append(_case(rpm=3400, nows=[0, 33, 66, 99, 132]))
+    cases.append(_case(rpm=0, nows=[0, 500, 999, 1000, 1499, 1500]))
+    cases.append(_case(self_test=engine.SELF_TEST_SWEEP, rpm=5000, self_test_start=1000,
+                       nows=[1000, 1500, 2000, 2500, 3000, 4000, 4999, 5001]))
+    cases.append(_case(self_test=engine.SELF_TEST_IDENTIFY, rpm=5000,
+                       self_test_start=1000,
+                       nows=[1000, 1125, 1250, 3999, 4000, 4001]))
+    cases.append(_case(can=False, rpm=5000, nows=[0, 400, 500, 999, 1000, 1400]))
+    cases.append(_case(enabled=False, rpm=5000, nows=[0, 500, 1000]))
+
+    # The remaining single-state cases.
     for now in (0, 100, 500, 999, 1000, 1500, 3000):
-        add(rpm=5000, sequence=engine.SEQ_CENTER_OUT, color_mode=0, theme_dim=False,
-            full_rpm=6800, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
-            enabled=False, can=True, error=False, self_test=0, now=now,
-            ramp=engine.DEFAULT_RAMP)
-        add(rpm=5000, sequence=engine.SEQ_CENTER_OUT, color_mode=0, theme_dim=False,
-            full_rpm=6800, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
-            enabled=True, can=False, error=False, self_test=0, now=now,
-            ramp=engine.DEFAULT_RAMP)
-        add(rpm=5000, sequence=engine.SEQ_CENTER_OUT, color_mode=0, theme_dim=False,
-            full_rpm=6800, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
-            enabled=True, can=True, error=True, self_test=0, now=now,
-            ramp=engine.DEFAULT_RAMP)
-        add(rpm=5000, sequence=engine.SEQ_LEFT_TO_RIGHT, color_mode=0, theme_dim=False,
-            full_rpm=6800, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
-            enabled=True, can=True, error=False, self_test=engine.SELF_TEST_SWEEP, now=now,
-            ramp=engine.DEFAULT_RAMP)
-        add(rpm=5000, sequence=engine.SEQ_CENTER_OUT, color_mode=0, theme_dim=False,
-            full_rpm=6800, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
-            enabled=True, can=True, error=False, self_test=engine.SELF_TEST_IDENTIFY,
-            now=now, ramp=engine.DEFAULT_RAMP)
+        cases.append(_case(enabled=False, rpm=5000, nows=[now]))
+        cases.append(_case(can=False, rpm=5000, nows=[now]))
+        cases.append(_case(error=True, rpm=5000, nows=[now]))
+        cases.append(_case(self_test=engine.SELF_TEST_SWEEP, rpm=5000, nows=[now]))
+        cases.append(_case(self_test=engine.SELF_TEST_IDENTIFY, rpm=5000, nows=[now]))
 
-    # Random sweep over everything.
+    # Random sweep over everything, with a random frame count so short animations are
+    # covered as well as single frames.
     for _ in range(count):
-        ramp = rng.choice(ramps)
-        add(rpm=rng.choice([rng.randrange(0, 9000), rng.randrange(0, 200), 0, 6800]),
+        start = rng.randrange(0, 4000)
+        length = rng.choice([1, 1, 2, 4, 8])
+        step = rng.choice([8, 15, 33, 100])
+        cases.append(_case(
+            rpm=rng.choice([rng.randrange(0, 9000), rng.randrange(0, 200), 0, 6800]),
             sequence=rng.choice([1, 2, 3, 4]),
             color_mode=rng.choice([0, 1]),
             theme_dim=rng.choice([False, True]),
@@ -444,12 +479,14 @@ def build_cases(count: int, rng: random.Random) -> List[dict]:
             error=rng.random() > 0.85,
             self_test=rng.choice([0, 0, 0, engine.SELF_TEST_SWEEP,
                                   engine.SELF_TEST_IDENTIFY]),
-            now=rng.randrange(0, 5000),
-            ramp=ramp)
+            self_test_start=start,
+            ramp=rng.choice(ramps),
+            nows=[start + i * step for i in range(length)]))
     return cases
 
 
-def run_cpp(exe: str, cases: List[dict]) -> List[List[str]]:
+def run_cpp(exe: str, cases: List[dict], led_count: int) -> List[List[List[str]]]:
+    """Every frame of every case, as the firmware renders it."""
     lines = []
     for case in cases:
         lines.append(" ".join(str(int(x)) for x in (
@@ -457,37 +494,54 @@ def run_cpp(exe: str, cases: List[dict]) -> List[List[str]]:
             case["full_rpm"], case["shift_rpm"], case["shift_hz"],
             case["shift_color"][0], case["shift_color"][1], case["shift_color"][2],
             int(case["enabled"]), int(case["can"]), int(case["error"]),
-            0, 0, case["self_test"], case["now"])))
+            0, 0, case["self_test"], case["self_test_start"], len(case["nows"]))))
         ramp = case["ramp"]
         lines.append(" ".join([str(len(ramp))] + [
             "%d %d %d %d" % (rpm, rgb[0], rgb[1], rgb[2]) for rpm, rgb in ramp]))
+        lines.append(" ".join(str(int(now)) for now in case["nows"]))
     stdin = "\n".join(lines) + "\n"
-    result = subprocess.run([exe], input=stdin, capture_output=True, text=True, timeout=300)
+    result = subprocess.run([exe], input=stdin, capture_output=True, text=True,
+                            timeout=300)
     if result.returncode != 0:
         raise SystemExit("harness exited %d: %s" % (result.returncode, result.stderr))
-    out = [line.split() for line in result.stdout.splitlines() if line.strip()]
-    if len(out) != len(cases):
-        raise SystemExit("expected %d frames, got %d" % (len(cases), len(out)))
-    return out
+    flat = [line.split() for line in result.stdout.splitlines() if line.strip()]
 
-
-def run_python(cases: List[dict]) -> List[List[str]]:
-    frames = []
+    frames: List[List[List[str]]] = []
+    cursor = 0
     for case in cases:
-        cfg = LedConfig(sequence=case["sequence"], color_mode=case["color_mode"],
-                        full_rpm=case["full_rpm"], theme_dim=case["theme_dim"],
-                        enabled=case["enabled"], brightness=255,
-                        shift_rpm=case["shift_rpm"], shift_hz=case["shift_hz"],
-                        shift_color=case["shift_color"], ramp=case["ramp"])
-        elf = LedEngine(cfg=cfg, can_initialized=case["can"],
-                        error_mode=case["error"], rpm=case["rpm"])
-        if case["self_test"]:
-            elf.start_self_test(case["self_test"], 0)
-        frames.append([engine.hex_of(rgb) for rgb in elf.frame(case["now"])])
+        block = flat[cursor:cursor + len(case["nows"])]
+        if len(block) != len(case["nows"]):
+            raise SystemExit("short output: expected %d frames, got %d"
+                             % (len(case["nows"]), len(block)))
+        frames.append(block)
+        cursor += len(block)
+    if cursor != len(flat):
+        raise SystemExit("harness produced %d extra frames" % (len(flat) - cursor))
     return frames
 
 
-def _mutation_caught(cases: List[dict], cpp_frames: List[List[str]]) -> bool:
+def run_python(cases: List[dict], led_count: int) -> List[List[List[str]]]:
+    """The same frames from the port, driven the same way."""
+    out: List[List[List[str]]] = []
+    for case in cases:
+        cfg = LedConfig(led_count=led_count, sequence=case["sequence"],
+                        color_mode=case["color_mode"], full_rpm=case["full_rpm"],
+                        theme_dim=case["theme_dim"], enabled=case["enabled"],
+                        brightness=255, shift_rpm=case["shift_rpm"],
+                        shift_hz=case["shift_hz"], shift_color=case["shift_color"],
+                        ramp=case["ramp"])
+        elf = LedEngine(cfg=cfg, can_initialized=case["can"],
+                        error_mode=case["error"], rpm=case["rpm"])
+        # Set the bench-pattern state directly, exactly as the harness sets the globals:
+        # `start_self_test` would also stamp the start time from the call.
+        elf.self_test_mode = case["self_test"]
+        elf.self_test_started = case["self_test_start"]
+        out.append([[engine.hex_of(rgb) for rgb in elf.frame(int(now))]
+                    for now in case["nows"]])
+    return out
+
+
+def _mutation_caught(cases: List[dict], cpp_frames, led_count: int) -> bool:
     """Perturb the port and confirm the comparison notices.
 
     A parity check that passes because both sides are inert (all zeros, say) is worse than
@@ -500,7 +554,7 @@ def _mutation_caught(cases: List[dict], cpp_frames: List[List[str]]) -> bool:
     original_dim = engine.DIM_SCALE
     try:
         engine.DIM_SCALE = original_dim - 1
-        if run_python(cases) != cpp_frames:
+        if run_python(cases, led_count) != cpp_frames:
             caught += 1
     finally:
         engine.DIM_SCALE = original_dim
@@ -508,7 +562,7 @@ def _mutation_caught(cases: List[dict], cpp_frames: List[List[str]]) -> bool:
     original_byte = engine._byte
     try:
         engine._byte = lambda value: (original_byte(value) - 1) & 0xFF
-        if run_python(cases) != cpp_frames:
+        if run_python(cases, led_count) != cpp_frames:
             caught += 1
     finally:
         engine._byte = original_byte
@@ -644,6 +698,47 @@ int main(void) {
 """
 
 
+def _neopixel_cpp() -> Optional[str]:
+    """Path to the installed Adafruit_NeoPixel implementation, if there is one."""
+    root = os.path.join(REPO, ".pio", "libdeps")
+    if not os.path.isdir(root):
+        return None
+    for env in os.listdir(root):
+        for directory in (os.path.join(root, env, "Adafruit NeoPixel"),
+                          os.path.join(root, env, "Adafruit_NeoPixel")):
+            path = os.path.join(directory, "Adafruit_NeoPixel.cpp")
+            if os.path.exists(path):
+                return path
+    return None
+
+
+def library_scale_problems() -> List[str]:
+    """Check the brightness scale we emulate is the one in the installed library.
+
+    `BRIGHTNESS_PROBE` is a transcription of two lines of Adafruit_NeoPixel. A transcription
+    is exactly what this whole exercise distrusts, so verify it against the real source:
+    `setBrightness` must store `b + 1`, and `show()` must scale `(v * brightness) >> 8`
+    behind an `if (brightness)` guard (which is why 255 means *no* scaling).
+    """
+    path = _neopixel_cpp()
+    if not path:
+        return []
+
+    problems = []
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    if "uint8_t newBrightness = b + 1;" not in text:
+        problems.append("library no longer stores b + 1 in setBrightness() - the "
+                        "brightness emulation in apply_brightness() is stale")
+    if "(r * brightness) >> 8" not in text:
+        problems.append("library no longer scales (v * brightness) >> 8 - the brightness "
+                        "emulation in apply_brightness() is stale")
+    if "if (brightness) {" not in text:
+        problems.append("library no longer gates the scale on `if (brightness)` - the "
+                        "255-means-no-scaling behaviour may have changed")
+    return problems
+
+
 def check_brightness(work: str, compiler: str) -> List[str]:
     source = os.path.join(work, "brightness.cpp")
     with open(source, "w", encoding="utf-8") as handle:
@@ -695,55 +790,76 @@ def main() -> int:
         print("SKIPPED: no C++ compiler found (set MX5_CL to a cl.exe path)")
         return 0
     print("compiler:", compiler)
+    library = _neopixel_cpp()
+    print("neopixel library:", library if library else "not installed (scale check skipped)")
 
     work = tempfile.mkdtemp(prefix="mx5-led-parity-")
     try:
         source = _read_main()
-        harness = build_harness(source, args.led_count)
-        with open(os.path.join(work, "verify.cpp"), "w", encoding="utf-8") as handle:
-            handle.write(harness)
-        exe = compile_harness(work, compiler)
+        # 20 is the strip that exists; odd counts are where the mirrored geometry gets
+        # interesting (the centre pixel has no partner), so check those too.
+        led_counts = sorted({args.led_count, 20, 21, 5})
+        total_cases = 0
+        total_frames = 0
+        all_mismatches = []
 
-        rng = random.Random(20261030)
-        cases = build_cases(args.cases, rng)
-        cpp_frames = run_cpp(exe, cases)
-        py_frames = run_python(cases)
+        for led_count in led_counts:
+            harness = build_harness(source, led_count)
+            with open(os.path.join(work, "verify.cpp"), "w", encoding="utf-8") as handle:
+                handle.write(harness)
+            exe = compile_harness(work, compiler)
 
-        mismatches = []
-        for index, (case, cpp, py) in enumerate(zip(cases, cpp_frames, py_frames)):
-            if cpp != py:
-                differing = [i for i in range(min(len(cpp), len(py))) if cpp[i] != py[i]]
-                mismatches.append((index, case, cpp, py, differing))
+            # A fresh random stream per width, so the cases are reproducible but not the
+            # same shape at every size.
+            rng = random.Random(20261030 + led_count)
+            cases = build_cases(args.cases, rng)
+            cpp_frames = run_cpp(exe, cases, led_count)
+            py_frames = run_python(cases, led_count)
 
-        brightness_problems = check_brightness(work, compiler)
+            for index, (case, cpp, py) in enumerate(zip(cases, cpp_frames, py_frames)):
+                if cpp == py:
+                    continue
+                differing = [(f, i) for f in range(min(len(cpp), len(py)))
+                             for i in range(len(cpp[f]))
+                             if cpp[f][i] != py[f][i]]
+                all_mismatches.append((led_count, index, case, cpp, py, differing))
+
+            total_cases += len(cases)
+            total_frames += sum(len(case["nows"]) for case in cases)
+
+            if args.mutate_check and not _mutation_caught(cases, cpp_frames, led_count):
+                print("BUT the check would not notice a difference at %d LEDs - it is not "
+                      "proving anything" % led_count)
+                return 1
+
+        brightness_problems = check_brightness(work, compiler) + library_scale_problems()
         rpm_problems = check_rpm_filter(work, compiler, source)
 
-        print("cases: %d   frames compared: %d" % (len(cases), len(cpp_frames)))
-        if not mismatches and not brightness_problems and not rpm_problems:
+        print("LED counts: %s   cases: %d   frames compared: %d"
+              % (", ".join(str(c) for c in led_counts), total_cases, total_frames))
+        if not all_mismatches and not brightness_problems and not rpm_problems:
             print("PARITY OK - every pixel of every frame matches the firmware")
-            if args.mutate_check and not _mutation_caught(cases, cpp_frames):
-                print("BUT the check would not notice a difference - it is not proving "
-                      "anything")
-                return 1
             if args.mutate_check:
-                print("sensitivity confirmed: a deliberate change is detected")
+                print("sensitivity confirmed: a deliberate change is detected at every width")
             return 0
 
         for problem in brightness_problems:
             print("MISMATCH (brightness)", problem)
         for problem in rpm_problems:
             print("MISMATCH (rpm filter)", problem)
-        for index, case, cpp, py, differing in mismatches[:8]:
-            print("\nMISMATCH case %d: rpm=%s seq=%s mode=%s dim=%s full=%s "
-                  "shift=%s@%sHz now=%s enabled=%s can=%s error=%s selftest=%s"
-                  % (index, case["rpm"], case["sequence"], case["color_mode"],
+        for led_count, index, case, cpp, py, differing in all_mismatches[:8]:
+            print("\nMISMATCH at %d LEDs, case %d: rpm=%s seq=%s mode=%s dim=%s full=%s "
+                  "shift=%s@%sHz enabled=%s can=%s error=%s selftest=%s@%s ramp=%s"
+                  % (led_count, index, case["rpm"], case["sequence"], case["color_mode"],
                      case["theme_dim"], case["full_rpm"], case["shift_rpm"],
-                     case["shift_hz"], case["now"], case["enabled"], case["can"],
-                     case["error"], case["self_test"]))
-            for pixel in differing[:6]:
-                print("   pixel %2d  C++ %s  python %s"
-                      % (pixel, cpp[pixel], py[pixel]))
-        print("\n%d of %d cases differ" % (len(mismatches), len(cases)))
+                     case["shift_hz"], case["enabled"], case["can"], case["error"],
+                     case["self_test"], case["self_test_start"],
+                     [rpm for rpm, _ in case["ramp"]]))
+            for frame_index, pixel in differing[:6]:
+                print("   frame %2d pixel %2d  C++ %s  python %s"
+                      % (frame_index, pixel, cpp[frame_index][pixel],
+                         py[frame_index][pixel]))
+        print("\n%d case(s) differ" % len(all_mismatches))
         return 1
     finally:
         if args.keep:

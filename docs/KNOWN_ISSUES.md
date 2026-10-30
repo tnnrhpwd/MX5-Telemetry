@@ -1207,8 +1207,8 @@ What was actually run after the LED-screen round (2026-10-30, no car, no phone, 
 | Pi link protocol + LED keys | `python pi/ui/src/test_link_protocol.py` | ✅ **58/58** passed (was 50; +8 for the new settings and the LED command allow-list) |
 | Reverse probe analysis | `python tools/can/test_reverse_probe.py` | ✅ **7/7** passed |
 | LED simulator engine | `python tools/simulators/led_simulator/test_led_engine.py` | ✅ **43/43** passed — the port is pinned to values worked out by hand from `arduino/src/main.cpp` |
-| LED simulator **vs the firmware** | `python tools/simulators/led_simulator/parity_check.py --mutate-check` | ✅ **371/371 frames identical, pixel for pixel**, against the firmware's own functions extracted from `main.cpp` and compiled with MSVC; rpm filter and brightness scale too; sensitivity confirmed |
-| LED simulator **settings** | `python tools/simulators/led_simulator/test_settings_parity.py` | ✅ **51/51** settings identical across firmware, Pi, app and simulator (found and fixed 3 drifts) |
+| LED simulator **vs the firmware** | `python tools/simulators/led_simulator/parity_check.py --mutate-check` | ✅ **1524 cases / 2724 frames identical, pixel for pixel**, at LED counts 5, 20 and 21, against the firmware's own functions extracted from `main.cpp` and compiled with MSVC; multi-frame animation and the repaint gate included; rpm filter and brightness scale too; sensitivity confirmed at every width |
+| LED simulator **settings** | `python tools/simulators/led_simulator/test_settings_parity.py` | ✅ **63/63** settings identical across firmware, Pi, app and simulator (found and fixed 3 drifts, plus 3 ramp-handling defects) |
 | LED simulator GUI | driven headlessly through every control | ✅ all controls, the sweep and the rpm filter behave; screenshots reviewed |
 | Pi LED persistence | ad-hoc round trip | ✅ save → load identical; missing file and corrupt JSON both fall back to defaults without raising |
 | Pi modules | `python -m py_compile main.py link_service.py web_server.py link_protocol.py` | ✅ clean |

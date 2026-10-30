@@ -308,12 +308,53 @@ def main():
     failures = [(what, actual, expected, where)
                 for what, actual, expected, where in CHECKS if actual != expected]
 
-    if not failures:
-        print("%d settings match across firmware, Pi, app and simulator" % len(CHECKS))
+    # The RAMP: contract, exercised rather than parsed: the simulator's parser must accept
+    # and reject exactly what the Pi's validator does, or `--pi` would load something the
+    # strip could not have been given.
+    functional = []
+
+    def accepts(text):
+        try:
+            engine.parse_ramp(text)
+            return True
+        except ValueError:
+            return False
+
+    ramp_cases = [
+        ("2 stops", "0:0000ff,6800:ff0000", True),
+        ("6 stops", engine.format_ramp(engine.DEFAULT_RAMP), True),
+        ("1 stop", "0:0000ff", False),
+        ("7 stops", ",".join("%d:000000" % (i * 100) for i in range(7)), False),
+        ("5-digit hex", "0:00000,6800:ff0000", False),
+        ("7-digit hex", "0:0000000,6800:ff0000", False),
+        ("non-hex colour", "0:zzzzzz,6800:ff0000", False),
+        ("signed rpm", "-100:0000ff,6800:ff0000", False),
+        ("empty rpm", ":0000ff,6800:ff0000", False),
+        # Legal but odd: the Pi accepts any order, and so must the simulator, because that
+        # is what the strip does.
+        ("descending", "0:0000ff,3000:00ff00,1500:ff0000", True),
+        ("duplicate rpm", "0:0000ff,2000:00ff00,2000:ff0000", True),
+    ]
+    for name, text, expected in ramp_cases:
+        if accepts(text) != expected:
+            functional.append(("ramp accepts %s" % name, accepts(text), expected,
+                               "pi/ui/src/link_service.py led_ramp validation"))
+
+    # ...and the Pi's own bounds, parsed earlier, must be the same 2-6.
+    stop_bounds = re.search(r"if not (\d+) <= len\(parts\) <= (\d+)", LINK)
+    if stop_bounds:
+        if (int(stop_bounds.group(1)), int(stop_bounds.group(2))) != (2, len(FW_RAMP)):
+            functional.append(("pi ramp stop bounds",
+                               tuple(int(v) for v in stop_bounds.groups()),
+                               (2, len(FW_RAMP)), "main.cpp RAMP_STOP_COUNT"))
+
+    if not failures and not functional:
+        print("%d settings match across firmware, Pi, app and simulator"
+              % (len(CHECKS) + len(ramp_cases) + 1))
         return 0
 
-    print("%d of %d settings disagree:\n" % (len(failures), len(CHECKS)))
-    for what, actual, expected, where in failures:
+    print("%d settings disagree:\n" % (len(failures) + len(functional)))
+    for what, actual, expected, where in failures + functional:
         print("  %-24s simulator/Pi/app %r\n  %-24s firmware        %r   (%s)\n"
               % (what + ":", actual, "", expected, where))
     return 1

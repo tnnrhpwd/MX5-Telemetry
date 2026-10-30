@@ -311,12 +311,18 @@ class Chips(tk.Frame):
 
 
 class Swatches(tk.Frame):
-    """Six ramp stops, each a colour button that opens a picker."""
+    """Ramp stops, each a colour button that opens a picker.
+
+    There are always six buttons because the app's editor has six stops, but a ramp that
+    arrived with fewer (or more) is shown honestly: `set()` only touches the swatches the
+    ramp actually has, and the legend draws the real table.
+    """
 
     def __init__(self, parent, colours: List[RGB], on_pick):
         super().__init__(parent, bg=CARD)
         self.on_pick = on_pick
         self.buttons: List[tk.Label] = []
+        self.hexes: List[str] = []
         for index, rgb in enumerate(colours):
             label = tk.Label(self, text=str(index + 1), bg=_hex(rgb), fg="#101014",
                              width=3, pady=4, font=("Segoe UI", 8, "bold"),
@@ -325,6 +331,12 @@ class Swatches(tk.Frame):
             label.bind("<Button-1>", lambda _e, i=index: self._choose(i))
             self.grid_columnconfigure(index, weight=1)
             self.buttons.append(label)
+            self.hexes.append(engine.hex_of(rgb))
+
+    @property
+    def colours(self) -> List[RGB]:
+        """The six swatch colours, whatever the live ramp happens to contain."""
+        return [engine.rgb_of_hex(value) for value in self.hexes]
 
     def _choose(self, index: int) -> None:
         initial = self.buttons[index].cget("bg")
@@ -334,11 +346,17 @@ class Swatches(tk.Frame):
             return
         value = engine.rgb_of_hex(chosen.lstrip("#"))
         self.buttons[index].config(bg=_hex(value))
+        self.hexes[index] = engine.hex_of(value)
         self.on_pick(index, value)
 
     def set(self, colours: List[RGB]) -> None:
-        for button, rgb in zip(self.buttons, colours):
-            button.config(bg=_hex(rgb))
+        """Show a ramp. Stops the ramp does not have keep their swatch, dimmed."""
+        for index, button in enumerate(self.buttons):
+            if index < len(colours):
+                button.config(bg=_hex(colours[index]), fg="#101014")
+                self.hexes[index] = engine.hex_of(colours[index])
+            else:
+                button.config(bg=CARD, fg=DIM)
 
 
 class LedSimulator(tk.Tk):
@@ -691,6 +709,7 @@ class LedSimulator(tk.Tk):
             shift_rpm=self.engine.cfg.shift_rpm,
             shift_hz=self.engine.cfg.shift_hz,
             shift_color=self.engine.cfg.shift_color)
+        self.full_at.low, self.full_at.high = 2000, 8000
         self.full_at.set(self.engine.cfg.full_rpm)
         self.swatches.set([rgb for _rpm, rgb in self.engine.cfg.ramp])
         self.legend.redraw()
@@ -713,19 +732,33 @@ class LedSimulator(tk.Tk):
         self.engine.cfg.shift_hz = max(1, value)
 
     def _on_full_at(self, value: int) -> None:
-        """Re-derive the stop rpms exactly as LedScreen.pushRamp() would."""
-        colours = [rgb for _rpm, rgb in self.engine.cfg.ramp]
+        """Re-derive the stop rpms exactly as LedScreen.pushRamp() would.
+
+        From the six swatch colours, always - the app's editor has six stops and scaling
+        whatever happened to be loaded (a 3-stop ramp from a hand-written RAMP: line, say)
+        would reshape it into something the app cannot produce.
+        """
         self.engine.cfg.full_rpm = value
-        self.engine.cfg.ramp = engine.ramp_from_fractions(value, colours)
+        self.engine.cfg.ramp = engine.ramp_from_fractions(value, self._swatch_colours())
         self.legend.redraw()
 
+    def _swatch_colours(self) -> List[RGB]:
+        return self.swatches.colours
+
     def _on_stop_colour(self, index: int, colour: RGB) -> None:
+        """Edit one stop.
+
+        Editing is what the app's six swatches do, so a ramp that arrived with fewer stops
+        is promoted to the app's six-stop shape rather than being silently ignored for
+        stops 4-6.
+        """
         stops = list(self.engine.cfg.ramp)
-        if index >= len(stops):
-            return
-        rpm = stops[index][0]
-        stops[index] = (rpm, colour)
-        self.engine.cfg.ramp = tuple(stops)
+        if index < len(stops):
+            stops[index] = (stops[index][0], colour)
+            self.engine.cfg.ramp = tuple(stops)
+        if len(stops) != len(engine.STOP_FRACTIONS):
+            self.engine.cfg.ramp = engine.ramp_from_fractions(self.engine.cfg.full_rpm,
+                                                              self._swatch_colours())
         self.legend.redraw()
 
     def _on_smooth(self) -> None:
@@ -796,6 +829,11 @@ class LedSimulator(tk.Tk):
         self.mode.select(cfg.color_mode)
         self.dim_button.config(bg=PRIMARY if cfg.theme_dim else "#2a2a30",
                                fg="#101014" if cfg.theme_dim else TEXT)
+        # The strip's "full at" is whatever the last RAMP: stop says, and a hand-written
+        # ramp can end below the slider's usual floor. Widen the track rather than
+        # clamping it, or the display would disagree with the table underneath it.
+        self.full_at.low = min(2000, cfg.full_rpm)
+        self.full_at.high = max(8000, cfg.full_rpm)
         self.full_at.set(cfg.full_rpm)
         self.swatches.set([rgb for _rpm, rgb in cfg.ramp])
         self.shift_button.config(text="ON" if cfg.shift_rpm else "OFF",
