@@ -16,7 +16,7 @@ with the firmware's own constants, so this is the strip's code, not a transcript
 
     python wire_check.py
 
-Needs a C++ compiler (MSVC via vswhere, or set MX5_CL). Without one it reports SKIPPED and
+Needs a C++ compiler (MSVC via vswhere, g++ on PATH, or set MX5_CL). Without one it reports SKIPPED and
 exits 0.
 """
 
@@ -172,16 +172,7 @@ int main() {
 
 
 def compile_harness(work: str, compiler: str) -> str:
-    source = os.path.join(work, "wire.cpp")
-    exe = os.path.join(work, "wire.exe")
-    vcvars = parity_check._vcvars_for(compiler)
-    command = '"%s" /nologo /EHsc /std:c++17 /Fe:"%s" "%s"' % (compiler, exe, source)
-    if vcvars:
-        command = 'call "%s" >nul && %s' % (vcvars, command)
-    built = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=300)
-    if built.returncode != 0:
-        raise SystemExit("cl failed:\n%s\n%s" % (built.stdout, built.stderr))
-    return exe
+    return parity_check._compile(work, compiler, "wire.cpp", "wire")
 
 
 def expected_ramp(scheme_id: str, dark: bool) -> str:
@@ -287,7 +278,7 @@ def main() -> int:
 
     compiler = parity_check.find_compiler()
     if not compiler:
-        print("SKIPPED: no C++ compiler found (set MX5_CL to a cl.exe path)")
+        print("SKIPPED: no C++ compiler found (MSVC, g++ on PATH, or set MX5_CL)")
         return 0
     print("compiler:", compiler)
 

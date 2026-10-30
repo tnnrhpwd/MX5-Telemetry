@@ -26,8 +26,10 @@ the port makes this fail - which is the point.
     python parity_check.py --cases 400     # widen the matrix (default 120 random cases)
 
 Needs a C++ compiler. MSVC is found through vswhere; set MX5_CL to an explicit cl.exe if
-you have one somewhere else. Without a compiler the check reports SKIPPED and exits 0, so
-it can sit in a test run on a machine that only has Python.
+you have one somewhere else. A g++ (or clang++) on PATH is used when MSVC is absent, which
+is what lets this run on the Pi alongside the rest of the checks. Without a compiler the
+check reports SKIPPED and exits 0, so it can sit in a test run on a machine that only has
+Python.
 """
 
 from __future__ import annotations
@@ -321,28 +323,68 @@ def find_compiler() -> Optional[str]:
         return "cl"
     vswhere = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
                            "Microsoft Visual Studio", "Installer", "vswhere.exe")
-    if not os.path.exists(vswhere):
-        return None
-    try:
-        roots = subprocess.run(
-            [vswhere, "-latest", "-products", "*",
-             "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-             "-property", "installationPath"],
-            capture_output=True, text=True, timeout=60).stdout.splitlines()
-    except Exception:
-        return None
-    for root in roots:
-        root = root.strip()
-        if not root:
-            continue
-        tools = os.path.join(root, "VC", "Tools", "MSVC")
-        if not os.path.isdir(tools):
-            continue
-        for version in sorted(os.listdir(tools), reverse=True):
-            candidate = os.path.join(tools, version, "bin", "Hostx64", "x64", "cl.exe")
-            if os.path.exists(candidate):
-                return candidate
+    if os.path.exists(vswhere):
+        try:
+            roots = subprocess.run(
+                [vswhere, "-latest", "-products", "*",
+                 "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                 "-property", "installationPath"],
+                capture_output=True, text=True, timeout=60).stdout.splitlines()
+        except Exception:
+            roots = []
+        for root in roots:
+            root = root.strip()
+            if not root:
+                continue
+            tools = os.path.join(root, "VC", "Tools", "MSVC")
+            if not os.path.isdir(tools):
+                continue
+            for version in sorted(os.listdir(tools), reverse=True):
+                candidate = os.path.join(tools, version, "bin", "Hostx64", "x64", "cl.exe")
+                if os.path.exists(candidate):
+                    return candidate
+
+    # No MSVC. This check is the strongest proof the LED port matches the firmware, so it
+    # should not be Windows-only: the Pi that runs the simulator already has g++.
+    for name in ("g++", "clang++", "c++"):
+        found = shutil.which(name)
+        if found:
+            return found
     return None
+
+
+def _is_msvc(compiler: str) -> bool:
+    return os.path.basename(compiler).lower().split('.')[0] in ('cl', 'clang-cl')
+
+
+def _compile(work: str, compiler: str, source: str, name: str) -> str:
+    """Compile one harness source in `work` and return the executable's path.
+
+    MSVC needs INCLUDE/LIB from vcvars loaded in the same cmd process; g++ and clang++
+    need nothing. Everything else about the two is the same command shape, which is why
+    the four harnesses below share this instead of each spelling out `cl`.
+    """
+    if _is_msvc(compiler):
+        exe_name = name + ".exe"
+        command = 'cl /nologo /std:c++17 /O2 /EHsc %s /Fe:%s' % (source, exe_name)
+        if compiler != "cl":
+            vcvars = _vcvars_for(compiler)
+            if not vcvars:
+                raise SystemExit("could not find vcvars64.bat above %s" % compiler)
+            command = 'call "%s" >nul && %s' % (vcvars, command)
+        result = subprocess.run(command, shell=True, cwd=work, capture_output=True,
+                                text=True, timeout=300)
+    else:
+        # No extension on POSIX, and the returned path has to match what was built.
+        exe_name = name + (".exe" if os.name == "nt" else "")
+        result = subprocess.run([compiler, "-std=c++17", "-O2", source, "-o", name],
+                                cwd=work, capture_output=True, text=True, timeout=300)
+
+    exe = os.path.join(work, exe_name)
+    if result.returncode != 0 or not os.path.exists(exe):
+        raise SystemExit("%s compile failed:\n%s\n%s"
+                         % (name, result.stdout, result.stderr))
+    return exe
 
 
 def _vcvars_for(cl_path: str) -> Optional[str]:
@@ -362,22 +404,8 @@ def _vcvars_for(cl_path: str) -> Optional[str]:
 
 
 def compile_harness(work: str, compiler: str) -> str:
-    """Compile the harness in a cmd that has the MSVC environment loaded."""
-    exe = os.path.join(work, "verify.exe")
-    command = ('cl /nologo /std:c++17 /O2 /EHsc /utf-8 verify.cpp /Fe:verify.exe')
-    if compiler != "cl":
-        # cl.exe needs INCLUDE/LIB from vcvars, so load them in the same cmd process.
-        vcvars = _vcvars_for(compiler)
-        if not vcvars:
-            raise SystemExit("could not find vcvars64.bat above %s" % compiler)
-        command = 'call "%s" >nul && %s' % (vcvars, command)
-    # shell=True so cmd.exe handles the `&&` and the quoted vcvars path; passing a list
-    # would have list2cmdline escape the inner quotes and break the call.
-    result = subprocess.run(command, shell=True, cwd=work, capture_output=True,
-                            text=True, timeout=300)
-    if result.returncode != 0 or not os.path.exists(exe):
-        raise SystemExit("compile failed:\n%s\n%s" % (result.stdout, result.stderr))
-    return exe
+    """Compile the main harness, which is where most of the comparison happens."""
+    return _compile(work, compiler, "verify.cpp", "verify")
 
 
 # -- cases --------------------------------------------------------------------
@@ -682,14 +710,7 @@ def check_rpm_filter(work: str, compiler: str, source: str) -> List[str]:
     path = os.path.join(work, "verify_rpm.cpp")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(build_rpm_harness(source))
-    exe = os.path.join(work, "verify_rpm.exe")
-    command = 'cl /nologo /std:c++17 /O2 /EHsc verify_rpm.cpp /Fe:verify_rpm.exe'
-    if compiler != "cl":
-        command = 'call "%s" >nul && %s' % (_vcvars_for(compiler), command)
-    result = subprocess.run(command, shell=True, cwd=work, capture_output=True,
-                            text=True, timeout=300)
-    if result.returncode != 0 or not os.path.exists(exe):
-        raise SystemExit("rpm harness compile failed:\n%s" % result.stdout)
+    exe = _compile(work, compiler, "verify_rpm.cpp", "verify_rpm")
 
     # A drive-ish sequence: idle, a climb, a snap, a slow fall, another climb.
     readings = ([800] * 3 + [900, 1100, 1600, 2600, 3600, 4200]
@@ -775,26 +796,15 @@ def library_scale_problems() -> List[str]:
     return problems
 
 
-def _build_probe(work: str, compiler: str, command: str, name: str) -> Optional[str]:
+def _build_probe(work: str, compiler: str, source: str, name: str) -> Optional[str]:
     """Compile one probe in `work` and return its exe path."""
-    if compiler != "cl":
-        vcvars = _vcvars_for(compiler)
-        if not vcvars:
-            raise SystemExit("could not find vcvars64.bat above %s" % compiler)
-        command = 'call "%s" >nul && %s' % (vcvars, command)
-    result = subprocess.run(command, shell=True, cwd=work, capture_output=True,
-                            text=True, timeout=300)
-    if result.returncode != 0:
-        raise SystemExit("%s compile failed:\n%s\n%s" % (name, result.stdout, result.stderr))
-    return os.path.join(work, name + ".exe")
+    return _compile(work, compiler, source, name)
 
 
 def check_brightness(work: str, compiler: str) -> List[str]:
     with open(os.path.join(work, "brightness.cpp"), "w", encoding="utf-8") as handle:
         handle.write(BRIGHTNESS_PROBE)
-    exe = _build_probe(work, compiler,
-                       "cl /nologo /std:c++17 /O2 /EHsc brightness.cpp /Fe:brightness.exe",
-                       "brightness")
+    exe = _build_probe(work, compiler, "brightness.cpp", "brightness")
 
     pairs = [(b, v) for b in range(0, 256, 7) for v in (0, 1, 2, 127, 128, 200, 254, 255)]
     stdin = "\n".join("%d %d" % pair for pair in pairs) + "\n"
@@ -867,9 +877,7 @@ def check_prediction(work: str, compiler: str, source: str) -> List[str]:
             .replace("@PREDICT_FN@", extract_function(source, "predictRPM")))
     with open(os.path.join(work, "predict.cpp"), "w", encoding="utf-8") as handle:
         handle.write(body)
-    exe = _build_probe(work, compiler,
-                       "cl /nologo /std:c++17 /O2 /EHsc predict.cpp /Fe:predict.exe",
-                       "predict")
+    exe = _build_probe(work, compiler, "predict.cpp", "predict")
 
     rows = []
     for now_gap in (0, 1, 3, 11, 12, 13, 40):
@@ -918,7 +926,7 @@ def main() -> int:
 
     compiler = find_compiler()
     if compiler is None:
-        print("SKIPPED: no C++ compiler found (set MX5_CL to a cl.exe path)")
+        print("SKIPPED: no C++ compiler found (MSVC, g++ on PATH, or set MX5_CL)")
         return 0
     print("compiler:", compiler)
     library = _neopixel_cpp()
