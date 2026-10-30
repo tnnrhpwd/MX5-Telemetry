@@ -249,6 +249,7 @@ int main(void) {
         errorMode         = displayErrorMode;
         demoForced        = v[13] != 0;
         demoRPM           = (uint16_t)v[14];
+        demoExpiresAt     = demoForced ? 0xFFFFFFFFUL : 0;
         selfTestMode      = (uint8_t)v[15];
         selfTestStart     = (unsigned long)v[16];
         long frames       = v[17];
@@ -405,8 +406,8 @@ def _case(nows=None, **kwargs) -> dict:
     """One case: a fixed configuration plus the timestamps to run it at."""
     case = dict(rpm=0, sequence=engine.SEQ_CENTER_OUT, color_mode=0, theme_dim=False,
                 full_rpm=6800, shift_rpm=0, shift_hz=8, shift_color=(255, 0, 0),
-                enabled=True, can=True, error=False, self_test=0, self_test_start=0,
-                ramp=engine.DEFAULT_RAMP)
+                enabled=True, can=True, error=False, demo=None, self_test=0,
+                self_test_start=0, ramp=engine.DEFAULT_RAMP)
     case.update(kwargs)
     case["nows"] = list(nows) if nows is not None else [kwargs.get("now", 0)]
     case.pop("now", None)
@@ -468,6 +469,13 @@ def build_cases(count: int, rng: random.Random) -> List[dict]:
         cases.append(_case(enabled=False, rpm=5000, nows=[now]))
         cases.append(_case(can=False, rpm=5000, nows=[now]))
         cases.append(_case(error=True, rpm=5000, nows=[now]))
+        # DEMO outranks both fault patterns, which is the only reason it is usable on a
+        # bench: nothing here should show the offline or scanner pattern.
+        cases.append(_case(can=False, rpm=0, demo=3000, nows=[now]))
+        cases.append(_case(error=True, rpm=0, demo=3000, nows=[now]))
+        cases.append(_case(rpm=0, demo=0, nows=[now]))
+        cases.append(_case(rpm=0, demo=6800, shift_rpm=6300,
+                           nows=[0, 31, 63, 94, 125]))
         cases.append(_case(self_test=engine.SELF_TEST_SWEEP, rpm=5000, nows=[now]))
         cases.append(_case(self_test=engine.SELF_TEST_IDENTIFY, rpm=5000, nows=[now]))
 
@@ -506,7 +514,8 @@ def run_cpp(exe: str, cases: List[dict], led_count: int) -> List[List[List[str]]
             case["full_rpm"], case["shift_rpm"], case["shift_hz"],
             case["shift_color"][0], case["shift_color"][1], case["shift_color"][2],
             int(case["enabled"]), int(case["can"]), int(case["error"]),
-            0, 0, case["self_test"], case["self_test_start"], len(case["nows"]))))
+            int(case["demo"] is not None), case["demo"] or 0,
+            case["self_test"], case["self_test_start"], len(case["nows"]))))
         ramp = case["ramp"]
         lines.append(" ".join([str(len(ramp))] + [
             "%d %d %d %d" % (rpm, rgb[0], rgb[1], rgb[2]) for rpm, rgb in ramp]))
@@ -543,7 +552,8 @@ def run_python(cases: List[dict], led_count: int) -> List[List[List[str]]]:
                         shift_hz=case["shift_hz"], shift_color=case["shift_color"],
                         ramp=case["ramp"])
         elf = LedEngine(cfg=cfg, can_initialized=case["can"],
-                        error_mode=case["error"], rpm=case["rpm"])
+                        error_mode=case["error"], rpm=case["rpm"],
+                        demo_rpm=case["demo"])
         # Set the bench-pattern state directly, exactly as the harness sets the globals:
         # `start_self_test` would also stamp the start time from the call.
         elf.self_test_mode = case["self_test"]
@@ -595,6 +605,7 @@ RPM_HARNESS = r"""
 
 #define CAN_OK 0
 #define CAN_MSGAVAIL 1
+#define CAN_MAX_FRAMES @FRAMES@
 #define MAZDA_RPM_CAN_ID 0x201
 #define RPM_SNAP_DELTA @SNAP@
 #define RPM_ALPHA_RISING @RISING@f
@@ -623,6 +634,7 @@ FakeCan canBus;
 
 // ---- globals readCANMessages() touches -------------------------------------
 unsigned long lastCANData = 0;
+unsigned long lastEngineFrame = 0;
 bool errorMode = false;
 bool displayErrorMode = false;
 unsigned long lastCanIdSeen = 0;
@@ -642,6 +654,7 @@ bool rpmHaveHistory = false;
 def build_rpm_harness(source: str) -> str:
     return (RPM_HARNESS
             .replace("@SNAP@", extract_define(source, "RPM_SNAP_DELTA"))
+            .replace("@FRAMES@", extract_define(source, "CAN_MAX_FRAMES").split()[0])
             .replace("@RISING@", extract_define(source, "RPM_ALPHA_RISING").rstrip("f"))
             .replace("@FALLING@", extract_define(source, "RPM_ALPHA_FALLING").rstrip("f"))
             + "\n// ---- readCANMessages (verbatim from main.cpp) ----\n"

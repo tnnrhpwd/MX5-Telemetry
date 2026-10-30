@@ -199,17 +199,38 @@ Two things were worth fixing, both now done:
    controller, so a frame that landed mid-drain had its flag cleared out from under it and
    waited for the 10 ms fallback poll. The flag is now cleared *before* the drain, and the
    fallback poll is down to 2 ms. Worst case goes from ~10 ms of extra staleness to ~2 ms.
+3. **The bar only moved on a broadcast.** Holding the newest sample makes the bar a 20 ms
+   staircase; `predictRPM()` now carries the slope of the last two samples forward for at
+   most 12 ms, so it sweeps. See §4.3 for the guards, and `wire_check`'s sibling
+   `parity_check` for the 784-case comparison of the firmware against the port.
 
 Still on the table, deliberately not done yet (they change what the driver sees, so they want
 the car, not a bench):
 
-- **Sub-frame interpolation.** At a 50 Hz broadcast the bar is inherently a 20 ms staircase.
-  Extrapolating along the last two samples would smooth it, but a tachometer that *leads* the
-  engine is worse than one that lags, so it needs judgement in the seat.
 - **Falling-RPM filter lag.** `RPM_ALPHA_FALLING` 0.75 costs about one sample of lag on a
   closed throttle. `RPM_SNAP_DELTA` 250 already bypasses it for gear changes.
 - **Resolution.** A 20-LED centre-out strip has 10 ranks, so each rank is 680 rpm at a 6800
   `full`. The fractional tip is what softens that; more LEDs is the only real fix.
+- **Predictor horizon.** `RPM_EXTRAPOLATE_MS` is 12 ms, roughly half a broadcast period. It is
+  a compile-time constant and the honest value is whichever feels right in the seat.
+
+### 4.3 The CAN side of the chain
+
+The strip listens on its own MCP2515; the Pi has a separate socketcan interface for the
+display, so the two paths are independent and decode identically
+(`raw = (b0 << 8) | b1`, `rpm = raw / 4` on both sides — checked, not assumed). What the
+CAN side was doing to the latency:
+
+| Finding | Effect | State |
+|---|---|---|
+| **`pinMode(INT, INPUT)`** — the MCP2515's INT output is open drain, so with no pull-up the line floats and the interrupt may never fire | every frame then waits for the fallback poll: a systematic, jittering delay *behind* any path that does not | ✅ now `INPUT_PULLUP`; the poll (2 ms) only covers a genuinely missed edge |
+| **Falling-edge interrupt, buffers drained in one unbounded pass** | if a second frame was already waiting, INT never went high, so no new edge — and an unbounded drain could starve the renderer | ✅ stops at 8 frames per pass and re-raises the flag, so the rest are read after a repaint |
+| **Timeout keyed off *any* frame** (`lastCANData`) | a bus still carrying traffic without 0x201 left the bar frozen on its last reading while reporting itself healthy — the exact fault the error pattern exists for | ✅ keyed off `lastEngineFrame` (0x201 only). Safe because the Pi's captured telemetry shows 0x201 arriving at ignition-on with `rpm: 0` |
+| **`DEMO:` outranked by the fault patterns** | the bench override was invisible on a bench with no bus — the one place it is used | ✅ DEMO is now evaluated before both, like `SELFTEST` |
+| Accept-all receive filters | ~320 frames/s of SPI work, ~1% CPU | left alone: measured, and the cost is not in the budget. 2 RX buffers with rollover already cover the 0.6 ms `show()` window |
+
+Verified by the parity harness now that it drives `DEMO` through the same cases as everything
+else: **1608 cases / 2892 frames**, and reverting the DEMO precedence makes 42 of them differ.
 
 
 ---

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field, replace
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 RGB = Tuple[int, int, int]
 
@@ -457,6 +457,9 @@ class LedEngine:
     error_mode: bool = False
     rpm: int = 0
     smoothed_rpm: float = 0.0
+    # `DEMO:<rpm>`: an explicit operator override. It outranks the fault patterns the same
+    # way SELFTEST does, because the reason to use it is a bench with no bus to listen to.
+    demo_rpm: Optional[int] = None
     self_test_mode: int = SELF_TEST_NONE
     self_test_started: int = 0
     _scan_position: int = 0
@@ -502,10 +505,18 @@ class LedEngine:
         if not cfg.enabled:
             return [(0, 0, 0)] * count
 
-        if not self.can_initialized:
+        # DEMO is an operator request, so it is evaluated before the fault patterns: on a
+        # bench with no CAN controller, or with the engine off and no 0x201, those patterns
+        # would otherwise hide the very thing the command exists to show. It overwrites
+        # `rpm`, exactly as the firmware overwrites `currentRPM`, so the shift light below
+        # still reacts to the demo value.
+        if self.demo_rpm is not None:
+            self.rpm = self.demo_rpm
+
+        if not self.can_initialized and self.demo_rpm is None:
             return can_offline_frame(now_ms, count)
 
-        if self.error_mode:
+        if self.error_mode and self.demo_rpm is None:
             self._scan_last, self._scan_position, self._scan_direction = advance_scanner(
                 now_ms, self._scan_last, self._scan_position, self._scan_direction, count)
             frame, _, _ = error_frame(now_ms, self._scan_position,

@@ -90,8 +90,8 @@
 #define CAN_CRYSTAL         MCP_8MHZ     // MCP2515 crystal frequency
 
 // Mazda-specific CAN IDs (NC Miata 2006-2015)
-#define MAZDA_RPM_CAN_ID    0x201   // Engine RPM broadcast ID
-#define MAZDA_SPEED_CAN_ID  0x201   // Vehicle speed (same frame as RPM)
+#define MAZDA_RPM_CAN_ID    0x201   // Engine RPM broadcast ID (speed is in the same frame;
+                                    // the strip only needs bytes 0-1, the Pi decodes the rest)
 
 // RPM limits. The color zones themselves are no longer compile-time constants - they
 // live in `rampStops[]`, which the Pi can replace at runtime (see RUNTIME COLOR RAMP).
@@ -101,6 +101,7 @@
 
 // Timing configuration (microseconds for precision)
 #define CAN_POLL_INTERVAL   2000    // Fallback poll every 2ms if an interrupt is missed
+#define CAN_MAX_FRAMES      8       // Frames drained per pass before yielding to rendering
 #define LED_UPDATE_INTERVAL 4000    // Repaint cadence between CAN frames (250Hz)
 // The repaint cadence is what makes the prediction visible: at the old 10 ms the bar took
 // one interpolated step between broadcasts, at 4 ms it sweeps. It costs only the render
@@ -288,6 +289,7 @@ unsigned long lastCANPoll = 0;
 unsigned long lastLEDUpdate = 0;
 unsigned long lastBrightnessRead = 0;
 unsigned long lastCANData = 0;
+unsigned long lastEngineFrame = 0;   // last 0x201, which is what the timeout watches
 
 // Animation state for error mode
 uint8_t errorScanPosition = 0;
@@ -758,8 +760,14 @@ bool initCAN() {
     // The car's ECU and other modules already ACK each other - we just eavesdrop
     canBus.setMode(MCP_LISTENONLY);
     
-    // Attach hardware interrupt for message reception
-    pinMode(CAN_INT_PIN, INPUT);
+    // Attach hardware interrupt for message reception.
+    //
+    // INPUT_PULLUP, not INPUT: the MCP2515's INT output is open drain, so without a
+    // pull-up the line floats whenever it is not actively driven low. A module with a
+    // 10k resistor on board works either way; one without would leave the interrupt
+    // never firing, and the strip would quietly fall back to polling - working, but a
+    // poll interval behind the bus on every frame.
+    pinMode(CAN_INT_PIN, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(CAN_INT_PIN), canInterrupt, FALLING);
     
     #if ENABLE_SERIAL_DEBUG
@@ -774,11 +782,16 @@ inline void readCANMessages() {
     unsigned long rxId;
     uint8_t len;
     uint8_t rxBuf[8];
-    
-    // Read all available messages
-    while (canBus.checkReceive() == CAN_MSGAVAIL) {
+
+    // Read what is there, but no more than this per pass. Draining without a bound would
+    // let a stuck flag (or a pathological burst) starve the renderer and the serial port;
+    // stopping early re-raises the flag instead, so the rest is picked up on the next
+    // iteration with a frame painted in between.
+    uint8_t drained = 0;
+    while (drained < CAN_MAX_FRAMES && canBus.checkReceive() == CAN_MSGAVAIL) {
+        drained++;
         if (canBus.readMsgBuf(&rxId, &len, rxBuf) == CAN_OK) {
-            // Any valid CAN message received - reset timeout and clear ALL error flags
+            // Any valid CAN message received - clear ALL error flags
             lastCANData = millis();
             errorMode = false;
             displayErrorMode = false;  // Immediately stop error animation
@@ -828,10 +841,23 @@ inline void readCANMessages() {
                 if (rpmPrevMs) {
                     rpmHaveHistory = true;
                 }
+
+                // Timed by the *engine* frame, not by any frame: the strip's job is to
+                // mirror the engine, and a bus that is alive with 0x201 missing is the
+                // failure the error pattern exists for. The Pi's captured telemetry shows
+                // 0x201 arriving at ignition-on with rpm 0, so an engine-off car still
+                // reads as healthy.
+                lastEngineFrame = millis();
             }
         }
     }
-    
+
+    // Stopped early: there is more waiting, so ask for another pass rather than letting
+    // these frames age behind a repaint.
+    if (drained == CAN_MAX_FRAMES) {
+        g_canDataReceived = 1;
+    }
+
     // Do not clear g_canDataReceived here: it is cleared before the drain in loop(), so a
     // frame arriving mid-drain still leaves the flag set for the next pass.
 }
@@ -1068,8 +1094,10 @@ inline void updateLEDs() {
     }
 
     // Checked before the error animation: a controller that never initialized is a
-    // different fault from a bus that went quiet, and they get different patterns.
-    if (!canInitialized) {
+    // different fault from a bus that went quiet, and they get different patterns. Both
+    // yield to the bench override below, which exists precisely for the case where there
+    // is no bus to listen to.
+    if (!canInitialized && !demoForced) {
         drawCanOffline();
         return;
     }
@@ -1080,12 +1108,13 @@ inline void updateLEDs() {
     if (demoForced) {
         if (millis() > demoExpiresAt) {
             demoForced = false;
+            lastRenderedRPM = 0xFFFF;   // hand the strip back to whatever is really there
         } else {
             currentRPM = demoRPM;
         }
     }
 
-    if (displayErrorMode) {
+    if (displayErrorMode && !demoForced) {
         updateErrorAnimation();
         // Force a repaint when error mode ends: the scanner pattern must not be
         // mistaken for "already rendered this RPM".
@@ -1148,6 +1177,9 @@ inline void updateLEDs() {
     
     // Haptic feedback at redline
     #if ENABLE_HAPTIC
+    // Blocking on purpose before the CAN path was interrupt-driven. It is left as-is
+    // because the motor is not fitted, but a 50 ms stall now costs the bar a repaint and
+    // several frames of staleness: make this non-blocking before switching it on.
     if (currentRPM >= RPM_REDLINE) {
         static unsigned long lastHapticPulse = 0;
         if (millis() - lastHapticPulse >= 500) {
@@ -1340,6 +1372,7 @@ void setup() {
     }
     
     lastCANData = millis();
+    lastEngineFrame = millis();
     
     #if ENABLE_SERIAL_DEBUG
     Serial.println(F("Ready"));
@@ -1388,8 +1421,10 @@ void loop() {
     // ========================================================================
     // `!canInitialized` deliberately counts as "no data": a controller that never came
     // up would otherwise not trip the watchdog at all, which is how a dead CAN link used
-    // to present as a perfectly healthy idle engine.
-    if (!canInitialized || (nowMs - lastCANData > TIMEOUT_MS)) {
+    // to present as a perfectly healthy idle engine. `lastEngineFrame` rather than
+    // `lastCANData`: a bus still carrying traffic without 0x201 is exactly the case where
+    // the strip would otherwise freeze on its last reading and call itself healthy.
+    if (!canInitialized || (nowMs - lastEngineFrame > TIMEOUT_MS)) {
         if (!errorMode) {
             errorMode = true;
             errorStartTime = nowMs;  // Start debounce timer
