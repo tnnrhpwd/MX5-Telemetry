@@ -32,6 +32,8 @@ Windows: double-click [`LED_Simulator.bat`](LED_Simulator.bat), or run
 | **Theme dim** | dark-mode dimming (170/255) | `CFG:theme=` |
 | **Full at** | the rpm at which the strip is completely lit | last `RAMP:` stop |
 | **Stop colors 1-6** | the ramp itself | `RAMP:` |
+| **Ramp source** | ROYGBIV (firmware default), App scheme (the phone's ramp), or Custom | `RAMP:` |
+| **Scheme / Dark-Light** | which of the phone's twelve themes, and which of its two palettes | `Palette.java`, `MainActivity.ledRampFor()` |
 | **Shift light** | start rpm, flash rate, color | `CFG:shift/hz/scol=` |
 | **Self test / Identify** | the two bench patterns | `SELFTEST`, `IDENTIFY` |
 | **CAN: online / dead** | the CAN-offline pattern (two orange pixels at 1 Hz) | `!canInitialized` |
@@ -62,7 +64,53 @@ python led_simulator_v3.py --pi 192.168.42.100:5000 --token <token>
 ```
 
 It reads `GET /api/status` once and applies the `led_*` keys. Nothing is written back: this
-is a viewer, so it cannot change the car.
+is a viewer, so it cannot change the car. Because a ramp that came off the car is neither
+the firmware default nor a scheme derived here, loading it also switches the **Ramp source**
+chips to *Custom*.
+
+## Choosing the ramp: ROYGBIV, the phone's scheme, or your own
+
+Three sources, picked with the chips above the swatches:
+
+| Source | What it is |
+|---|---|
+| **ROYGBIV** | The firmware's compiled-in table — blue → cyan → green → yellow → orange → red, full at 8000. What the strip uses until something sends `RAMP:`. |
+| **App scheme** | The ramp the phone would push for one of its twelve themes (`aurora`, `crimson`, `emerald`, `sakura`, `midnight`, `sunset`, `ocean`, `cyberpunk`, `monokai`, `usa`, `forest`, `neutral`), in that theme's dark or light palette. |
+| **Custom** | Anything you build by hand. Editing a stop color or dragging **Full at** switches you here, because the table no longer matches either of the other two. |
+
+An App-scheme ramp is the theme's own two hues blended from the soft, mode-corrected accent
+up to the vivid seed, so all twelve themes produce visibly different bars. That is
+deliberate: the strip is part of the app, not a separate instrument, and the alarm colors
+(`bad` red, `alert` orange, `warn` amber) are kept out of it because they have to mean the
+same thing in every scheme. The things that flash — the shift light, the CAN-offline pair,
+the error scanner — keep their own fixed colors. Those are the emergency signals; the bar
+is decor that also happens to tell you the rpm.
+
+The App-scheme mode exists so the two color worlds can be compared from the driver's seat
+rather than in the source: the phone's schemes are a considered palette, and the firmware's
+default is a spectrum. Which one reads better at a glance going into a corner is not a thing
+you can settle by reading code.
+
+It also makes one consequence of the app visible. The phone has **two** ramp producers that
+disagree:
+
+- `MainActivity.ledRampFor()` — used when the theme changes — uses six **fixed** stop rpms:
+  0, 1400, 2800, 4500, 5800, 6800.
+- `LedScreen.pushRamp()` — the six swatches in the phone's LED screen — spaces them by
+  `STOP_FRACTIONS` of the current "Full at".
+
+So picking a different theme on the phone resets the strip's full-illumination rpm to 6800.
+The simulator reproduces that rather than papering over it: selecting an App scheme sets
+**Full at** to 6800 (the note under the chips says so). Edit anything afterwards and you are
+in Custom, where the scale is yours again. The app itself is unchanged; this is a thing to
+notice, not a thing this tool fixes.
+
+CLI equivalents, for starting straight in the mode you want to look at:
+
+```bash
+python led_simulator_v3.py --scheme sakura          # that theme, dark palette
+python led_simulator_v3.py --scheme ocean --light   # same theme, light palette
+```
 
 ## How "identical" is proved
 
@@ -139,7 +187,39 @@ being shown; a ramp that arrived with fewer than six stops silently ignored edit
 
 It is not vacuous: drifting `DIM_SCALE` to 169 makes it exit 1 and name the firmware line.
 
-### 3. What is deliberately *not* modeled
+### 3. The app's palettes: the real `Palette.java` is compiled and diffed
+
+```bash
+python tools/simulators/led_simulator/palette_parity.py
+```
+
+[`app_palette.py`](app_palette.py) is a port of the phone's `Palette.java`, and a port of a
+color derivation is exactly the kind of thing that drifts silently — a blend in the wrong
+direction, a lift that stops at the top instead of stopping short of it. So `palette_parity.py` compiles the **real** `Palette.java` against a
+small `android.graphics.Color` stub and compares all **12 schemes × 2 modes = 24 ramps**,
+stop by stop, channel by channel. The harness calls the app's own `Palette.ramp()`, so the
+derivation is exercised rather than transcribed; `MainActivity.ledRampFor()` is separately
+checked to still take its colors from there.
+
+Two mismatches in the first run, both real. Java's `Math.round(float)` is
+`floor(x + 0.5)`, not Python's round-half-to-even: `152.5` is `153` in the app and was `152`
+here. The port now rounds the way the app rounds and the 24 ramps match exactly.
+
+Matching the app is not the same as the ramp following the theme, though: a faithful port of
+a ramp built from `good`, `warn`, `bad` and `alert` would pass and still paint four of its
+six stops the same color in all twelve schemes — which is what it used to do. So the check
+also asserts, mechanically, that:
+
+- each of the twelve schemes produces a **different color at every stop** (per mode), and
+- **no stop is one of the fixed alarm colors** — those belong to the things that flash.
+
+Both were confirmed to fail when the old mapping is put back (`stop 2 is 22c55e in 12 dark
+schemes — the ramp is not following the theme`).
+
+Requires a JDK (`javac` and `java` on `PATH`). Without one it reports `SKIPPED` and exits
+0, like the compiler check above.
+
+### 4. What is deliberately *not* modeled
 
 Nothing here changes a pixel, but claiming "identical" without saying this would be
 overclaiming:

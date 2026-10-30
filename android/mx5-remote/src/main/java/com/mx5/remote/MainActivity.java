@@ -898,16 +898,14 @@ public class MainActivity extends Activity implements Screen.Host {
      *
      * The phone owns the colors, so it sends them rather than letting the Pi keep a
      * second copy of every scheme. Stops are (rpm:rrggbb) pairs ordered by rpm; the last
-     * one is also the rpm at which the strip is completely full, so "fully lit" tracks
-     * the theme's redline rather than a hardcoded 6800.
+     * one is also the rpm at which the strip is completely full.
      *
-     * The mapping reuses the palette's own semantic roles - accent at idle through
-     * primary, good, warn and bad - so the strip reads like the rest of the app instead
-     * of being an unrelated rainbow bolted onto it.
+     * The colors come from {@link Palette#ramp()}, which derives all six from the scheme's
+     * own hues - see there for why none of them is a fixed semantic color.
      */
     private static String ledRampFor(Palette p) {
-        int[] colors = {p.accent, p.primary, p.good, p.warn, p.bad, p.alert};
-        int[] rpms = {0, 1400, 2800, 4500, 5800, 6800};
+        int[] colors = p.ramp();
+        int[] rpms = Palette.RAMP_RPMS;
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < colors.length; i++) {
             if (i > 0) {

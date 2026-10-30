@@ -74,9 +74,12 @@ public final class Palette {
     public final int tile;
     /** A neutral tone-change edge. Not a border to decorate with. */
     public final int hairline;
+    /** The scheme's second seed, before the mode lifts or sinks it. */
+    public final int seedB;
 
-    private Palette(boolean dark, int accent, int primary) {
+    private Palette(boolean dark, Scheme scheme, int accent, int primary) {
         this.dark = dark;
+        this.seedB = scheme.b;
         if (dark) {
             page = 0xFF141416;
             panel = 0xFF212124;
@@ -112,7 +115,40 @@ public final class Palette {
         float amt = 0.18f;
         int accent = dark ? lift(s.a, amt) : sink(s.a, amt);
         int primary = dark ? lift(s.b, amt) : sink(s.b, amt);
-        return new Palette(dark, accent, primary);
+        return new Palette(dark, s, accent, primary);
+    }
+
+    /**
+     * The stop rpms of the LED strip's ramp: where each color sits on the rev range.
+     *
+     * Fixed rather than scaled to a "full at" the owner picks, so the ramp can be
+     * generated without knowing the car. The last stop is therefore also the rpm at
+     * which the strip is completely lit.
+     */
+    public static final int[] RAMP_RPMS = {0, 1400, 2800, 4500, 5800, 6800};
+
+    /**
+     * The six colors the strip climbs through, derived from this scheme alone.
+     *
+     * The bar is part of the app, not a separate instrument bolted onto it: every stop is
+     * this scheme's own two hues, blended from the mode-corrected accent up to the vivid
+     * seed, so changing the theme changes the whole bar. No stop is a fixed semantic
+     * color - that would leave most themes looking identical, which is what following the
+     * theme is supposed to avoid.
+     *
+     * The alarm colors ({@link #alert}, {@link #bad}) are deliberately absent. They mean
+     * "something is wrong" and have to read the same in every scheme, so they belong to
+     * the indicators that flash, not to a bar that is supposed to look like the theme.
+     */
+    public int[] ramp() {
+        return new int[]{
+                accent,
+                mix(accent, primary, 0.40f),
+                mix(accent, primary, 0.75f),
+                primary,
+                mix(primary, seedB, 0.55f),
+                seedB
+        };
     }
 
     public static Palette of(int schemeIndex, boolean dark) {

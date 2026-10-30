@@ -155,7 +155,7 @@ Done and verified on the car:
 | Snappier tracking: `RPM_SNAP_DELTA` 400→250, falling alpha 0.60→0.75 | ✅ in firmware |
 | Pi→Nano link: identity-checked (`PING`/`PONG`), retries through a reset, never grabs the ESP32's port | ✅ in `main.py` |
 | Pi→Nano config forwarding: `led_ramp`, `led_theme_dim`, `led_brightness` settings → `RAMP:`/`CFG:` | ✅ in `main.py` + `link_service.py`, verified through the API |
-| Phone pushes a theme-derived ramp (`Palette.accent → primary → good → warn → bad → alert`) and the dark/light dim flag | ✅ in `MainActivity.pushThemeToPi()`; fires once the app has a link |
+| Phone pushes a theme-derived ramp (`Palette.ramp()`: accent → primary → the scheme's vivid seed) and the dark/light dim flag | ✅ in `MainActivity.pushThemeToPi()`; fires once the app has a link |
 | A 128-byte serial command buffer (the old 32 truncated a full `RAMP:` line and silently produced a 2-stop ramp capped at 1400 rpm) | ✅ fixed |
 | `CFG:save` / `CFG?` / `CFG:reset` — ramp, dim, brightness and full-illumination rpm survive a power cycle (EEPROM block behind a magic byte + CRC) | ✅ in firmware, **verified across a watchdog reboot**: `full=4200,dim=1,bright=200` + a 3-stop ramp came back identical |
 | The Pi reads the strip's `STATUS:` line and exposes it as `led` in `/api/telemetry` | ✅ live: `{"connected":true,"can":true,"fps":300,"last_id":"0x201","full_rpm":6800,"dim":false,"error":false,"rpm":0}` |

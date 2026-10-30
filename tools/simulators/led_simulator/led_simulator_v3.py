@@ -14,6 +14,13 @@ scale and the shift point can be judged before they are flashed.
     python led_simulator_v3.py --leds 30        # if the strip was extended
     python led_simulator_v3.py --pi 192.168.42.100:5000
                                                 # start from the car's live settings
+    python led_simulator_v3.py --scheme sakura  # start on the phone's ramp for that theme
+    python led_simulator_v3.py --scheme ocean --light
+
+The ramp has three sources, picked with the chips above it: ROYGBIV is the firmware's
+compiled-in table, App scheme is the ramp the phone would push for one of its twelve
+themes, and Custom is whatever you build by hand. Editing a stop or "Full at" switches
+you to Custom, because the table no longer matches either of the other two.
 
 Keys: Up/Down 100 rpm, PageUp/PageDown 500 rpm, Home/End 0 and full, Space sweeps,
 S sequences, M color mode, E enable, T self test, I identify, Esc quits.
@@ -32,6 +39,7 @@ from typing import List, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import led_engine as engine  # noqa: E402
+import app_palette  # noqa: E402
 from led_engine import (  # noqa: E402
     SEQ_CENTER_IN, SEQ_CENTER_OUT, SEQ_LEFT_TO_RIGHT, SEQ_RIGHT_TO_LEFT,
     SELF_TEST_IDENTIFY, SELF_TEST_SWEEP, RGB, LedConfig, LedEngine, SEQUENCE_NAMES,
@@ -121,7 +129,7 @@ class RampLegend(tk.Canvas):
     """
 
     def __init__(self, master, cfg_getter):
-        super().__init__(master, bg=BG, highlightthickness=0, height=54)
+        super().__init__(master, bg=BG, highlightthickness=0, height=62)
         self.cfg_getter = cfg_getter
         self.bind("<Configure>", lambda _e: self.redraw())
 
@@ -129,7 +137,9 @@ class RampLegend(tk.Canvas):
         self.delete("all")
         cfg: LedConfig = self.cfg_getter()
         width = max(self.winfo_width(), 300)
-        left, right, top, height = 12, width - 12, 8, 20
+        # `top` leaves room above the bar for the shift label, which used to be drawn off
+        # the top edge of the canvas and so was half cut off.
+        left, right, top, height = 12, width - 12, 14, 20
         steps = int(right - left)
         if steps <= 0:
             return
@@ -142,13 +152,22 @@ class RampLegend(tk.Canvas):
         for rpm, _colour in cfg.ramp:
             x = left + (right - left) * (rpm / cfg.full_rpm if cfg.full_rpm else 0)
             self.create_line(x, top + height, x, top + height + 4, fill=DIM)
+            # The last stop sits on the right edge, so a centered label would be half cut off.
+            anchor = "e" if x > right - 10 else "center"
             self.create_text(x, top + height + 14, text=str(rpm), fill=DIM,
-                             font=("Segoe UI", 6))
+                             font=("Segoe UI", 6), anchor=anchor)
         if cfg.shift_rpm and cfg.full_rpm:
-            x = left + (right - left) * min(1.0, cfg.shift_rpm / cfg.full_rpm)
-            self.create_line(x, top - 3, x, top + height + 2, fill=BAD, dash=(3, 2))
-            self.create_text(x, top - 8, text="shift %d" % cfg.shift_rpm, fill=BAD,
-                             font=("Segoe UI", 7))
+            if cfg.shift_rpm > cfg.full_rpm:
+                # Past the end of the scale: a dashed line pinned to the edge would claim
+                # the shift point is at full illumination, which is the opposite of true.
+                self.create_text(right, top - 8, text="shift %d (above full)" % cfg.shift_rpm,
+                                 fill=BAD, font=("Segoe UI", 7), anchor="e")
+            else:
+                x = left + (right - left) * (cfg.shift_rpm / cfg.full_rpm)
+                self.create_line(x, top - 3, x, top + height + 2, fill=BAD, dash=(3, 2))
+                self.create_text(x, top - 8, text="shift %d" % cfg.shift_rpm, fill=BAD,
+                                 font=("Segoe UI", 7),
+                                 anchor="e" if x > right - 30 else "center")
 
 
 def _card(parent, title: str) -> tk.Frame:
@@ -379,6 +398,11 @@ class LedSimulator(tk.Tk):
         # deliberately separate: with smoothing on, the bar chases this over a few frames
         # exactly as it does in the car.
         self.feed_target = 0
+        # Which ramp the strip is showing: 0 = the firmware's ROYGBIV default, 1 = derived
+        # from the phone's color scheme, 2 = hand-edited here.
+        self.ramp_source = 0
+        self.scheme_index = 0
+        self.scheme_dark = True
 
         self.engine = LedEngine(cfg=LedConfig(led_count=led_count), rpm=0)
 
@@ -538,9 +562,31 @@ class LedSimulator(tk.Tk):
         # -- ramp
         section = Section(parent, "Color ramp")
         section.pack(pady=(10, 0))
+
+        # The ramp comes from one of three places. "App scheme" is what the phone actually
+        # pushes, so it is the one worth previewing: six stops derived from the active
+        # palette, exactly as MainActivity.ledRampFor() does it.
+        self.ramp_source_chips = Chips(section.body, ["ROYGBIV", "App scheme", "Custom"],
+                                 [0, 1, 2], 0, self._on_ramp_source, color=PRIMARY,
+                                 columns=3)
+        self.ramp_source_chips.pack(fill="x", pady=(2, 0))
+
+        self.scheme_chips = Chips(
+            section.body,
+            [name for _ident, name, _a, _b in app_palette.SCHEMES],
+            list(range(len(app_palette.SCHEMES))), 0,
+            self._on_scheme, color=PRIMARY, columns=3)
+        self.scheme_mode = Chips(section.body, ["Dark", "Light"], [1, 0], 1,
+                                 self._on_scheme_mode, color=PRIMARY, columns=2)
+        self.scheme_note = tk.Label(
+            section.body,
+            text="The phone's fixed stops end at 6800, so picking a theme also moves "
+                 "Full at to 6800",
+            bg=CARD, fg=DIM, font=("Segoe UI", 7), justify="left", wraplength=270)
+
         self.full_at = Slider(section.body, "Full at", 2000, 8000,
-                             self.engine.cfg.full_rpm, " rpm", step=100,
-                             on_change=self._on_full_at, color=PRIMARY)
+                              self.engine.cfg.full_rpm, " rpm", step=100,
+                              on_change=self._on_full_at, color=PRIMARY)
         self.full_at.pack(fill="x")
         self.swatches = Swatches(section.body,
                                  [rgb for _rpm, rgb in self.engine.cfg.ramp],
@@ -699,20 +745,73 @@ class LedSimulator(tk.Tk):
         self.engine.start_self_test(mode, self.now_ms())
 
     def reset_ramp(self) -> None:
-        self.engine.cfg = LedConfig(
-            led_count=self.engine.cfg.led_count,
-            sequence=self.engine.cfg.sequence,
-            color_mode=self.engine.cfg.color_mode,
-            theme_dim=self.engine.cfg.theme_dim,
-            enabled=self.engine.cfg.enabled,
-            brightness=self.engine.cfg.brightness,
-            shift_rpm=self.engine.cfg.shift_rpm,
-            shift_hz=self.engine.cfg.shift_hz,
-            shift_color=self.engine.cfg.shift_color)
-        self.full_at.low, self.full_at.high = 2000, 8000
+        """Back to the firmware's compiled-in ROYGBIV ramp."""
+        self._apply_source(0)
+
+    # -- the three ramp sources ----------------------------------------------
+
+    def _on_ramp_source(self, value: int) -> None:
+        self._apply_source(value)
+
+    def _apply_source(self, value: int) -> None:
+        self.ramp_source = value
+        self.ramp_source_chips.select(value)
+        if value == 0:
+            self.engine.cfg.ramp = engine.DEFAULT_RAMP
+            self.engine.cfg.full_rpm = engine.DEFAULT_RAMP[-1][0]
+        elif value == 1:
+            self._apply_app_scheme()
+        self._show_scheme_controls(value == 1)
+        self._show_ramp()
+
+    def _apply_app_scheme(self) -> None:
+        """The ramp the phone would push for this scheme and mode.
+
+        `MainActivity.ledRampFor()` uses six fixed stops ending at 6800, so applying it
+        also sets the strip's full-illumination rpm to 6800 - which is what happens in the
+        car, and worth seeing rather than hiding.
+        """
+        ident = app_palette.SCHEMES[self.scheme_index][0]
+        self.engine.cfg.ramp = app_palette.ramp_for(
+            app_palette.palette(ident, self.scheme_dark))
+        self.engine.cfg.full_rpm = self.engine.cfg.ramp[-1][0]
+
+    def _on_scheme(self, index: int) -> None:
+        self.scheme_index = index
+        if self.ramp_source == 1:
+            self._apply_app_scheme()
+            self._show_ramp()
+
+    def _on_scheme_mode(self, dark: int) -> None:
+        self.scheme_dark = bool(dark)
+        if self.ramp_source == 1:
+            self._apply_app_scheme()
+            self._show_ramp()
+
+    def _show_scheme_controls(self, visible: bool) -> None:
+        # Packed above "Full at" rather than at the end, so the note explaining why the
+        # scale just moved sits next to the thing that moved it.
+        if visible:
+            for widget in (self.scheme_chips, self.scheme_mode, self.scheme_note):
+                widget.pack(fill="x", pady=(4, 0), before=self.full_at)
+        else:
+            for widget in (self.scheme_chips, self.scheme_mode, self.scheme_note):
+                widget.pack_forget()
+
+    def _show_ramp(self) -> None:
+        """Redraw everything that depends on the ramp table."""
+        self.full_at.low = min(2000, self.engine.cfg.full_rpm)
+        self.full_at.high = max(8000, self.engine.cfg.full_rpm)
         self.full_at.set(self.engine.cfg.full_rpm)
         self.swatches.set([rgb for _rpm, rgb in self.engine.cfg.ramp])
         self.legend.redraw()
+
+    def _note_custom(self) -> None:
+        """Editing by hand is a third thing: no longer ROYGBIV, no longer the phone's."""
+        if self.ramp_source != 2:
+            self.ramp_source = 2
+            self.ramp_source_chips.select(2)
+            self._show_scheme_controls(False)
 
     def _on_sequence(self, value: int) -> None:
         self.engine.cfg.sequence = value
@@ -738,6 +837,7 @@ class LedSimulator(tk.Tk):
         whatever happened to be loaded (a 3-stop ramp from a hand-written RAMP: line, say)
         would reshape it into something the app cannot produce.
         """
+        self._note_custom()
         self.engine.cfg.full_rpm = value
         self.engine.cfg.ramp = engine.ramp_from_fractions(value, self._swatch_colours())
         self.legend.redraw()
@@ -752,6 +852,7 @@ class LedSimulator(tk.Tk):
         is promoted to the app's six-stop shape rather than being silently ignored for
         stops 4-6.
         """
+        self._note_custom()
         stops = list(self.engine.cfg.ramp)
         if index < len(stops):
             stops[index] = (stops[index][0], color)
@@ -819,6 +920,7 @@ class LedSimulator(tk.Tk):
         self._sync_controls()
         messagebox.showinfo("Loaded", "Took the LED settings currently on the car.",
                             parent=self)
+
     def _sync_controls(self) -> None:
         cfg = self.engine.cfg
         self.enable_button.config(text="ON" if cfg.enabled else "OFF",
@@ -829,13 +931,9 @@ class LedSimulator(tk.Tk):
         self.mode.select(cfg.color_mode)
         self.dim_button.config(bg=PRIMARY if cfg.theme_dim else "#2a2a30",
                                fg="#101014" if cfg.theme_dim else TEXT)
-        # The strip's "full at" is whatever the last RAMP: stop says, and a hand-written
-        # ramp can end below the slider's usual floor. Widen the track rather than
-        # clamping it, or the display would disagree with the table underneath it.
-        self.full_at.low = min(2000, cfg.full_rpm)
-        self.full_at.high = max(8000, cfg.full_rpm)
-        self.full_at.set(cfg.full_rpm)
-        self.swatches.set([rgb for _rpm, rgb in cfg.ramp])
+        # Whatever the car is running came from somewhere else, so it is neither the
+        # firmware default nor a scheme derived here.
+        self._apply_source(2)
         self.shift_button.config(text="ON" if cfg.shift_rpm else "OFF",
                                  bg=BAD if cfg.shift_rpm else "#2a2a30",
                                  fg="#101014" if cfg.shift_rpm else TEXT)
@@ -968,9 +1066,24 @@ def main() -> int:
                         help="host:port of the car's Pi, to load its live LED settings")
     parser.add_argument("--token", default=os.environ.get("MX5_WEB_TOKEN", ""),
                         help="API token (or set MX5_WEB_TOKEN)")
+    parser.add_argument("--scheme", default=None,
+                        help="start on the phone's ramp for this scheme, e.g. --scheme aurora")
+    parser.add_argument("--light", action="store_true",
+                        help="with --scheme, use the light palette instead of dark")
     args = parser.parse_args()
 
+    scheme_ids = [s[0] for s in app_palette.SCHEMES]
+    if args.scheme is not None and args.scheme.lower() not in scheme_ids:
+        parser.error("unknown scheme %r; choose from: %s"
+                     % (args.scheme, ", ".join(scheme_ids)))
+
     app = LedSimulator(max(5, min(60, args.leds)), args.pi, args.token)
+    if args.scheme:
+        app.scheme_index = scheme_ids.index(args.scheme.lower())
+        app.scheme_dark = not args.light
+        app.scheme_chips.select(app.scheme_index)
+        app.scheme_mode.select(1 if app.scheme_dark else 0)
+        app._apply_source(1)
     if args.rpm:
         app.set_rpm(args.rpm)
     app.mainloop()

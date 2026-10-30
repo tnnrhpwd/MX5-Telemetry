@@ -33,6 +33,8 @@ APP_LED = os.path.join(REPO, "android", "mx5-remote", "src", "main", "java",
                        "com", "mx5", "remote", "LedScreen.java")
 APP_MAIN = os.path.join(REPO, "android", "mx5-remote", "src", "main", "java",
                         "com", "mx5", "remote", "MainActivity.java")
+APP_PALETTE = os.path.join(REPO, "android", "mx5-remote", "src", "main", "java",
+                           "com", "mx5", "remote", "Palette.java")
 SIMULATOR = os.path.join(HERE, "led_simulator_v3.py")
 
 
@@ -179,7 +181,7 @@ APP_SHIFT = java_slider("Start at")
 APP_HZ = java_slider("Flash rate")
 
 APP_THEME_RPMS = tuple(int(v.strip()) for v in
-                       grab(r"int\[\] rpms = \{([^}]*)\}", read(APP_MAIN),
+                       grab(r"RAMP_RPMS\s*=\s*\{([^}]*)\}", read(APP_PALETTE),
                             "the theme ramp").group(1).split(","))
 
 
