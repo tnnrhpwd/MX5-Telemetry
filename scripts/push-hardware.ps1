@@ -258,7 +258,16 @@ function Ensure-AndroidSdkEnv {
     if (Test-Path $localProps) {
         $line = Get-Content $localProps | Where-Object { $_ -match '^\s*sdk\.dir\s*=' } | Select-Object -First 1
         if ($line) {
-            $env:ANDROID_HOME = ($line -replace '^\s*sdk\.dir\s*=', '').Replace('/', '\').Trim()
+            # local.properties is a Java properties file, so the path arrives escaped:
+            # `sdk.dir=C\:\\Users\\me\\AndroidBuild\\sdk`. Replacing only the separators
+            # left `C\:\Users\...` behind, and Join-Path then reported
+            # "Cannot find drive C\", which surfaced as "adb not found" - the APKs were
+            # built and never installed.
+            $value = ($line -replace '^\s*sdk\.dir\s*=', '').Trim()
+            $value = $value.Replace('/', '\')
+            $value = $value -replace '\\\\', '\'
+            $value = $value -replace '\\:', ':'
+            $env:ANDROID_HOME = $value.TrimEnd('\')
             Write-Info "ANDROID_HOME=$env:ANDROID_HOME (from android/local.properties)"
             return
         }
@@ -589,7 +598,10 @@ function Get-LocalArduinoPort {
     if ($pio) {
         $raw = & $pio device list --json-output 2>$null
         if ($raw) {
-            try { $ports = @($raw | ConvertFrom-Json) } catch { $ports = @() }
+            # -InputObject, not a pipe: piping the JSON text into ConvertFrom-Json on
+            # PowerShell 5.1 yields ONE object whose members are arrays, so `port` came
+            # back as "COM4 COM3 COM5" and the upload was attempted on all three at once.
+            try { $ports = @(ConvertFrom-Json -InputObject ($raw -join "`n")) } catch { $ports = @() }
         }
     }
 
@@ -601,6 +613,9 @@ function Get-LocalArduinoPort {
     }
 
     $ports = @($ports | Where-Object { $_.port })
+    # A Bluetooth serial device is never an Arduino, and listing it only makes the
+    # "is there exactly one unknown port?" fallback below guess wrong.
+    $ports = @($ports | Where-Object { "$($_.hwid)" -notmatch 'BTHENUM' })
     if ($ports.Count -eq 0) { return $null }
 
     # CH340 (1A86) / FTDI (0403) / genuine USB serial are what Nanos show up as.
@@ -646,9 +661,19 @@ function Invoke-ArduinoDeploy {
             Set-Status 'Arduino' 'FAILED (no Pi)'
             return $false
         }
+        Write-Info 'Stopping the display service so it releases the Nano serial port'
+        Stop-PiDisplayService
         Write-Info 'Flashing the Nano attached to the Pi (/dev/ttyUSB0)'
         $cmd = "cd $PiRepoDir && git pull --ff-only && { PIO=`$HOME/.local/bin/pio; [ -x `$PIO ] || PIO=pio; `$PIO run -d arduino -e nano --target upload --upload-port /dev/ttyUSB0; }"
-        $code = Invoke-Ssh -Command $cmd
+        # The flash and the restart share a try/finally: a failed upload must not leave the
+        # car with its display powered down. avrdude also cannot open the port while the
+        # service holds it - it waits instead of failing - so the stop is not optional.
+        try {
+            $code = Invoke-Ssh -Command $cmd
+        }
+        finally {
+            Start-PiDisplayService
+        }
         if ($code -ne 0) {
             Write-Fail 'Remote Arduino flash failed.'
             Set-Status 'Arduino' 'FAILED (remote)'
