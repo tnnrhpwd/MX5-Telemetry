@@ -1,4 +1,4 @@
-/*
+﻿/*
  * ============================================================================
  * MX5-Telemetry Single Arduino - Optimized CAN + LED Controller
  * ============================================================================
@@ -8,11 +8,11 @@
  * for minimum latency and maximum responsiveness.
  * 
  * ADVANTAGES OVER DUAL ARDUINO:
- * ✅ Zero RPM data corruption (no serial link)
- * ✅ <1ms CAN-to-LED latency (was ~70ms with serial)
- * ✅ 100Hz LED update rate (was 10Hz)
- * ✅ Simpler wiring (no inter-Arduino connection)
- * ✅ Lower power consumption
+ * âœ… Zero RPM data corruption (no serial link)
+ * âœ… <1ms CAN-to-LED latency (was ~70ms with serial)
+ * âœ… 100Hz LED update rate (was 10Hz)
+ * âœ… Simpler wiring (no inter-Arduino connection)
+ * âœ… Lower power consumption
  * 
  * OPTIMIZATIONS APPLIED:
  * 1. Hardware interrupt for CAN message reception (D2/INT0)
@@ -92,17 +92,10 @@
 #define MAZDA_RPM_CAN_ID    0x201   // Engine RPM broadcast ID
 #define MAZDA_SPEED_CAN_ID  0x201   // Vehicle speed (same frame as RPM)
 
-// RPM thresholds for the LED colour scale.
-//
-// These are anchored to the engine, not to round numbers: the strip must be
-// fully red at the real redline (~6800) instead of saturating at 6200 and
-// showing nothing for the last 600 rpm. Idle sits just under RPM_ZONE_CYAN, so
-// a cold idle reads blue/cyan and a cruising engine reads green.
-#define RPM_ZONE_CYAN       1400    // idle / moving off
-#define RPM_ZONE_GREEN      2800    // cruising - the economical band
-#define RPM_ZONE_YELLOW     4500    // waking up
-#define RPM_ZONE_ORANGE     5800    // spirited
-#define RPM_MAX             6800    // redline - full red
+// RPM limits. The colour zones themselves are no longer compile-time constants - they
+// live in `rampStops[]`, which the Pi can replace at runtime (see RUNTIME COLOUR RAMP).
+// These two remain because they are limits, not preferences.
+#define RPM_MAX             6800    // default rpm at which the strip is completely full
 #define RPM_REDLINE         6800    // Trigger haptic pulse
 
 // Timing configuration (microseconds for precision)
@@ -134,6 +127,56 @@ enum LEDSequence {
 MCP_CAN canBus(CAN_CS_PIN);
 Adafruit_NeoPixel strip(LED_COUNT, LED_DATA_PIN, NEO_GRB + NEO_KHZ800);
 
+// ----------------------------------------------------------------------------
+// Frame pacing
+//
+// strip.show() is the slow part of every update: on a 16 MHz AVR it pushes the
+// whole strip out with interrupts disabled, so calling it when nothing changed
+// costs latency and masks the CAN interrupt for no benefit. Every renderer writes
+// into the pixel buffer and calls showIfChanged(), which compares against what was
+// last transmitted and skips the transfer when the frame is identical.
+// ----------------------------------------------------------------------------
+static uint32_t lastShown[LED_COUNT] = {0};
+static bool stripForceShow = true;   // set when brightness changes, which pixel values don't show
+
+inline void showIfChanged() {
+    bool changed = stripForceShow;
+    stripForceShow = false;
+
+    for (uint8_t i = 0; i < LED_COUNT; i++) {
+        uint32_t c = strip.getPixelColor(i);
+        if (c != lastShown[i]) {
+            lastShown[i] = c;
+            changed = true;
+        }
+    }
+
+    if (changed) strip.show();
+}
+
+// Runtime colour ramp. Declared up here because the serial command handler (below)
+// rewrites it - the table used to be five `#define`s, which meant reflashing to change
+// a colour. The last stop doubles as the "full illumination" rpm.
+struct RampStop {
+    uint16_t rpm;
+    uint8_t  r, g, b;
+};
+
+#define RAMP_STOP_COUNT 6
+
+RampStop rampStops[RAMP_STOP_COUNT] = {
+    {    0,   0,   0, 255 },   // idle - blue
+    { 1400,   0, 220, 255 },   // pulling away - cyan
+    { 2800,  50, 215, 130 },   // economical cruise - green
+    { 4500, 255, 210,  60 },   // waking up - yellow
+    { 5800, 255, 128,   0 },   // spirited - orange
+    { 6800, 255,   0,   0 },   // redline - red
+};
+
+uint8_t  rampStopCount = RAMP_STOP_COUNT;
+uint16_t rpmFull = 6800;          // rpm at which the strip is completely full
+uint8_t  themeDim = 0;            // 0 = full brightness ramp, 1 = dark-mode (dimmed)
+
 // Use USB Serial for commands from Pi
 #if ENABLE_SERIAL_CMD
 #define cmdSerial Serial
@@ -147,6 +190,7 @@ volatile uint8_t g_canDataReceived = 0;  // Flag set by interrupt
 uint16_t currentRPM = 0;
 float smoothedRPM = 0.0f;  // Exponential moving average for smooth transitions
 uint8_t currentBrightness = 255;
+bool potEnabled = true;   // false once the app sets a brightness: the pot would fight it
 bool errorMode = false;
 bool canInitialized = false;
 
@@ -154,9 +198,9 @@ bool canInitialized = false;
 // Rising revs track the engine one-to-one (no lag at the shift point); falling
 // revs keep a light filter so the strip does not trail pixels when the throttle
 // closes. Large deltas snap instantly.
-#define RPM_SNAP_DELTA     400     // RPM jump that bypasses the filter entirely
+#define RPM_SNAP_DELTA     250     // RPM jump that bypasses the filter entirely
 #define RPM_ALPHA_RISING   1.00f   // Throttle-on: no filtering at all
-#define RPM_ALPHA_FALLING  0.60f   // Lift-off: light settle, still quick
+#define RPM_ALPHA_FALLING  0.75f   // Lift-off: light settle, still quick
 
 // LED sequence setting (persisted in EEPROM)
 uint8_t ledSequence = SEQ_CENTER_OUT;  // Default: center-out (mirrored)
@@ -168,9 +212,30 @@ static uint16_t lastRenderedRPM = 0xFFFF;
 
 // Serial command buffer
 #if ENABLE_SERIAL_CMD
-char cmdBuffer[32];
+// 128, not 32: a full RAMP: line is six "<rpm>:<rrggbb>" pairs, which is ~76 characters,
+// and the old 32-byte buffer silently truncated it. The parser then saw a partial ramp
+// and accepted a two-stop table ending at 1400 rpm - which looked like a working command
+// and quietly capped the strip at 1400 rpm.
+char cmdBuffer[128];
 uint8_t cmdIndex = 0;
 #endif
+
+// Bench override: `DEMO:<rpm>` forces the RPM the strip renders, `DEMO:OFF` clears it.
+//
+// This exists so the strip can be validated with the engine off. The alternative -
+// transmitting a synthetic 0x201 frame - would put fake RPM and speed on the car's bus
+// where the cluster, ABS and transmission controllers can read it, which is not
+// something a diagnostic should ever do. The override only changes what the LED code
+// draws; CAN decoding is untouched, and it clears itself after a minute so a forgotten
+// command cannot leave a fake tachometer behind.
+bool demoForced = false;
+uint16_t demoRPM = 0;
+unsigned long demoExpiresAt = 0;
+#define DEMO_TIMEOUT_MS 60000UL
+
+// CAN diagnostics reported in the STATUS line
+unsigned long lastCanIdSeen = 0;
+uint16_t frameCount = 0;         // wraps every ~65k frames; only the 1 Hz delta is used
 
 // Timing
 unsigned long lastCANPoll = 0;
@@ -197,10 +262,6 @@ void loadSettingsFromEEPROM();
 void saveSettingsToEEPROM();
 void handleSerialCommands();
 void setLEDSequence(uint8_t seq);
-void updateLEDsCenterOut();
-void updateLEDsLeftToRight();
-void updateLEDsRightToLeft();
-void updateLEDsCenterIn();
 
 // ============================================================================
 // CAN INTERRUPT HANDLER - Triggered on MCP2515 INT pin falling edge
@@ -309,6 +370,90 @@ void handleSerialCommands() {
                     // Health check
                     cmdSerial.println(F("PONG"));
                 }
+                else if (strncmp(cmdBuffer, "RAMP:", 5) == 0) {
+                    // RAMP:<rpm>:<rrggbb>,<rpm>:<rrggbb>,...  (the last stop is "full")
+                    uint8_t count = 0;
+                    char* p = cmdBuffer + 5;
+                    while (*p && count < RAMP_STOP_COUNT) {
+                        uint16_t rpm = 0;
+                        while (*p >= '0' && *p <= '9') { rpm = (uint16_t)(rpm * 10 + (*p - '0')); p++; }
+                        if (*p != ':') break;
+                        p++;
+                        uint32_t rgb = 0;
+                        uint8_t digits = 0;
+                        while (digits < 6 && *p) {
+                            char c = *p;
+                            uint8_t v;
+                            if (c >= '0' && c <= '9')      v = (uint8_t)(c - '0');
+                            else if (c >= 'A' && c <= 'F') v = (uint8_t)(c - 'A' + 10);
+                            else if (c >= 'a' && c <= 'f') v = (uint8_t)(c - 'a' + 10);
+                            else break;
+                            rgb = (rgb << 4) | v;
+                            p++;
+                            digits++;
+                        }
+                        if (digits != 6) break;
+                        rampStops[count].rpm = rpm;
+                        rampStops[count].r = (uint8_t)(rgb >> 16);
+                        rampStops[count].g = (uint8_t)(rgb >> 8);
+                        rampStops[count].b = (uint8_t)rgb;
+                        count++;
+                        if (*p == ',') { p++; } else { break; }
+                    }
+                    if (count >= 2) {
+                        rampStopCount = count;
+                        rpmFull = rampStops[count - 1].rpm;
+                        lastRenderedRPM = 0xFFFF;   // force a repaint
+                        cmdSerial.println(F("OK:RAMP"));
+                    } else {
+                        cmdSerial.println(F("ERR:RAMP"));
+                    }
+                }
+                else if (strncmp(cmdBuffer, "CFG:", 4) == 0) {
+                    // CFG:bright=<0-255>,theme=<0|1>,full=<rpm>
+                    char* p = cmdBuffer + 4;
+                    while (*p) {
+                        if (strncmp(p, "bright=", 7) == 0) {
+                            int v = atoi(p + 7);
+                            if (v < 0) v = 0;
+                            if (v > 255) v = 255;
+                            currentBrightness = (uint8_t)v;
+                            strip.setBrightness(currentBrightness);
+                            potEnabled = false;      // app owns brightness now
+                            stripForceShow = true;
+                        } else if (strncmp(p, "theme=", 6) == 0) {
+                            themeDim = (atoi(p + 6) != 0) ? 1 : 0;
+                            lastRenderedRPM = 0xFFFF;
+                        } else if (strncmp(p, "full=", 5) == 0) {
+                            int v = atoi(p + 5);
+                            if (v < 2000) v = 2000;
+                            if (v > 8000) v = 8000;
+                            rpmFull = (uint16_t)v;
+                            lastRenderedRPM = 0xFFFF;
+                        } else if (strncmp(p, "pot=", 4) == 0) {
+                            potEnabled = (atoi(p + 4) != 0);
+                        }
+                        char* comma = strchr(p, ',');
+                        if (!comma) break;
+                        p = comma + 1;
+                    }
+                    cmdSerial.println(F("OK:CFG"));
+                }
+                else if (strncmp(cmdBuffer, "DEMO:", 5) == 0) {
+                    // Bench override, see demoForced. "DEMO:OFF" hands control back to CAN.
+                    if (strcmp(cmdBuffer + 5, "OFF") == 0) {
+                        demoForced = false;
+                        cmdSerial.println(F("OK:DEMO_OFF"));
+                    } else {
+                        uint16_t rpm = (uint16_t)atoi(cmdBuffer + 5);
+                        if (rpm > RPM_MAX) rpm = RPM_MAX;
+                        demoRPM = rpm;
+                        demoForced = true;
+                        demoExpiresAt = millis() + DEMO_TIMEOUT_MS;
+                        cmdSerial.print(F("OK:DEMO:"));
+                        cmdSerial.println(demoRPM);
+                    }
+                }
                 
                 cmdIndex = 0;
             }
@@ -367,7 +512,13 @@ inline void readCANMessages() {
             lastCANData = millis();
             errorMode = false;
             displayErrorMode = false;  // Immediately stop error animation
-            
+
+            // Diagnostics: which ids and how many frames actually reach the controller.
+            // A strip that stays blue because its own CAN link is silent looks identical
+            // to one that is being told "0 rpm", and these two numbers are the difference.
+            lastCanIdSeen = rxId & 0x7FFFFFFF;
+            frameCount++;
+
             // Parse Mazda RPM message (ID 0x201)
             // Format: bytes 0-1 = RPM * 4 (big endian)
             // Mask out extended ID flag (bit 31) for comparison
@@ -412,119 +563,136 @@ inline void readCANMessages() {
 #define SET_LED(idx, r, g, b) strip.setPixelColor(idx, strip.Color(r, g, b))
 #define CLEAR_LED(idx) strip.setPixelColor(idx, 0)
 
-// ----------------------------------------------------------------------------
-// Frame pacing
-//
-// strip.show() is the slow part of every update: on a 16 MHz AVR it pushes the
-// whole strip out with interrupts disabled, so calling it when nothing changed
-// costs latency and masks the CAN interrupt for no benefit. Every renderer now
-// writes into the pixel buffer and calls showIfChanged(), which compares against
-// what was last transmitted and skips the transfer when the frame is identical.
-// ----------------------------------------------------------------------------
-static uint32_t lastShown[LED_COUNT] = {0};
-static bool stripForceShow = true;   // set when brightness changes, which pixel values don't show
+// RUNTIME COLOUR RAMP
+// ============================================================================
+// The ramp used to be five `#define`s compiled into the colour maths, so changing a
+// zone meant reflashing. It is now a small table (rpm, colour) that the Pi can replace
+// at runtime, which is what lets the strip follow the phone's theme, or a hand-picked
+// set of colours, without a rebuild. The last stop is also the "full illumination" rpm.
 
-inline void showIfChanged() {
-    bool changed = stripForceShow;
-    stripForceShow = false;
+inline void rampColorAtRpm(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
+    if (rpm <= rampStops[0].rpm) {
+        *r = rampStops[0].r; *g = rampStops[0].g; *b = rampStops[0].b;
+        return;
+    }
+    for (uint8_t i = 1; i < rampStopCount; i++) {
+        if (rpm > rampStops[i].rpm) continue;
+        const RampStop& a = rampStops[i - 1];
+        const RampStop& z = rampStops[i];
+        uint16_t span = z.rpm - a.rpm;
+        float t = span ? (float)(rpm - a.rpm) / (float)span : 1.0f;
+        *r = (uint8_t)((float)a.r + ((float)((int)z.r - (int)a.r) * t) + 0.5f);
+        *g = (uint8_t)((float)a.g + ((float)((int)z.g - (int)a.g) * t) + 0.5f);
+        *b = (uint8_t)((float)a.b + ((float)((int)z.b - (int)a.b) * t) + 0.5f);
+        return;
+    }
+    *r = rampStops[rampStopCount - 1].r;
+    *g = rampStops[rampStopCount - 1].g;
+    *b = rampStops[rampStopCount - 1].b;
+}
+
+// Where this LED sits along the current fill direction, in LED slots from the root.
+// Mirrored sequences have two LEDs per rank, so the "length" is half the strip.
+inline uint8_t barRank(uint8_t index) {
+    const uint8_t half = LED_COUNT / 2;
+    switch (ledSequence) {
+        case SEQ_LEFT_TO_RIGHT: return index;
+        case SEQ_RIGHT_TO_LEFT: return (LED_COUNT - 1) - index;
+        case SEQ_CENTER_IN:     return (index < half) ? (uint8_t)(half - 1 - index)
+                                                      : (uint8_t)(index - half);
+        case SEQ_CENTER_OUT:
+        default:                return (index < half) ? index
+                                                      : (uint8_t)((LED_COUNT - 1) - index);
+    }
+}
+
+inline uint8_t barSlots() {
+    return (ledSequence == SEQ_LEFT_TO_RIGHT || ledSequence == SEQ_RIGHT_TO_LEFT)
+           ? (uint8_t)LED_COUNT : (uint8_t)(LED_COUNT / 2);
+}
+
+// Draw the bar for `rpm`.
+//
+// Colour is sampled from each LED's *share of the current rpm*, not from a fixed
+// position on the strip. That is the difference between a static rainbow that grows and
+// a ramp that flows: the tip is always the colour of the present rpm, the root stays at
+// the bottom of the ramp, and every LED in between shifts continuously as the engine
+// revs. It also removes the old single-frame jump when the leading edge crossed a zone.
+inline void renderBar(uint16_t rpm) {
+    if (rpm > rpmFull) rpm = rpmFull;
+
+    const uint8_t slots = barSlots();
+    // Fill length in LED units: 1 at idle (one LED is always lit) up to `slots` at rpmFull.
+    // Kept fractional so the colour position moves continuously rather than in steps.
+    float fill = 1.0f + ((float)rpm * (float)(slots - 1)) / (float)rpmFull;
+    uint8_t full = (uint8_t)fill;
+    float frac = fill - (float)full;
+    float span = (fill > 1.0f) ? (fill - 1.0f) : 1.0f;
 
     for (uint8_t i = 0; i < LED_COUNT; i++) {
-        uint32_t c = strip.getPixelColor(i);
-        if (c != lastShown[i]) {
-            lastShown[i] = c;
-            changed = true;
+        uint8_t rank = barRank(i);
+        float level;
+
+        if (rank < full) {
+            level = 1.0f;
+        } else if (rank == full && frac > 0.05f) {
+            level = frac;
+        } else {
+            CLEAR_LED(i);
+            continue;
         }
+
+        float p = (float)rank / span;
+        if (p > 1.0f) p = 1.0f;
+
+        uint8_t r, g, b;
+        rampColorAtRpm((uint16_t)(p * (float)rpm), &r, &g, &b);
+
+        uint8_t scale = themeDim ? 170 : 255;   // dark mode is dimmer by design
+        SET_LED(i,
+                (uint8_t)((uint16_t)r * level * scale / 255),
+                (uint8_t)((uint16_t)g * level * scale / 255),
+                (uint8_t)((uint16_t)b * level * scale / 255));
     }
-
-    if (changed) strip.show();
+    showIfChanged();
 }
 
-// Light one LED from the shared ramp at scale position t (0..1) and brightness
-// level (0..1). This is what turns the strip into a gradient: each LED keeps the
-// colour of its own place on the RPM scale instead of the whole bar taking the
-// current RPM's single colour.
-inline void scaleColorAt(float t, uint8_t* r, uint8_t* g, uint8_t* b);  // defined below
-
-inline void setLedAtPos(uint8_t idx, float t, float level) {
-    uint8_t r, g, b;
-    scaleColorAt(t, &r, &g, &b);
-    SET_LED(idx, (uint8_t)(r * level), (uint8_t)(g * level), (uint8_t)(b * level));
-}
-
-// ============================================================================
-// SMOOTH LED TRANSITIONS - Fractional brightness & color gradients
-// ============================================================================
-// Provides buttery-smooth LED progression with:
-// 1. Fractional LED brightness (sub-LED resolution) - 2x effective steps
-// 2. Smooth color gradients between RPM zones - no jarring color jumps
-// ============================================================================
-
-// Helper: Linear interpolation between two colors.
+// CAN-offline pattern: two edge pixels blinking orange once a second.
 //
-// The float result is rounded, then cast once. The previous form cast the
-// *delta* (which is negative on any ramp that runs downwards, e.g. yellow's
-// green 210 -> orange's 128) and added it to a uint8_t. That is technically
-// undefined (a negative float converted to an unsigned type); it happens to
-// land on the right byte on AVR because the arithmetic wraps mod 256, but it is
-// not something to rely on.
-inline void interpolateColor(uint8_t r1, uint8_t g1, uint8_t b1,
-                             uint8_t r2, uint8_t g2, uint8_t b2,
-                             float position,
-                             uint8_t* outR, uint8_t* outG, uint8_t* outB) {
-    *outR = (uint8_t)((float)r1 + ((float)((int)r2 - (int)r1) * position) + 0.5f);
-    *outG = (uint8_t)((float)g1 + ((float)((int)g2 - (int)g1) * position) + 0.5f);
-    *outB = (uint8_t)((float)b1 + ((float)((int)b2 - (int)b1) * position) + 0.5f);
-}
-
-// Get the colour for a position on the RPM scale.
-//
-// t is 0.0 at the bottom of the scale and 1.0 at the redline. This is the single
-// source of the strip's colour ramp: both the lit bar and the per-LED gradient
-// sample it, so the strip can never show two different ideas of "hot".
-// Colors flow: Blue -> Cyan -> Green -> Yellow -> Orange -> Red
-inline void scaleColorAt(float t, uint8_t* r, uint8_t* g, uint8_t* b) {
-    if (t < 0.0f) t = 0.0f;
-    if (t > 1.0f) t = 1.0f;
-
-    const float fCyan   = (float)RPM_ZONE_CYAN / RPM_MAX;
-    const float fGreen  = (float)RPM_ZONE_GREEN / RPM_MAX;
-    const float fYellow = (float)RPM_ZONE_YELLOW / RPM_MAX;
-    const float fOrange = (float)RPM_ZONE_ORANGE / RPM_MAX;
-
-    if (t < fCyan) {
-        // 0 -> idle: blue to cyan
-        interpolateColor(0, 0, 255,      0, 220, 255,
-                         t / fCyan, r, g, b);
+// This exists because "the CAN controller never came up" used to look *exactly* like a
+// healthy engine at 0 rpm: both ended in the blue two-pixel idle state, and the build
+// ships with serial debug off, so nothing anywhere said which one it was. Diagnosing
+// "the strip is always blue" then means guessing at wiring instead of reading the strip.
+inline void drawCanOffline() {
+    bool on = ((millis() / 500) & 1) != 0;
+    strip.clear();
+    if (on) {
+        SET_LED(0, 255, 80, 0);
+        SET_LED(LED_COUNT - 1, 255, 80, 0);
     }
-    else if (t < fGreen) {
-        // idle -> cruise: cyan to green
-        interpolateColor(0, 220, 255,    50, 215, 130,
-                         (t - fCyan) / (fGreen - fCyan), r, g, b);
-    }
-    else if (t < fYellow) {
-        // cruise -> waking: green to yellow
-        interpolateColor(50, 215, 130,   255, 210, 60,
-                         (t - fGreen) / (fYellow - fGreen), r, g, b);
-    }
-    else if (t < fOrange) {
-        // waking -> spirited: yellow to orange
-        interpolateColor(255, 210, 60,   255, 128, 0,
-                         (t - fYellow) / (fOrange - fYellow), r, g, b);
-    }
-    else {
-        // spirited -> redline: orange to red
-        interpolateColor(255, 128, 0,    255, 0, 0,
-                         (t - fOrange) / (1.0f - fOrange), r, g, b);
-    }
-}
-
-// Colour for a given RPM on the shared scale.
-inline void getRPMColor(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
-    scaleColorAt((float)rpm / (float)RPM_MAX, r, g, b);
+    showIfChanged();
 }
 
 // Main LED update - inline for maximum speed
 inline void updateLEDs() {
+    // Checked before the error animation: a controller that never initialised is a
+    // different fault from a bus that went quiet, and they get different patterns.
+    if (!canInitialized) {
+        drawCanOffline();
+        return;
+    }
+
+    // Bench override: the strip renders this RPM instead of the engine's. It only
+    // changes what is drawn - CAN decoding above is untouched - and it self-clears so a
+    // forgotten command cannot leave a fake tachometer on the strip.
+    if (demoForced) {
+        if (millis() > demoExpiresAt) {
+            demoForced = false;
+        } else {
+            currentRPM = demoRPM;
+        }
+    }
+
     if (displayErrorMode) {
         updateErrorAnimation();
         // Force a repaint when error mode ends: the scanner pattern must not be
@@ -564,22 +732,9 @@ inline void updateLEDs() {
         return;
     }
     
-    // Dispatch to appropriate sequence handler
-    switch (ledSequence) {
-        case SEQ_LEFT_TO_RIGHT:
-            updateLEDsLeftToRight();
-            break;
-        case SEQ_RIGHT_TO_LEFT:
-            updateLEDsRightToLeft();
-            break;
-        case SEQ_CENTER_IN:
-            updateLEDsCenterIn();
-            break;
-        case SEQ_CENTER_OUT:
-        default:
-            updateLEDsCenterOut();
-            break;
-    }
+    // Dispatch to the shared renderer. The four sequences only differ in the order the
+    // LEDs fill, which barRank() encodes, so there is one code path for colour and fill.
+    renderBar(currentRPM);
     
     // Haptic feedback at redline
     #if ENABLE_HAPTIC
@@ -593,145 +748,6 @@ inline void updateLEDs() {
         }
     }
     #endif
-}
-
-// Sequence 1: Center-Out with smooth fractional LED brightness
-// LEDs fill from edges toward center with sub-LED resolution
-void updateLEDsCenterOut() {
-    uint16_t clampedRPM = currentRPM;
-    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
-    
-    uint8_t maxPerSide = LED_COUNT / 2;
-    
-    // Calculate FRACTIONAL LED position for smooth transitions
-    float ledPositionFloat = 1.0f + ((float)(clampedRPM - 1) * (maxPerSide - 1)) / (float)(RPM_MAX - 1);
-    if (ledPositionFloat > maxPerSide) ledPositionFloat = maxPerSide;
-    
-    // Split into full LEDs and fractional brightness
-    uint8_t fullLEDsPerSide = (uint8_t)ledPositionFloat;
-    float fractionalPart = ledPositionFloat - fullLEDsPerSide;
-    
-    // Per-LED gradient: each lit LED takes the colour of its own position on the
-    // scale, so the bar runs blue at the edges to red at the centre.
-    for (uint8_t i = 0; i < LED_COUNT; i++) {
-        bool isLeftSide = (i < maxPerSide);
-        uint8_t sidePosition = isLeftSide ? i : (LED_COUNT - 1 - i);
-        float t = (float)sidePosition / (float)(maxPerSide - 1);
-
-        if (sidePosition < fullLEDsPerSide) {
-            setLedAtPos(i, t, 1.0f);
-        }
-        else if (sidePosition == fullLEDsPerSide && fractionalPart > 0.05f) {
-            setLedAtPos(i, t, fractionalPart);
-        }
-        else {
-            CLEAR_LED(i);
-        }
-    }
-    
-    showIfChanged();
-}
-
-// Sequence 2: Left-to-Right with smooth fractional LED brightness
-// LEDs fill from left to right with sub-LED resolution (2x effective steps)
-void updateLEDsLeftToRight() {
-    uint16_t clampedRPM = currentRPM;
-    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
-    
-    // Calculate FRACTIONAL LED position for smooth transitions
-    float ledPositionFloat = 1.0f + ((float)(clampedRPM - 1) * (LED_COUNT - 1)) / (float)(RPM_MAX - 1);
-    if (ledPositionFloat > LED_COUNT) ledPositionFloat = LED_COUNT;
-    
-    // Split into full LEDs and fractional brightness
-    uint8_t fullLEDs = (uint8_t)ledPositionFloat;
-    float fractionalPart = ledPositionFloat - fullLEDs;
-    
-    // Fill from left (LED 0) to right with fractional brightness
-    for (uint8_t i = 0; i < LED_COUNT; i++) {
-        float t = (float)i / (float)(LED_COUNT - 1);
-        if (i < fullLEDs) {
-            setLedAtPos(i, t, 1.0f);
-        }
-        else if (i == fullLEDs && fractionalPart > 0.05f) {
-            setLedAtPos(i, t, fractionalPart);
-        }
-        else {
-            CLEAR_LED(i);
-        }
-    }
-    
-    showIfChanged();
-}
-
-// Sequence 3: Right-to-Left with smooth fractional LED brightness
-// LEDs fill from right to left with sub-LED resolution (2x effective steps)
-void updateLEDsRightToLeft() {
-    uint16_t clampedRPM = currentRPM;
-    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
-    
-    // Calculate FRACTIONAL LED position for smooth transitions
-    float ledPositionFloat = 1.0f + ((float)(clampedRPM - 1) * (LED_COUNT - 1)) / (float)(RPM_MAX - 1);
-    if (ledPositionFloat > LED_COUNT) ledPositionFloat = LED_COUNT;
-    
-    // Split into full LEDs and fractional brightness
-    uint8_t fullLEDs = (uint8_t)ledPositionFloat;
-    float fractionalPart = ledPositionFloat - fullLEDs;
-    
-    // Fill from right (LED_COUNT-1) to left with fractional brightness
-    for (uint8_t i = 0; i < LED_COUNT; i++) {
-        uint8_t positionFromRight = LED_COUNT - 1 - i;
-        float t = (float)positionFromRight / (float)(LED_COUNT - 1);
-
-        if (positionFromRight < fullLEDs) {
-            setLedAtPos(i, t, 1.0f);
-        }
-        else if (positionFromRight == fullLEDs && fractionalPart > 0.05f) {
-            setLedAtPos(i, t, fractionalPart);
-        }
-        else {
-            CLEAR_LED(i);
-        }
-    }
-    
-    showIfChanged();
-}
-
-// Sequence 4: Center-In with smooth fractional LED brightness
-// LEDs fill from center outward to edges with sub-LED resolution
-void updateLEDsCenterIn() {
-    uint16_t clampedRPM = currentRPM;
-    if (clampedRPM > RPM_MAX) clampedRPM = RPM_MAX;
-    
-    uint8_t maxPerSide = LED_COUNT / 2;
-    
-    // Calculate FRACTIONAL LED position for smooth transitions
-    float ledPositionFloat = 1.0f + ((float)(clampedRPM - 1) * (maxPerSide - 1)) / (float)(RPM_MAX - 1);
-    if (ledPositionFloat > maxPerSide) ledPositionFloat = maxPerSide;
-    
-    // Split into full LEDs and fractional brightness
-    uint8_t fullLEDsPerSide = (uint8_t)ledPositionFloat;
-    float fractionalPart = ledPositionFloat - fullLEDsPerSide;
-    
-    // Fill from center outward with fractional brightness. The centre is the
-    // bottom of the scale here and the edges are the top, so the leading edge of
-    // the bar is always the colour of the rpm it represents.
-    uint8_t center = LED_COUNT / 2;
-    for (uint8_t i = 0; i < LED_COUNT; i++) {
-        int distFromCenter = abs((int)i - (int)center);
-        float t = (float)distFromCenter / (float)(maxPerSide - 1);
-
-        if (distFromCenter < fullLEDsPerSide) {
-            setLedAtPos(i, t, 1.0f);
-        }
-        else if (distFromCenter == fullLEDsPerSide && fractionalPart > 0.05f) {
-            setLedAtPos(i, t, fractionalPart);
-        }
-        else {
-            CLEAR_LED(i);
-        }
-    }
-    
-    showIfChanged();
 }
 
 // Error animation - Cylon scanner effect
@@ -777,9 +793,14 @@ void updateErrorAnimation() {
 
 #if ENABLE_BRIGHTNESS
 inline void updateBrightness() {
+    // Once the app has taken ownership of brightness, stop reading the pot: it is
+    // unconnected on this build (the pin floats), so it would otherwise fight the app
+    // with a random value.
+    if (!potEnabled) return;
+    
     // Read potentiometer and invert (clockwise = brighter)
     int potValue = 1023 - analogRead(BRIGHTNESS_POT_PIN);
-    uint8_t newBrightness = potValue >> 2;  // 0-1023 → 0-255
+    uint8_t newBrightness = potValue >> 2;  // 0-1023 â†’ 0-255
     
     // Only update if changed significantly (avoid flicker)
     if (abs((int16_t)newBrightness - (int16_t)currentBrightness) > 2) {
@@ -925,17 +946,21 @@ void loop() {
         
         if (canInitialized) {
             readCANMessages();
-            // Paint as soon as the frame is decoded instead of waiting for the
-            // next LED timer tick. That removes up to 10 ms of the old latency.
-            updateLEDs();
-            lastLEDUpdate = now;
         }
+        // Paint even when the controller never initialised: updateLEDs() then shows the
+        // CAN-offline pattern. Skipping the paint here is what left the strip sitting on
+        // the startup blues forever with no indication of a fault.
+        updateLEDs();
+        lastLEDUpdate = now;
     }
     
     // ========================================================================
     // TIMEOUT CHECK - Enter error mode if no CAN data (with debounce)
     // ========================================================================
-    if (canInitialized && (nowMs - lastCANData > TIMEOUT_MS)) {
+    // `!canInitialized` deliberately counts as "no data": a controller that never came
+    // up would otherwise not trip the watchdog at all, which is how a dead CAN link used
+    // to present as a perfectly healthy idle engine.
+    if (!canInitialized || (nowMs - lastCANData > TIMEOUT_MS)) {
         if (!errorMode) {
             errorMode = true;
             errorStartTime = nowMs;  // Start debounce timer
@@ -967,6 +992,45 @@ void loop() {
     if (now - lastBrightnessRead >= BRIGHTNESS_INTERVAL) {
         lastBrightnessRead = now;
         updateBrightness();
+    }
+    #endif
+    
+    // ========================================================================
+    // SERIAL STATUS - once a second, always in the shipped build
+    // ========================================================================
+    // TX-only, ~40 bytes/s (about 4% of 9600 baud) and buffered by the UART, so it costs
+    // nothing in LED latency. It is the only way to tell a working strip from a silent
+    // one without a scope: CAN=0 means the MCP2515 never came up, CAN=1 with RPM=0 means
+    // the controller is fine but no engine frame is arriving.
+    #if ENABLE_SERIAL_CMD
+    static unsigned long lastStatusReport = 0;
+    static uint16_t lastFrameCount = 0;
+    if (nowMs - lastStatusReport >= 1000) {
+        lastStatusReport = nowMs;
+        cmdSerial.print(F("STATUS:CAN="));
+        cmdSerial.print(canInitialized ? 1 : 0);
+        cmdSerial.print(F(",RPM="));
+        cmdSerial.print(currentRPM);
+        cmdSerial.print(F(",SEQ="));
+        cmdSerial.print(ledSequence);
+        cmdSerial.print(F(",ERR="));
+        cmdSerial.print(errorMode ? 1 : 0);
+        cmdSerial.print(F(",FPS="));
+        cmdSerial.print((uint16_t)(frameCount - lastFrameCount));
+        lastFrameCount = frameCount;
+        cmdSerial.print(F(",LAST=0x"));
+        if (lastCanIdSeen < 0x100) cmdSerial.print('0');
+        if (lastCanIdSeen < 0x10) cmdSerial.print('0');
+        cmdSerial.print(lastCanIdSeen, HEX);
+        cmdSerial.print(F(",FULL="));
+        cmdSerial.print(rpmFull);
+        cmdSerial.print(F(",DIM="));
+        cmdSerial.print(themeDim);
+        if (demoForced) {
+            cmdSerial.print(F(",DEMO="));
+            cmdSerial.print(demoRPM);
+        }
+        cmdSerial.println();
     }
     #endif
     

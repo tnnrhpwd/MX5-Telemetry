@@ -611,8 +611,15 @@ static int predictedRpm(int gear, float speedKmh) {
     return (int)(speedKmh / KMH_PER_1000_RPM[gear] * 1000.0f + 0.5f);
 }
 
-// Draws the three gears whose predicted RPM sits closest to the sweet-spot band,
-// with that RPM. Replaces the TPMS card while the Bluetooth sensors are offline.
+// Draws all six gears in numeric order — 1 2 / 3 4 / 5 6 — with the RPM each gear
+// would sit at for the current road speed. Replaces the TPMS card while the Bluetooth
+// sensors are offline.
+//
+// This used to rank the six gears by how close their predicted RPM was to the
+// sweet-spot band and print only the best three. That ordering answered a different
+// question than the one the driver asks: in the car it produced lists like "4, 3, 5",
+// which read as scrambled rather than helpful. The ladder is numeric again, and the
+// sweet-spot information is carried only by the colour of each RPM figure.
 //
 // Geometry is deliberately tight to the bottom of the disc: the COOL/OIL/VOLT and
 // MPG/FUEL/RANGE cards end at y=244, so the block starts at 250 and the clear
@@ -620,6 +627,8 @@ static int predictedRpm(int gear, float speedKmh) {
 // bottom corner and put the first row under "RANGE".
 static void drawGearLadder() {
     const int rowW = 146;
+    const int gutter = 4;
+    const int cellW = (rowW - gutter) / 2;
     const int rowH = 24;
     const int rowGap = 2;
     const int startY = 250;
@@ -639,29 +648,14 @@ static void drawGearLadder() {
         return;
     }
 
-    // Rank all six gears by how far their predicted RPM is from the band.
-    int order[6] = {1, 2, 3, 4, 5, 6};
-    int score[6];
     for (int i = 0; i < 6; i++) {
-        int rpm = predictedRpm(order[i], speed);
-        if (rpm < GEAR_BAND_LOW)       score[i] = GEAR_BAND_LOW - rpm;
-        else if (rpm > GEAR_BAND_HIGH) score[i] = rpm - GEAR_BAND_HIGH;
-        else                           score[i] = 0;
-    }
-    for (int i = 0; i < 5; i++) {
-        for (int j = 0; j < 5 - i; j++) {
-            if (score[j] > score[j + 1]) {
-                int t = score[j]; score[j] = score[j + 1]; score[j + 1] = t;
-                t = order[j]; order[j] = order[j + 1]; order[j + 1] = t;
-            }
-        }
-    }
+        const int gear = i + 1;            // numeric order, always
+        const int col = i % 2;
+        const int row = i / 2;
+        const int cx = x + col * (cellW + gutter);
+        const int y = startY + row * (rowH + rowGap);
 
-    for (int row = 0; row < 3; row++) {
-        int gear = order[row];
         int rpm = predictedRpm(gear, speed);
-        int y = startY + row * (rowH + rowGap);
-
         bool isCurrent = (telemetry.gear == gear) && !telemetry.isInReverse;
         uint16_t bg = isCurrent ? COLOR_BG_ELEVATED : COLOR_BG_CARD;
 
@@ -670,15 +664,17 @@ static void drawGearLadder() {
         else if (rpm > GEAR_BAND_HIGH)                    rpmColor = MX5_RED;
         else                                              rpmColor = MX5_BLUE;
 
-        LCD_FillRoundRect(x, y, rowW, rowH, 8, bg);
+        LCD_FillRoundRect(cx, y, cellW, rowH, 8, bg);
 
         char gearStr[6];
         snprintf(gearStr, sizeof(gearStr), "%d", gear);
-        LCD_DrawString(x + 14, y + 5, gearStr, isCurrent ? MX5_WHITE : MX5_GRAY, bg, 2);
+        LCD_DrawString(cx + 8, y + 5, gearStr, isCurrent ? MX5_WHITE : MX5_GRAY, bg, 2);
 
+        // Size 1 for the RPM: a cell is only ~71 px wide, and the number can reach five
+        // digits (1st gear at motorway speed). At size 2 that would overrun the gutter.
         char rpmStr[10];
         snprintf(rpmStr, sizeof(rpmStr), "%d", rpm);
-        drawRightAligned(x + rowW - 12, y + 5, rpmStr, rpmColor, bg, 2);
+        drawRightAligned(cx + cellW - 6, y + 8, rpmStr, rpmColor, bg, 1);
     }
 }
 

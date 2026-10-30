@@ -49,6 +49,7 @@ OBD-II → HS-CAN & MS-CAN → Pi (Hub) → ESP32 Display + Arduino LEDs + Pione
 | Document | Description |
 |----------|-------------|
 | [**LED_SYSTEM.md**](LED_SYSTEM.md) | ⭐ Complete LED system guide (states, modes, performance) |
+| [**LED_REVAMP_PLAN.md**](LED_REVAMP_PLAN.md) | 🔧 Planned rewrite: visible failure states, `CFG:` protocol, Android `LED STRIP` screen |
 
 ---
 

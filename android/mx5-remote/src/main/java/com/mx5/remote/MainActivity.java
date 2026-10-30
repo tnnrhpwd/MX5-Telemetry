@@ -850,6 +850,10 @@ public class MainActivity extends Activity implements Screen.Host {
     private void pushThemeToPi() {
         final String scheme = schemeId;
         final int darkFlag = dark ? 1 : 0;
+        // Following the theme is the default; the LED screen can switch it off, in which
+        // case the strip keeps whatever hard colours the user picked.
+        final boolean followTheme = prefs == null || prefs.getBoolean("led_follow_theme", true);
+        final String ramp = followTheme ? ledRampFor(Palette.of(scheme, dark)) : null;
         new Thread(() -> {
             try {
                 if (!pi.isConfigured()) {
@@ -857,10 +861,40 @@ public class MainActivity extends Activity implements Screen.Host {
                 }
                 pi.updateSetting("theme_scheme", scheme);
                 pi.updateSetting("theme_dark", darkFlag);
+                if (ramp != null) {
+                    pi.updateSetting("led_ramp", ramp);
+                    pi.updateSetting("led_theme_dim", darkFlag);
+                }
             } catch (Exception ignored) {
                 // Offline: the Pi still holds whatever theme was last delivered.
             }
         }, "theme-sync").start();
+    }
+
+    /**
+     * The LED strip's colour ramp for a palette, as the firmware's RAMP: payload.
+     *
+     * The phone owns the colours, so it sends them rather than letting the Pi keep a
+     * second copy of every scheme. Stops are (rpm:rrggbb) pairs ordered by rpm; the last
+     * one is also the rpm at which the strip is completely full, so "fully lit" tracks
+     * the theme's redline rather than a hardcoded 6800.
+     *
+     * The mapping reuses the palette's own semantic roles - accent at idle through
+     * primary, good, warn and bad - so the strip reads like the rest of the app instead
+     * of being an unrelated rainbow bolted onto it.
+     */
+    private static String ledRampFor(Palette p) {
+        int[] colours = {p.accent, p.primary, p.good, p.warn, p.bad, p.alert};
+        int[] rpms = {0, 1400, 2800, 4500, 5800, 6800};
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < colours.length; i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(rpms[i]).append(':')
+              .append(String.format("%06X", colours[i] & 0xFFFFFF));
+        }
+        return sb.toString();
     }
 
     // ----------------------------------------------------------------- polling

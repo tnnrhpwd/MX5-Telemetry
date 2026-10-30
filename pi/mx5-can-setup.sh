@@ -6,12 +6,17 @@
 sleep 2
 
 # Bring up HS-CAN (500kbps) - Engine data, RPM, Speed
-# LISTEN-ONLY mode for production (no transmission to car CAN bus)
+#
+# NOT listen-only. The ECU broadcasts everything this app uses passively, but the two
+# OBD-II Mode 01 PIDs (MAF 0x10 and intake air 0x0F) are *request/response*: the Pi has
+# to transmit 0x7DF to get an answer. With `listen-only on` the kernel drops the TX
+# silently, so no reply ever comes, `telemetry.maf` stays 0 and instant MPG can never be
+# computed. Requests are one 8-byte frame 4x/second, which is nothing on a 500 kbps bus.
 # restart-ms 100: Auto-recover from bus-off errors
 # ACTUAL WIRING: HS-CAN is on can1 (spi0.0, CE0)
 if ip link show can1 > /dev/null 2>&1; then
-    ip link set can1 up type can bitrate 500000 restart-ms 100 listen-only on
-    echo "can1 (HS-CAN) up at 500kbps (listen-only, auto-restart)"
+    ip link set can1 up type can bitrate 500000 restart-ms 100 listen-only off
+    echo "can1 (HS-CAN) up at 500kbps (transmit enabled for OBD-II, auto-restart)"
 else
     echo "can1 not found - check MCP2515 wiring"
 fi

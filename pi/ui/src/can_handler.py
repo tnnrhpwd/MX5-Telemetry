@@ -987,12 +987,10 @@ To use CAN on Raspberry Pi with MCP2515:
    pip install python-can
 
 4. Bring up CAN interfaces (if using socketcan):
-   sudo ip link set can0 up type can bitrate 500000 listen-only on
-   sudo ip link set can1 up type can bitrate 125000 listen-only on
+   sudo ip link set can1 up type can bitrate 500000 listen-only off   # HS: needs TX for OBD-II
+   sudo ip link set can0 up type can bitrate 125000 listen-only on    # MS: read-only body bus
 
-5. Test CAN:
-   candump can0
-   candump can1
-
-NOTE: listen-only mode prevents transmission to car CAN bus (read-only)
+NOTE: HS-CAN must NOT be listen-only. The OBD-II PIDs used here (MAF 0x10, intake air
+0x0F) are request/response; a listen-only interface drops the request and no reply can
+ever arrive. MS-CAN stays read-only.
 """

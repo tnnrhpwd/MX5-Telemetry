@@ -2,6 +2,22 @@
 
 **Vehicle:** Mazda MX-5 NC (2006-2015) | **System:** Pi 4B + ESP32-S3 + Arduino Nano + 3× MCP2515
 
+> **Software/firmware work is tracked elsewhere.** This document is the *hardware* backlog
+> (sections 1–4). The open software work from the 2026-10-30 in-car test lives in
+> [KNOWN_ISSUES.md › Work queue](KNOWN_ISSUES.md#work-queue-2026-10-30-in-car-round):
+>
+> | Item | Document |
+> |---|---|
+> | LED strip is permanently blue; LED logic + Android settings menu revamp | [LED_REVAMP_PLAN.md](LED_REVAMP_PLAN.md) |
+> | Instant MPG never shows a number (HS-CAN is listen-only) | [KNOWN_ISSUES.md › ISSUE-10](KNOWN_ISSUES.md#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder) |
+> | Drive app not reachable while driving | [ANDROID_AUTO_PLAN.md](ANDROID_AUTO_PLAN.md), [KNOWN_ISSUES.md › ISSUE-09](KNOWN_ISSUES.md#issue-09--app-is-not-available-while-driving) |
+> | Gear ladder not in numeric order | [KNOWN_ISSUES.md › ISSUE-13](KNOWN_ISSUES.md#issue-13--overview-gear-ladder-is-not-in-numeric-order) |
+> | Reverse shows a positive speed and gear 1 | [KNOWN_ISSUES.md › ISSUE-14](KNOWN_ISSUES.md#issue-14--reverse-reports-a-positive-speed-and-gear-1) |
+>
+> Sections 1 and 2 below become more valuable once the above are closed: the ADS1115 in
+> section 1 is also the cleanest way to add the spare analog input the reverse-switch
+> fallback in ISSUE-14 may want.
+
 ---
 
 ## 1. Live 12V Automotive Voltage Monitoring

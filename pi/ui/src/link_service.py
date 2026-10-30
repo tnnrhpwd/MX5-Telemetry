@@ -228,6 +228,36 @@ class LinkService:
                 # Send LED sequence change to Arduino using the app's method
                 if hasattr(app, '_send_led_sequence_to_arduino'):
                     app._send_led_sequence_to_arduino()
+            elif name == 'led_ramp':
+                # "<rpm>:<rrggbb>,..." from the phone, forwarded to the strip as-is.
+                # Reject anything that is not that shape rather than letting a malformed
+                # string reach firmware that parses it byte by byte.
+                text = str(value).strip()
+                parts = [p for p in text.split(',') if p]
+                if not 2 <= len(parts) <= 6:
+                    return {'success': False, 'error': 'led_ramp needs 2-6 stops'}, 400
+                for part in parts:
+                    rpm, _, colour = part.partition(':')
+                    if not rpm.isdigit() or len(colour) != 6:
+                        return {'success': False, 'error': 'led_ramp stop must be rpm:rrggbb'}, 400
+                    try:
+                        int(colour, 16)
+                    except ValueError:
+                        return {'success': False, 'error': 'led_ramp colour is not hex'}, 400
+                app.settings.led_ramp = text
+                if hasattr(app, '_send_led_config'):
+                    app._send_led_config()
+            elif name == 'led_theme_dim':
+                app.settings.led_theme_dim = 1 if _truthy(value) else 0
+                if hasattr(app, '_send_led_config'):
+                    app._send_led_config()
+            elif name == 'led_brightness':
+                level = int(value)
+                if not 0 <= level <= 255:
+                    return {'success': False, 'error': 'led_brightness must be 0-255'}, 400
+                app.settings.led_brightness = level
+                if hasattr(app, '_send_led_config'):
+                    app._send_led_config()
             elif name == 'clutch_display_mode':
                 app.settings.clutch_display_mode = int(value)
             elif name == 'theme_scheme':

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declares to the Android Auto host that this package ships an Android for Cars
+     App Library (templated) app.
+
+     Without this the head unit never enumerates the CarAppService, however correct the
+     service declaration and its category are: the host reads this descriptor to decide
+     which "automotive app" features the package claims, and a templated app must claim
+     exactly one - `template`.
+
+     Referenced from src/drive/AndroidManifest.xml through the
+     com.google.android.gms.car.application meta-data. It lives in the drive flavor's
+     resource set on purpose: the parked app is a plain CAR_LAUNCHER activity, not a
+     templated app, so claiming `template` there would be wrong. -->
+<automotiveApp>
+    <uses name="template" />
+</automotiveApp>

@@ -2,6 +2,13 @@
 
 This document covers the complete LED RPM visualization system running on the Arduino Nano.
 
+> ⚠️ **Being replaced.** The behaviour below is what the firmware did before the revamp.
+> The strip now takes its colour ramp at runtime from the Pi (`RAMP:`) so it can follow the
+> phone's theme, reports health once a second (`STATUS:`), and can be driven without the
+> engine (`DEMO:<rpm>`). The authoritative specification is
+> [LED_REVAMP_PLAN.md](LED_REVAMP_PLAN.md); this page describes the states and sequences,
+> which are unchanged in spirit.
+
 ---
 
 ## System Overview

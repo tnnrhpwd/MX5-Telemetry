@@ -255,6 +255,14 @@ class Settings:
     coolant_warn_f: int = 220
     demo_mode: bool = False  # False = use real CAN data, True = simulated data
     led_sequence: int = LED_SEQ_CENTER_OUT  # LED sequence mode (1-4)
+    # LED strip colour configuration, forwarded verbatim to the Arduino.
+    #
+    # The phone owns the theme palette, so it sends the ramp rather than the Pi keeping
+    # a second copy of every scheme. Empty means "never received": the strip then keeps
+    # its own compiled-in default instead of being reset by a Pi restart.
+    led_ramp: str = ""              # "<rpm>:<rrggbb>,..." ending at the full-illumination rpm
+    led_theme_dim: int = -1         # -1 = unset, 1 = dimmer (dark mode), 0 = full brightness
+    led_brightness: int = -1        # -1 = leave the strip alone, else 0-255
     clutch_display_mode: int = 0  # 0=Gear#(colored), 1='C', 2='S', 3='-'
     # Theme mirrored from the phone app so the round display can match it.
     # The phone is authoritative. Empty means "never received": the Pi then sends
@@ -606,16 +614,18 @@ class PiDisplayApp:
             self.mpg_calculator.start()
             print(f"  ✓ MPG calculator started (avg: {self.mpg_calculator.average_mpg:.1f} MPG)")
         
-        # Initialize Arduino serial for LED sequence commands (optional, non-blocking)
-        try:
-            self._init_arduino_serial()
-        except Exception as e:
-            print(f"  ✗ Arduino serial init failed: {e}")
+        # Arduino serial (LED strip) is initialised *after* the ESP32 handler: it has to
+        # know which port the display owns so it never writes LED commands into the
+        # display's telemetry stream. See _init_arduino_serial().
         
         if self.settings.demo_mode:
             print("Data Source: DEMO MODE - using simulated data")
             # Still try to connect ESP32 for display sync even in demo mode
             self._init_esp32_handler()
+            try:
+                self._init_arduino_serial()
+            except Exception as e:
+                print(f"  ✗ Arduino serial init failed: {e}")
             return
         
         # Production mode - initialize real data sources
@@ -649,7 +659,19 @@ class PiDisplayApp:
                 self.voltage_monitor = None
     
     def _init_arduino_serial(self):
-        """Initialize serial connection to Arduino for LED sequence commands (optional)"""
+        """Open the serial link to the Arduino Nano (LED strip control).
+
+        The Nano is on a CH340 USB-serial adapter (``/dev/ttyUSB0``); the ESP32-S3 is
+        native USB CDC on ``/dev/ttyACM0``, so the two do not collide. This routine used
+        to grab whichever candidate port opened first, which is unsafe: an open tty
+        proves nothing, and writing LED commands into another device's stream is worse
+        than not writing them at all.
+
+        So a port is only accepted when it answers PING with PONG - the Nano's own
+        firmware replies ``PONG`` and ``SEQ:<n>``, which is a positive identity check.
+        ``/dev/ttyAMA0`` is deliberately not a candidate: on this install it is the
+        Bluetooth HCI, and opening it can disturb the phone link.
+        """
         if not SERIAL_AVAILABLE:
             # Serial not available - this is fine, LED sequences just won't sync
             return
@@ -662,30 +684,82 @@ class PiDisplayApp:
                 pass
             self.arduino_serial = None
         
-        # Arduino serial port options (different from ESP32)
-        # Pi GPIO UART: /dev/serial0 (pins 14/15 - TXD0/RXD0) 
-        # Or USB: /dev/ttyUSB0, /dev/ttyUSB1
-        arduino_ports = ['/dev/serial0', '/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyAMA0']
+        # USB first (where the Nano actually is), GPIO UART second (bench wiring).
+        arduino_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/serial0']
+        esp32_port = getattr(self.esp32_handler, 'port', None) if self.esp32_handler else None
         
+        failures = []
         for port in arduino_ports:
+            if esp32_port and port == esp32_port:
+                continue  # that is the display link, not the LED controller
+            if not os.path.exists(port):
+                continue
             try:
                 import serial
-                self.arduino_serial = serial.Serial(
-                    port=port,
-                    baudrate=9600,  # Match Arduino SoftwareSerial baud rate
-                    timeout=0.05,   # Very short timeout to avoid blocking
-                    write_timeout=0.05
-                )
-                print(f"  ✓ Arduino serial connected on {port} (LED sequence control)")
-                # Send current LED sequence setting on connect
-                self._send_led_sequence_to_arduino()
-                return
-            except Exception:
-                # Port not available - try next one
+                conn = serial.Serial()
+                conn.port = port
+                conn.baudrate = 9600  # Match the Arduino's command baud rate
+                conn.timeout = 0.2    # Short: this runs on the main thread at startup
+                conn.write_timeout = 0.2
+                # Keep DTR deasserted across the open. On this Nano DTR is wired to the
+                # reset line, so a plain open reboots the board - which restarts the LED
+                # startup animation and ignores everything sent for the next few seconds.
+                # pyserial applies _dtr_state when it opens the handle, so setting it
+                # first avoids the reset entirely.
+                try:
+                    conn._dtr_state = False
+                except Exception:
+                    pass
+                conn.open()
+            except Exception as e:
+                failures.append(f"{port}: {getattr(e, 'strerror', None) or e}")
                 continue
+            
+            # Still tolerant of a reset: if the board did reboot, it answers as soon as
+            # the sketch starts, so keep pinging instead of failing on the first silence.
+            if not self._arduino_answers(conn, timeout=6.0):
+                conn.close()
+                failures.append(f"{port}: opened but did not answer PING")
+                continue
+            
+            self.arduino_serial = conn
+            print(f"  ✓ Arduino serial connected on {port} (LED sequence control)")
+            # Send current LED sequence setting on connect
+            self._send_led_sequence_to_arduino()
+            self._send_led_config()
+            return
         
-        # No Arduino serial found - this is normal if not wired up
-        # LED sequences will just use Arduino's default
+        # Not fatal - the strip keeps its own stored sequence - but the cause matters,
+        # because a silent failure here looks exactly like "the setting did nothing".
+        if failures:
+            print("  ✗ Arduino/LED link unavailable - " + "; ".join(failures))
+
+    @staticmethod
+    def _arduino_answers(conn, timeout: float = 3.0) -> bool:
+        """True when this port answers a PING with PONG within `timeout` seconds.
+
+        Identity check rather than an existence check: both the Nano and the ESP32
+        present a plain tty, and writing LED commands into the ESP32's stream is worse
+        than not writing them at all. A live board answers on the first try; a board
+        that was reset by the open answers once its sketch starts.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                conn.reset_input_buffer()
+                conn.write(b"PING\n")
+                read_deadline = time.time() + 0.45
+                buf = b""
+                while time.time() < read_deadline:
+                    chunk = conn.read(32)
+                    if not chunk:
+                        continue
+                    buf += chunk
+                    if b"PONG" in buf:
+                        return True
+            except Exception:
+                return False
+        return False
     
     def _init_esp32_handler(self):
         """Initialize ESP32 serial handler for display sync"""
@@ -714,6 +788,12 @@ class PiDisplayApp:
                 self.esp32_handler = None
         else:
             print("  ✗ Serial library not available - install pyserial")
+        
+        # Last, now that the ESP32 handler knows which port the display owns.
+        try:
+            self._init_arduino_serial()
+        except Exception as e:
+            print(f"  ✗ Arduino serial init failed: {e}")
     
     def _on_nav_lock_changed(self, locked: bool):
         """Callback when navigation lock state changes - sync to ESP32"""
@@ -871,6 +951,32 @@ class PiDisplayApp:
                 pass
         except Exception as e:
             print(f"Pi: Failed to send LED sequence to Arduino: {e}")
+    
+    def _send_led_config(self):
+        """Send the ramp / brightness / dimming configuration to the Arduino.
+
+        The strip's colours used to be compiled in. They are now runtime settings so it
+        can follow the phone's theme, which means the Pi has to forward them on connect
+        and whenever one changes. A missing link is not an error: the strip simply keeps
+        the values it already has.
+        """
+        if not (hasattr(self, 'arduino_serial') and self.arduino_serial and self.arduino_serial.is_open):
+            return
+        try:
+            cfg = []
+            if self.settings.led_theme_dim >= 0:
+                cfg.append(f"theme={self.settings.led_theme_dim}")
+            if self.settings.led_brightness >= 0:
+                cfg.append(f"bright={self.settings.led_brightness}")
+            if cfg:
+                self.arduino_serial.write(("CFG:" + ",".join(cfg) + "\n").encode())
+            if self.settings.led_ramp:
+                self.arduino_serial.write(f"RAMP:{self.settings.led_ramp}\n".encode())
+            print("Pi: Sent LED configuration to Arduino "
+                  f"(ramp={'yes' if self.settings.led_ramp else 'default'}, "
+                  f"theme={self.settings.led_theme_dim})")
+        except Exception as e:
+            print(f"Pi: Failed to send LED configuration: {e}")
     
     def _on_esp32_settings_sync(self, settings_dict: dict):
         """Callback when ESP32 sends all settings - full sync to Pi"""
@@ -1058,8 +1164,12 @@ class PiDisplayApp:
                 # validity flag lets the UIs show "--" instead of a fake zero.
                 maf = self.telemetry.maf
                 maf_age = time.time() - self.telemetry.maf_timestamp
-                if speed_mph > 1.0 and maf > 0.5 and maf_age < 2.0:
-                    inst = 11.438 * speed_mph / maf
+                # abs(): reversing consumes fuel over distance just like driving forwards,
+                # and speed_kmh is negative in reverse, so a plain `> 1.0` test silently
+                # disabled instant MPG whenever the car was backing up.
+                speed_for_mpg = abs(speed_mph)
+                if speed_for_mpg > 1.0 and maf > 0.5 and maf_age < 2.0:
+                    inst = 11.438 * speed_for_mpg / maf
                     if inst > 99.0:
                         inst = 99.0  # clamp fuel-cut / coasting spikes
                     self.telemetry.instant_mpg = inst

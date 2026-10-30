@@ -10,6 +10,29 @@ Status: **superseded in part — see the outcome notes below.** Written 2026-10-
 > templated app cannot be sideloaded did not hold on this device.
 > See [KNOWN_ISSUES.md](KNOWN_ISSUES.md#issue-09--app-is-not-available-while-driving)
 > and [android/README.md](../android/README.md).
+>
+> **Outcome 2 (2026-10-30, in the car).** "MX5 Drive" is **still not reachable while
+> driving**. Two separate causes, both now identified:
+>
+> 1. **Our manifest is incomplete.** A templated Android Auto app must declare
+>    `<meta-data android:name="com.google.android.gms.car.application"
+>    android:resource="@xml/automotive_app_desc"/>`, with an `automotive_app_desc.xml`
+>    containing `<uses name="template"/>`. The drive manifest has the service and the
+>    `category.IOT` filter but **not this meta-data** — compare the AOSP
+>    `car-samples/car_app_library/showcase/mobile` manifest. Without it the host has
+>    nothing to enumerate. This is a prerequisite for every other option and is not yet
+>    fixed.
+> 2. **Sideloading a templated app no longer works.** Field reports from June 2026 show
+>    Android Auto refusing Car App Library apps that are not installed from Play, with
+>    `CAR.AUTH: … isPackageAllowed = false` and
+>    `Finsky: PlayGearheadService <package>, app owners empty` in logcat — even with
+>    developer mode and *Allow unknown sources* enabled. The only supported route is a
+>    Play channel; **internal app sharing / internal test track** need a $25 one-time
+>    developer account and no review.
+>
+> So the 2026-10-18 probe was accurate about *enumeration* and wrong about *distribution*:
+> the head unit listed the app, but that is not the same as being allowed to run it in
+> motion. Next step is (1), then (2) if the tile still does not appear.
 
 ## 1. Goal
 
