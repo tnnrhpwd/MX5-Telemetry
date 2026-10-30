@@ -37,7 +37,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 from enum import Enum
 
 # Try to import CAN library
@@ -97,7 +97,24 @@ class OBD2:
 
 class CANParser:
     """Parse CAN messages into telemetry values"""
-    
+
+    # The PCM broadcasts vehicle speed in 0x201 bytes 4-5 as a 16-bit field in
+    # 0.01 km/h units biased by +100 km/h, so 0x2710 is 0.00 km/h and reverse
+    # lies below it. Two things used to destroy that sign on the way in:
+    #
+    #   * read as unsigned, a plain two's-complement negative (0x8000 and up)
+    #     turns into +228..+555 km/h. That is how a reverse reading arrived as a
+    #     large *positive* speed, which then made the gear estimator choose 1st.
+    #   * a blanked field (raw 0) decodes to -100 km/h and a corrupt frame can
+    #     decode to +555 km/h under the bias, neither of which this car can do.
+    #
+    # So the field is decoded as two's complement first and around the bias
+    # second, and anything outside physically possible limits is discarded
+    # instead of being drawn on a screen.
+    SPEED_RAW_ZERO = 10000          # 0x2710 == 0.00 km/h
+    SPEED_MAX_KMH = 250             # forward limit, with margin over the real 220
+    SPEED_MAX_REVERSE_KMH = 50      # nothing on this car reverses faster
+
     @staticmethod
     def parse_rpm(data: bytes) -> int:
         """Parse RPM from engine message (ID 0x201)
@@ -110,32 +127,55 @@ class CANParser:
         return 0
     
     @staticmethod
+    def parse_speed_raw(data: bytes) -> Optional[int]:
+        """The raw 16-bit speed field from 0x201, before any scaling.
+
+        Exposed so the telemetry stream itself records what the PCM actually sends
+        while reversing. The one open question left in ISSUE-14 is whether this
+        value ever drops below SPEED_RAW_ZERO; that can be settled from a drive
+        without any extra tooling, because it now travels in /api/telemetry.
+        """
+        if len(data) < 6:
+            return None
+        return (data[4] << 8) | data[5]
+
+    @staticmethod
     def parse_speed(data: bytes) -> int:
-        """Parse vehicle speed from engine message (ID 0x201).
+        """Parse vehicle speed from the engine message (ID 0x201) into km/h.
 
         Returns **km/h** - the canonical speed unit for the whole system. The
         Android app converts to mph for display, and the ESP32 does the same.
 
-        MX5 NC uses a 16-bit value in 0.01 km/h units with a 100 km/h offset:
-        - 0 km/h actual = 10000 raw (100.00 km/h in raw units)
-        - -5 km/h (reverse) = 9500 raw (95.00 km/h in raw units)
-        - +50 km/h forward = 15000 raw (150.00 km/h in raw units)
+        The sign is kept end to end: a reverse reading comes back *negative*, and
+        every display renders that minus sign next to the `R` marker.
 
-        IMPORTANT: For negative speeds (reverse), the sign must be preserved even
-        for small values. int() truncates toward zero, which would turn -0.4 km/h
-        into 0 and lose the reverse indicator, so negatives are floored instead.
+        MX5 NC uses a 16-bit value in 0.01 km/h units with a +100 km/h bias:
+        - 0 km/h actual = 10000 raw (0x2710)
+        - -5 km/h (reverse) = 9500 raw (0x251C)
+        - +50 km/h forward = 15000 raw (0x3A98)
+
+        Negatives are floored rather than truncated: int() turns -0.4 km/h into
+        0 and would lose the reverse direction, which then made the gear
+        estimator fall through to "1st gear at walking pace".
         """
-        if len(data) >= 6:
-            raw = (data[4] << 8) | data[5]
+        raw = CANParser.parse_speed_raw(data)
+        if raw is None:
+            return 0
 
-            # Raw value is in 0.01 km/h units with +100 km/h offset
-            true_kmh = (raw - 10000) / 100.0
+        if raw >= 0x8000:
+            # Two's complement: the PCM wrote a plain signed value. Under the
+            # +100 km/h bias this range would mean +228 km/h or faster, which
+            # this car cannot do, so the signed reading is the only sane one.
+            kmh = (raw - 0x10000) / 100.0
+        else:
+            kmh = (raw - CANParser.SPEED_RAW_ZERO) / 100.0
 
-            # Floor for negative: -0.4 -> -1, ensuring reverse is detected.
-            if true_kmh < 0:
-                return int(math.floor(true_kmh))
-            return int(true_kmh)
-        return 0
+        if kmh < -CANParser.SPEED_MAX_REVERSE_KMH or kmh > CANParser.SPEED_MAX_KMH:
+            # Blanked field or corrupt frame. Report "no reading" rather than
+            # -100 km/h (which used to fake a reverse) or +555 km/h.
+            return 0
+
+        return int(math.floor(kmh)) if kmh < 0 else int(kmh)
 
     @staticmethod
     def parse_throttle(data: bytes) -> int:
@@ -186,31 +226,55 @@ class CANParser:
         return 0.0
     
     @staticmethod
-    def parse_gear(data: bytes) -> int:
-        """Parse gear position (ID 0x231)
-        
-        2008 MX5 NC GT does NOT have a gear position sensor for gears 1-6!
-        Only Neutral can be reliably detected via the neutral safety switch.
-        Gears 1-6 must be ESTIMATED from speed/RPM ratio.
-        
+    def parse_range(data: bytes) -> Optional[int]:
+        """Parse the transmission-range code from 0x231, or None if the frame is empty.
+
+        2008 MX5 NC GT has no gear position sensor for gears 1-6, so only the
+        neutral/park marker is trustworthy on this frame. The raw code is returned
+        anyway because it is the one remaining candidate source for reverse that
+        the car is already broadcasting.
+
         Returns:
-            0 = Neutral (detected from CAN)
-            None = Not in neutral (gear must be estimated from speed/RPM)
-        
-        Note: Reverse is detected separately via negative speed from CAN message 0x201
+            0    = neutral/park (reliable, from the neutral safety switch)
+            1-15 = the raw range nibble, meaning not established for this car
+            None = frame too short to read
         """
-        if len(data) >= 1:
-            # Check byte 1 for neutral/park indicators
-            if len(data) >= 2 and data[1] == 0x04:
-                return 0  # Neutral/Park - reliable from CAN
-            gear = data[0] & 0x0F
-            if gear == 0:
-                return 0  # Neutral - reliable from CAN
-            # For any other value, we cannot reliably determine the gear
-            # The MX5 NC doesn't report gears 1-6 accurately - must estimate from speed/RPM
-            return None  # Return None to indicate gear must be estimated
+        if len(data) < 1:
+            return None
+        if len(data) >= 2 and data[1] == 0x04:
+            return 0
+        return data[0] & 0x0F
+
+    # Transmission-range codes from 0x231 that mean reverse.
+    #
+    # Deliberately empty. The range switch does transmit something for R, but the
+    # code has never been captured on this car, and guessing would put a confident
+    # `R` on the display while driving forward. parse_range() keeps the value in
+    # telemetry.transmission_range so one drive records it; putting the observed
+    # code here then makes reverse detection independent of the sign of the speed.
+    REVERSE_RANGE_CODES = frozenset()
+
+    @staticmethod
+    def parse_gear(data: bytes) -> int:
+        """Parse gear position (ID 0x231).
+
+        Returns:
+            0    = neutral (detected from CAN, reliable)
+            -1   = reverse, when this car's range code has been recorded in
+                   REVERSE_RANGE_CODES
+            None = not neutral; gears 1-6 must be estimated from speed/RPM
+
+        Gears 1-6 genuinely cannot be read from this frame - the car has no sensor
+        for them - so anything other than neutral or a configured reverse code
+        returns None rather than a guess.
+        """
+        code = CANParser.parse_range(data)
+        if code == 0:
+            return 0
+        if code in CANParser.REVERSE_RANGE_CODES:
+            return -1
         return None
-    
+
     @staticmethod
     def parse_wheel_speeds(data: bytes) -> tuple:
         """Parse individual wheel speeds (ID 0x4B0)
@@ -449,15 +513,18 @@ class GearEstimator:
                 recommended_gear: Suggested gear for current speed (1-6)
                 gear_color: Color indicator ('red', 'blue', 'green', 'yellow', 'cyan')
         """
+        # Reverse is checked before neutral. The neutral switch is a separate
+        # sensor and stays asserted for a frame or two while the car is already
+        # rolling backward; letting it win is what produced "N" instead of "R"
+        # on the way out of a parking space.
+        if speed_mph < 0:
+            return (-1, False, 1.0, -1, 'green')
+
         # If CAN reports neutral, return neutral
         if is_in_neutral:
             recommended = self.suggest_gear_for_speed(speed_mph)
             color = self.get_gear_color(speed_mph, rpm, recommended)
             return (0, False, 1.0, recommended, color)
-        
-        # Check for reverse (negative speed from CAN)
-        if speed_mph < 0:
-            return (-1, False, 1.0, -1, 'green')
         
         # Always calculate recommended gear based on speed
         recommended_gear = self.suggest_gear_for_speed(speed_mph)
@@ -523,6 +590,31 @@ class CANHandler:
     # off while the pedal is held is worse than one that clears late.
     PEDAL_STALE_SEC = 0.75
     BRAKE_STALE_SEC = 2.5
+
+    # Speed comes from the engine frame, which is the fastest thing on the bus, so a
+    # whole second of silence means the link is gone rather than the frame is slow.
+    #
+    # Decaying it matters more than it looks: speed is what decides reverse. Without
+    # this, unplugging the CAN lead while reversing left the display holding a
+    # negative speed and `R` for ever, on all three screens at once.
+    SPEED_STALE_SEC = 1.0
+
+    # Time constant for the MAF exponential average. MAF arrives in one OBD slot
+    # shared with intake air (~2 samples/s); averaging over about a second keeps the
+    # INST MPG number readable without hiding a real change in throttle.
+    MAF_SMOOTHING_TAU_SEC = 0.7
+
+    # Air flow that stops arriving is cleared after this long. The Engine page shows
+    # MAF as a live value, and instant MPG calls the same reading unknown once it is
+    # older than this, so the two readouts agree instead of one going blank while the
+    # other keeps showing the last number.
+    MAF_STALE_SEC = 2.0
+
+    # An OBD request that cannot be sent (bus off, interface still listen-only,
+    # adapter unplugged) used to print once per request - four lines a second, which
+    # buries everything else in the journal. It is the same failure every time, so
+    # say it once per half minute.
+    OBD_ERROR_LOG_SEC = 30.0
     
     def __init__(self, telemetry_data, swc_handler=None):
         """
@@ -551,6 +643,7 @@ class CANHandler:
         # time to prevent flickering when CAN speed oscillates around zero offset
         self._reverse_hold_until = 0  # time.time() until which to keep showing reverse
         self._REVERSE_HOLD_SECONDS = 0.5  # Hold reverse for 500ms after speed goes to 0
+        self._reverse_from_range = False  # set when 0x231 carries a configured reverse code
         
         self._last_thr_log = 0.0
 
@@ -564,6 +657,7 @@ class CANHandler:
         # the dash showing a throttle that is no longer applied.
         self.throttle_timestamp = 0.0
         self.brake_timestamp = 0.0
+        self.speed_timestamp = 0.0
         self._engine_throttle_pct = -1   # last decode from 0x201, for the cross-check log
 
         # OBD-II polling state. MAF and intake air share one request slot, so they
@@ -572,6 +666,7 @@ class CANHandler:
         self.obd_request_interval = 0.25   # 4 requests/second, alternating PIDs
         self._obd_pid_index = 0
         self._obd_pids = (OBD2.PID_MAF, OBD2.PID_INTAKE_AIR)
+        self._last_obd_error_log = 0.0     # rate limit for "request could not be sent"
 
     def start(self) -> bool:
         """Initialize and start CAN bus reading"""
@@ -654,7 +749,7 @@ class CANHandler:
         
         self.connected = False
     
-    def _smooth_fuel_level(self, raw_fuel: float) -> float:
+    def _smooth_fuel_level(self, raw_fuel: float) -> Tuple[float, float]:
         """Average the fuel level over a wall-clock window to stop it flickering.
 
         The fuel sender is coarse (roughly 1% steps) and the fuel in the tank
@@ -670,7 +765,10 @@ class CANHandler:
             raw_fuel: Raw fuel percentage from CAN (0-100)
 
         Returns:
-            Smoothed, hysteresis-filtered fuel percentage.
+            (displayed, averaged). `displayed` is the hysteresis-filtered value for
+            the panel; `averaged` is the plain rolling mean, which is what the fuel
+            accounting must use - the deadband is a display device, not a
+            measurement, and feeding it back would throw away up to 1.5%.
         """
         now = time.time()
         self._fuel_samples.append((now, raw_fuel))
@@ -688,14 +786,14 @@ class CANHandler:
 
         if self._fuel_displayed is None:
             self._fuel_displayed = float(round(averaged))
-            return self._fuel_displayed
+            return self._fuel_displayed, averaged
 
         # Hysteresis: only move the displayed value once the average has moved
         # far enough to be meaningful.
         if abs(averaged - self._fuel_displayed) >= self.FUEL_HYSTERESIS:
             self._fuel_displayed = float(round(averaged))
 
-        return self._fuel_displayed
+        return self._fuel_displayed, averaged
 
     def _maybe_request_obd(self):
         """Alternately request MAF (0x10) and intake air temp (0x0F) from the ECU.
@@ -719,29 +817,52 @@ class CANHandler:
                 data=[0x02, OBD2.MODE_CURRENT_DATA, pid, 0, 0, 0, 0, 0],
                 is_extended_id=False,
             )
-            self.hs_can.send(msg)
+            # A bounded timeout matters: with no ACK on the bus (lead unplugged, or
+            # the interface is still listen-only) socketcan keeps retrying and an
+            # unbounded send parks this read thread, which stops *all* telemetry
+            # until the Pi is restarted.
+            self.hs_can.send(msg, timeout=0.05)
         except Exception as e:
             # Don't spam on transient send errors (bus off, listen-only, etc.)
-            print(f"OBD-II request error (pid 0x{pid:02X}): {e}")
+            if now - self._last_obd_error_log >= self.OBD_ERROR_LOG_SEC:
+                self._last_obd_error_log = now
+                print(f"OBD-II request error (pid 0x{pid:02X}): {e}")
 
-    def _apply_pedal_staleness(self):
-        """Zero a pedal reading that has stopped arriving.
+    def _apply_staleness(self):
+        """Zero readings that have stopped arriving.
 
         Without this, a dropped or intermittent frame leaves the last value frozen
-        on the dash - which reads as a stuck throttle.
+        on the dash - which reads as a stuck throttle. Speed gets the same treatment
+        because it is what decides reverse: a frozen negative speed used to leave
+        `R` and a negative number on every screen after the bus went quiet.
         """
         now = time.time()
+        if self.telemetry.maf_timestamp and now - self.telemetry.maf_timestamp > self.MAF_STALE_SEC:
+            # The engine's air flow must not sit on the Engine page as if it were
+            # still breathing. Instant MPG uses this same timestamp, so the card and
+            # the MAF tile go quiet together.
+            self.telemetry.maf = 0.0
         if self.throttle_timestamp and now - self.throttle_timestamp > self.PEDAL_STALE_SEC:
             self.telemetry.throttle_percent = 0
         if self.brake_timestamp and now - self.brake_timestamp > self.BRAKE_STALE_SEC:
             self.telemetry.brake_percent = 0
+        if self.speed_timestamp and now - self.speed_timestamp > self.SPEED_STALE_SEC:
+            # No speed means the estimated gear is meaningless too, so clear the
+            # whole derived set rather than leave a confident `R` or `1` behind.
+            self.telemetry.speed_kmh = 0
+            self.telemetry.gear = 0
+            self.telemetry.is_in_reverse = False
+            self.telemetry.gear_estimated = False
+            self.telemetry.clutch_engaged = False
+            self._reverse_from_range = False
+            self._reverse_hold_until = 0
 
     def _read_hs_can(self):
         """Read HS-CAN messages in background thread"""
         while self._running and self.hs_can:
             try:
                 self._maybe_request_obd()
-                self._apply_pedal_staleness()
+                self._apply_staleness()
                 msg = self.hs_can.recv(timeout=0.1)
                 if msg:
                     self.last_hs_msg_time = time.time()
@@ -781,9 +902,22 @@ class CANHandler:
 
             maf = CANParser.parse_maf(data)
             if maf > 0:
-                # EMA-smooth MAF (polled, alternating with IAT) to reduce inst-MPG flicker.
+                # Exponential average over MAF to keep the INST MPG number readable.
+                # The weight comes from the real sample interval rather than a fixed
+                # 0.5: MAF arrives once per OBD poll slot, so a fixed weight would
+                # silently change the smoothing time the moment the poll rate did.
+                # A long gap (stalled reader, bus just came back) weights the new
+                # sample fully instead of crawling toward it.
                 prev = self.telemetry.maf
-                self.telemetry.maf = (0.5 * maf + 0.5 * prev) if prev > 0 else maf
+                prev_at = self.telemetry.maf_timestamp
+                if prev > 0 and prev_at > 0:
+                    dt = max(0.0, now - prev_at)
+                    alpha = 1.0 - math.exp(-dt / self.MAF_SMOOTHING_TAU_SEC)
+                    self.telemetry.maf = prev + alpha * (maf - prev)
+                else:
+                    self.telemetry.maf = maf
+                # Stamped with the arrival of the sample, not the average: this is
+                # what tells instant MPG whether the reading is still alive.
                 self.telemetry.maf_timestamp = now
                 if now - getattr(self, '_last_maf_log', 0.0) >= 5.0:
                     self._last_maf_log = now
@@ -793,6 +927,10 @@ class CANHandler:
         if can_id == HSCanID.ENGINE_RPM:
             self.telemetry.rpm = CANParser.parse_rpm(data)
             self.telemetry.speed_kmh = CANParser.parse_speed(data)
+            raw_speed = CANParser.parse_speed_raw(data)
+            if raw_speed is not None:
+                self.telemetry.speed_raw = raw_speed
+            self.speed_timestamp = time.time()
 
             # The pedal position rides in the same engine frame (byte 6). Prefer it:
             # the legacy 0x200 decode is only a fallback for short/odd frames.
@@ -820,27 +958,31 @@ class CANHandler:
                       f"legacy(0x200)={CANParser.parse_throttle(data)}%")
 
         elif can_id == HSCanID.GEAR_POSITION:
+            range_code = CANParser.parse_range(data)
+            if range_code is not None:
+                self.telemetry.transmission_range = range_code
             can_gear = CANParser.parse_gear(data)
             # Use CAN neutral signal directly - the neutral safety switch is reliable
             # 2008 MX5 NC GT reliably detects Neutral via the neutral safety switch
             # Trust CAN neutral signal and store it so gear estimation can use it
             # Note: Gears 1-6 cannot be detected from CAN - must be estimated
-            # Note: Reverse is detected from negative speed (CAN ID 0x201), not gear position
-            if can_gear == 0:
-                self.telemetry.is_in_neutral = True
-                self.telemetry.is_in_reverse = False
-            else:
-                # can_gear is None - not in neutral, need to estimate gear from speed/RPM
-                # is_in_reverse is set based on negative speed in _update_gear_estimation()
-                self.telemetry.is_in_neutral = False
+            #
+            # Only the neutral bit and a *configured* reverse code are taken from this
+            # frame. `is_in_reverse` itself is still written by
+            # _update_gear_estimation() alone: this frame arrives independently of
+            # 0x201, and letting it clear the flag made the phone (which reads the
+            # flag) disagree with the ESP (which also reads `gear == -1`) for a
+            # frame or two - the R/N flicker at walking pace.
+            self.telemetry.is_in_neutral = (can_gear == 0)
+            if can_gear == -1:
+                # A discrete reverse code does not depend on the PCM encoding a
+                # sign into the speed, so it wins once one is configured.
+                self._reverse_from_range = True
+            elif can_gear == 0:
+                self._reverse_from_range = False
             # Don't set gear here - let _update_gear_estimation handle it
             # The gear estimation will check is_in_neutral and calculate from speed/RPM
-            
-        elif can_id == HSCanID.WHEEL_SPEEDS:
-            speeds = CANParser.parse_wheel_speeds(data)
-            # Store individual wheel speeds if needed
-            # Calculate average speed if main speed not available
-            
+
         elif can_id == HSCanID.STEERING_ANGLE:
             # Store steering angle if needed
             pass
@@ -856,10 +998,14 @@ class CANHandler:
             self.telemetry.ambient_temp_f = CANParser.parse_ambient_temp(data)
             
         elif can_id == HSCanID.FUEL_LEVEL:
-            # Apply EMA smoothing + hysteresis to reduce fluctuations
+            # One rolling average feeds two consumers: the panel gets it with a
+            # hysteresis deadband so the number stops twitching, and the fuel
+            # accounting gets the plain mean, where a deadband would be a
+            # measurement error rather than a cosmetic one.
             raw_fuel = CANParser.parse_fuel_level(data)
-            smoothed_fuel = self._smooth_fuel_level(raw_fuel)
-            self.telemetry.fuel_level_percent = smoothed_fuel
+            display_fuel, average_fuel = self._smooth_fuel_level(raw_fuel)
+            self.telemetry.fuel_level_percent = display_fuel
+            self.telemetry.fuel_level_average = average_fuel
             
         elif can_id == HSCanID.BATTERY_VOLTAGE:
             self.telemetry.voltage = CANParser.parse_voltage(data)
@@ -922,7 +1068,8 @@ class CANHandler:
         # flickers between R and 1. We hold reverse state for 500ms after speed
         # returns to 0 to prevent this.
         now = time.time()
-        if self.telemetry.speed_kmh < 0:
+        in_reverse = self.telemetry.speed_kmh < 0 or self._reverse_from_range
+        if in_reverse:
             # Actively in reverse - extend hold timer
             self._reverse_hold_until = now + self._REVERSE_HOLD_SECONDS
             self.telemetry.gear = -1  # -1 = Reverse

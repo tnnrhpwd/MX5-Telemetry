@@ -13,6 +13,7 @@
 
 #include "ui_core.h"
 #include "gear_font.h"
+#include "boot_logo.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -41,7 +42,7 @@ bool imuAvailable = false;
 char themeScheme[16] = "aurora";
 bool themeDark = true;
 
-// Starts as the dark aurora scheme so the palette is never uninitialised, even
+// Starts as the dark aurora scheme so the palette is never uninitialized, even
 // if nothing has applied a theme yet.
 ThemePalette g_theme = {
     RGB565(10, 10, 16),   // bg
@@ -98,7 +99,7 @@ inline int mix8(int a, int b, float t) {
     return (int)(a + (b - a) * t + 0.5f);
 }
 
-// Blend a colour toward a target RGB.
+// Blend a color toward a target RGB.
 inline uint16_t mixColor(uint16_t base, int tr, int tg, int tb, float t) {
     int r = (base >> 11) & 0x1F, g = (base >> 5) & 0x3F, b = base & 0x1F;
     // Expand to 8-bit so the blend happens in sRGB, not in the packed 565 fields.
@@ -108,7 +109,7 @@ inline uint16_t mixColor(uint16_t base, int tr, int tg, int tb, float t) {
     return rgb565(mix8(r8, tr, t), mix8(g8, tg, t), mix8(b8, tb, t));
 }
 
-// Scale a colour's brightness. f<1 darkens, f>1 lightens.
+// Scale a color's brightness. f<1 darkens, f>1 lightens.
 inline uint16_t scaleColor(uint16_t base, float f) {
     int r = (base >> 11) & 0x1F, g = (base >> 5) & 0x3F, b = base & 0x1F;
     int r8 = (r << 3) | (r >> 2);
@@ -151,7 +152,7 @@ void applyTheme(const char* scheme, bool dark) {
         g_theme.bgElevated = mixColor(rgb565(255, 255, 255), seed->aR, seed->aG, seed->aB, 0.14f);
         g_theme.text       = rgb565(20, 20, 28);
         g_theme.textDim    = rgb565(90, 90, 110);
-        // Mid-grey, not near-white: this is the "unlit / subtle stroke" colour, and
+        // Mid-gray, not near-white: this is the "unlit / subtle stroke" color, and
         // page-indicator dots at (201,202,214) were invisible on the light background.
         g_theme.darkGray   = rgb565(150, 152, 168);
         // The seed hues are tuned for dark backgrounds; on white they need to be
@@ -160,7 +161,7 @@ void applyTheme(const char* scheme, bool dark) {
         g_theme.purple     = scaleColor(rgb565(seed->bR, seed->bG, seed->bB), 0.72f);
     }
 
-    // Status colours stay semantic in every scheme (red is always a warning), but
+    // Status colors stay semantic in every scheme (red is always a warning), but
     // light mode needs the darker variants to stay legible on white.
     float f = dark ? 1.0f : 0.72f;
     g_theme.red    = scaleColor(rgb565(255, 70, 85), f);
@@ -176,10 +177,28 @@ void applyDefaultTheme() {
     applyTheme("aurora", true);
 }
 
+int ui_themeCount() {
+    return THEME_SEED_COUNT;
+}
+
+const char* ui_themeId(int index) {
+    if (index < 0 || index >= THEME_SEED_COUNT) return "";
+    return THEME_SEEDS[index].id;
+}
+
 // Speed is km/h end-to-end; only the display converts.
+//
+// The sign is kept. Clamping a negative to zero here is what made a reversing
+// car read "0" no matter what the Pi sent, and rounding toward zero would show
+// "0" for a slow reverse roll - so a reverse reading is floored, like the Pi and
+// the phone do, and the minus reaches the eye. The `R` marker beside it says
+// which way the minus points.
 static inline int displaySpeedKmhOrMph() {
     float s = telemetry.speed;
-    if (s < 0) s = 0;
+    if (s < 0) {
+        float converted = settings.useMPH ? s * 0.621371f : s;
+        return (int)floorf(converted);
+    }
     return (int)(settings.useMPH ? s * 0.621371f + 0.5f : s + 0.5f);
 }
 
@@ -232,9 +251,11 @@ bool navLocked = false;       // Navigation lock state (from Pi SWC handler)
 // Boot countdown
 unsigned long bootStartTime = 0;
 bool piDataReceived = false;
-int lastBootCountdown = 99;
-int currentLoadingMessage = 0;
-unsigned long lastMessageChange = 0;
+
+// Last complete line from the Pi; 0 means nothing has arrived yet. The parser
+// stamps it, the stale watchdog in main.cpp times out on it, and the link-lost
+// screen counts the seconds since it.
+unsigned long lastPiDataMs = 0;
 
 // Page transition animation state
 TransitionType currentTransition = TRANSITION_NONE;
@@ -278,13 +299,31 @@ void drawBackground() {
 //   y  44 .. 326   content
 //   y 326 .. 348   page indicator
 //
-// Horizontal budget shrinks fast towards the top/bottom of the disc, so wide
-// elements belong near the vertical centre.
+// Horizontal budget shrinks fast toward the top/bottom of the disc, so wide
+// elements belong near the vertical center.
 // ============================================================================
 #define SAFE_RADIUS  165
 #define TITLE_Y      16
 #define RULE_Y       34
 #define FOOTER_Y     338
+
+// The dial sweep, as an angle pair. Shared by the boot self-test and the RPM
+// ring so both gestures start and stop in the same place; the Overview halo
+// uses its own shallower arc (OV_ARC_*) because it has to clear the cards.
+// Angles are measured in screen space with +Y down, which is the convention
+// every dot ring in this file uses.
+#define DIAL_ARC_START 135.0f
+#define DIAL_ARC_SWEEP 270.0f
+
+// RPM -> ramp colour. One definition for the halo, the RPM ring and the boot
+// self-test: three copies of these thresholds is how they drift apart.
+static uint16_t rpmRampColor(float rpm) {
+    if (rpm >= 5500.0f) return MX5_RED;
+    if (rpm >= 4500.0f) return MX5_ORANGE;
+    if (rpm >= 3000.0f) return MX5_YELLOW;
+    if (rpm >= 2000.0f) return MX5_GREEN;
+    return MX5_BLUE;
+}
 
 // Advance widths from the LCD driver: 5x7 -> 6, 10x14 -> 11, 15x21 -> 16.
 // Glyph width is always advance - 1, so a run of N chars is N*advance - 1 px.
@@ -311,7 +350,7 @@ static void drawDegMark(int x, int y, uint16_t fg) {
     LCD_FillRect(x + 2, y + 1, 1, 1, fg);
 }
 
-// Standard screen title: name centred, with an accent rule beneath it.
+// Standard screen title: name centered, with an accent rule beneath it.
 static void drawHeader(const char* title, uint16_t accent) {
     drawCentered(CENTER_X, TITLE_Y, title, MX5_WHITE, COLOR_BG, 2);
     LCD_FillRect(CENTER_X - 30, RULE_Y, 24, 2, accent);
@@ -375,11 +414,7 @@ static void drawDotArcSeg(int cx, int cy, int r, float startDeg, float sweepDeg,
     uint16_t color = MX5_DARKGRAY;
     if (active) {
         float rpmAt = (index / (float)segCount) * 8000.0f;
-        if (rpmAt >= 5500)      color = MX5_RED;
-        else if (rpmAt >= 4500) color = MX5_ORANGE;
-        else if (rpmAt >= 3000) color = MX5_YELLOW;
-        else if (rpmAt >= 2000) color = MX5_GREEN;
-        else                    color = MX5_BLUE;
+        color = rpmRampColor(rpmAt);
     }
     LCD_FillCircle(px, py, dotR, color);
 }
@@ -388,7 +423,6 @@ static void drawDotArcSeg(int cx, int cy, int r, float startDeg, float sweepDeg,
 #define OV_ARC_START     200.0f
 #define OV_ARC_SWEEP     140.0f
 #define OV_ARC_RADIUS    170
-
 
 // ============================================================================
 // Page transition animation
@@ -539,6 +573,592 @@ void drawTransition() {
 }
 
 // ============================================================================
+// Startup animation (power-on -> first live frame)
+// ============================================================================
+// This lives in the shared core rather than in main.cpp so the desktop
+// simulator plays exactly the sequence the panel plays. It runs before the Pi
+// link exists, so it is timed from a clock passed in by the caller, never from
+// telemetry.
+//
+// Every element only ever *advances* (dots light, emblem grows, rule widens),
+// so a frame can be seeked: ui_startupFrame(t, true) repaints the state at any
+// timestamp from a clean screen. The simulator uses that to render stills.
+//
+// Cost model: only batched primitives (FillRect / FillCircle / DrawImage /
+// DrawImageScaled / DrawString). The previous version rasterised its arc with
+// LCD_DrawThickArc - one QSPI transaction per pixel - and cleared the whole
+// panel between every zoom step, which is why the zoom stuttered on the panel
+// even though the pacing said 65 ms.
+//
+// Geometry: the self-test ring sits at r=150 on the same 135deg..405deg arc as
+// the RPM screen, and its gap is the wedge of the disc where the title goes.
+// ============================================================================
+
+namespace {
+
+const int BOOT_RING_R     = 150;
+const int BOOT_RING_SEGS  = 36;
+const int BOOT_RING_DOT_R = 6;
+const int BOOT_LOGO_PX    = 200;   // emblem disc; boot_logo.h is 200x200 (its content is a disc)
+const int BOOT_RULE_Y     = 286;
+const int BOOT_TITLE_Y    = 290;   // size 1, shared with the wait
+const int BOOT_STATE_Y    = 302;   // size 2: "READY", then the rotating message
+const int BOOT_SECS_Y     = 322;
+const int BOOT_RULE_MAX_W = 96;
+
+const int BOOT_PARTICLES  = 120;
+
+// Film beats (ms from power-on).
+//
+// The opening is a film, not a sequence of widgets: the particles are a closed
+// form of (time, index), every frame repaints the backdrop and the whole effect,
+// and the gauge/text beats that follow are incremental deltas.
+const unsigned long BOOT_T_IGNITE_END   = 900;    // core pulse only
+const unsigned long BOOT_T_PARTICLES    = 900;    // stream starts
+const unsigned long BOOT_T_FLASH_START  = 9900;   // implosion glow
+const unsigned long BOOT_T_FLASH_PEAK   = 10300;
+const unsigned long BOOT_T_FLASH_END    = 11500;
+const unsigned long BOOT_T_BADGE_START  = 10600;  // emblem scales in out of the flash
+const unsigned long BOOT_T_BADGE_END    = 11800;
+
+// The blast writes the gauge: the self-test sweep starts *at* the flash peak, so
+// there is no beat where the screen just sits there between the impact and the
+// ring. It runs long (6 s) because it now carries the badge scale-in with it.
+const unsigned long BOOT_T_SWEEP_START  = 10400;
+const unsigned long BOOT_T_SWEEP_END    = 16400;
+
+// Lock pulse: once the ring is full, a bright wave leaves it outward. Kept inside
+// the film so it can be erased by the next full repaint.
+const unsigned long BOOT_T_LOCK_START   = 16350;
+const unsigned long BOOT_T_LOCK_END     = 17000;
+const unsigned long BOOT_T_FILM_END     = 17000;  // last full-repaint frame
+
+// Tail beats (incremental, drawn over the film's last frame).
+const unsigned long BOOT_T_SETTLE_END   = 19000;
+const unsigned long BOOT_T_RULE_START   = 18400;
+const unsigned long BOOT_T_RULE_END     = 20800;
+const unsigned long BOOT_T_TITLE        = 20400;
+const unsigned long BOOT_T_READY        = 21200;
+
+// Film frame rate. The board is painting ~260 KB of backdrop per frame, so this
+// is the one place where 25 fps beats 30: the difference is invisible behind
+// motion trails and the QSPI budget is already a third of the bus.
+const unsigned long BOOT_FILM_FRAME_MS  = 40;
+
+// Ease-out cubic progress across [start, end].
+inline float bootPhase(unsigned long t, unsigned long start, unsigned long end) {
+    if (t <= start) return 0.0f;
+    if (t >= end) return 1.0f;
+    float p = (float)(t - start) / (float)(end - start);
+    return 1.0f - powf(1.0f - p, 3.0f);
+}
+
+inline float smooth01(float x) {
+    if (x <= 0.0f) return 0.0f;
+    if (x >= 1.0f) return 1.0f;
+    return x * x * (3.0f - 2.0f * x);
+}
+
+// Deterministic noise: the film has to look identical on the panel and in the
+// simulator's stills, so no rand() anywhere.
+inline uint32_t bootHash(uint32_t x) {
+    x ^= x >> 16; x *= 0x7feb352dU;
+    x ^= x >> 15; x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+
+inline float bootRand01(int i, int salt) {
+    return (float)(bootHash((uint32_t)i * 2654435761U + (uint32_t)salt * 40503U) & 0xFFFFu)
+           / 65535.0f;
+}
+
+// Blend two packed RGB565 colours. The film paints with the theme's *seed*
+// colours (accent + secondary), blended at runtime, so a crimson phone gets a
+// crimson ignition and an emerald phone gets a green one - while the gauge keeps
+// its semantic blue->red ramp, because that ramp means RPM.
+inline uint16_t mix565(uint16_t a, uint16_t b, float t) {
+    if (t <= 0.0f) return a;
+    if (t >= 1.0f) return b;
+    int ar = (a >> 11) & 0x1F, ag = (a >> 5) & 0x3F, ab = a & 0x1F;
+    int br = (b >> 11) & 0x1F, bg = (b >> 5) & 0x3F, bb = b & 0x1F;
+    int r = ar + (int)((float)(br - ar) * t + (t >= 0 ? 0.5f : -0.5f));
+    int g = ag + (int)((float)(bg - ag) * t + (t >= 0 ? 0.5f : -0.5f));
+    int bl = ab + (int)((float)(bb - ab) * t + (t >= 0 ? 0.5f : -0.5f));
+    return (uint16_t)((r << 11) | (g << 5) | bl);
+}
+
+// A "light" colour that works in both themes and in every scheme. On the dark
+// theme the burst is the accent lifted toward white; on a near-white page a white
+// core is invisible, so light mode uses the accent itself.
+inline uint16_t bootGlow(float alpha) {
+    uint16_t hot = themeDark ? mix565(MX5_ACCENT, MX5_WHITE, 0.55f) : MX5_ACCENT;
+    return mix565(COLOR_BG, hot, alpha);
+}
+
+struct BootAnimState {
+    bool awake;
+    bool filmAny;         // a film frame has been painted
+    bool filmDone;        // the end-of-film state is on screen
+    unsigned long filmT;  // timestamp of the last film frame
+    int  settled;         // segments cooled back to unlit, from the redline end
+    int  ruleW;           // underline width in px
+    bool title;
+    bool ready;
+};
+
+BootAnimState bootState = {false, false, false, 0, 0, 0, false, false};
+unsigned long bootFrameT = 0;
+
+void bootRingDotR(int index, uint16_t color, int radius) {
+    float t = (index + 0.5f) / (float)BOOT_RING_SEGS;
+    float rad = (DIAL_ARC_START + DIAL_ARC_SWEEP * t) * (float)PI / 180.0f;
+    int px = CENTER_X + (int)(cosf(rad) * BOOT_RING_R);
+    int py = CENTER_Y + (int)(sinf(rad) * BOOT_RING_R);
+    LCD_FillCircle((uint16_t)px, (uint16_t)py, (uint16_t)radius, color);
+}
+
+void bootRingDot(int index, uint16_t color) {
+    bootRingDotR(index, color, BOOT_RING_DOT_R);
+}
+
+uint16_t bootRingColor(int index) {
+    return rpmRampColor((index / (float)BOOT_RING_SEGS) * 8000.0f);
+}
+
+// The emblem, drawn as a disc.
+//
+// boot_logo.h is a circular badge on a square of black. Blitting it whole leaves
+// four black corners, which is why it used to sit on a rounded plate - and a
+// plate is a second shape competing with the gauge. Instead every source row is
+// clipped to its own chord, so the emblem *is* a disc and needs no surround.
+//
+// One LCD_DrawBuffer per row: the driver stages each row through its scratch
+// buffer, so a 200 px disc is ~200 transactions (~2 ms), not 40,000 pixels.
+// `boot_logo_data` is stored big-endian; DrawBuffer wants native order, so the
+// row copy does the swap.
+void bootEmblemDisc(int diameter) {
+    if (diameter < 8) return;
+    if (diameter > BOOT_LOGO_PX) diameter = BOOT_LOGO_PX;
+
+    static uint16_t row[BOOT_LOGO_PX];
+    const int r = diameter / 2;
+    const int x0 = CENTER_X - r;
+    const int y0 = CENTER_Y - r;
+
+    for (int y = 0; y < diameter; y++) {
+        int dy = y - r;
+        int half = (int)sqrtf((float)(r * r - dy * dy));
+        if (half <= 0) continue;
+
+        int c0 = r - half;
+        int c1 = r + half - 1;
+        int sy = y * BOOT_LOGO_DATA_HEIGHT / diameter;
+        const uint16_t* srcLine = boot_logo_data + sy * BOOT_LOGO_DATA_WIDTH;
+
+        for (int c = c0; c <= c1; c++) {
+            int sx = c * BOOT_LOGO_DATA_WIDTH / diameter;
+            uint16_t v = srcLine[sx];
+            row[c] = (uint16_t)((v << 8) | (v >> 8));
+        }
+        LCD_DrawBuffer((uint16_t)(x0 + c0), (uint16_t)(y0 + y),
+                       (uint16_t)(c1 - c0 + 1), 1, row + c0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Particle stream
+// ---------------------------------------------------------------------------
+// One closed-form position per particle, in polar space and in *seconds since the
+// burst started*, so the beats line up with the absolute beat table instead of
+// with whatever the film length happens to be:
+//
+//   s  0.0 - 4.8   stream outward from the core (looping, so it reads as warp)
+//   s  4.8 - 6.8   settle into an orbit at 112..182 px, picking up spin
+//   s  6.8 - 8.4   orbit
+//   s  8.4 - 9.3   implode into the core, landing on the flash
+//
+static void bootParticle(int i, float s, float* px, float* py, float* travelOut) {
+    const float base   = ((float)i + 0.5f) / (float)BOOT_PARTICLES * 2.0f * (float)PI;
+    const float jitter = (bootRand01(i, 1) - 0.5f) * 0.35f;
+    const float phase  = bootRand01(i, 2);
+    const float dir    = (i & 1) ? 1.0f : -1.0f;
+
+    float travel = fmodf(phase + s * 0.62f, 1.0f);   // ~1.6 s per crossing
+    if (travel < 0.0f) travel += 1.0f;
+
+    float rOut = travel * 196.0f;
+    float rOrb = 112.0f + 70.0f * bootRand01(i, 3);
+    float settle = smooth01((s - 4.8f) / 2.0f);
+    float r = rOut * (1.0f - settle) + rOrb * settle;
+    r *= 1.0f - smooth01((s - 8.4f) / 0.9f);
+
+    float ang = base + jitter + dir * (s * s) * 0.075f;
+    *px = cosf(ang) * r;
+    *py = sinf(ang) * r;
+    *travelOut = travel;
+}
+
+// One frame of the opening film. Repaints the backdrop, so it is idempotent.
+static void bootFilm(unsigned long t) {
+    drawBackground();
+
+    float u = 0.0f;
+    if (t > BOOT_T_PARTICLES) {
+        u = (float)(t - BOOT_T_PARTICLES) /
+            (float)(BOOT_T_FILM_END - BOOT_T_PARTICLES);
+        if (u > 1.0f) u = 1.0f;
+    }
+    const float sec = (t > BOOT_T_PARTICLES) ? (float)(t - BOOT_T_PARTICLES) / 1000.0f : 0.0f;
+
+    // 1. ignition: a core that pulses twice, with two rings running off it
+    if (t < BOOT_T_IGNITE_END) {
+        float p = (float)t / (float)BOOT_T_IGNITE_END;
+        float pulse = 0.5f + 0.5f * sinf(p * 4.0f * (float)PI - (float)PI * 0.5f);
+        int r = 3 + (int)(2.0f * pulse);
+        LCD_FillCircle(CENTER_X, CENTER_Y, (uint16_t)(r + 9),
+                       bootGlow(0.10f + 0.14f * pulse));
+        LCD_FillCircle(CENTER_X, CENTER_Y, (uint16_t)r, MX5_WHITE);
+
+        // two rings running out from the core, 60 dots each, in the theme accent
+        for (int ring = 0; ring < 2; ring++) {
+            float rp = p * 1.6f - 0.30f * (float)ring;
+            if (rp <= 0.0f || rp >= 1.0f) continue;
+            float rr = 8.0f + 58.0f * rp;
+            uint16_t col = scaleColor(MX5_ACCENT, 1.0f - rp);
+            for (int k = 0; k < 60; k++) {
+                float a = (float)k / 60.0f * 2.0f * (float)PI;
+                LCD_FillCircle((uint16_t)(CENTER_X + (int)(cosf(a) * rr)),
+                               (uint16_t)(CENTER_Y + (int)(sinf(a) * rr)), 1, col);
+            }
+        }
+    }
+
+    // 2. the stream. Each particle is a streak between its position now and its
+    //    position a moment ago, thinning and dimming toward the tail. The field
+    //    fades *in* from the ignition core, so there is no frame where 120
+    //    particles simply appear, and it is fully collapsed before the flash.
+    if (t >= BOOT_T_PARTICLES && sec <= 9.4f) {
+        const float born = smooth01(sec / 0.5f);
+        const float s0 = (sec > 0.14f) ? sec - 0.14f : 0.0f;   // 140 ms of trail
+        for (int i = 0; i < BOOT_PARTICLES; i++) {
+            float x1, y1, tr1, x0, y0, tr0;
+            bootParticle(i, sec, &x1, &y1, &tr1);
+            bootParticle(i, s0, &x0, &y0, &tr0);
+
+            // accent -> secondary seed across the run, hot near the core
+            uint16_t col = mix565(MX5_ACCENT, MX5_PURPLE, tr1);
+            if (tr1 < 0.25f) col = mix565(col, MX5_WHITE, 1.0f - tr1 / 0.25f);
+
+            for (int k = 0; k < 4; k++) {
+                float a = (float)k / 3.0f;                 // 0 = head, 1 = tail
+                float x = x1 + (x0 - x1) * a;
+                float y = y1 + (y0 - y1) * a;
+                float fade = (1.0f - 0.24f * (float)k) * born;
+                // dim toward the rim so the burst does not fight the bezel
+                fade *= 1.0f - 0.40f * tr1;
+                int r = (k == 0) ? 2 : 1;
+                LCD_FillCircle((uint16_t)(CENTER_X + (int)x), (uint16_t)(CENTER_Y + (int)y),
+                               (uint16_t)r, scaleColor(col, fade));
+            }
+        }
+    }
+
+    // 3. impact: a bright core plus three shockwave rings running out through the
+    //    bezel. Rings, not flat discs - a flat disc over the leather reads as a
+    //    grey plate, while a wave of dots reads as light.
+    if (t > BOOT_T_FLASH_START && t < BOOT_T_FLASH_END) {
+        float f;
+        if (t < BOOT_T_FLASH_PEAK) {
+            f = (float)(t - BOOT_T_FLASH_START) / (float)(BOOT_T_FLASH_PEAK - BOOT_T_FLASH_START);
+        } else {
+            f = 1.0f - (float)(t - BOOT_T_FLASH_PEAK) / (float)(BOOT_T_FLASH_END - BOOT_T_FLASH_PEAK);
+        }
+        f = smooth01(f);
+
+        // core
+        LCD_FillCircle(CENTER_X, CENTER_Y, (uint16_t)(14 + (int)(44.0f * f)),
+                       bootGlow(0.75f * f));
+
+        // three waves, each a little behind the last
+        for (int w = 0; w < 3; w++) {
+            float age = 1.0f - f + 0.20f * (float)w;   // 0 = just launched
+            if (age > 1.0f) continue;
+            float rr = 18.0f + 158.0f * age;
+            uint16_t wc = mix565(MX5_WHITE, MX5_ACCENT, 0.30f);
+            uint16_t col = scaleColor(wc, (1.0f - age) * (0.6f + 0.4f * f));
+            int dots = 64 + (int)(rr * 0.45f);
+            for (int k = 0; k < dots; k++) {
+                float a = (float)k / (float)dots * 2.0f * (float)PI;
+                LCD_FillCircle((uint16_t)(CENTER_X + (int)(cosf(a) * rr)),
+                               (uint16_t)(CENTER_Y + (int)(sinf(a) * rr)), 2, col);
+            }
+        }
+    }
+
+    // 4. the emblem grows out of the flash
+    if (t >= BOOT_T_BADGE_START) {
+        float p = bootPhase(t, BOOT_T_BADGE_START, BOOT_T_BADGE_END);
+        bootEmblemDisc(24 + (int)((float)(BOOT_LOGO_PX - 24) * p));
+    }
+
+    // 5. the blast writes the gauge. Sweeping here, inside the film, is what makes
+    //    the impact and the self-test one gesture instead of two beats: the wave
+    //    lands, and the ring starts lighting out of it.
+    if (t >= BOOT_T_SWEEP_START) {
+        int lit = (int)(bootPhase(t, BOOT_T_SWEEP_START, BOOT_T_SWEEP_END) *
+                        BOOT_RING_SEGS + 0.5f);
+        if (lit > BOOT_RING_SEGS) lit = BOOT_RING_SEGS;
+
+        for (int i = 0; i < BOOT_RING_SEGS; i++) {
+            uint16_t c = (i < lit) ? bootRingColor(i) : MX5_DARKGRAY;
+            int radius = BOOT_RING_DOT_R;
+            // A comet head on the leading edge - bright and larger, decaying over
+            // three dots - is what the eye tracks round the dial. Only while the
+            // sweep is still running: the last film frame must repaint the ring at
+            // dot size or the head survives the hand-off.
+            if (t < BOOT_T_SWEEP_END) {
+                int back = lit - 1 - i;              // 0 = head, 1..2 = tail
+                if (back >= 0 && back < 3) {
+                    float k = (back == 0) ? 0.90f : (back == 1) ? 0.55f : 0.22f;
+                    c = mixColor(bootRingColor(i), 255, 255, 255, k);
+                    radius = BOOT_RING_DOT_R + (back == 0 ? 3 : (back == 1 ? 2 : 1));
+                }
+            }
+            bootRingDotR(i, c, radius);
+        }
+    }
+
+    // 6. lock pulse: a bright wave leaves the full ring outward
+    if (t >= BOOT_T_LOCK_START && t < BOOT_T_LOCK_END - 150) {
+        float age = (float)(t - BOOT_T_LOCK_START) /
+                    (float)(BOOT_T_LOCK_END - BOOT_T_LOCK_START);
+        float rr = (float)BOOT_RING_R + 26.0f * age;
+        uint16_t c = scaleColor(mix565(MX5_WHITE, MX5_ACCENT, 0.45f), 1.0f - age);
+        for (int k = 0; k < 72; k++) {
+            float a = (float)k / 72.0f * 2.0f * (float)PI;
+            LCD_FillCircle((uint16_t)(CENTER_X + (int)(cosf(a) * rr)),
+                           (uint16_t)(CENTER_Y + (int)(sinf(a) * rr)), 1, c);
+        }
+    }
+}
+
+// Advance the animation to time `t`, drawing only what changed.
+void bootApply(unsigned long t) {
+    if (!bootState.awake) {
+        bootState.awake = true;
+        drawBackground();          // the film repaints it, but a seek may land past the film
+    }
+
+    // ---- film ----
+    if (!bootState.filmDone) {
+        if (t < BOOT_T_FILM_END) {
+            // 25 fps while particles and the impact are on screen; once only the
+            // sweep is moving, 10 fps is indistinguishable and saves the bus.
+            unsigned long frameMs = (t < BOOT_T_BADGE_END) ? BOOT_FILM_FRAME_MS : 100;
+            if (!bootState.filmAny || t - bootState.filmT >= frameMs) {
+                bootFilm(t);
+                bootState.filmT = t;
+                bootState.filmAny = true;
+            }
+            return;
+        }
+        bootFilm(BOOT_T_FILM_END - 1);   // land the end-of-film state before the tail
+        bootState.filmDone = true;
+    }
+
+    // ---- ring settles back to unlit around the emblem ----
+    int settleTarget = (int)(bootPhase(t, BOOT_T_FILM_END, BOOT_T_SETTLE_END) * BOOT_RING_SEGS + 0.5f);
+    while (bootState.settled < settleTarget) {
+        bootRingDot(BOOT_RING_SEGS - 1 - bootState.settled, MX5_DARKGRAY);
+        bootState.settled++;
+    }
+
+    // ---- accent rule and wordmark ----
+    int ruleTarget = (int)(bootPhase(t, BOOT_T_RULE_START, BOOT_T_RULE_END) * BOOT_RULE_MAX_W + 0.5f);
+    if (ruleTarget != bootState.ruleW) {
+        if (ruleTarget > 0) {
+            LCD_FillRect((uint16_t)(CENTER_X - ruleTarget / 2), (uint16_t)BOOT_RULE_Y,
+                         (uint16_t)ruleTarget, 2, MX5_ACCENT);
+        }
+        bootState.ruleW = ruleTarget;
+    }
+    if (t >= BOOT_T_TITLE && !bootState.title) {
+        drawCentered(CENTER_X, BOOT_TITLE_Y, "MX5 TELEMETRY", MX5_WHITE, COLOR_BG, 1);
+        bootState.title = true;
+    }
+    if (t >= BOOT_T_READY && !bootState.ready) {
+        // Same slot and type size as the wait's rotating message, so the hand-off
+        // from "READY" to the first loading message is a word swap, not a re-layout.
+        drawCentered(CENTER_X, BOOT_STATE_Y, "READY", MX5_CYAN, COLOR_BG, 2);
+        bootState.ready = true;
+    }
+}
+
+}  // namespace
+
+// Total length. The sequence ends on the "MX5 TELEMETRY / READY" frame and
+// holds it briefly so it can be read before the wait takes over. Kept outside
+// the anonymous namespace because the firmware and the simulator both pace
+// against it, and because the wait needs it to split the countdown.
+extern const unsigned long UI_BOOT_ANIM_MS = 22000;
+
+void ui_startupFrame(unsigned long t, bool seek) {
+    if (seek || t < bootFrameT) {
+        bootState.awake = false;      // force the backdrop, then replay forward
+        bootState.filmAny = false;
+        bootState.filmDone = false;
+        bootState.filmT = 0;
+        bootState.settled = 0;
+        bootState.ruleW = 0;
+        bootState.title = bootState.ready = false;
+    }
+    bootApply(t);
+    bootFrameT = t;
+}
+
+// ============================================================================
+// Boot wait - the same screen, alive, until the link or the countdown ends
+// ============================================================================
+// Drawn instead of the Overview once the intro is over, so the rest of the 30 s
+// is still one continuous animation rather than a dashboard full of "--" and a
+// timer. Three things move at once:
+//
+//   ring       dots fill as what is left of the countdown burns down, and a
+//              comet laps the dial, brightening the dots it passes;
+//   emblem     breathes between 196 and 204 px;
+//   caption    the loading message rotates every 4 s, with the seconds under it.
+//
+// `totalEl` is milliseconds since power-on, not since the intro ended: the
+// countdown in the caption has to be the real one (30 s from power-on), while the
+// ring and the comet restart from empty at the hand-off. Every value is derived
+// from the clock alone, so the frame is idempotent and any instant can be
+// rendered on its own.
+// ============================================================================
+#define BOOT_COMET_MS 3400
+
+void ui_bootWaitFrame(unsigned long totalEl) {
+    const unsigned long waitMs = (unsigned long)PI_BOOT_COUNTDOWN * 1000UL;
+    unsigned long el = (totalEl > UI_BOOT_ANIM_MS) ? totalEl - UI_BOOT_ANIM_MS : 0;
+    unsigned long span = (waitMs > UI_BOOT_ANIM_MS) ? waitMs - UI_BOOT_ANIM_MS : 1;
+
+    drawBackground();
+
+    float breath = 0.5f + 0.5f * sinf((float)el / 2600.0f * 2.0f * (float)PI);
+    // 196..204 around the intro's final 200, so the hand-off has no size step.
+    bootEmblemDisc(196 + (int)(breath * 8.0f));
+
+    int progress = (int)((el * (unsigned long)BOOT_RING_SEGS) / span);
+    if (progress > BOOT_RING_SEGS) progress = BOOT_RING_SEGS;
+
+    float comet = (float)fmod((double)el, (double)BOOT_COMET_MS) /
+                  (float)BOOT_COMET_MS * (float)BOOT_RING_SEGS;
+
+    for (int i = 0; i < BOOT_RING_SEGS; i++) {
+        uint16_t base = (i < progress) ? bootRingColor(i) : MX5_DARKGRAY;
+        float d = fabsf((float)i - comet);
+        float hot = (d < 0.9f) ? 0.75f : (d < 1.9f) ? 0.42f : (d < 2.9f) ? 0.18f : 0.0f;
+        bootRingDot(i, hot > 0.0f ? mixColor(base, 255, 255, 255, hot) : base);
+    }
+
+    LCD_FillRect((uint16_t)(CENTER_X - BOOT_RULE_MAX_W / 2), (uint16_t)BOOT_RULE_Y,
+                 (uint16_t)BOOT_RULE_MAX_W, 2, MX5_ACCENT);
+    drawCentered(CENTER_X, BOOT_TITLE_Y, "MX5 TELEMETRY", MX5_WHITE, COLOR_BG, 1);
+
+    // The rotating message is the hero of the wait: it is the only thing that
+    // says what the car is waiting for, so it takes the slot and the type size
+    // "READY" had at the end of the intro. A fixed rotation, not a random walk,
+    // so replaying the wait looks the same on the panel and in the stills.
+    int msg = (int)(el / 4000UL) % NUM_LOADING_MESSAGES;
+    drawCentered(CENTER_X, BOOT_STATE_Y, LOADING_MESSAGES[msg], MX5_CYAN, COLOR_BG, 2);
+
+    int secs = PI_BOOT_COUNTDOWN - (int)(totalEl / 1000UL);
+    if (secs < 0) secs = 0;
+    char left[10];
+    snprintf(left, sizeof(left), "%d SEC", secs);
+    drawCentered(CENTER_X, BOOT_SECS_Y, left, MX5_GRAY, COLOR_BG, 1);
+}
+
+// ============================================================================
+// Link-lost screen - the Pi (or the CAN link behind it) died while driving
+// ============================================================================
+// This is a *takeover* screen: it is decided at the dispatcher, not inside a
+// screen, because the driver may be on any of the eight screens when the Pi
+// drops, and a frozen dashboard is worse than an explicit "no data". It belongs
+// to the boot family visually (same dial, same emblem, same caption block) so the
+// panel never looks broken - but it is amber and it counts upward, where the boot
+// wait is accent-coloured and counts down.
+//
+// The sweep is a radar, not a progress bar: it laps the dial forever without
+// filling it, which is the difference between "still looking" and "30 % done".
+// Its phase comes from the time *since the last packet*, not from the wall clock,
+// so a still render of t=4.2 s is identical on the panel and in the simulator.
+//
+// Colours: the ring and the headline are the semantic warning amber in every
+// scheme. This state is not decoration, so it does not take the phone's accent -
+// a crimson theme must not paint "NO DATA" in the same crimson as everything
+// else that is fine.
+#define LINK_SWEEP_MS   2000UL
+#define LINK_TRAIL_DOTS 11
+#define LINK_BREATH_MS  2600.0f
+
+bool ui_linkLostActive() {
+    if (settings.demoMode) return false;
+    if (telemetry.hasReceivedTelemetry) return false;
+    // A link that was up and is now silent is always news. Before the countdown
+    // ends the boot screen still owns the panel, and after it an empty dashboard
+    // is just a screen full of "--".
+    if (piDataReceived) return true;
+    return (millis() - bootStartTime) >= (unsigned long)PI_BOOT_COUNTDOWN * 1000UL;
+}
+
+void ui_linkLostFrame() {
+    const unsigned long now = millis();
+    unsigned long since = lastPiDataMs ? (now - lastPiDataMs)
+                                       : (now - bootStartTime);
+
+    drawBackground();
+
+    // Slower breathing than the boot wait, so the panel is calm at night.
+    float breath = 0.5f + 0.5f * sinf((float)since / LINK_BREATH_MS * 2.0f * (float)PI);
+    bootEmblemDisc(168);
+
+    float head = (float)(since % LINK_SWEEP_MS) / (float)LINK_SWEEP_MS * (float)BOOT_RING_SEGS;
+
+    for (int i = 0; i < BOOT_RING_SEGS; i++) {
+        float behind = head - (float)i;
+        if (behind < 0.0f) behind += (float)BOOT_RING_SEGS;
+
+        // Idle dots breathe, and a slow wave chases around the ring so the dial is
+        // never a still photograph of dots between sweeps.
+        float wave = 0.5f + 0.5f * sinf((float)since / 620.0f - (float)i * 0.5f);
+        uint16_t c = mix565(MX5_DARKGRAY, MX5_ORANGE, 0.08f + 0.14f * breath + 0.10f * wave);
+
+        if (behind < (float)LINK_TRAIL_DOTS) {
+            float k = 1.0f - behind / (float)LINK_TRAIL_DOTS;
+            c = mix565(c, MX5_ORANGE, k * k);            // tail cools off fast
+            // Hot leading edge. White only in the dark theme: on a near-white page
+            // a white head is invisible.
+            if (behind < 1.2f) c = themeDark ? mix565(MX5_ORANGE, MX5_WHITE, 0.5f) : MX5_ORANGE;
+        }
+        bootRingDot(i, c);
+    }
+
+    LCD_FillRect((uint16_t)(CENTER_X - BOOT_RULE_MAX_W / 2), (uint16_t)BOOT_RULE_Y,
+                 (uint16_t)BOOT_RULE_MAX_W, 2, MX5_ORANGE);
+    drawCentered(CENTER_X, BOOT_TITLE_Y, "WAITING FOR", MX5_GRAY, COLOR_BG, 1);
+    drawCentered(CENTER_X, BOOT_STATE_Y, "PI / CANBUS", MX5_ORANGE, COLOR_BG, 2);
+
+    // How long it has been quiet. Under a minute reads as seconds; past that the
+    // driver needs the minute count, because "412s" means nothing.
+    char age[16];
+    unsigned long secs = since / 1000UL;
+    if (secs < 60UL) snprintf(age, sizeof(age), "%lus", secs);
+    else             snprintf(age, sizeof(age), "%lum %02lus", secs / 60UL, secs % 60UL);
+    drawCentered(CENTER_X, BOOT_SECS_Y, age, MX5_GRAY, COLOR_BG, 1);
+}
+
+// ============================================================================
 // Large gear indicator
 // ============================================================================
 // The big gear character is drawn from gear_font.h: coverage masks baked from
@@ -596,7 +1216,7 @@ void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, ui
 // ============================================================================
 
 // Road speed per 1000 rpm in each gear, in km/h. Derived from the NC 6-speed
-// ratios, 4.10 final drive and 24.3" tyre - the same numbers the Android
+// ratios, 4.10 final drive and 24.3" tire - the same numbers the Android
 // GearRpmView uses, converted from mph so the ladder needs no unit handling.
 static const float KMH_PER_1000_RPM[7] = {
     0.0f, 7.92f, 13.13f, 18.11f, 25.09f, 29.79f, 35.32f
@@ -619,14 +1239,17 @@ static int predictedRpm(int gear, float speedKmh) {
 // sweet-spot band and print only the best three. That ordering answered a different
 // question than the one the driver asks: in the car it produced lists like "4, 3, 5",
 // which read as scrambled rather than helpful. The ladder is numeric again, and the
-// sweet-spot information is carried only by the colour of each RPM figure.
+// sweet-spot information is carried only by the color of each RPM figure.
 //
 // Geometry is deliberately tight to the bottom of the disc: the COOL/OIL/VOLT and
 // MPG/FUEL/RANGE cards end at y=244, so the block starts at 250 and the clear
 // rectangle begins below that edge. Starting any higher wiped the right card's
 // bottom corner and put the first row under "RANGE".
 static void drawGearLadder(bool forceFullRepaint) {
-    const int rowW = 146;
+    // 180 wide, not 146: at 146 the RPM had to be size 1 (5x7 px) to survive a
+    // five-digit value in a 71 px cell, and it was unreadable at arm's length.
+    // Both figures are size 2 now - 5 digits is 54 px, the gear 11 px, the cell 88.
+    const int rowW = 180;
     const int gutter = 4;
     const int cellW = (rowW - gutter) / 2;
     const int rowH = 24;
@@ -635,8 +1258,9 @@ static void drawGearLadder(bool forceFullRepaint) {
     const int blockH = rowH * 3 + rowGap * 2;
     const int x = CENTER_X - rowW / 2;
 
-    float speed = telemetry.speed;
-    if (speed < 0) speed = 0;
+    // Magnitude: the ladder predicts forward gear RPMs, and the reverse case is
+    // handled by the placeholder below rather than by a negative speed.
+    float speed = fabsf(telemetry.speed);
 
     const bool placeholder = (speed < 1.0f || telemetry.isInReverse);
 
@@ -655,7 +1279,12 @@ static void drawGearLadder(bool forceFullRepaint) {
 
     const int mode = placeholder ? 0 : 1;
     if (mode != ladderMode) {
-        LCD_FillRect(x - 4, startY - 4, rowW + 8, blockH + 8, COLOR_BG);
+        // Leaving the grid means all three rows have to go; entering it means the
+        // placeholder (or a stale grid) does. When the block has only ever held
+        // the placeholder, clear just that row - a full-block clear left a dark
+        // rectangle under the "WAITING" pill.
+        int clearH = (ladderMode == 1 || mode == 1) ? blockH + 8 : rowH + 8;
+        LCD_FillRect(x - 4, startY - 4, rowW + 8, clearH, COLOR_BG);
         ladderMode = (int8_t)mode;
         for (int i = 0; i < 6; i++) {
             lastCellRpm[i] = 0xFFFF;
@@ -666,12 +1295,12 @@ static void drawGearLadder(bool forceFullRepaint) {
     }
 
     if (placeholder) {
-        const int8_t kind = telemetry.isInReverse ? 1 : 0;
+        const int8_t kind = telemetry.isInReverse ? 1 : (!telemetry.hasReceivedTelemetry ? 2 : 0);
         if (kind != lastPlaceholderKind) {
             lastPlaceholderKind = kind;
             LCD_FillRoundRect(x, startY, rowW, rowH, 8, COLOR_BG_CARD);
-            drawCentered(CENTER_X, startY + 8, kind ? "REVERSE" : "STOPPED",
-                         MX5_GRAY, COLOR_BG_CARD, 1);
+            const char* label = (kind == 1) ? "REVERSE" : (kind == 2 ? "WAITING" : "STOPPED");
+            drawCentered(CENTER_X, startY + 5, label, MX5_GRAY, COLOR_BG_CARD, 2);
         }
         return;
     }
@@ -706,15 +1335,16 @@ static void drawGearLadder(bool forceFullRepaint) {
         }
 
         if (rpm != lastCellRpm[i] || rpmColor != lastCellColor[i]) {
-            // Size 1 for the RPM: a cell is only ~71 px wide, and the number can reach five
-            // digits (1st gear at motorway speed). At size 2 that would overrun the gutter.
+            // Size 2 now that the cell is 88 px: five digits (1st gear at motorway
+            // speed) is 54 px, which leaves the gear digit its own 11 px and 9 px
+            // of gutter between them.
             //
             // Padded to a fixed five characters so the glyph background always covers the
             // same field: a shrinking number ("1000" -> "999") would otherwise leave the
             // old leading digit behind.
             char rpmStr[8];
             snprintf(rpmStr, sizeof(rpmStr), "%5d", rpm);
-            drawRightAligned(cx + cellW - 6, y + 8, rpmStr, rpmColor, bg, 1);
+            drawRightAligned(cx + cellW - 6, y + 5, rpmStr, rpmColor, bg, 2);
             lastCellRpm[i] = (uint16_t)rpm;
             lastCellColor[i] = rpmColor;
         }
@@ -722,6 +1352,29 @@ static void drawGearLadder(bool forceFullRepaint) {
 }
 
 void drawOverviewScreen() {
+    // The boot screen owns the panel for the whole PI_BOOT_COUNTDOWN: first the
+    // intro animation, then the animated wait. The Overview - and its column of
+    // "--" placeholders - is not drawn until the link is up or the countdown runs
+    // out. Whoever draws first after that needs a full repaint, because the boot
+    // screen left pixels everywhere.
+    static bool onBootScreen = true;
+    unsigned long bootElapsed = millis() - bootStartTime;
+    if (!piDataReceived && bootElapsed < UI_BOOT_ANIM_MS) {
+        ui_startupFrame(bootElapsed);
+        onBootScreen = true;
+        return;
+    }
+    if (!piDataReceived && bootElapsed < (unsigned long)PI_BOOT_COUNTDOWN * 1000UL) {
+        ui_bootWaitFrame(bootElapsed);
+        onBootScreen = true;
+        return;
+    }
+    if (onBootScreen) {
+        onBootScreen = false;
+        needsFullRedraw = true;
+        prevTelemetry.initialized = false;
+    }
+
     bool rpmChanged = !prevTelemetry.initialized || (int)telemetry.rpm != (int)prevTelemetry.rpm;
     bool speedChanged = !prevTelemetry.initialized || (int)telemetry.speed != (int)prevTelemetry.speed;
     bool gearChanged = !prevTelemetry.initialized || telemetry.gear != prevTelemetry.gear;
@@ -740,21 +1393,11 @@ void drawOverviewScreen() {
     bool rangeChanged = !prevTelemetry.initialized ||
                         telemetry.rangeMiles != prevTelemetry.rangeMiles;
 
-    int currentBootCountdown = PI_BOOT_COUNTDOWN - ((millis() - bootStartTime) / 1000);
-    if (currentBootCountdown < 0) currentBootCountdown = 0;
-    bool inBootCountdown = !piDataReceived && currentBootCountdown > 0;
-    bool bootCountdownChanged = inBootCountdown && (currentBootCountdown != lastBootCountdown);
-
-    bool wasInCountdown = !piDataReceived && lastBootCountdown > 0;
-    bool countdownJustEnded = wasInCountdown && !inBootCountdown;
-
-    lastBootCountdown = currentBootCountdown;
-
     static bool prevPiDataReceived = false;
     bool justReceivedPiData = piDataReceived && !prevPiDataReceived;
     prevPiDataReceived = piDataReceived;
 
-    if (justReceivedPiData || countdownJustEnded) {
+    if (justReceivedPiData) {
         needsFullRedraw = true;
     }
 
@@ -777,7 +1420,8 @@ void drawOverviewScreen() {
 
     bool anyChange = needsFullRedraw || rpmChanged || speedChanged || gearChanged ||
         coolantChanged || fuelChanged || ambientChanged || oilChanged || tpmsChanged ||
-        arcChanged || mpgChanged || instMpgChanged || rangeChanged || voltageChanged || bootCountdownChanged || justReceivedPiData || countdownJustEnded || reverseChanged;
+        arcChanged || mpgChanged || instMpgChanged || rangeChanged || voltageChanged ||
+        justReceivedPiData || reverseChanged;
 
     if (!anyChange) return;
 
@@ -787,17 +1431,14 @@ void drawOverviewScreen() {
         prevTelemetry.arcColor = MX5_DARKGRAY;
     }
 
-    bool hideTopDuringBoot = !piDataReceived && currentBootCountdown > 0;
-
     uint16_t rpmColor = MX5_BLUE;
     if (telemetry.rpm >= 5500) rpmColor = MX5_RED;
     else if (telemetry.rpm >= 4500) rpmColor = MX5_ORANGE;
     else if (telemetry.rpm >= 3000) rpmColor = MX5_YELLOW;
     else if (telemetry.rpm >= 2000) rpmColor = MX5_GREEN;
 
-    if (!hideTopDuringBoot) {
     // Tach halo: one dot per segment, only the dots that changed are repainted.
-    // (The old version rasterised 45 wedges pixel by pixel - ~4,400 single-pixel
+    // (The old version rasterized 45 wedges pixel by pixel - ~4,400 single-pixel
     // QSPI transactions for a full sweep.)
     int currentSegment = (int)(rpmPercent * OV_ARC_SEGS + 0.5f);
 
@@ -817,7 +1458,6 @@ void drawOverviewScreen() {
 
     prevTelemetry.arcEndAngle = startAngle + (currentSegment * (totalArc / OV_ARC_SEGS));
     prevTelemetry.arcColor = rpmColor;
-    }
 
     // Hero readout: two symmetric chips. Everything this high up has to stay
     // inside the disc, so they are narrow and low enough to clear the bezel.
@@ -829,31 +1469,6 @@ void drawOverviewScreen() {
     const int rpmChipCx = rpmChipX + chipW / 2;
     const int mphChipCx = mphChipX + chipW / 2;
 
-    if (hideTopDuringBoot) {
-        static bool loadingBoxDrawn = false;
-        bool messageChanged = false;
-
-        if (millis() - lastMessageChange >= 5000) {
-            int newMessage;
-            do {
-                newMessage = random(NUM_LOADING_MESSAGES);
-            } while (newMessage == currentLoadingMessage && NUM_LOADING_MESSAGES > 1);
-            currentLoadingMessage = newMessage;
-            lastMessageChange = millis();
-            messageChanged = true;
-        }
-
-        if (needsFullRedraw || messageChanged || !loadingBoxDrawn) {
-            loadingBoxDrawn = true;
-            const int pillW = 240, pillH = 64;
-            const int pillX = CENTER_X - pillW / 2;
-            LCD_FillRect(pillX - 4, chipY - 4, pillW + 8, pillH + 8, COLOR_BG);
-            LCD_FillRoundRect(pillX, chipY, pillW, pillH, 16, COLOR_BG_CARD);
-            LCD_FillRoundRect(pillX + 24, chipY + pillH - 6, pillW - 48, 3, 1, MX5_CYAN);
-            drawCentered(CENTER_X, chipY + 16, LOADING_MESSAGES[currentLoadingMessage],
-                         MX5_CYAN, COLOR_BG_CARD, 2);
-        }
-    } else {
     static bool rpmLabelDrawn = false;
     static bool mphLabelDrawn = false;
     static uint16_t lastRpmAccent = 0xFFFF;
@@ -902,14 +1517,13 @@ void drawOverviewScreen() {
         LCD_FillRect(mphChipX + 4, chipY + 6, chipW - 8, 27, COLOR_BG_CARD);
         drawCentered(mphChipCx, chipY + 9, speedStr, MX5_CYAN, COLOR_BG_CARD, 3);
     }
-    }
 
     uint16_t gearGlow = MX5_WHITE;
 
     static uint16_t prevGearGlow = 0;
     bool gearGlowChanged = (gearGlow != prevGearGlow);
 
-    if (needsFullRedraw || gearChanged || reverseChanged || gearGlowChanged || bootCountdownChanged || justReceivedPiData) {
+    if (needsFullRedraw || gearChanged || reverseChanged || gearGlowChanged || justReceivedPiData) {
         int gearX = CENTER_X;
         int gearY = 190;
         int gearRadius = 46;
@@ -920,18 +1534,11 @@ void drawOverviewScreen() {
 
         char gearStr[4];
 
-        int bootCountdown = currentBootCountdown;
-        bool showBootCountdown = inBootCountdown;
-
-        if (showBootCountdown) {
-            char countdownStr[4];
-            snprintf(countdownStr, sizeof(countdownStr), "%d", bootCountdown);
-            drawCentered(gearX, gearY - 12, countdownStr, gearGlow, COLOR_BG_CARD, 3);
-            drawCentered(gearX, gearY + 14, "SEC", MX5_GRAY, COLOR_BG_CARD, 1);
-
-            prevGearGlow = gearGlow;
-        } else {
-        if (telemetry.isInReverse || telemetry.gear == -1) {
+        if (!telemetry.hasReceivedTelemetry) {
+            // No link means no gear. Showing a remembered `R` after the Pi stops
+            // talking is the same lie as showing a remembered speed.
+            snprintf(gearStr, sizeof(gearStr), "--");
+        } else if (telemetry.isInReverse || telemetry.gear == -1) {
             snprintf(gearStr, sizeof(gearStr), "R");
         } else if (!telemetry.engineRunning) {
             if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
@@ -962,7 +1569,6 @@ void drawOverviewScreen() {
         drawLargeGear(gearX, gearY, gearStr, gearGlow, COLOR_BG_CARD);
 
         prevGearGlow = gearGlow;
-        }
     }
 
     bool hideDuringBoot = !piDataReceived;
@@ -973,16 +1579,12 @@ void drawOverviewScreen() {
     const int leftX  = 34;
     const int rightX = SCREEN_WIDTH - 34 - cardW;   // 246
 
-    static bool sideBoxesCleared = false;
-
     if (hideDuringBoot) {
-        if (needsFullRedraw && !sideBoxesCleared) {
-            LCD_FillRect(leftX - 4, cardY - 4, cardW + 8, cardH + 8, COLOR_BG);
-            LCD_FillRect(rightX - 4, cardY - 4, cardW + 8, cardH + 8, COLOR_BG);
-            sideBoxesCleared = true;
-        }
+        // Nothing to paint: the Pi has not sent a frame yet, and the full redraw
+        // that got us here already laid down the backdrop. (This used to clear
+        // both card rectangles with COLOR_BG, which on the dark theme left two
+        // flat black boxes sitting on the leather.)
     } else {
-    sideBoxesCleared = false;
 
     uint16_t coolColor = MX5_CYAN;
     if (telemetry.coolantTemp == 0) coolColor = MX5_RED;
@@ -1103,7 +1705,7 @@ void drawOverviewScreen() {
     }
 
     if (needsFullRedraw && navLocked) {
-        // Nav-lock is signalled by the page indicator turning amber (see
+        // Nav-lock is signaled by the page indicator turning amber (see
         // drawPageIndicator); a badge in the corner does not fit the disc.
     }
 
@@ -1149,18 +1751,13 @@ void drawOverviewScreen() {
 #define RPM_ARC_CX    CENTER_X
 #define RPM_ARC_CY    168
 #define RPM_ARC_R     102
-#define RPM_ARC_START 135.0f
-#define RPM_ARC_SWEEP 270.0f
+#define RPM_ARC_START DIAL_ARC_START
+#define RPM_ARC_SWEEP DIAL_ARC_SWEEP
 #define GEAR_CY       140
 #define GEAR_R        44
 
 static uint16_t rpmSegColor(int index) {
-    float rpmAt = (index / (float)RPM_SEGS) * 8000.0f;
-    if (rpmAt >= 5500) return MX5_RED;
-    if (rpmAt >= 4500) return MX5_ORANGE;
-    if (rpmAt >= 3000) return MX5_YELLOW;
-    if (rpmAt >= 2000) return MX5_GREEN;
-    return MX5_BLUE;
+    return rpmRampColor((index / (float)RPM_SEGS) * 8000.0f);
 }
 
 static void drawRpmArcSeg(int index, bool active) {
@@ -1211,7 +1808,8 @@ void drawRPMScreen() {
 
     // ---- gear ----
     char gearStr[4];
-    if (telemetry.isInReverse || telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+    if (!telemetry.hasReceivedTelemetry) snprintf(gearStr, sizeof(gearStr), "--");
+    else if (telemetry.isInReverse || telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
     else if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
     else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
 
@@ -1223,7 +1821,8 @@ void drawRPMScreen() {
 
     // ---- rpm digits ----
     char rpmStr[8];
-    snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
+    if (!telemetry.hasReceivedTelemetry) snprintf(rpmStr, sizeof(rpmStr), "--");
+    else snprintf(rpmStr, sizeof(rpmStr), "%d", (int)telemetry.rpm);
     if (needsFullRedraw || rpmChanged) {
         LCD_FillRect(CENTER_X - 46, 190, 92, 34, COLOR_BG);
         drawCentered(CENTER_X, 192, rpmStr, MX5_WHITE, COLOR_BG, 3);
@@ -1233,7 +1832,8 @@ void drawRPMScreen() {
     // ---- speed ----
     if (needsFullRedraw || speedChanged) {
         char speedStr[8];
-        snprintf(speedStr, sizeof(speedStr), "%d", displaySpeedKmhOrMph());
+        if (!telemetry.hasReceivedTelemetry) snprintf(speedStr, sizeof(speedStr), "--");
+        else snprintf(speedStr, sizeof(speedStr), "%d", displaySpeedKmhOrMph());
         LCD_FillRect(CENTER_X - 46, 248, 92, 38, COLOR_BG);
         drawCentered(CENTER_X, 250, speedStr, MX5_CYAN, COLOR_BG, 3);
         drawCentered(CENTER_X, 274, settings.useMPH ? "MPH" : "KMH", MX5_GRAY, COLOR_BG, 1);
@@ -1407,7 +2007,7 @@ void drawEngineScreen() {
 // G-Force screen
 //
 // A g-scatter with a decaying trail, ported from the Android GForceView. Position
-// is the instantaneous lateral/longitudinal acceleration, colour and size are the
+// is the instantaneous lateral/longitudinal acceleration, color and size are the
 // magnitude, and the last two seconds of points show the shape of the corner. A
 // single dot tells you almost nothing about a turn; the trail is the point.
 //

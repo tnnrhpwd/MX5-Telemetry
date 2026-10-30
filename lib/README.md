@@ -27,7 +27,8 @@ These libraries are primarily used by the **Arduino Nano** for LED control.
 - Dual-mode operation (direct CAN monitoring + OBD-II fallback)
 - 100Hz high-frequency RPM polling
 - Hardware interrupt on D2 for minimal latency
-- Supports Mazda-specific CAN ID 0x201 (RPM) and 0x420 (Speed)
+- Supports Mazda-specific CAN ID 0x201 (RPM/speed) and 0x420 (coolant and ambient
+  temperatures)
 - Shares HS-CAN bus with Raspberry Pi (both can read simultaneously)
 
 **Files**:

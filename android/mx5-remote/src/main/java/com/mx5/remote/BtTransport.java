@@ -4,6 +4,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import android.bluetooth.BluetoothDevice;
+import android.util.Log;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -26,8 +27,20 @@ abstract class BtTransport implements LinkTransport {
 
     private static final long REPLY_TIMEOUT_MS = 3000;
 
+    /**
+     * How long a roof command may take to answer.
+     *
+     * Those ops open the RCNC-2's serial port, wait 0.35s for it to settle, and then wait
+     * up to 2s for a reply, and `roof.connect` may do more than one exchange. Timing one
+     * out at the ordinary deadline did more than fail the command: the transport counted
+     * as broken, was demoted, and the whole chain was walked again mid-command.
+     */
+    private static final long ROOF_REPLY_TIMEOUT_MS = 8000;
+
     /** Stray lines tolerated while waiting for our own reply. */
     private static final int MAX_SKIPPED_LINES = 8;
+
+    private static final String TAG = "MX5Link";
 
     protected final String token;
 
@@ -35,12 +48,41 @@ abstract class BtTransport implements LinkTransport {
     private int nextId = 1;
     private boolean authenticated;
 
+    /**
+     * When the Pi last refused the token.
+     *
+     * A wrong token is not a reason to walk the chain - none of the transports will be
+     * accepted - but it *was* a reason to reconnect several times a second, because every
+     * poll opened a fresh RFCOMM socket or GATT client and asked again. That is exactly
+     * the hammering that leaves Android's Bluetooth stack refusing connections, so a
+     * refusal pauses this transport instead. The pause is cleared by a successful hello
+     * and by rebuilding the transports, which is what changing the token does.
+     */
+    private long authRefusedAt;
+
+    private static final long AUTH_REFUSAL_PAUSE_MS = 10000;
+
     // Complete lines received, handed over by whichever profile is carrying the link.
     // A queue rather than a plain buffer so receiveLine can honour a real timeout: an
     // RFCOMM read() and a GATT callback both block or arrive whenever they like, and
     // neither can be given a deadline directly.
     private final LinkedBlockingQueue<String> lines = new LinkedBlockingQueue<>();
-    private final StringBuilder lineAccumulator = new StringBuilder();
+
+    // Bytes that have arrived without a newline yet.
+    //
+    // Bytes, not a String. Decoding each chunk separately corrupted any character whose
+    // UTF-8 encoding straddled the boundary, and over BLE the boundary is every 20 bytes
+    // when the MTU is at its floor: a reply containing a degree sign or an accented
+    // character in an error message came back with a replacement character in it and was
+    // then dropped as malformed. Splitting on the newline first and decoding the finished
+    // line is the only version that cannot do that.
+    private final java.io.ByteArrayOutputStream lineBytes = new java.io.ByteArrayOutputStream();
+
+    /** Ceiling on a line with no newline in it, so a desynced peer cannot grow it. */
+    private static final int MAX_LINE_BYTES = 65536;
+
+    /** Where the last newline search stopped, so a growing buffer is not rescanned. */
+    private int scanned;
 
     BtTransport(String token) {
         this.token = token == null ? "" : token.trim();
@@ -85,23 +127,43 @@ abstract class BtTransport implements LinkTransport {
         if (data == null || data.length == 0) {
             return;
         }
-        synchronized (lineAccumulator) {
-            lineAccumulator.append(new String(data, StandardCharsets.UTF_8));
-            int nl;
-            while ((nl = lineAccumulator.indexOf("\n")) >= 0) {
-                String line = lineAccumulator.substring(0, nl).trim();
-                lineAccumulator.delete(0, nl + 1);
+        synchronized (lineBytes) {
+            lineBytes.write(data, 0, data.length);
+            if (lineBytes.size() > MAX_LINE_BYTES) {
+                Log.w(TAG, "dropping " + lineBytes.size() + " bytes with no newline in them");
+                lineBytes.reset();
+                scanned = 0;
+                return;
+            }
+
+            byte[] buf = lineBytes.toByteArray();
+            int start = 0;
+            for (int i = scanned; i < buf.length; i++) {
+                if (buf[i] != '\n') {
+                    continue;
+                }
+                String line = new String(buf, start, i - start, StandardCharsets.UTF_8).trim();
+                start = i + 1;
                 if (!line.isEmpty()) {
                     lines.offer(line);
                 }
+            }
+            scanned = buf.length;
+
+            // Keep only the unfinished tail: everything before `start` has been consumed.
+            if (start > 0) {
+                lineBytes.reset();
+                lineBytes.write(buf, start, buf.length - start);
+                scanned -= start;
             }
         }
     }
 
     /** Forget any half-received line and anything queued, for a fresh connection. */
     protected final void clearReceived() {
-        synchronized (lineAccumulator) {
-            lineAccumulator.setLength(0);
+        synchronized (lineBytes) {
+            lineBytes.reset();
+            scanned = 0;
             lines.clear();
         }
     }
@@ -143,54 +205,109 @@ abstract class BtTransport implements LinkTransport {
     @Override
     public String request(String method, String path, String body) throws IOException {
         synchronized (ioLock) {
-            ensureAuthenticated();
+            long timeout = timeoutFor(path);
 
-            int id = nextId++;
-            JSONObject req;
-            try {
-                req = buildRequest(id, path, body);
-            } catch (JSONException e) {
-                throw new IOException("Bad request for " + path + ": " + e.getMessage(), e);
-            }
+            // One retry, used only when the Pi says the session is not authenticated.
+            for (int attempt = 0; ; attempt++) {
+                ensureAuthenticated();
 
-            try {
-                send((req.toString() + "\n").getBytes(StandardCharsets.UTF_8));
-            } catch (IOException e) {
-                // The write itself failed, so the connection is gone.
-                closePipe();
-                authenticated = false;
-                throw e;
-            }
-
-            for (int i = 0; i <= MAX_SKIPPED_LINES; i++) {
-                String line = receiveLine(REPLY_TIMEOUT_MS);
-                JSONObject reply;
+                int id = nextId++;
+                JSONObject req;
                 try {
-                    reply = new JSONObject(line);
+                    req = buildRequest(id, path, body);
                 } catch (JSONException e) {
-                    continue;               // not JSON at all: skip and keep waiting
+                    throw new IOException("Bad request for " + path + ": " + e.getMessage(), e);
                 }
-                if (reply.optInt("id", -1) != id) {
-                    continue;               // a reply to something else
+
+                JSONObject reply = exchange(id, req, path, timeout);
+
+                if (reply.optBoolean("ok", false)) {
+                    JSONObject data = reply.optJSONObject("data");
+                    return data == null ? "{}" : data.toString();
                 }
-                if (!reply.optBoolean("ok", false)) {
-                    throw new LinkTransport.Refused(
-                            reply.optString("error", "Refused by the Pi"));
+
+                String error = reply.optString("error", "Refused by the Pi");
+                if (attempt == 0 && isAuthFailure(error)) {
+                    // The Pi dropped the session but the phone never saw the link go: a
+                    // BLE central that reconnected without BlueZ reporting the disconnect,
+                    // or a display app that was restarted underneath us. Logging in again
+                    // is both safe and invisible; reporting it as a refusal is neither,
+                    // because there is nothing the driver could do about it.
+                    Log.d(TAG, "the Pi did not recognise the session, authenticating again");
+                    authenticated = false;
+                    closePipe();
+                    continue;
                 }
-                JSONObject data = reply.optJSONObject("data");
-                return data == null ? "{}" : data.toString();
+                throw new LinkTransport.Refused(error);
             }
-            // A timeout here is ambiguous: the peer may be gone or merely slow. Drop the
-            // connection so the next attempt starts clean.
+        }
+    }
+
+    /**
+     * Send one request and return the reply that carries its id.
+     *
+     * The deadline covers the whole wait, not each line. It used to be applied per line,
+     * so a peer that kept sending lines that were not ours - a second client on the same
+     * session, or a half-received reply after a reconnect - could hold this thread for
+     * eight times the reply timeout before giving up.
+     */
+    private JSONObject exchange(int id, JSONObject req, String path, long timeout)
+            throws IOException {
+        try {
+            send((req.toString() + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            // The write itself failed, so the connection is gone.
             closePipe();
             authenticated = false;
-            throw new IOException("No reply from the Pi for " + path);
+            throw e;
         }
+
+        long deadline = System.currentTimeMillis() + timeout;
+        for (int i = 0; i <= MAX_SKIPPED_LINES; i++) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                break;
+            }
+            String line = receiveLine(remaining);
+            JSONObject reply;
+            try {
+                reply = new JSONObject(line);
+            } catch (JSONException e) {
+                continue;               // not JSON at all: skip and keep waiting
+            }
+            if (reply.optInt("id", -1) != id) {
+                continue;               // a reply to something else
+            }
+            return reply;
+        }
+
+        // A timeout here is ambiguous: the peer may be gone or merely slow. Drop the
+        // connection so the next attempt starts clean.
+        closePipe();
+        authenticated = false;
+        throw new IOException("No reply from the Pi for " + path);
+    }
+
+    /** The reply wait for one path. Roof commands are allowed longer; see the constant. */
+    private static long timeoutFor(String path) {
+        return path != null && path.startsWith("/api/roof/")
+                ? ROOF_REPLY_TIMEOUT_MS
+                : REPLY_TIMEOUT_MS;
+    }
+
+    /** Whether the Pi's error means "this session is not logged in". */
+    private static boolean isAuthFailure(String error) {
+        return error != null && error.toLowerCase(java.util.Locale.US).contains("authenticat");
     }
 
     // -- session ------------------------------------------------------------
 
     private void ensureAuthenticated() throws IOException {
+        long since = System.currentTimeMillis() - authRefusedAt;
+        if (authRefusedAt != 0 && since < AUTH_REFUSAL_PAUSE_MS) {
+            throw new LinkTransport.Refused(
+                    "The Pi refused the token " + (since / 1000) + "s ago");
+        }
         if (isOpen() && authenticated) {
             return;
         }
@@ -220,10 +337,15 @@ abstract class BtTransport implements LinkTransport {
 
         send((hello.toString() + "\n").getBytes(StandardCharsets.UTF_8));
 
+        long deadline = System.currentTimeMillis() + REPLY_TIMEOUT_MS;
         for (int i = 0; i <= MAX_SKIPPED_LINES; i++) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                break;
+            }
             JSONObject reply;
             try {
-                reply = new JSONObject(receiveLine(REPLY_TIMEOUT_MS));
+                reply = new JSONObject(receiveLine(remaining));
             } catch (JSONException e) {
                 continue;
             }
@@ -233,10 +355,12 @@ abstract class BtTransport implements LinkTransport {
             if (!reply.optBoolean("ok", false)) {
                 // A bad token is not a reason to try the other profile with the same token.
                 closePipe();
+                authRefusedAt = System.currentTimeMillis();
                 throw new LinkTransport.Refused(
                         reply.optString("error", "Link refused the token"));
             }
             authenticated = true;
+            authRefusedAt = 0;
             return;
         }
         closePipe();

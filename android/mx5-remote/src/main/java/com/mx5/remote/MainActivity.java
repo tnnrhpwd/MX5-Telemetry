@@ -2,7 +2,6 @@ package com.mx5.remote;
 
 import android.Manifest;
 import android.app.Activity;
-import android.bluetooth.BluetoothDevice;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -55,6 +54,8 @@ public class MainActivity extends Activity implements Screen.Host {
     /** Lifecycle only. Link failures log under MX5Link, Bluetooth under MX5Ble. */
     private static final String TAG = "MX5Life";
     private static final String DEFAULT_ADDRESS = "192.168.42.100:5000";    private static final int POLL_MS = 250;
+    /** Whichever transport was carrying the link when the app last had one. */
+    static final String KEY_LAST_TRANSPORT = "last_transport";
     private static final int STATUS_EVERY = 8;
     private static final int ROOF_EVERY = 12;
     /**
@@ -77,6 +78,37 @@ public class MainActivity extends Activity implements Screen.Host {
     /** Never shrink a row below this, or the label stops being a usable target. */
     private static final int RAIL_ROW_MIN_DP = 21;
 
+    /**
+     * Extra left margin, in dp, that keeps the app's own left column out from under the
+     * head unit's screen-edge chrome.
+     *
+     * The Pioneer AVH draws a bar of on-screen buttons over the left of the projected
+     * image. It belongs to the head unit, not to Android Auto, so the display the phone is
+     * handed still starts at x=0 and whatever the app draws in the first ~80dp disappears
+     * underneath it - which is the whole left rail of page names. No API reports that bar's
+     * width, so the margin is a stored preference: this default, nudged in Settings while
+     * looking at the car.
+     */
+    static final String KEY_EDGE_LEFT_DP = "edge_left_dp";
+
+    /**
+     * Default on a car screen. The bar on this AVH covers roughly 80dp, and the first rail
+     * label already starts about 19dp in, so 64dp of extra margin clears it with a few dp
+     * to spare. Zero on a phone, which has no such bar and no width to give away.
+     */
+    private static final int EDGE_LEFT_CAR_DP = 64;
+
+    /** Past this the page names are being pushed off the right edge, not cleared of chrome. */
+    private static final int EDGE_LEFT_MAX_DP = 160;
+
+    /**
+     * What the EDGE chip steps through, in dp.
+     *
+     * Discrete presets rather than a free drag: the chip is tapped while watching the rail
+     * appear from under the bar, and 0 is first so one tap can always undo a bad guess.
+     */
+    private static final int[] EDGE_PRESETS = {0, 40, 64, 88, 112, 144};
+
     /** Request code for the one-off Nearby devices prompt. */
     private static final int REQ_BLUETOOTH = 1001;
 
@@ -92,19 +124,11 @@ public class MainActivity extends Activity implements Screen.Host {
      * Where the Bluetooth transports get their device, and why they cannot have one.
      *
      * The transports are handed this rather than reaching into preferences themselves, so
-     * that the "why not" message can be built where the Bluetooth state is visible.
+     * that the "why not" message can be built where the Bluetooth state is visible. Built
+     * once prefs exists; see onCreate(), and BtDevices.source() for why the in-motion app
+     * needs the same thing.
      */
-    private final BtTransport.DeviceSource btDevices = new BtTransport.DeviceSource() {
-        @Override
-        public BluetoothDevice device() {
-            return BtDevices.find(MainActivity.this, prefs.getString("bt_device", ""));
-        }
-
-        @Override
-        public String reason() {
-            return BtDevices.explain(MainActivity.this, prefs.getString("bt_device", ""));
-        }
-    };
+    private BtTransport.DeviceSource btDevices;
 
     private SharedPreferences prefs;
     private Palette palette;
@@ -120,7 +144,7 @@ public class MainActivity extends Activity implements Screen.Host {
     private LinearLayout root;
     private LinearLayout rail;
     private FrameLayout contentHost;
-    private TextView linkPill, footerLeft, footerRight, themeButton, schemeButton;
+    private TextView linkPill, footerLeft, footerRight, themeButton, schemeButton, edgeButton;
     private final List<TextView> railChips = new ArrayList<>();
     private final List<View> railItems = new ArrayList<>();
     private final List<View> railMarkers = new ArrayList<>();
@@ -166,6 +190,7 @@ public class MainActivity extends Activity implements Screen.Host {
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        btDevices = BtDevices.source(this, prefs);
 
         schemeId = prefs.getString("scheme", "aurora");
         dark = prefs.getBoolean("dark", true);
@@ -179,6 +204,8 @@ public class MainActivity extends Activity implements Screen.Host {
         // the link, and leave its GATT connection open but unreachable.
         if (!pi.bluetoothConfigured()) {
             pi.setBluetooth(this, btDevices, prefs.getString("token", ""));
+            // Start on the link that worked last time rather than at the head of the chain.
+            pi.preferTransport(prefs.getString(KEY_LAST_TRANSPORT, ""));
         }
         requestBluetoothPermission();
 
@@ -222,7 +249,9 @@ public class MainActivity extends Activity implements Screen.Host {
         // reads as unbranded and makes the panels look pasted on rather than placed.
         root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{palette.pageGlow(), palette.page}));
-        root.setPadding(Ui.dp(this, Ui.S4), Ui.dp(this, Ui.S3),
+        // The left margin is S4 plus the edge inset: the head unit's own button bar lands on
+        // exactly this column, and the row of page names is the first thing it eats.
+        root.setPadding(Ui.dp(this, Ui.S4 + edgeInset()), Ui.dp(this, Ui.S3),
                 Ui.dp(this, Ui.S4), Ui.dp(this, Ui.S3));
 
         root.addView(buildTopBar());
@@ -500,6 +529,12 @@ public class MainActivity extends Activity implements Screen.Host {
             pushThemeToPi();
         });
 
+        // The head unit's own button bar is drawn over the left of the projection, so this
+        // has to be reachable from every page while the bar is in the way - hence the top
+        // bar rather than a settings page the bar itself would cover.
+        edgeButton = topButton(edgeLabel());
+        edgeButton.setOnClickListener(v -> cycleEdge());
+
         bar.addView(title);
         bar.addView(linkPill, pillParams);
         bar.addView(Ui.gap(this));
@@ -512,6 +547,7 @@ public class MainActivity extends Activity implements Screen.Host {
             bar.addView(buildStatusChip());
             bar.addView(schemeButton);
             bar.addView(themeButton);
+            bar.addView(edgeButton);
             bar.addView(buildExitButton());
         }
         return bar;
@@ -1081,6 +1117,25 @@ public class MainActivity extends Activity implements Screen.Host {
         if (screen instanceof SystemScreen) {
             ((SystemScreen) screen).refreshTransport();
         }
+        rememberTransport();
+    }
+
+    /**
+     * Persist which transport is carrying the link, so the next launch starts there.
+     *
+     * A cold start otherwise tries the tether first, and on a phone with no cable that is
+     * a 1.5s connect timeout before Bluetooth is even considered - the "it takes a moment
+     * to connect every time I open it" complaint. With Bluetooth's answer remembered, the
+     * first poll of the next launch goes straight to the link that was working.
+     */
+    private void rememberTransport() {
+        if (!online || prefs == null) {
+            return;
+        }
+        String via = pi.activeTransport();
+        if (!via.isEmpty() && !via.equals(prefs.getString(KEY_LAST_TRANSPORT, ""))) {
+            prefs.edit().putString(KEY_LAST_TRANSPORT, via).apply();
+        }
     }
 
     // -------------------------------------------------------------------- host
@@ -1130,6 +1185,11 @@ public class MainActivity extends Activity implements Screen.Host {
     @Override
     public void applyConnection(String address, String token) {
         pi.configure(address, token);
+        // The Bluetooth transports carry the token they were built with, so a new one has
+        // to reach them explicitly. Without this a token typed in here worked over the
+        // tether and was refused over Bluetooth, which reads as "Bluetooth is broken" and
+        // could only be cleared by restarting the app.
+        pi.setBluetooth(this, btDevices, token);
         prefs.edit().putString("address", address).putString("token", token).apply();
         refreshNow();
     }
@@ -1159,6 +1219,58 @@ public class MainActivity extends Activity implements Screen.Host {
     @Override
     public void reapplyTheme() {
         pushThemeToPi();
+    }
+
+    /**
+     * The stored left margin, in dp, for this window.
+     *
+     * Zero on a phone: the bar is the head unit's, and a phone has neither that chrome nor
+     * the width to give away - even though the two instances share one preference file.
+     * Clamped rather than trusted, because a value past the maximum would push the page
+     * names off the opposite edge with no way back except clearing app data.
+     */
+    private int edgeInset() {
+        if (narrow) {
+            return 0;
+        }
+        return Math.max(0, Math.min(EDGE_LEFT_MAX_DP,
+                prefs.getInt(KEY_EDGE_LEFT_DP, EDGE_LEFT_CAR_DP)));
+    }
+
+    /**
+     * Move the shell clear of the head unit's left bar, live.
+     *
+     * Applied as padding on `root` rather than by rebuilding: the chip that drives this is
+     * tapped while watching the page names come out from under the bar, and a rebuild would
+     * throw away every other piece of state on the page mid-look.
+     */
+    private void setEdgeInset(int dp) {
+        int clamped = Math.max(0, Math.min(EDGE_LEFT_MAX_DP, dp));
+        prefs.edit().putInt(KEY_EDGE_LEFT_DP, clamped).apply();
+        if (root != null) {
+            root.setPadding(Ui.dp(this, Ui.S4 + clamped), Ui.dp(this, Ui.S3),
+                    Ui.dp(this, Ui.S4), Ui.dp(this, Ui.S3));
+        }
+        if (edgeButton != null) {
+            edgeButton.setText(edgeLabel());
+        }
+    }
+
+    private String edgeLabel() {
+        return "Edge " + edgeInset();
+    }
+
+    /** Step the left margin to the next preset, wrapping back to zero after the last. */
+    private void cycleEdge() {
+        int now = edgeInset();
+        int next = EDGE_PRESETS[0];
+        for (int preset : EDGE_PRESETS) {
+            if (preset > now) {
+                next = preset;
+                break;
+            }
+        }
+        setEdgeInset(next);
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -1207,6 +1319,7 @@ public class MainActivity extends Activity implements Screen.Host {
         // Rebuild the chain either way: the transports cache their readiness, so a grant
         // would otherwise not take effect until the next launch.
         pi.setBluetooth(this, btDevices, prefs.getString("token", ""));
+        pi.preferTransport(prefs.getString(KEY_LAST_TRANSPORT, ""));
         updateLink();
     }
 

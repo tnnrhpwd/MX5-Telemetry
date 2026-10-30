@@ -67,6 +67,28 @@ PAIRED_CMD = (
 
 SDP_CMD = "sdptool browse local 2>/dev/null | grep -i -A8 'Serial Port'"
 
+# The three main.conf settings that decide whether a reconnect is quick and whether a
+# phone can re-pair without being forgotten first. There is no runtime property for any of
+# them, so a Pi missing them looks healthy and reconnects slowly.
+MAIN_CONF_CMD = (
+    "grep -E '^[[:space:]]*(FastConnectable|AutoEnable|JustWorksRepairing)[[:space:]]*=' "
+    "/etc/bluetooth/main.conf 2>/dev/null || echo __NONE__"
+)
+MAIN_CONF_WANTED = {
+    'FastConnectable': 'true',
+    'AutoEnable': 'true',
+    'JustWorksRepairing': 'always',
+}
+
+# Sessions the server had to reclaim or refuse. Both mean the phone reconnected while the
+# Pi still held a session for it, which is the fault this link used to need a restart for.
+SPP_CHURN_CMD = (
+    "PID=$(pgrep -f 'python.*main.py' | head -1); "
+    "if [ -z \"$PID\" ]; then echo __NOPID__; else "
+    "journalctl _PID=$PID --no-pager 2>/dev/null "
+    "| grep -iE 'SPP: (reclaiming|refusing)' | tail -8; fi"
+)
+
 
 def run(ssh, cmd, timeout=25):
     """Run one command and return (exit_status, combined_output)."""
@@ -197,13 +219,34 @@ def main():
                 record(FAIL, "SDP Serial Port record on channel %d" % args.channel,
                        sdp or "(no Serial Port record found)", hint)
 
-        # -- 5. BLE ------------------------------------------------------------
+        # -- 5. BlueZ settings that decide how fast a reconnect is ------------
+        _, out = run(ssh, MAIN_CONF_CMD)
+        have = {}
+        for line in out.splitlines():
+            if '=' in line and not line.startswith('__'):
+                key, _, value = line.partition('=')
+                have[key.strip()] = value.strip()
+        missing = [(k, v) for k, v in MAIN_CONF_WANTED.items()
+                   if have.get(k, '').lower() != v]
+        if missing:
+            record(WARN, "BlueZ reconnect tuning in /etc/bluetooth/main.conf",
+                   "; ".join("%s=%s" % (k, have.get(k, "unset")) for k in MAIN_CONF_WANTED),
+                   "set " + ", ".join("%s = %s" % (k, v) for k, v in missing)
+                   + " under [General], then `sudo systemctl restart bluetooth`. "
+                     "FastConnectable makes the phone's reconnect quicker, AutoEnable "
+                     "brings the adapter up after a reboot, and JustWorksRepairing=always "
+                     "lets a phone re-pair instead of having to be forgotten first.")
+        else:
+            record(PASS, "BlueZ reconnect tuning in /etc/bluetooth/main.conf",
+                   "FastConnectable, AutoEnable and JustWorksRepairing are all set")
+
+        # -- 6. BLE ------------------------------------------------------------
         _, out = run(ssh, "python3 -c 'import bless; print(\"ok\")' 2>&1 | tail -1")
         record(PASS if out.strip() == "ok" else WARN, "bless importable (BLE)",
                out if out.strip() != "ok" else "ok",
                "" if out.strip() == "ok" else "pip install bless (plus python3-dbus python3-gi)")
 
-        # -- 6. the phone ------------------------------------------------------
+        # -- 7. the phone ------------------------------------------------------
         _, out = run(ssh, PAIRED_CMD)
         if not out.strip():
             record(WARN, "A phone is paired", "no paired devices",
@@ -218,7 +261,7 @@ def main():
                    "%d device(s) known" % len(rows),
                    "" if paired else "known but none marked Paired: yes")
 
-        # -- 7. what the link said when it started ----------------------------
+        # -- 8. what the link said when it started ----------------------------
         # Filter by PID rather than by recency: a CAN transmit fault can print twenty
         # lines a second, which pushed the startup banner out of any fixed window and made
         # this check report "no link lines" against a link that had started fine.
@@ -254,6 +297,24 @@ def main():
             record(WARN, "The link reported itself started",
                    "the running app printed nothing about a link",
                    "the running code may predate the Bluetooth link; git pull and restart")
+
+        # -- 9. SPP session churn ---------------------------------------------
+        # Both messages mean the phone reconnected while the Pi still held a session for
+        # it. That is normal occasionally (the app reopens, the phone sleeps), but a run of
+        # them is the signature of the fault that used to wedge the listener until the
+        # display app was restarted.
+        _, out = run(ssh, SPP_CHURN_CMD)
+        if "__NOPID__" in out:
+            record(WARN, "SPP has no stale sessions to reclaim",
+                   "no main.py process, so this cannot be answered")
+        elif out.strip():
+            record(WARN, "SPP has no stale sessions to reclaim", out,
+                   "each line is a reconnect that overlapped an old session. A few are "
+                   "normal; a steady stream means the phone keeps losing the link - check "
+                   "range, and that /etc/bluetooth/main.conf has FastConnectable = true")
+        else:
+            record(PASS, "SPP has no stale sessions to reclaim",
+                   "no reclaims or refusals in this run")
     finally:
         ssh.close()
 

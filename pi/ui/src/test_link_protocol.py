@@ -79,7 +79,8 @@ _roof_module.RoofController = _FakeRoofController
 _roof_module.RoofControllerError = _FakeRoofControllerError
 sys.modules['roof_controller'] = _roof_module
 
-from link_protocol import LinkProtocol, LinkSession, MAX_AUTH_FAILURES  # noqa: E402
+from link_protocol import (LinkProtocol, LinkSession, MAX_AUTH_FAILURES,  # noqa: E402
+                           MAX_LINE_BYTES)
 from link_service import LinkService  # noqa: E402
 
 
@@ -98,6 +99,8 @@ class FakeTelemetry:
         self.gear_color = 'green'
         self.is_in_neutral = True
         self.is_in_reverse = False
+        self.speed_raw = 10000          # raw 0x201 field; 0x2710 == 0.00 km/h
+        self.transmission_range = -1    # raw 0x231 range code; -1 = not seen yet
         self.throttle_percent = 0.0
         self.brake_percent = 0.0
         self.coolant_temp_f = 90
@@ -105,6 +108,7 @@ class FakeTelemetry:
         self.ambient_temp_f = 41
         self.maf = 0.0
         self.fuel_level_percent = 0.0
+        self.fuel_level_average = 0.0
         self.voltage = 0.0
         self.tire_pressure = [0.0, 0.0, 0.0, 0.0]
         self.tire_temp = [0.0, 0.0, 0.0, 0.0]
@@ -117,6 +121,7 @@ class FakeTelemetry:
         self.instant_mpg = 0.0
         self.instant_mpg_valid = False
         self.average_mpg = 0.0
+        self.average_mpg_source = 'estimated'
         self.range_miles = 0
         self.check_engine_light = False
         self.abs_warning = False
@@ -708,6 +713,63 @@ def test_an_exception_escaping_the_service_still_replies():
     assert ask(session, id=41, op='ping')['ok'] is True
 
 
+def test_a_flood_with_no_newline_is_bounded_and_recovers():
+    """MAX_LINE_BYTES has to cap the unfinished line, not only complete ones.
+
+    A peer that stops sending newlines - a desynced stream, a crash that dumped binary at
+    the socket - grew the buffer without bound, which is the one thing that constant
+    claims to prevent. It also reported the overflow on every chunk and then spliced the
+    tail onto the next real request, so the recovery attempt was lost too.
+    """
+    app, _, _, session = build()
+    hello(session)
+
+    peak = 0
+    errors = 0
+    for _ in range(60):
+        for reply in session.feed(b'x' * 512):
+            errors += 1
+            assert json.loads(reply)['ok'] is False
+        peak = max(peak, session.pending_bytes())
+
+    assert peak <= MAX_LINE_BYTES + 512, 'the buffer grew past its cap (%d)' % peak
+    assert errors == 1, 'the overflow was reported %d times' % errors
+
+    # The first request after the garbage's newline is answered, not spliced onto it.
+    replies = session.feed(b'tail\n' + json.dumps({'id': 60, 'op': 'ping'}).encode() + b'\n')
+    assert len(replies) == 1
+    assert json.loads(replies[0])['id'] == 60
+    assert json.loads(replies[0])['ok'] is True
+
+
+def test_a_payload_that_cannot_be_encoded_does_not_drop_the_link():
+    """One unencodable field must cost a reply, not the session.
+
+    This is not hypothetical: a Screen enum reached json.dumps once and every request
+    over Bluetooth stopped. It used to raise straight out of the protocol, which closed
+    the SPP peer and produced an opaque ATT error over BLE, so the phone reconnected, asked
+    again, and was dropped again - for ever, because the fault was in the data.
+    """
+    class Unserializable:
+        def telemetry(self):
+            return {'rpm': 3200, 'bad': {1, 2, 3}}      # a set is not JSON
+
+        def status(self):
+            return {}
+
+    protocol = LinkProtocol(Unserializable(), token=None, require_token=False)
+    session = LinkSession(protocol)
+
+    reply = ask(session, id=50, op='telemetry')
+    assert reply['ok'] is False, "an unencodable payload was reported as success"
+    assert reply['id'] == 50, 'the id has to come back so the client can match it'
+    assert 'encoded' in reply['error'].lower()
+    assert session.closed is False
+
+    # And the session is still usable afterwards.
+    assert ask(session, id=51, op='ping')['ok'] is True
+
+
 def test_token_can_be_required_or_not():
     """require_token=False is for a bench test over a trusted pipe."""
     app = FakeDisplayApp()
@@ -850,6 +912,89 @@ def test_spp_server_rejects_a_bad_token_and_drops_the_peer():
         server.stop()
 
 
+def test_spp_server_serves_a_second_peer_while_the_first_is_silent():
+    """A peer that stops talking must not block the next phone from being served.
+
+    This was the worst fault in the link. The accept loop served one peer inline, so a
+    phone that went away without a clean disconnect held the listener inside recv() for
+    ever: the next connection was accepted by the kernel and never answered, the app
+    timed out, and the only cure was closing the app or restarting the Pi's service.
+    """
+    server, app, _, port = _spp_over_tcp()
+    try:
+        silent, silent_f = _connect(port)          # connects, then says nothing at all
+        try:
+            conn, f = _connect(port)
+            try:
+                assert _rpc(f, id=1, op='hello', token=TOKEN)['ok'] is True
+                app.telemetry.rpm = 1234
+                assert _rpc(f, id=2, op='telemetry')['data']['rpm'] == 1234
+            finally:
+                _close_peer(conn, f)
+        finally:
+            _close_peer(silent, silent_f)
+    finally:
+        server.stop()
+
+
+def test_spp_server_reclaims_an_idle_peer():
+    """Silence for longer than the idle timeout releases the session."""
+    server, _, _, port = _spp_over_tcp(idle_timeout=0.5)
+    try:
+        conn, f = _connect(port)
+        try:
+            assert _rpc(f, id=1, op='hello', token=TOKEN)['ok'] is True
+            # The server has to notice the silence on its own and hang up.
+            assert f.readline() == b'', "the idle peer was never reclaimed"
+        finally:
+            _close_peer(conn, f)
+    finally:
+        server.stop()
+
+
+def test_spp_server_makes_room_for_a_new_peer_instead_of_refusing():
+    """With one slot taken by a silent peer, the newcomer still gets served.
+
+    The newcomer is nearly always the phone that just reconnected, and the peer holding
+    the slot is the stale session it reconnected from, so the stale one has to go.
+    """
+    server, app, _, port = _spp_over_tcp(max_peers=1)
+    try:
+        stale, stale_f = _connect(port)
+        try:
+            conn, f = _connect(port)
+            try:
+                app.telemetry.rpm = 4321
+                assert _rpc(f, id=1, op='hello', token=TOKEN)['ok'] is True
+                assert _rpc(f, id=2, op='telemetry')['data']['rpm'] == 4321
+            finally:
+                _close_peer(conn, f)
+            assert stale_f.readline() == b'', "the stale peer was left holding the slot"
+        finally:
+            _close_peer(stale, stale_f)
+    finally:
+        server.stop()
+
+
+def test_spp_describe_reports_peer_health():
+    """A wedged link has to be visible in the diagnostics, not just felt on the phone."""
+    server, _, _, port = _spp_over_tcp()
+    try:
+        conn, f = _connect(port)
+        try:
+            _rpc(f, id=1, op='hello', token=TOKEN)
+            info = server.describe()
+            assert info['peers'] == 1
+            assert info['connections'] == 1
+            assert info['refused'] == 0
+            assert info['reaped'] == 0
+            assert info['idle_timeout'] > 0
+        finally:
+            _close_peer(conn, f)
+    finally:
+        server.stop()
+
+
 def test_spp_describe_reports_what_is_missing():
     """The diagnostics have to name the missing piece, not just fail to connect."""
     from bt_spp_server import SppServer
@@ -893,6 +1038,31 @@ def test_bt_link_can_be_turned_off():
     assert link.enabled is False
     assert link.start() is False
     assert link.errors == {}
+
+
+def test_bt_link_reads_the_idle_timeout_from_the_environment():
+    """The SPP idle timeout has to be tunable, and has to survive a bad value.
+
+    A peer that stays silent is reclaimed after this long. It is generous because a
+    backgrounded app stops polling and still holds a good socket, but a bench test wants a
+    number it can watch.
+    """
+    import os
+    from bt_link import BtLink
+
+    saved = os.environ.get('MX5_BT_IDLE_TIMEOUT')
+    try:
+        os.environ['MX5_BT_IDLE_TIMEOUT'] = '7.5'
+        assert BtLink(LinkService(FakeDisplayApp())).idle_timeout == 7.5
+        assert BtLink(LinkService(FakeDisplayApp())).status()['idle_timeout'] == 7.5
+
+        os.environ['MX5_BT_IDLE_TIMEOUT'] = 'not a number'
+        assert BtLink(LinkService(FakeDisplayApp())).idle_timeout == 300.0
+    finally:
+        if saved is None:
+            os.environ.pop('MX5_BT_IDLE_TIMEOUT', None)
+        else:
+            os.environ['MX5_BT_IDLE_TIMEOUT'] = saved
 
 
 def test_bt_link_falls_back_on_an_unknown_mode():

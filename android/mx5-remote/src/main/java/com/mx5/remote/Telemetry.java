@@ -269,6 +269,26 @@ public final class Telemetry {
         return useMph != 0 ? speedMph() : speedKmh;
     }
 
+    /**
+     * The speed to actually draw, with the sign kept.
+     *
+     * {@link Math#round} rounds -0.4 to 0, so a car reversing at walking pace
+     * lost its minus and read as stationary - which is also what made the gear
+     * look like 1st. Rounding away from zero keeps the sign, and any reverse
+     * motion at all is shown as at least -1. The Pi and the ESP32 floor
+     * negatives the same way, so all three screens agree.
+     *
+     * @param mph true to draw mph, false for km/h
+     * @return the value to print, negative while reversing
+     */
+    public long speedForDisplay(boolean mph) {
+        double v = mph ? speedMph() : speedKmh;
+        if (v < 0) {
+            return -Math.max(1L, Math.round(-v));
+        }
+        return Math.round(v);
+    }
+
     public double gMagnitude() {
         return Math.sqrt(gLateral * gLateral + gLongitudinal * gLongitudinal);
     }

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # replacement for those routes, not a new contract, so it stays 8 here too.
 SCREEN_COUNT = 8
 
-# Colour schemes offered by the phone app. Must stay in sync with
+# Color schemes offered by the phone app. Must stay in sync with
 # android/mx5-remote/Palette.SCHEMES and the ESP32 theme table.
 THEME_SCHEMES = (
     'aurora', 'crimson', 'emerald', 'sakura', 'midnight', 'sunset',
@@ -46,7 +46,7 @@ def _truthy(value):
 def screen_index(app):
     """The display app's current screen as a plain int.
 
-    The app holds current_screen as a Screen enum. That is neither JSON-serialisable nor
+    The app holds current_screen as a Screen enum. That is neither JSON-serializable nor
     usable as a list index, so every payload and every lookup has to unwrap it first. The
     protocol and parity tests drive a stand-in whose current_screen is already an int,
     which is exactly why they passed while this failed against the real app.
@@ -57,6 +57,22 @@ def screen_index(app):
 def screen_name(app):
     """The name of the display app's current screen."""
     return app.screen_names[screen_index(app)]
+
+
+def _can_is_live(app):
+    """True when the CAN handler is actually receiving frames right now.
+
+    Mirrors `CANHandler.is_receiving_data()`. The handler exposes it, but the
+    stand-in app used by the protocol/parity tests has a `can_handler` without
+    that method, so the fallback keeps those tests honest instead of crashing.
+    """
+    handler = getattr(app, 'can_handler', None)
+    if handler is None:
+        return False
+    probe = getattr(handler, 'is_receiving_data', None)
+    if probe is None:
+        return True
+    return bool(probe())
 
 
 class LinkService:
@@ -128,6 +144,11 @@ class LinkService:
             'gear_color': t.gear_color,
             'is_in_neutral': t.is_in_neutral,
             'is_in_reverse': t.is_in_reverse,
+            # Raw CAN values behind the reverse decision. ISSUE-14's last open
+            # question is whether the PCM ever writes 0x201's speed field below
+            # its centre; these two numbers answer it from an ordinary drive.
+            'speed_raw': t.speed_raw,
+            'transmission_range': t.transmission_range,
             'throttle_percent': t.throttle_percent,
             'brake_percent': t.brake_percent,
             'coolant_temp_f': t.coolant_temp_f,
@@ -135,6 +156,9 @@ class LinkService:
             'ambient_temp_f': t.ambient_temp_f,
             'maf': t.maf,
             'fuel_level_percent': t.fuel_level_percent,
+            # Pre-hysteresis mean: what the fuel accounting runs on, and the honest
+            # number for anything diagnosing the gas figures from a phone.
+            'fuel_level_average': t.fuel_level_average,
             'voltage': t.voltage,
             'tire_pressure': list(t.tire_pressure),
             'tire_temp': list(t.tire_temp),
@@ -147,6 +171,9 @@ class LinkService:
             'instant_mpg': t.instant_mpg,
             'instant_mpg_valid': t.instant_mpg_valid,
             'average_mpg': t.average_mpg,
+            # 'maf' | 'fuel_gauge' | 'estimated' - where the average came from, so a
+            # surprising figure can be traced without reading the calculator.
+            'average_mpg_source': t.average_mpg_source,
             'range_miles': t.range_miles,
             'check_engine_light': t.check_engine_light,
             'abs_warning': t.abs_warning,
@@ -165,7 +192,11 @@ class LinkService:
             'dtc_codes': list(t.dtc_codes),
             'dtc_count': t.dtc_count,
             'wheel_slip': list(t.wheel_slip),
-            'can_connected': getattr(app, 'can_handler', None) is not None,
+            # A handler object existing is not the same as a bus that is talking.
+            # The object is built at start-up whether or not the MCP2515 ever came
+            # up, so this used to report "UP" over a dead link - and the System
+            # page had no way to say the car had gone quiet.
+            'can_connected': _can_is_live(app),
             'demo_mode': app.settings.demo_mode,
             'sleeping': app.sleeping,
             # LED strip health, reported by the Nano itself over its serial link. The
@@ -265,14 +296,14 @@ class LinkService:
                 app.settings.led_shift_hz = hz
                 self._push_led(app)
             elif name == 'led_shift_color':
-                colour = str(value).strip().lower()
-                if len(colour) != 6:
+                color = str(value).strip().lower()
+                if len(color) != 6:
                     return {'success': False, 'error': 'led_shift_color must be rrggbb'}, 400
                 try:
-                    int(colour, 16)
+                    int(color, 16)
                 except ValueError:
                     return {'success': False, 'error': 'led_shift_color is not hex'}, 400
-                app.settings.led_shift_color = colour
+                app.settings.led_shift_color = color
                 self._push_led(app)
             elif name == 'led_ramp':
                 # "<rpm>:<rrggbb>,..." from the phone, forwarded to the strip as-is.
@@ -283,13 +314,13 @@ class LinkService:
                 if not 2 <= len(parts) <= 6:
                     return {'success': False, 'error': 'led_ramp needs 2-6 stops'}, 400
                 for part in parts:
-                    rpm, _, colour = part.partition(':')
-                    if not rpm.isdigit() or len(colour) != 6:
+                    rpm, _, color = part.partition(':')
+                    if not rpm.isdigit() or len(color) != 6:
                         return {'success': False, 'error': 'led_ramp stop must be rpm:rrggbb'}, 400
                     try:
-                        int(colour, 16)
+                        int(color, 16)
                     except ValueError:
-                        return {'success': False, 'error': 'led_ramp colour is not hex'}, 400
+                        return {'success': False, 'error': 'led_ramp color is not hex'}, 400
                 app.settings.led_ramp = text
                 self._push_led(app)
             elif name == 'led_theme_dim':

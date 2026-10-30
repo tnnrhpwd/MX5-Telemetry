@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 
@@ -152,5 +153,27 @@ final class BtDevices {
         }
         return "No paired device looks like the Pi"
                 + (wanted == null || wanted.isEmpty() ? "" : " (looking for " + wanted + ")");
+    }
+
+    /**
+     * The device source both car surfaces hand to the transports.
+     *
+     * Shared rather than written twice, because the two surfaces are separate packages
+     * with separate processes: the in-motion one used to have no Bluetooth at all
+     * precisely because this wiring only existed in the parked app's activity, and a
+     * head-unit-only launch never runs that activity.
+     */
+    static BtTransport.DeviceSource source(final Context c, final SharedPreferences prefs) {
+        return new BtTransport.DeviceSource() {
+            @Override
+            public BluetoothDevice device() {
+                return find(c, prefs.getString("bt_device", ""));
+            }
+
+            @Override
+            public String reason() {
+                return explain(c, prefs.getString("bt_device", ""));
+            }
+        };
     }
 }

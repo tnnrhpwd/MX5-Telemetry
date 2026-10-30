@@ -21,26 +21,32 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* The car canvas. Exactly the resolution Android Auto projects at, so what is measured
- * here is the same geometry the head unit gets. A class rather than an id, because the
- * contact sheet needs nine of them at once. */
+/* The car canvas. The head unit reports 919x480 at 209dpi, which is 700x367dp, and dp is
+ * what Ui.java lays out in - so this is the geometry the app actually gets. Rendering at
+ * 800x480 (the old value here) gave every screen 113dp of height the car does not have,
+ * which is how three of them came to be clipped in the car while looking fine in a
+ * browser. A class rather than an id, because the contact sheet needs nine at once. */
 .device {
   position: relative;
-  width: 800px;
-  height: 480px;
+  width: 700px;
+  height: 367px;
   overflow: hidden;
   background: linear-gradient(to bottom, var(--page-glow), var(--page));
   color: var(--text);
   display: flex;
   flex-direction: column;
+  /* Everything the app draws starts this far in, because the head unit can lay its own
+   * button bar over the left of the projection. Mirrors MainActivity's edge inset. */
+  padding-left: var(--edge-left, 0px);
 }
 
-/* The phone shell is a different canvas. The car's 800x480 is what Android Auto projects, but
- * a phone is tall and narrow: rendering the narrow shell in the car's frame clips the drawer
- * and makes a working layout look broken. 384x832dp is the S25 Ultra, near enough. */
+/* The phone shell is a different canvas: a phone is tall and narrow, and rendering the
+ * narrow shell in the car's frame clips the drawer and makes a working layout look broken.
+ * 384x832dp is the S25 Ultra, near enough. */
 .device.phone {
   width: 400px;
   height: 832px;
+  padding-left: 0;
 }
 
 /* Nine screens on one page, half scale, for a holistic read before drilling in. */
@@ -61,8 +67,8 @@ html, body {
 }
 
 .sheet-frame {
-  width: 400px;
-  height: 240px;
+  width: 350px;
+  height: 184px;
   overflow: hidden;
   border: 1px solid #2a2a30;
   border-radius: 3px;
@@ -286,6 +292,40 @@ html, body {
 .drawer-row.on { color: var(--accent); background: var(--wash-accent); }
 .drawer-row.action { color: var(--accent); }
 .drawer-row.danger { color: var(--bad); }
+
+/* ------------------------------------------------------- head unit overlay */
+
+/* The Pioneer's own button bar, drawn by the head unit over the left of the projected
+ * image. It is not part of Android Auto and not something the app can ask about, which is
+ * why the app carries a left edge inset instead of reading an inset. Shown with
+ * ?headunit=1 so a layout can be checked with it in the way. */
+.headunit-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--headunit-bar, 80px);
+  z-index: 20;
+  background: #000;
+  border-right: 1px solid #1c1c20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-evenly;
+  padding: 8px 0;
+}
+
+.headunit-key {
+  width: 42px;
+  height: 42px;
+  border-radius: 9px;
+  background: #141418;
+  color: #767b8a;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 /* ----------------------------------------------------------------------- body */
 

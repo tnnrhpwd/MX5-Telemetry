@@ -26,12 +26,54 @@ final class SppTransport extends BtTransport {
     /** The Serial Port Profile UUID. Android's own SPP constant is this exact value. */
     static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
 
+    /**
+     * How long the whole create-and-connect may take.
+     *
+     * Neither createRfcommSocketToServiceRecord (which performs an SDP lookup) nor
+     * connect() has a timeout, and both are allowed to take tens of seconds when the
+     * peer is powered off or out of range: the RFCOMM page timeout alone is around
+     * fifteen. That time was spent on the poll thread, holding PiClient's request lock,
+     * so one attempt at a Pi that was not there yet stalled the whole app and looked
+     * exactly like a link that needed the app reopened.
+     */
+    private static final long CONNECT_TIMEOUT_MS = 6000;
+
+    /**
+     * How long one request line may take to be written.
+     *
+     * A BluetoothSocket write blocks until the peer's flow control accepts the bytes, and
+     * there is no write timeout to set. A phone whose link died mid-write otherwise sat
+     * there for ever with the request lock held, so nothing could recover it.
+     */
+    private static final long WRITE_TIMEOUT_MS = 2500;
+
     private final DeviceSource devices;
 
     private BluetoothSocket socket;
     private InputStream in;
     private OutputStream out;
     private Thread reader;
+
+    /**
+     * Whether the insecure socket variant is the one that works with this Pi.
+     *
+     * Learned once per device. The secure socket resolves the service through SDP and
+     * authenticates the link, which is the right default, but a Pi that has been
+     * rebooted, had bluetoothd restarted or been re-paired routinely leaves that cached
+     * record stale. Retrying the secure path first on every reconnect meant paying a
+     * failed SDP lookup, and the extra delay, on every single reconnect for the rest of
+     * the session. Nothing is unprotected by the insecure path: the token in `hello` is
+     * the real gate.
+     */
+    private boolean preferInsecure;
+    private String learnedFor = "";
+
+    /** A connect that hit the deadline, as opposed to one that failed outright. */
+    private static final class Timeout extends IOException {
+        Timeout(String message) {
+            super(message);
+        }
+    }
 
     SppTransport(String token, DeviceSource devices) {
         super(token);
@@ -74,56 +116,114 @@ final class SppTransport extends BtTransport {
             throw new IOException(devices.reason());
         }
 
-        BluetoothSocket s;
-        try {
-            s = device.createRfcommSocketToServiceRecord(SPP_UUID);
-        } catch (SecurityException e) {
-            throw new IOException("Bluetooth permission denied", e);
-        } catch (IOException e) {
-            throw new IOException("Could not create an SPP socket: " + e.getMessage(), e);
+        // The learned preference belongs to one device: a different Pi may be the one that
+        // publishes a clean SDP record, so start it at the secure path again.
+        String address = BtDevices.address(device);
+        if (!address.equals(learnedFor)) {
+            learnedFor = address;
+            preferInsecure = false;
         }
 
-        try {
-            s.connect();
-        } catch (IOException secureFailure) {
-            closeQuietly(s);
-
-            // Retry once over the insecure variant before giving up on SPP.
-            //
-            // createRfcommSocketToServiceRecord does an SDP lookup on the Pi and needs the
-            // cached record to still be right. A Pi that has been rebooted, had bluetoothd
-            // restarted, or been re-paired routinely leaves that cache stale, and the
-            // secure connect then fails with "service discovery failed" even though the
-            // device is paired and in range. The insecure socket skips authentication at
-            // the RFCOMM layer and still finds the record, and nothing is actually
-            // unprotected by it: the token in `hello` is the real gate, exactly as the
-            // comment on authenticate() says. Without this the app had to be restarted, or
-            // the pairing redone, to get the link back.
-            Log.d("MX5Link", "secure SPP connect failed, retrying insecure: " + secureFailure);
-            try {
-                s = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID);
-            } catch (SecurityException e) {
-                throw new IOException("Bluetooth permission denied", e);
-            } catch (IOException e) {
-                throw new IOException("SPP connect failed: " + secureFailure.getMessage(), e);
-            }
-
-            try {
-                s.connect();
-            } catch (IOException insecureFailure) {
-                closeQuietly(s);
-                // The usual cause on a Pi is that the SDP record was never published, which
-                // reads as "service not found" here.
-                throw new IOException("SPP connect failed: " + insecureFailure.getMessage(),
-                        insecureFailure);
-            }
-        }
+        BluetoothSocket s = connect(device);
 
         socket = s;
         in = s.getInputStream();
         out = s.getOutputStream();
         clearReceived();
         startReader(in);
+    }
+
+    /**
+     * Create and connect a socket, secure first and insecure if that fails.
+     *
+     * Only a failure is retried insecurely. A connect that ran out of time is not an SDP
+     * problem: it means the Pi is off, asleep or out of range, and trying again over the
+     * other variant would double the wait to prove the same thing.
+     */
+    private BluetoothSocket connect(android.bluetooth.BluetoothDevice device) throws IOException {
+        if (preferInsecure) {
+            return connectWithin(device, false);
+        }
+        try {
+            return connectWithin(device, true);
+        } catch (Timeout e) {
+            throw e;
+        } catch (IOException secureFailure) {
+            // createRfcommSocketToServiceRecord does an SDP lookup on the Pi and needs the
+            // cached record to still be right...
+            Log.d("MX5Link", "secure SPP connect failed, retrying insecure: " + secureFailure);
+            BluetoothSocket s = connectWithin(device, false);
+            preferInsecure = true;
+            return s;
+        }
+    }
+
+    /**
+     * Do the create and the connect on a worker thread, with a deadline.
+     *
+     * Closing the socket is the only way to interrupt either call; there is no
+     * cancel, and neither accepts a timeout.
+     */
+    private BluetoothSocket connectWithin(android.bluetooth.BluetoothDevice device,
+                                          boolean secure) throws IOException {
+        final Attempt attempt = new Attempt();
+        Thread worker = new Thread(() -> {
+            try {
+                BluetoothSocket s = secure
+                        ? device.createRfcommSocketToServiceRecord(SPP_UUID)
+                        : device.createInsecureRfcommSocketToServiceRecord(SPP_UUID);
+                attempt.socket = s;
+                if (attempt.aborted) {
+                    closeQuietly(s);
+                    return;
+                }
+                s.connect();
+            } catch (IOException e) {
+                attempt.error = e;
+            } catch (SecurityException e) {
+                attempt.error = new IOException("Bluetooth permission denied", e);
+            }
+        }, "spp-connect");
+        worker.setDaemon(true);
+        worker.start();
+
+        try {
+            worker.join(CONNECT_TIMEOUT_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            attempt.aborted = true;
+            closeQuietly(attempt.socket);
+            throw new IOException("Interrupted while connecting over SPP", e);
+        }
+
+        if (worker.isAlive()) {
+            attempt.aborted = true;
+            closeQuietly(attempt.socket);
+            try {
+                // Give the worker a moment to observe the abort, then free anything it
+                // created at the last instant.
+                worker.join(250);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            closeQuietly(attempt.socket);
+            throw new Timeout("SPP connect timed out after " + CONNECT_TIMEOUT_MS + "ms");
+        }
+
+        if (attempt.error != null) {
+            throw attempt.error;
+        }
+        if (attempt.socket == null) {
+            throw new IOException("SPP connect failed");
+        }
+        return attempt.socket;
+    }
+
+    /** Hand-back between the connecting thread and the worker doing the blocking call. */
+    private static final class Attempt {
+        volatile BluetoothSocket socket;
+        volatile IOException error;
+        volatile boolean aborted;
     }
 
     private void startReader(InputStream input) {
@@ -133,6 +233,7 @@ final class SppTransport extends BtTransport {
                 while (true) {
                     int n = input.read(buf);
                     if (n < 0) {
+                        Log.d("MX5Link", "SPP peer closed the link");
                         return;             // peer closed
                     }
                     if (n > 0) {
@@ -144,20 +245,57 @@ final class SppTransport extends BtTransport {
             } catch (IOException e) {
                 // Connection gone. The queue simply stops filling, so a pending
                 // receiveLine times out rather than hanging for ever.
+                Log.d("MX5Link", "SPP read failed: " + e);
             }
         }, "spp-read");
         reader.setDaemon(true);
         reader.start();
     }
 
+    /**
+     * Write a request line, giving up if the stack will not take it.
+     *
+     * The write runs on a worker so it can be abandoned. Closing the socket is what
+     * actually unblocks it: a BluetoothSocket has no write timeout, and a peer whose
+     * link died mid-transfer stops accepting bytes without ever reporting it. When that
+     * happened inline, the poll thread held PiClient's request lock for ever and nothing
+     * in the app could recover except a restart.
+     */
     @Override
     protected void send(byte[] data) throws IOException {
-        OutputStream o = out;
-        if (o == null) {
+        final OutputStream o = out;
+        final BluetoothSocket s = socket;
+        if (o == null || s == null) {
             throw new IOException("SPP socket is not open");
         }
-        o.write(data);
-        o.flush();
+
+        final IOException[] failure = new IOException[1];
+        Thread writer = new Thread(() -> {
+            try {
+                o.write(data);
+                o.flush();
+            } catch (IOException e) {
+                failure[0] = e;
+            }
+        }, "spp-write");
+        writer.setDaemon(true);
+        writer.start();
+
+        try {
+            writer.join(WRITE_TIMEOUT_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            closeQuietly(s);
+            throw new IOException("Interrupted during an SPP write", e);
+        }
+
+        if (writer.isAlive()) {
+            closeQuietly(s);
+            throw new IOException("SPP write timed out after " + WRITE_TIMEOUT_MS + "ms");
+        }
+        if (failure[0] != null) {
+            throw failure[0];
+        }
     }
 
     @Override

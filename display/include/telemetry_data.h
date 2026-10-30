@@ -24,7 +24,9 @@ struct TelemetryPacket {
     int8_t   oilTemp;           // -40 to 215°C
     
     // Transmission
-    uint8_t  speed;             // 0-255 km/h or mph
+    // Speed is signed: a reverse reading comes back negative. It was `uint8_t`
+    // here, which silently turned -3 km/h into 253.
+    float    speed;             // km/h, negative while reversing
     int8_t   gear;              // -1=R, 0=N, 1-6
     
     // Fuel

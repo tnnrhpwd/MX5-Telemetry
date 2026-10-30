@@ -26,11 +26,13 @@ Protocol (ESP32 -> Pi):
     OK:SCREEN_X\n            - Confirmation of screen change
 
 Protocol (Pi -> ESP32):
-    TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage
-        Example: TEL:3500,65,3,45,185,1,72,1,0,0,28.5,156,0,13.8
-        Fields: RPM, speed(km/h), gear, throttle%, coolant°F, oil_ok(0/1), 
-                fuel%, engine_on(0/1), gear_estimated(0/1), clutch(0/1),
-                average_mpg, estimated_range_miles
+    TEL:rpm,speed,gear,throttle,coolant,oil,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage,inst_mpg,reverse,brake,inst_mpg_valid
+        Example: TEL:3500,65,3,45,185,1,72,1,0,0,28.5,156,0,13.8,31.0,0,0,1
+        Fields: RPM, speed(km/h, signed - negative while reversing), gear
+                (-1=R, 0=N, 1-6), throttle%, coolant°F, oil_ok(0/1), fuel%,
+                engine_on(0/1), gear_estimated(0/1), clutch(0/1), average_mpg,
+                estimated_range_miles, gear_color, voltage, instant_mpg,
+                reverse(0/1), brake%, instant_mpg_valid(0/1)
     SCREEN:0\n                        - Change to screen 0 (Overview)
     SCREEN:1\n                        - Change to screen 1 (RPM)
     LEFT\n                            - Next screen
@@ -56,6 +58,52 @@ except ImportError:
 
 # TPMS data persistence file
 TPMS_CACHE_FILE = "/home/pi/MX5-Telemetry/data/tpms_cache.json"
+
+
+def telemetry_mpg_fields(t):
+    """Average MPG and range exactly as they go on the wire, fallbacks applied."""
+    avg_mpg = t.average_mpg if t.average_mpg > 0 else 26.0
+    range_miles = t.range_miles
+    if range_miles <= 0 and t.fuel_level_percent > 0:
+        range_miles = int(t.fuel_level_percent * 12.7 * avg_mpg / 100)
+    return avg_mpg, range_miles
+
+
+def format_telemetry_line(t) -> str:
+    """Build the `TEL:` line for the ESP32 from a TelemetryData snapshot.
+
+    Kept outside the handler so the field order can be checked without a serial
+    port; the order is a contract with display/src/main.cpp and is asserted in
+    test_can_speed.py.
+
+    `speed` is signed km/h. It used to be clamped to 0 here, which meant the
+    display could never show a reverse speed no matter what the CAN decode
+    produced - the ESPs only ever see this line. The separate `reverse` flag
+    still travels in field 16, because a sign alone cannot distinguish
+    "reversing" from "field blanked".
+    """
+    speed = t.speed_kmh
+    if speed == 0:
+        # Normalize -0.0, which formats as "-0" and reads as a sign to the ESP
+        # while meaning nothing.
+        speed = 0.0
+
+    avg_mpg, range_miles = telemetry_mpg_fields(t)
+    color_map = {'green': 0, 'red': 1, 'blue': 2, 'yellow': 3, 'cyan': 4}
+
+    msg = f"TEL:{t.rpm:.0f},{speed:.0f},{t.gear},"
+    msg += f"{t.throttle_percent:.0f},{t.coolant_temp_f:.0f},"
+    msg += f"{1 if t.oil_status else 0},"
+    msg += f"{t.fuel_level_percent:.0f},"
+    msg += f"{1 if t.rpm > 0 else 0},"
+    msg += f"{1 if t.gear_estimated else 0},{1 if t.clutch_engaged else 0},"
+    msg += f"{avg_mpg:.1f},{range_miles},"
+    msg += f"{color_map.get(t.gear_color, 0)},{t.voltage:.1f},{t.instant_mpg:.1f}"
+    msg += f",{1 if t.is_in_reverse else 0}"
+    msg += f",{t.brake_percent:.0f}"
+    msg += f",{1 if t.instant_mpg_valid else 0}\n"
+    return msg
+
 
 # TPMS readings are considered stale after this long without a successful update.
 # Beyond this, cached values are discarded and shown as "--" instead of the last value.
@@ -113,7 +161,7 @@ class ESP32SerialHandler:
         self.last_tx_time = 0
         self.last_imu_time = 0  # Track when last IMU data was received
         
-        # Current ESP32 screen (synced from acknowledgements)
+        # Current ESP32 screen (synced from acknowledgments)
         self.esp32_screen = 0
         
         # TPMS data cache (updated from ESP32)
@@ -474,16 +522,16 @@ class ESP32SerialHandler:
                 # All settings from ESP32 - full sync
                 self._parse_all_settings(line[9:])
             elif line.startswith("OK:SCREEN_"):
-                # Screen change acknowledgement
+                # Screen change acknowledgment
                 try:
                     self.esp32_screen = int(line[10:])
                 except ValueError:
                     pass
             elif line.startswith("OK:SET:"):
-                # Setting change acknowledgement
+                # Setting change acknowledgment
                 print(f"ESP32: Setting confirmed - {line[7:]}")
             elif line.startswith("OK:"):
-                # Other acknowledgements (SCREEN_NEXT, SCREEN_PREV, etc.)
+                # Other acknowledgments (SCREEN_NEXT, SCREEN_PREV, etc.)
                 pass
             elif line.startswith("Touch I2C"):
                 # Ignore touch debug messages
@@ -632,55 +680,21 @@ class ESP32SerialHandler:
                 # Format: TEL:rpm,speed,gear,throttle,coolant,oil_ok,fuel,engine,gear_est,clutch,avg_mpg,range_miles,gear_color,voltage,inst_mpg,reverse,brake,inst_mpg_valid
                 # gear_color: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
                 #
-                # speed is km/h. Negative speeds are sent as 0 and the sign is carried
-                # by the dedicated `reverse` field: formatting a small negative with
-                # :.0f yields "-0", and C++ compares -0.0 < 0 as false, so the ESP
-                # could never infer reverse from the speed field alone.
-                speed_for_wire = self.telemetry.speed_kmh
-                if speed_for_wire <= 0:
-                    # `<= 0` rather than `< 0`: a -0.0 would format as "-0" and compare
-                    # false against zero at the far end.
-                    speed_for_wire = 0
-                msg = f"TEL:{self.telemetry.rpm:.0f},{speed_for_wire:.0f},{self.telemetry.gear},"
-                msg += f"{self.telemetry.throttle_percent:.0f},{self.telemetry.coolant_temp_f:.0f},"
-                oil_val = 1 if self.telemetry.oil_status else 0
-                msg += f"{oil_val},"
-                fuel_pct = self.telemetry.fuel_level_percent
-                msg += f"{fuel_pct:.0f},"
-                engine_running = 1 if self.telemetry.rpm > 0 else 0
-                msg += f"{engine_running},"
-                # Add gear estimation and clutch flags
-                gear_est = 1 if self.telemetry.gear_estimated else 0
-                clutch = 1 if self.telemetry.clutch_engaged else 0
-                msg += f"{gear_est},{clutch},"
-                # Add MPG data (average MPG and estimated range in miles)
-                # Use defaults if no data calculated yet
-                avg_mpg = self.telemetry.average_mpg if self.telemetry.average_mpg > 0 else 26.0
-                fuel_pct = self.telemetry.fuel_level_percent
-                range_miles = self.telemetry.range_miles
-                # Calculate range fallback if no range but have fuel data
-                if range_miles <= 0 and fuel_pct > 0:
-                    range_miles = int(fuel_pct * 12.7 * avg_mpg / 100)
-                msg += f"{avg_mpg:.1f},{range_miles},"
-                # Add gear color indicator (0=green, 1=red, 2=blue, 3=yellow, 4=cyan)
-                color_map = {'green': 0, 'red': 1, 'blue': 2, 'yellow': 3, 'cyan': 4}
-                gear_color_val = color_map.get(self.telemetry.gear_color, 0)
-                msg += f"{gear_color_val},{self.telemetry.voltage:.1f},{self.telemetry.instant_mpg:.1f}"
-                # Explicit reverse flag, so the ESP never has to guess from the sign
-                # of a rounded speed value.
-                msg += f",{1 if self.telemetry.is_in_reverse else 0}"
-                # Brake is a binary pedal switch on this car; the ESP renders it as
-                # an on/off indicator rather than a proportional bar.
-                msg += f",{self.telemetry.brake_percent:.0f}"
-                # Distinguishes "no MAF/speed reading" from a real 0 mpg.
-                msg += f",{1 if self.telemetry.instant_mpg_valid else 0}\n"
-                
+                # speed is signed km/h. The sign is part of the contract: a
+                # reverse reading goes out negative so the display can show it.
+                # It is no longer clamped to 0 here - that clamp is why the ESP
+                # could not display a reverse speed even when the CAN decode
+                # produced one.
+                msg = format_telemetry_line(self.telemetry)
+
                 # Debug: log fuel/MPG data periodically (every ~10 seconds)
                 if not hasattr(self, '_mpg_debug_counter'):
                     self._mpg_debug_counter = 0
                 self._mpg_debug_counter += 1
                 if self._mpg_debug_counter >= 300:  # ~10 sec at 30Hz
                     self._mpg_debug_counter = 0
+                    fuel_pct = self.telemetry.fuel_level_percent
+                    avg_mpg, range_miles = telemetry_mpg_fields(self.telemetry)
                     print(f"[ESP32 TX] fuel={fuel_pct:.1f}%, tel.avg_mpg={self.telemetry.average_mpg:.1f}, tel.range={self.telemetry.range_miles}, sending: mpg={avg_mpg:.1f}, range={range_miles}")
                 
                 self.serial_conn.write(msg.encode('utf-8'))

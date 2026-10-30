@@ -8,6 +8,7 @@ server's token and CORS settings:
     MX5_BT_SPP_CHANNEL  RFCOMM channel          (default: 3)
     MX5_BT_ADDRESS  local adapter MAC for SPP   (default: auto-detect via hciconfig)
     MX5_BT_NAME     BLE advertised name         (default: MX5 Pi Link)
+    MX5_BT_IDLE_TIMEOUT  seconds of silence before an SPP peer is reclaimed (default: 300)
 
 Both transports are on by default because they are fallbacks for each other: SPP is the
 cheaper protocol but depends on an SDP record, and BLE needs no SDP but chunks its replies.
@@ -76,6 +77,15 @@ class BtLink:
         self.address = (address if address is not None
                         else os.environ.get('MX5_BT_ADDRESS', '')).strip()
 
+        # How long an SPP peer may stay silent before its session is reclaimed. The app
+        # polls several times a second while it is on screen, so this only ever catches a
+        # peer that has actually gone; it is generous because a backgrounded app stops
+        # polling and still holds a perfectly good socket.
+        try:
+            self.idle_timeout = float(os.environ.get('MX5_BT_IDLE_TIMEOUT', 300) or 300)
+        except (TypeError, ValueError):
+            self.idle_timeout = 300.0
+
         self._spp = None
         self._ble = None
         self.errors = {}
@@ -116,7 +126,8 @@ class BtLink:
             self._spp = SppServer(self.service, token=self.token,
                                   require_token=self.require_token,
                                   channel=self.spp_channel,
-                                  address=self.address)
+                                  address=self.address,
+                                  idle_timeout=self.idle_timeout)
             self._spp.start()
             logger.info("SPP link up: %s", self._spp.describe())
             return True
@@ -156,7 +167,8 @@ class BtLink:
 
     def status(self):
         """A summary for the startup log and for anything that wants to report it."""
-        out = {'mode': self.mode, 'token_required': self.require_token, 'errors': self.errors}
+        out = {'mode': self.mode, 'token_required': self.require_token,
+               'idle_timeout': self.idle_timeout, 'errors': self.errors}
         if self.refused_reason is not None:
             out['refused'] = self.refused_reason
         if self._spp is not None:

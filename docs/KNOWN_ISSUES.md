@@ -50,15 +50,18 @@
 | [ISSUE-04](#issue-04--throttle-and-brake-wrong-on-the-rpm-page) | Throttle and brake wrong on the RPM page | Android (+ ESP) | Bug | 🟠 High | ✅ Fixed (needs CAN log) |
 | [ISSUE-05](#issue-05--esp32-gyro-screen-still-uses-the-old-visualization) | Gyro screen still uses the old display code | ESP32-S3 | Bug | 🟡 Medium | ✅ Fixed (unverified in car) |
 | [ISSUE-06](#issue-06--android-speed-reads-about-two-thirds-of-actual) | Speed reads ~⅔ of actual | Android | Bug | 🔴 Critical | ✅ Fixed (unverified in car) |
-| [ISSUE-07](#issue-07--startup-animation-is-plain) | Startup animation needs polish | ESP32-S3 | Polish | ⚪ Low | 🟡 Improved, **not done** — wants a proper, impressive animation |
+| [ISSUE-07](#issue-07--startup-animation-is-plain) | Startup animation needs polish | ESP32-S3 | Polish | ⚪ Low | 🟡 **Rebuilt** — 4-beat sequence in the shared UI core; preview via the native simulator, needs one panel pass |
 | [ISSUE-08](#issue-08--fuel-percentage-is-not-stable) | Fuel % jumps around; needs averaging | Pi / all UIs | Bug | 🟡 Medium | ✅ Fixed (unverified in car) |
 | [ISSUE-09](#issue-09--app-is-not-available-while-driving) | App not viewable while driving | Android Auto | Feature | 🟠 High | 🟡 **Descriptor added + installed** — needs the head unit, then possibly a Play track |
 | [ISSUE-10](#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder) | Instantaneous MPG always shows `---` | ESP32-S3 / Pi | Bug | 🟡 Medium | ✅ **Fixed, verified live** — MAF and IAT answer |
 | [ISSUE-11](#issue-11--tpms-card-should-become-a-gear--rpm-card) | TPMS card on Overview → 3-gear RPM view | ESP32-S3 | Feature | 🟡 Medium | ✅ Fixed — numeric order, see ISSUE-13 |
 | [ISSUE-12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient) | LED strip laggy; flat colours, no gradient | Arduino Nano | Bug / Polish | 🟠 High | ✅ **Verified working on the strip** — full gradient at 6500 rpm |
 | **ISSUE-13** | Overview gear ladder is not in numeric order | ESP32-S3 | Bug | 🟡 Medium | ✅ **Fixed, flashed** — 2 × 3 grid |
-| **ISSUE-14** | Reverse shows a **positive** speed and gear 1, never `R` | Pi → ESP32-S3 | Bug | 🟠 High | ⏳ Open — probe tool ready and analysed offline, capture pending |
+| **ISSUE-14** | Reverse shows a **positive** speed and gear 1, never `R` | Pi → ESP32-S3 | Bug | 🟠 High | ✅ Every code-side defect fixed and tested; reverse now also switchable to a discrete range code |
 | **ISSUE-15** | LED control surface is one chip row; needs a real settings screen | Android + Arduino | Feature | 🟠 High | ✅ **Built** — screen, firmware keys and Pi API; needs a device pass |
+| [ISSUE-16](#issue-16--the-head-units-own-button-bar-covers-the-page-names) | Head unit's own button bar covers the page names | Android Auto (parked) | Bug | 🟠 High | ✅ **Fixed** — stored left edge inset + the EDGE chip; needs one look in the car |
+| [ISSUE-17](#issue-17--three-pages-are-taller-than-the-head-unit) | System / Roof / Settings are taller than 367dp and clip | Android Auto (parked) | Bug | 🟡 Medium | ⏳ Open — measured in the mimic; every page's last row needs to be reachable |
+| **ISSUE-18** | Average MPG and range are derived from a coarse sender, and several accounting bugs biased them | Pi → all UIs | Bug | 🟠 High | ✅ **Rebuilt** — fuel is now summed from air flow; sender path corrected and unit-tested |
 
 **Status key:** ✅ code complete and building · ❌ **verified still broken in the car** ·
 🟡 works but wrong/misleading · ⚠️ partially addressed, see the issue · ⏳ open.
@@ -83,21 +86,23 @@ fix that did not survive contact with the car.
 | 5 | **Reverse still shows positive speed / gear 1** ([01](#issue-01--reverse-gear-not-detected-on-esp32), [14](#issue-14--reverse-reports-a-positive-speed-and-gear-1)) | Probe tool written (`tools/can/reverse_probe.py`); one capture in neutral vs reverse is still needed. | S (log) → M (fix) |
 | 6 | **Startup animation** ([07](#issue-07--startup-animation-is-plain)) | Design pass, then implement. Cosmetic but explicitly wanted. | M |
 | 7 | **Fuel % / IAT** ([08](#issue-08--fuel-percentage-is-not-stable), [03](#issue-03--intake-air-temperature-always-zero-on-android)) | ✅ IAT reports live (`89F`); fuel needs a drive to confirm the averaging now that the bus is clean. | S, needs drive |
+| 8 | **Page names under the head unit's bar** ([16](#issue-16--the-head-units-own-button-bar-covers-the-page-names)) | ✅ left edge inset (64dp default) plus the EDGE chip in the top bar; the mimic can now prove it (`?headunit=1`). One look in the car settles the default. | S |
+| 9 | **Three pages taller than the car** ([17](#issue-17--three-pages-are-taller-than-the-head-unit)) | Measured at 700x367dp: System +20, Roof +49, Settings +63. Needs a scrolling panel body before those rows can be tapped. | M |
 
 
 ---
 
 ## ISSUE-01 — Reverse gear not detected on ESP32
 
-**Status:** ❌ **Still broken in the car (2026-10-30).** The explicit `reverse` flag was
-added and the ESP honours it, but the flag is never true when it matters: driving in
-reverse the ESP shows a **positive** speed and gear **1**, not `R`. See
-[ISSUE-14](#issue-14--reverse-reports-a-positive-speed-and-gear-1) for the follow-up
-investigation — the fault is upstream of the link, so this issue's fix (the flag) is
-correct but was never the whole problem.
+**Status:** 🟡 **Transport fixed; four separate sign-destroying defects were found and
+fixed (2026-10-30, code-only pass).** The explicit `reverse` flag was added and the ESP
+honours it, and the sign of the speed now survives from the CAN frame all the way to
+both pixels — that part is proven below. What is still unproven is whether the car
+writes the sign into the field at all. See
+[ISSUE-14](#issue-14--reverse-reports-a-positive-speed-and-gear-1).
 
-- `esp32_serial_handler.py` clamps the transmitted speed to `0` and appends
-  `reverse` as field 16 of `TEL:`.
+- `esp32_serial_handler.py` sends the speed **signed** (`format_telemetry_line()`) and
+  appends `reverse` as field 16 of `TEL:`.
 - `display/src/main.cpp` reads it into `telemetry.isInReverse`;
   `ui_core.cpp` uses that flag on the Overview and RPM screens.
 - `telemetry.isInReverse` is set by the Pi whenever speed is negative, and held for
@@ -238,8 +243,8 @@ MS-CAN body-bus frame (needs a log).
 pinned empty).
 
 **Where it lives:**
-- [telemetry_data.py](../pi/ui/src/telemetry_data.py#L43) — `intake_temp_f: int = 0`
-- [main.py](../pi/ui/src/main.py#L184) — same default
+- [main.py](../pi/ui/src/main.py#L186) — `intake_temp_f: int = 0` (the only
+  `TelemetryData` left; the drifting duplicate in `telemetry_data.py` was deleted)
 - [can_handler.py](../pi/ui/src/can_handler.py) — **no assignment to `intake_temp_f`
   anywhere in the CAN path**
 - [link_service.py](../pi/ui/src/link_service.py#L103) — sends `intake_temp_f` as-is
@@ -458,57 +463,157 @@ mode, and the ESP and phone agree.
 
 ## ISSUE-07 — Startup animation is plain
 
-**Status:** 🟡 **Improved, not done (2026-10-30).** `playStartupAnimation()` in `main.cpp`
-replaced the single blit and 1.5 s `delay()`, and the car no longer shows a static logo —
-but it is not the "wow" the owner wants. Treat the three beats below as the *baseline* to
-build on, not the answer.
+**Status:** 🟡 **Rebuilt (2026-10-30), needs one pass on the panel.** The sequence now
+lives in the shared UI core (`ui_startupFrame()` in `ui_core.cpp`) instead of `main.cpp`,
+so the native simulator plays the exact code the panel runs — every frame below was
+rendered by that simulator, not re-created in Python. It is 1.56 s long and still only
+runs before the Pi link exists.
 
-Baseline (fixed total length ~1.45 s):
-1. the logo zooms in from 40% to 100%;
-2. a tach-style arc sweeps 135°→405° and settles back to empty, matching the RPM
-   screen's geometry;
-3. the title `MX5 TELEMETRY` fades in over a growing accent rule.
+Nine beats, all timed from one clock, paced to fill 22 s — most of the 30 s wait. The beats
+**overlap** on purpose: each one starts before the last has finished, so there is no frame
+where the screen is just sitting there waiting for the next thing.
+
+| Time | Beat |
+|------|------|
+| 0 – 0.9 s | **Ignition.** A white core pulses twice and two rings run out from it. |
+| 0.9 – 6 s | **Warp burst.** 120 particles stream outward in colour-coded streaks (white → cyan → blue), fading *in* from the core so nothing appears out of nowhere. |
+| 6 – 8.4 s | **Vortex.** The stream loses its outward speed and settles into an orbit at r=112…182, picking up spin. |
+| 8.4 – 10.3 s | **Implosion.** The orbit collapses into the core, timed to land exactly on the flash. |
+| 9.9 – 11.5 s | **Impact.** A bright core disc plus three dotted shockwave rings running out through the bezel. |
+| 10.4 – 16.4 s | **Self-test sweep.** Starts *at* the flash, so the blast writes the gauge: the 36-dot tach ring lights round the dial with an oversized leading blob. |
+| 10.6 – 11.8 s | **Emblem.** The Mazda disc scales in out of the flash (24 → 200 px), *inside* the sweeping ring. |
+| 16.35 – 17 s | **Lock pulse.** A bright wave leaves the now-full ring outward. |
+| 17 – 19 s | **Settle.** The lit dots cool back to unlit from the redline end. |
+| 18.4 – 22 s | **Wordmark.** The accent rule grows out from the centre, then `MX5 TELEMETRY` and a big cyan `READY`. |
+
+The first 17 s is a *film*: the particles, the flash, the waves, the sweeping ring, the badge
+and the lock pulse are all a closed form of `(time, index)`, and every frame repaints the
+backdrop and the whole effect — 25 fps while particles are on screen, 10 fps once only the
+sweep is moving. The settle and wordmark that follow are incremental deltas. The whole
+sequence is deterministic (no `rand()`), so the panel and the simulator's stills agree.
 
 The theme is loaded from NVS *before* the animation, so the boot sequence is already in
-the phone's colours.
+the phone's colours. The opening paints its *decorative* parts from the scheme's two seed
+colours (`accent` and `purple`, blended at runtime in `mix565`), so crimson ignites red,
+emerald green, cyberpunk yellow — while the tach ring keeps the semantic blue→red RPM ramp,
+because that ramp means RPM and must not change with a theme. `esp32_ui_simulator.exe
+--themes` renders all twelve schemes, dark and light, for checking.
 
-**Remaining (this is a design task, not a bug fix):** make it genuinely impressive.
-Constraints that must survive: it runs before the Pi link is up, it must not add more than
-~2 s to boot, it must run on the ESP32-S3's existing draw primitives, and it must look
-right in both the dark and light themes. Ideas worth prototyping on the round panel:
-a rotating "startup sweep" that lights each screen's accent in turn, a needle sweep with
-overshoot and settle, a particle/afterglow trail on the arc, and a hard cut to the first
-frame rather than a fade to black.
+### What was wrong with the first pass
+
+- **The light theme was broken.** The wordmark was drawn in the theme's text colour
+  (`MX5_WHITE`, which is dark navy in light mode) straight on top of the dark logo photo,
+  so it vanished; the logo also erased two horizontal bands with `COLOR_BG`, which on a
+  light theme painted white stripes across a black emblem. The wordmark now sits *below*
+  the badge, on the page background, in theme colours.
+- **The emblem was a square.** `boot_logo.h` is a circular badge on a square of black, so
+  blitting it whole left four black corners — which is why it spent a while sitting on a
+  rounded plate, a second shape competing with the gauge. It is now clipped to a disc
+  (`bootEmblemDisc()`): every source row is cut to its own chord and pushed as one
+  transaction, so the emblem and the gauge are the same shape. No plate in either theme.
+- **The sweep was the wrong way round.** It was rasterised with `LCD_DrawThickArc`, which
+  measures angles with +Y *up*, while every dot ring in the UI measures +Y *down*. The
+  boot arc's 270° gap was at the **top**; the RPM ring it was supposed to match has its
+  gap at the **bottom**. Both now come from one `DIAL_ARC_START/SWEEP` pair.
+- **It was drawn with the most expensive primitives.** `LCD_DrawThickArc` is one QSPI
+  transaction per pixel (~10 µs each), and each zoom step cleared the whole 360×360 panel
+  (a 253 KB PSRAM fill) before blitting. The old zoom was also only 4 hard steps, so it
+  stuttered rather than zoomed. The new sequence uses only batched calls — dot fills,
+  `FillRoundRect`, `DrawString` and four scaled blits — and never clears the full panel
+  once the backdrop is down.
+- **The final frame collided.** The logo was blown up to the full 360×360, so the wordmark
+  at y=250 and the accent rule at y=72 were printed on top of the emblem. Nothing overlaps
+  now: badge in the middle, rule and wordmark in the ring's bottom gap.
+
+### The wait that follows
+
+The boot screen does **not** hand over to the Overview at the end of the intro. It stays up
+and keeps animating for the whole `PI_BOOT_COUNTDOWN` (30 s), so the wait is part of the
+animation rather than a timer to stare at. The intro eats 22 s of that 30 s; the last 8 s
+are the wait:
+
+| Element | Motion |
+|---------|--------|
+| Ring, r=150 | dots fill one at a time over the remaining 8 s **and** a comet laps the dial every 3.4 s, brightening the three dots it passes |
+| Emblem | the disc breathes between 196 and 204 px on a 2.6 s sine — 200 at the hand-off, so there is no size step |
+| Caption | the rotating message takes the exact slot and type size `READY` had, so the hand-off from the intro is a word swap (every 4 s: Rocket boosters…, Flux capacitor…, Hamster wheels…) |
+| Timer | `30 SEC → 0 SEC`, measured from power-on, so it includes the intro |
+
+The frame is derived from the elapsed clock alone, so it is idempotent: repainting it leaves
+no seam, and the simulator can render any instant of the wait on its own. The firmware drives
+it at 8 fps from `loop()` (the intro runs at 20 fps inside `setup()`); once the first
+telemetry line arrives (or the 30 s runs out) the Overview takes over with one full repaint.
+
+If the link never arrives, the countdown expiring hands the panel to the link-lost screen
+(below), not a boot screen forever and not a dashboard full of `--`.
+
+### When the link dies (any screen, any time)
+
+A Pi that stops sending must not leave its last frame on the panel, and a screen full of
+`--` does not tell the driver *why* it is empty. So the link-lost state is a **takeover
+screen**, decided at the dispatcher in `loop()` and in the simulator's `renderCurrentScreen()`
+rather than inside any one screen — the driver may be on any of the eight screens when the
+Pi drops:
+
+```cpp
+if (ui_linkLostActive()) {   // link that was up has gone silent, or boot countdown spent
+    ui_linkLostFrame();      // radar sweep, emblem, WAITING FOR / PI / CANBUS, seconds
+} else switch (currentScreen) { ... }
+```
+
+| Element | Motion |
+|---------|--------|
+| Ring, r=150 | a radar sweep: a hot head plus an 11-dot tail laps the dial every 2 s and never fills it, so it reads as "still looking", not "30 % done". The idle dots breathe and a slow wave chases around them |
+| Emblem | the same disc at 168 px (smaller than the boot's 200, so the state is distinct at a glance), breathing on a 2.6 s sine |
+| Caption | `WAITING FOR` (grey) / `PI / CANBUS` (amber, size 2) / the seconds since the last packet — `4s`, then `1m 05s` |
+| Colour | semantic warning **amber** in every scheme, not the phone's accent: this is a state, not decoration, so a crimson theme does not paint "NO DATA" in the same crimson as everything that is fine |
+
+Details that matter:
+
+- **Phase comes from the silence, not the wall clock.** The sweep position is derived from
+  `millis() - lastPiDataMs`, so a still rendered at "4.2 s since the last packet" is identical
+  on the panel and in the simulator.
+- **3 s of silence before it appears** (`PI_STALE_MS` in main.cpp, several hundred lines at
+  the Pi's 30 Hz). A single dropped line must never flash the screen; a dead link must.
+- **Leaving the screen repaints everything.** The Pi's first line back only sets
+  `needsRedraw`, which would draw a delta over the takeover screen, so the falling edge sets
+  `needsFullRedraw` explicitly.
+- **10 fps**, the same budget as the boot wait, and the G-Force screen's 60 fps repaint is
+  suppressed while the link is down.
+- The link state is one shared stamp, `lastPiDataMs` in ui_core: the parser sets it, the
+  watchdog times out on it, the screen counts from it.
+
+### Preview
+
+```bat
+tools\simulators\native\startup.bat      rem boot_*.bmp, wait_*.bmp, live_*.bmp, linklost_*.bmp
+tools\simulators\native\run.bat          rem the window plays it on launch; B replays,
+                                         rem Enter/Space ends the wait early, P kills/restores
+                                         rem the Pi link to see the takeover
+```
+
+The window plays the real phase machine: animation → 30 s wait → live Overview. `--startup`
+also writes the intro at 30 fps (`startup_frames\`) and the wait at 1 fps
+(`startup_frames_wait\`) so the whole power-on can be assembled into a film, and renders both
+themes.
+
+**Remaining:** nothing is blocking — this needs eyes on the 1.85" panel in daylight, and a
+light-theme phone paired, to confirm the colours and the 1.56 s pacing feel right. If the
+panel's QSPI transfers make the bloom step visible as steps rather than growth, the fix is
+more bloom steps, not a different beat.
 
 **Reported:** The device boot experience should be more polished and impressive — a cool
 animation.
 
 **Where it lives:**
-- [main.cpp](../display/src/main.cpp#L259) — currently `LCD_DrawImageScaled(boot_logo_data,
-  …)` followed by `delay(1500)`
-- [main.cpp](../display/src/main.cpp#L296) — the boot countdown / loading-message state that
-  follows the logo
-- [ui_core.cpp](../display/src/ui_core/ui_core.cpp) — drawing primitives available for an
-  animation
-
-**Working theory:**
-There is no animation today: the boot logo is blitted once, the firmware blocks for
-1.5 seconds, and then the loading state begins. The 240×240 round display and the
-`LCD_*` primitives can already do fades, arcs and text, so this is a design/effort problem
-rather than a capability one.
-
-Note that the current `delay(1500)` also blocks anything else that could be initialised in
-parallel; an animation loop is a good excuse to make startup non-blocking.
-
-**Proposed approach:** Ideas, in rough order of payoff per line of code:
-1. Logo fade-in with a slight scale-up, then a sweep.
-2. A needle/sweep gauge self-test that mirrors the real cluster's power-on sweep.
-3. A segmented arc that fills to 100% and settles at zero — ties into the
-   [LED system](LED_SYSTEM.md) language.
-4. Show real boot progress instead of a fixed delay (display init, IMU, BLE, first `TEL:`).
-
-Keep total startup time under ~2 s and make the animation interruptible once real telemetry
-arrives, so it can never mask a working connection.
+- [ui_core.cpp](../display/src/ui_core/ui_core.cpp) — `ui_startupFrame()`, the whole
+  sequence and its geometry, plus `ui_linkLostActive()` / `ui_linkLostFrame()`
+- [main.cpp](../display/src/main.cpp) — `playStartupAnimation()`: paces the real clock
+  against it; the stale watchdog and the link-lost takeover in `loop()`
+- [ui_core.cpp](../display/src/ui_core/ui_core.cpp) — the boot countdown / loading-message
+  state that follows the logo
+- [native_main.cpp](../tools/simulators/native/native_main.cpp) — plays it on launch,
+  `--startup` renders stills, `P` kills the link
 
 **Done when:** Power-on shows a smooth, intentional animation that ends in the normal
 screen, and the device reaches live telemetry no later than it does today.
@@ -568,17 +673,19 @@ when the tank actually changes, with no jump larger than a percent or two after 
 
 ## ISSUE-09 — App is not available while driving
 
-**Status:** ❌ **Still unreachable in the car (2026-10-30).** The two-app split is correct
-and builds, but the head unit never offers "MX5 Drive". Two independent causes, both
-confirmed in this repo / in the field:
+**Status:** ⚠️ **Cause 1 is fixed and verified in the build; cause 2 is the open one
+(2026-10-30).** The two-app split is correct and builds, but "MX5 Drive" has not been seen
+on the head unit yet — the owner tested the car again the same day and does not believe the
+tile appeared. Two independent causes, both confirmed in this repo / in the field:
 
-1. **The drive flavor never declares the Android Auto template hookup.** Every templated
-   AA app must declare
+1. **The drive flavor was not declaring the Android Auto template hookup.**
+   ✅ **Fixed.** Every templated AA app must declare
    `<meta-data android:name="com.google.android.gms.car.application"
    android:resource="@xml/automotive_app_desc"/>` with an `automotive_app_desc.xml`
-   containing `<uses name="template"/>`. The drive manifest has the `CarAppService` and the
-   `category.IOT` filter but **not** this meta-data, so the host has nothing to enumerate.
-   The AOSP `car-samples` `mobile` manifest shows the exact shape.
+   containing `<uses name="template"/>`. That descriptor and meta-data are now in
+   `src/drive`, and the merged `driveDebug` manifest was re-read to confirm both, plus the
+   `CarAppService`/`category.IOT` filter and `minCarApiLevel`, and the absence of any
+   `android:appCategory` (which would make AA hide the package in motion).
 2. **Android Auto stopped listing sideloaded Car App Library apps** (field reports from
    June 2026): logcat shows `CAR.AUTH: … isPackageAllowed = false` and
    `Finsky: PlayGearheadService <package>, app owners empty` even with developer mode and
@@ -602,9 +709,14 @@ What ships now:
 | `drive` | `com.mx5.remote.drive` | MX5 Drive | `CarAppService` with `category.IOT`, templates, no `appCategory` |
 
 - `Mx5CarService` → `Mx5CarSession` → `Mx5CarScreen`: one `PaneTemplate` carrying the
-  Overview page's readings — speed, RPM, gear, coolant, fuel, range, battery, average
-  MPG — polled once a second from the shared `PiLink` client. Value first, label
-  second, because the host draws the row title large.
+  Overview page's readings — speed, RPM, gear, coolant, fuel, range — polled once a second
+  from the shared `PiLink` client. Value first, label second, because the host draws the row
+  title large. **Six rows, not eight**: the projected display is 367dp tall, which is room
+  for six rows under the template header, and battery volts plus average MPG would sit below
+  the fold where reaching them needs a scroll ([ISSUE-17](#issue-17--three-pages-are-taller-than-the-head-unit)).
+  Until the first reading arrives the pane is flagged loading (`Pane.Builder.setLoading`), so
+  the driver sees the host's progress indicator rather than six rows of `--`, which looks
+  exactly like a link that will never work.
 - `IOT` is the only documented category that fits: the app reports the state of a
   connected device. The probe notes in [android/README.md](../android/README.md)
   record a real AA app (Tuya) being enumerated with exactly that category.
@@ -614,11 +726,25 @@ What ships now:
 1. Add `res/xml/automotive_app_desc.xml` (`<uses name="template"/>`) and the
    `com.google.android.gms.car.application` meta-data to the drive manifest, then rebuild
    and re-check the launcher list. This is a prerequisite for every other option.
-2. Confirm what the head unit actually shows today (missing tile / greyed tile / tile that
-   opens then closes) — the three look identical from the driver's seat but point at
-   different causes.
-3. If it still does not appear: publish the drive flavor to a Play **internal test track**
-   (the only supported route for templated apps). Budget the $25 one-time developer fee.
+   — **Done 2026-10-30**: the merged `driveDebug` manifest now carries both, verified with
+   `:mx5-remote:assembleDriveDebug` (see *What ships now* above). The owner tested the car
+   again the same day and does not believe the tile appeared, so read the symptom first.
+2. **Tell the three symptoms apart, because they look identical from the driver's seat.**
+   With the phone connected and AA up, `adb logcat -d | Select-String -Pattern
+   'CAR.AUTH|PlayGearheadService|GH\.'` answers it in one line:
+
+   | Symptom | What the log says | What it means |
+   | --- | --- | --- |
+   | Tile absent from the AA app list | no `GH.` line for `com.mx5.remote.drive` | the host never enumerated the package: descriptor or category wrong |
+   | Tile present, screen blanks on tap | `CAR.AUTH: … com.mx5.remote.drive … isPackageAllowed = false` | Android Auto refuses templated apps that did not come from Play |
+   | Tile present and the pane opens | a `GH.` line and no `CAR.AUTH` | it works; only the car's screen edge was in the way (ISSUE-16) |
+
+   The first and third are code, the second is distribution. Do not buy anything until the
+   log has been read: the descriptor was the first cause and it is now fixed, so the next
+   result is either "it works" or "`isPackageAllowed = false`".
+3. If it is `isPackageAllowed = false`: publish the drive flavor to a Play **internal test
+   track** (the only supported route for templated apps). Budget the $25 one-time developer
+   fee; no review is involved for internal testing.
 4. Decide the fallback if (3) is refused: run the phone dashboard on a mount/tablet, or
    move to an Android Automotive head unit.
 
@@ -740,6 +866,41 @@ itself, since nothing else in the chain looks broken:
 
 **Done when:** Cruising at a steady speed shows a plausible instant MPG that rises on
 lift-off and drops under load, instead of `--`.
+
+### Hardened after the car run (2026-10-30, desk-only)
+
+The value is correct on the car, so this pass went after the ways it can silently
+disappear again. Everything below is verified without a vehicle.
+
+- **It no longer depends on the fuel-level calculator.** The calculation sat inside
+  `if self.mpg_calculator:`, and that calculator's import is optional. A missing
+  `mpg_calculator.py` would have blanked INST MPG while MAF was arriving perfectly.
+  It now runs in its own block in [main.py](../pi/ui/src/main.py) and needs nothing
+  but the CAN reader's sample.
+- **The maths and the guards moved to [instant_mpg.py](../pi/ui/src/instant_mpg.py)**
+  and are unit-tested ([test_instant_mpg.py](../pi/ui/src/test_instant_mpg.py)): the
+  standard MAF/lambda derivation, the 11.438 constant, the 99 mpg fuel-cut clamp,
+  reverse counting like forward, and each reason the card shows `--` (stopped car, no
+  MAF reply, MAF older than 2 s) as a *separate* case, because any one of them
+  produces the same symptom. A NaN now fails the guards instead of reaching the wire.
+- **`MPGCalculator.instant_mpg` is gone.** It returned the *average*, which is exactly
+  the sort of plausible wrong number that never gets noticed on a dash.
+- **MAF smoothing is time-based** (`MAF_SMOOTHING_TAU_SEC`, 0.7 s) instead of a fixed
+  0.5 weight, so the smoothing means the same thing if the OBD poll rate is ever
+  changed. A long gap weights the returning sample fully instead of crawling.
+- **An OBD request that cannot be sent is logged once per 30 s, not four times a
+  second**, and `send()` now has a 50 ms timeout. Without the timeout, a bus with no
+  ACK (lead unplugged, interface still listen-only) can park the CAN read thread and
+  take *every* reading down with it, which is indistinguishable from a dead adapter.
+- **Demo mode simulates MAF**, so the whole chain — air flow → MPG → `TEL` field 15/18
+  → the ESP card — can be exercised on the bench. `python3 main.py --headless`, set
+  demo mode, then `GET /api/telemetry` shows `instant_mpg` around 13-34 with
+  `instant_mpg_valid: true`. The native simulator now sets `instantMPGValid`, so
+  screenshots show `INST MPG 32` instead of `--`.
+- **When it is invalid while the car is moving, it says why** — one journal line per
+  30 s: `MPG INST: -- while moving at 45 mph (MAF 5.0s old)`. That separates "the ECU
+  never answered the PID" from "the reply stopped", which is a wiring question versus
+  a bus question.
 
 ---
 
@@ -960,11 +1121,109 @@ and the numbers never reorder as speed changes. — *believe met; confirm on the
 
 ## ISSUE-14 — Reverse reports a positive speed and gear 1
 
-**Status:** ⏳ **Open — blocked on one capture** (found in the car 2026-10-30, supersedes
-the "fixed" claim in ISSUE-01).
+**Status:** ✅ **Every code-side defect is fixed and tested (2026-10-30).** Seven separate
+faults were destroying the reverse reading, and all seven are closed. The sign of the
+speed now survives from the CAN frame to both pixels, nothing rounds it away, nothing
+freezes it, and one flag has one owner.
+
+The only thing code cannot decide is whether the PCM writes a sign into `0x201` at all.
+That is now a *configurable* decision rather than a hidden assumption: `parse_range()`
+keeps the `0x231` range code in telemetry, and filling in
+`CANParser.REVERSE_RANGE_CODES` makes reverse come from the range switch instead of the
+speed sign — no other change needed.
+
+### What was actually broken
+
+The sign was being destroyed in **four independent places**, so fixing any one of them
+alone would never have made `-3 km/h` reach a screen:
+
+| # | Where | Defect | Effect |
+|---|-------|--------|--------|
+| 1 | [`parse_speed`](../pi/ui/src/can_handler.py#L130) | Only the +100 km/h bias was decoded. A plain two's-complement negative (`0x8000`+) was read as part of the biased range. | `0xFE0C` (-5 km/h) came out as **+555 km/h** — a large *positive* speed, which is exactly the report. |
+| 2 | [`esp32_serial_handler.py`](../pi/ui/src/esp32_serial_handler.py#L72) | `if speed_for_wire <= 0: speed_for_wire = 0` | The ESP32 could **never** receive a negative speed, whatever the decode produced. A hard clamp, by design. |
+| 3 | [`displaySpeedKmhOrMph`](../display/src/ui_core/ui_core.cpp#L186) | `if (s < 0) s = 0;` | Even with a signed value on the wire, the ESP drew `0`. |
+| 4 | [`fonts_hires.cpp`](../display/lib/WaveshareDisplay/fonts_hires.cpp) | The 15x21 font used at text size 3+ had **13 blank glyphs** (chars 35–47, `#` through `/`), including `-`. | The ESP had **no minus sign** at the size the speed is drawn. `-2` rendered as ` 2` — a positive-looking number. |
+
+Plus two rounding defects that ate slow reverse: `Math.round(-0.4)` is `0` on Android and
+`int(-0.4)` is `0` on the Pi's pygame readout, so a car creeping backwards read as
+stopped. And `estimate_gear` tested the neutral bit *before* the negative-speed check, so
+a lagging neutral switch could win.
+
+### Found on the second pass (same symptom family)
+
+Fixing the sign exposed three more ways the reverse state could be wrong rather than
+merely unsigned:
+
+| # | Where | Defect | Effect |
+|---|-------|--------|--------|
+| 5 | [`_apply_staleness`](../pi/ui/src/can_handler.py#L767) | Only throttle and brake decayed. **Speed never did.** | Unplugging CAN while reversing left a negative speed and `R` frozen on all three screens for ever — the exact reading this issue is about, caused by *stale* data instead of a bad decode. |
+| 6 | [`_process_hs_message`](../pi/ui/src/can_handler.py#L874) | `0x231` (range switch) wrote `is_in_reverse = False` whenever it thought the car was in neutral — a **second writer** for a flag that `_update_gear_estimation()` already owns, arriving at a different rate. | The phone (which trusts the flag) and the ESP (which also trusts `gear == -1`) disagreed for a frame at a time: R/N flicker at walking pace, and the phone could show `–` while the ESP showed `R`. |
+| 7 | [`link_service.telemetry()`](../pi/ui/src/link_service.py#L188) | `can_connected` reported whether a **handler object existed**, not whether frames were arriving. | The app's System page said `UP` over a dead bus, which is why a silent link looked identical to a healthy one. |
+
+The ESP32 had the mirror of #5: `telemetry.connected` was only ever set **true**, so a Pi
+that stopped talking left the round display holding its last frame — including `-3 MPH`
+and `R` — indefinitely.
+
+### What changed
+
+- `parse_speed` decodes `0x8000`+ as two's complement, decodes everything else around the
+  bias, and rejects physically impossible magnitudes (blanked field → `0` instead of
+  `-100`; noise → `0` instead of `+555`). Negatives are floored, never truncated.
+- `esp32_serial_handler.format_telemetry_line()` puts the **signed** speed in `TEL` field
+  2, so the ESP can show it. `-0.0` is normalised so it never serialises as `-0`.
+- `displaySpeedKmhOrMph()` keeps the sign and floors negatives; the gear ladder uses the
+  magnitude.
+- The 15x21 font gained real glyphs for `# $ % & ' ( ) * + , - . /`.
+- `Telemetry.speedForDisplay()` on Android and `display_speed_value()` on the Pi keep the
+  sign and show any reverse motion as at least 1 in magnitude.
+- Reverse is now checked before neutral in the estimator, and on both Android gear
+  readouts reverse is tested before neutral.
+- `_apply_staleness()` now decays **speed** on the Pi, and clears `gear`, `is_in_reverse`
+  and the hold timer with it, so a silent bus cannot leave `R` frozen on screen.
+- `_update_gear_estimation()` is the only writer of `is_in_reverse`; `0x231` now only
+  sets the neutral bit.
+- The ESP32 clears `connected` / `hasReceivedTelemetry` and the motion values after 3 s
+  without a Pi line, and both big screens draw `--` for RPM, speed and gear in that state.
+- `can_connected` in `/api/telemetry` reports `is_receiving_data()` now.
+- `parse_range()` keeps the `0x231` range code in `telemetry.transmission_range`, and
+  `CANParser.REVERSE_RANGE_CODES` turns a configured code into reverse independently of
+  the speed sign. The set ships **empty** — a guessed code would put a confident `R` on
+  screen while driving — and a test asserts it stays empty until one is observed.
+- `telemetry.speed_raw` carries the untranslated `0x201` field into `/api/telemetry`, so
+  the last open question below can be answered from an ordinary drive.
+- Dead traps removed: the second `TelemetryData` (which had drifted from the real one) is
+  deleted, and the `uint8_t` speed fields in the legacy Arduino `CANHandler` and the
+  unused `display/include/telemetry_data.h` packet are signed.
+
+Verified without the car: `python3 pi/ui/src/test_can_speed.py` (18/18), the full Pi desk
+suite (58/58 link protocol, 11/11 roof, 7/7 reverse probe, web-parity clean), a clean
+`pio run -d display` from `-t clean`, and three native-simulator render modes that
+compile the **real** `ui_core.cpp`:
+
+| Render | Shows |
+|---|---|
+| `--screenshot` | 45 km/h forward — `28 MPH`, gear `3`, ladder `1..6` (unchanged) |
+| `--screenshot --reverse` | `-2 MPH` beside `R`, ladder `REVERSE` on Overview and RPM |
+| `--screenshot --stale` | `--` for RPM, speed and gear on both pages |
+
+### The one thing left, and how it closes itself
+
+If the PCM clamps the biased field at its centre, `raw` never drops below `0x2710` and the
+decode still yields `0` while reversing. That is the only remaining way the reading can be
+wrong, and there are now two ways to settle it without new tooling:
+
+1. `speed_raw` in `/api/telemetry` is the literal field. Reverse once and see whether it
+   goes below `10000`.
+2. `transmission_range` is the literal `0x231` code from the same drive. Whichever value
+   changes only while reversing is the code to put in `CANParser.REVERSE_RANGE_CODES`.
+
+If neither moves, the signal is not on these frames and the answer is the backup-lamp bit
+on `0x290`/`0x4A0` — `parse_headlights()` currently decodes only two bits of those.
+
+### Earlier investigation notes (kept for context)
 
 `tools/can/reverse_probe.py` captures both buses in two states and diffs them. The
-*analysis* half is now verified without the car: `tools/can/test_reverse_probe.py` pins
+*analysis* half is verified without the car: `tools/can/test_reverse_probe.py` pins
 down what "the signal" looks like against synthetic captures (7/7 pass), and two real
 defects were fixed while doing it:
 
@@ -983,18 +1242,23 @@ the translated gear is still first rather than reverse."
 **Why this is a different bug from ISSUE-01:** ISSUE-01 fixed the *transport* — the ESP no
 longer has to infer reverse from a rounded speed, it gets an explicit flag. But the flag is
 only ever set by `_update_gear_estimation()` when `telemetry.speed_kmh < 0`
-([can_handler.py](../pi/ui/src/can_handler.py#L924)). A **positive** reading while
+([can_handler.py](../pi/ui/src/can_handler.py#L956)). A **positive** reading while
 reversing means `parse_speed()`
-([can_handler.py](../pi/ui/src/can_handler.py#L108)) is not producing a negative number in
+([can_handler.py](../pi/ui/src/can_handler.py#L130)) is not producing a negative number in
 reverse, so:
 
 - the reverse branch never runs, `is_in_reverse` stays false, `gear` is estimated from
   `speed/rpm` at a few km/h → the estimator returns gear **1**; and
-- the wire speed is positive, so the ESP shows a positive speed by design
-  (`esp32_serial_handler.py` clamps `<= 0` to 0, it does not take an absolute value).
+- the wire speed is positive, so the ESP shows a positive speed.
 
 So the offset assumption `true_kmh = (raw - 10000) / 100` is either wrong in reverse or the
 car does not encode reverse in this field at all.
+
+**Superseded in part:** the transport half of this is now fixed — see *What was actually
+broken* above. `parse_speed` decodes the field as two's complement when it is at or above
+`0x8000` and rejects impossible magnitudes, `TEL` field 2 carries the sign, and the font
+can draw it. What remains is only the question of whether the field itself ever goes below
+its centre.
 
 **Proposed approach — measure before changing the decode:**
 
@@ -1089,6 +1353,91 @@ survives a power cycle, and a dead strip says so on both the strip and the phone
 
 ---
 
+## ISSUE-16 — The head unit's own button bar covers the page names
+
+**Status:** ✅ **Fixed in code (2026-10-30) — needs one look in the car to confirm the
+default clears the bar.**
+
+**Reported:** "the left hand pioneer menu was covering up the page names on the left side
+of the pioneer … its like a virtual black bar with virtual buttons on the left."
+
+**What it is.** The Pioneer draws a strip of its own on-screen buttons over the left edge of
+the projected image. It is the head unit's UI, not Android Auto's: the display handed to the
+phone still starts at x=0, so the app's own left column - the rail of page names - is drawn
+underneath it and simply vanishes. Nothing in the platform reports that strip's width, so
+there is nothing to read; the app has to carry a margin and let the driver set it.
+
+**Fix.**
+- `MainActivity` keeps a **left edge inset** (`KEY_EDGE_LEFT_DP` in the `mx5` prefs,
+  default 64dp on a car screen, 0 on a phone, clamped to 160dp) and applies it as extra left
+  padding on the root view. `S4` is added on top of it, and the rail's own padding on top of
+  that, so 64dp puts the first label at about 85dp from the screen edge.
+- An **EDGE** chip in the top bar steps 0 / 40 / 64 / 88 / 112 / 144 dp and shows the current
+  value. It edits the root's padding instead of rebuilding the shell, so the rail slides out
+  from under the bar while you tap. It lives in the top bar rather than on a settings page
+  because the bar would cover that page's own left edge too.
+- `android/mimic` gained `?headunit=1&bar=80` (draw the bar) and `?edge=<dp>` (move the shell),
+  so the geometry can be checked without the car. At `edge=0` the rail is completely hidden,
+  which reproduces the report; at the 64dp default every page name is clear.
+
+**Done when:** the page names are readable in the car with the bar on screen. If they are
+not, tap EDGE until the names clear it - the value is remembered.
+
+**Where it lives:**
+- [MainActivity.java](../android/mx5-remote/src/main/java/com/mx5/remote/MainActivity.java) —
+  `KEY_EDGE_LEFT_DP`, `EDGE_PRESETS`, `edgeInset()`, `setEdgeInset()`, `cycleEdge()`
+- [mimic.css](../android/mimic/mimic.css) / [mimic.js](../android/mimic/mimic.js) —
+  `--edge-left`, `--headunit-bar`, `?headunit=1`
+- [android/mx5-remote/README.md](../android/mx5-remote/README.md) — "The car's real geometry,
+  and the head unit's own bar"
+
+---
+
+## ISSUE-17 — Three pages are taller than the head unit
+
+**Status:** ⏳ **Open. Found while fixing ISSUE-16; not caused by it.** Measured, not
+guessed - see below.
+
+The car projects at **919x480 at 209dpi**, which is **700x367dp**, and `Ui.java` lays out in
+dp. `android/mimic` used to render 800x480, which is 113dp taller, so pages could look
+complete in a browser and be clipped in the car.
+
+Measured in the mimic at the real 700x367dp, with the 64dp edge inset applied:
+
+| Page | Overflows by |
+| --- | --- |
+| Overview, RPM, TPMS, Engine, G-Force, Diagnostics | 0dp - they fit exactly |
+| System | 20dp |
+| Roof | 49dp |
+| Settings | 63dp |
+
+A `LinearLayout` does not lay out a child that falls past its own bottom edge, so the last
+row is not merely hidden: it is absent from the hierarchy and cannot be tapped. On Settings
+that is the **Redline** slider; on System and Roof it is the bottom action row. The mimic
+canvas is now 700x367dp so this cannot hide again.
+
+**Not fixed yet, deliberately.** Every one of these pages finishes with a weighted filler
+(`sectionGap` / `spacer`) that stretches when there is room, and a `ScrollView` measures its
+child with an unspecified height, under which a `height=0, weight=1` child collapses to zero
+and takes its heading with it. Making them scroll therefore means converting those pages to
+natural-height layout first, which is a page-by-page change, not a switch.
+
+The same measurement also shows two pages *squeezing* rather than overflowing: on RPM the
+tile captions lose about 8dp, and on G-Force the captions of the four peak tiles collapse to
+nothing at all. That is the mimic's flex layout being honest about a column of four weighted
+tiles in 244dp, and the Java uses the same four weights, so it is worth confirming on the
+device before calling it mimic-only.
+
+**Next action:** give the panel an optional scrolling body (`Ui.Panel` with the body inside a
+`ScrollView`, `sectionGap` changed to `WRAP_CONTENT` + weight so a heading never measures to
+zero), and turn it on for System, Roof and Settings only. Overview and friends are dashboards:
+they must keep filling the screen and must not scroll.
+
+**Done when:** every page's last row is reachable at 700x367dp, verified with
+`android/mimic/index.html?all=1`.
+
+---
+
 ## Historical resolution order (first in-car round, 2026-10-18)
 
 Shared plumbing landed once, then each device, so every group could be built before the
@@ -1139,7 +1488,7 @@ because it compiled.
 | 07 boot | NVS theme → logo zoom → arc sweep → title | ✅ Builds; pacing is a hardware judgement |
 | 08 fuel | raw frame → 60 s deque average → hysteresis → telemetry → all three UIs and the MPG calculator | ✅ Confirmed; running sum matches a brute-force recompute |
 | 09 driving | flavor split → `Mx5CarAppService` → session → `PaneTemplate` → shared `PiLink` | ✅ Two APKs verified: parked = game + `CAR_LAUNCHER`; drive = `category.IOT` service, no `appCategory` |
-| 10 instant MPG | MAF reply → guards → `instant_mpg_valid` → `TEL` field 18 / HTTP → `--` | ✅ Confirmed; still depends on a MAF reply |
+| 10 instant MPG | MAF reply → guards → `instant_mpg_valid` → `TEL` field 18 / HTTP → `--` | ✅ Confirmed; still depends on a MAF reply. Hardened afterwards (own module, tested, demo MAF) — see [ISSUE-10](#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder) |
 | 11 ladder | speed → six predicted RPMs → band distance → top three | ✅ Confirmed against the screenshot values |
 | 12 LEDs | CAN frame → immediate render → per-LED ramp → changed-only transfer | ✅ Ramp table checked; build clean |
 
@@ -1319,4 +1668,80 @@ impressive enough yet (ISSUE-07).
 - **ISSUE-07:** a proper startup animation. Design pass, then implement; only the car can
   judge the pacing.
 - **ISSUE-02:** the light theme is an sRGB approximation of the app's OKLCH derivation.
+- **ISSUE-18:** the gas metrics are rebuilt on air flow and unit-tested; one tank of
+  normal driving is what will confirm the air-flow total against brim-to-brim gallons.
 
+
+---
+
+## ISSUE-18 — Average MPG and range were guesses dressed as measurements
+
+**Status:** ✅ **Rebuilt and unit-tested (2026-10-30, desk-only).** Fuel is now summed from
+air flow; the tank-sender path is the fallback and has had its accounting corrected.
+
+**Reported as:** "make the gas metrics accurate and reliable." The instant reading was
+already fixed; AVG MPG, FUEL and RANGE are the remaining three numbers on the same card.
+
+**Where it lives:**
+- [mpg_calculator.py](../pi/ui/src/mpg_calculator.py) — both fuel totals, the average and
+  the range
+- [instant_mpg.py](../pi/ui/src/instant_mpg.py) — the fuel model (`g/s` of air -> `gal/h`)
+  shared by the instant reading and the long-run total
+- [can_handler.py](../pi/ui/src/can_handler.py) — `_smooth_fuel_level()`, which now returns
+  the plain rolling mean as well as the display value
+- [test_mpg_calculator.py](../pi/ui/src/test_mpg_calculator.py) — 18 tests, no car needed
+
+### What was wrong
+
+1. **The only source was the tank sender.** 1% of a 12.7 gal tank is 0.127 gal, and the
+   float reading moves with every corner. A segment was measured by waiting for a 2% drop
+   (~0.25 gal, ~4 miles) and dividing the distance by it, so a single segment carried
+   roughly ±20% of noise - and the average inherited it for a whole tank.
+2. **Burned fuel was thrown away when the resulting MPG looked wrong.** Gallons were only
+   added to the lifetime total *alongside an accepted sample*. Every warm-up, traffic jam
+   and idle stretch therefore contributed fuel to the tank but nothing to the denominator,
+   which biases the average **upward**. Worse, those gallons were gone for good.
+3. **A top-up under 10% silently stopped the accounting.** Only a rise of 10% counted as a
+   refuel. After a 3% fill the milestone stayed above the new level, so every later drop
+   read as negative: no milestones, no updates, a frozen average until the tank fell below
+   the old mark.
+4. **The accounting ran on the display value.** The hysteresis deadband (1.5%) exists to
+   stop the panel twitching; feeding it into the arithmetic discarded up to 1.5% of every
+   measurement - most of a milestone.
+5. **An average was clamped to 10-50 mpg**, so a track day read 10 and a long descent read
+   50. The same constants also rejected whole 2% segments, which amplified (2).
+6. **Range had three implementations** - the calculator, the ESP serial fallback and
+   `ui_core.cpp` - each with its own default MPG.
+
+### What it does now
+
+- **Air flow is the primary fuel source.** `gal/h = MAF(g/s) / 11.438`, summed over time.
+  This is a measurement of fuel burned, not an inference from a float level, so it is
+  right from the first couple of minutes, needs no tank reading at all, and counts idle
+  fuel honestly. Distance is credited to this path *only* over intervals whose fuel flow
+  is known, so the numerator and denominator always cover the same time.
+- **The sender path is the fallback and the cross-check**, and it now counts burned fuel
+  whether or not the resulting figure is plausible, rebases on *any* fill (1% deadband),
+  and runs on the pre-hysteresis mean.
+- **`average_mpg_source`** reports which one is in use (`maf`, `fuel_gauge`, `estimated`)
+  in the journal and in `/api/telemetry`, so a surprising number can be traced without
+  reading the code.
+- **Range** is tank contents × average, computed once, on the Pi, from the averaged level.
+
+### Accuracy, stated plainly
+
+- Air-flow average: limited by the AFR assumption (14.7, closed loop; richer at wide-open
+  throttle reads ~5% optimistic) and by MAF sample coverage. Expected within a few percent
+  of pump-to-pump.
+- Sender fallback: limited by the sender's 0.13 gal resolution and its non-linearity at the
+  ends of the scale. Good to a few percent over a tank, not per segment.
+- Range: inherited from the above **plus** any error in what "50%" of the tank means. The
+  gauge is not guaranteed linear in volume, and 0% is where the sender bottoms out, not
+  where the tank is dry - so range near empty is deliberately conservative.
+
+**Needs hardware:** Ideally one tank of normal driving, to compare the air-flow total
+against brim-to-brim gallons at the pump.
+
+**Done when:** `/api/telemetry` shows `average_mpg_source: "maf"` on a normal drive, the
+average matches pump-to-pump within a couple of mpg, and RANGE tracks the tank level
+without the number jumping when the tank is topped up.

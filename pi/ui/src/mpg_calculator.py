@@ -1,21 +1,30 @@
 """
 MPG Calculator for MX5 Telemetry System
 
-Calculates fuel efficiency (MPG) and estimated range from CAN bus data.
+Calculates average fuel efficiency (MPG) and estimated range from CAN bus data.
 
-SIMPLIFIED APPROACH:
-- Track distance traveled and fuel consumed per trip
-- Use simple milestone-based fuel tracking (record when fuel drops by 1%)
-- Calculate rolling MPG from recent fuel consumption events
-- Persist data for long-term accuracy
+Instantaneous MPG is NOT calculated here: it comes from mass air flow each loop
+iteration and lives in instant_mpg.py. This module owns the two long-run gas
+metrics, AVG MPG and RANGE.
 
-Key insight: Fuel sensors have low resolution (~1% steps). Trying to track
-tiny per-frame fuel changes with EMA smoothing doesn't work well. Instead,
-we track distance between fuel level drops and calculate MPG from that.
+TWO SOURCES, IN ORDER OF ACCURACY
+---------------------------------
+1. **Air flow (primary).** MAF is polled twice a second, and air mass converts to
+   fuel mass with the same stoichiometric constants the instant reading uses
+   (instant_mpg.py). Fuel used is simply summed over time, so idle and stop-start
+   traffic are counted the way they are counted at a pump, and the average is
+   right from the first mile. No dependence on the fuel sender.
+2. **Fuel level (fallback).** Without MAF the only fuel signal left is the tank
+   sender, which is coarse (~1% of 12.7 gal = 0.13 gal) and noisy. Distance is
+   accumulated between level milestones and gallons are derived from the drop.
+
+The air-flow total is used whenever it exists; the sender total is kept running
+underneath so the readout survives a MAF drop-out without starting over, and so
+the two can be compared in the journal.
 
 Industry Standard Formulas:
 - MPG = Distance (miles) / Fuel Used (gallons)
-- Range = Remaining Fuel (gallons) × Average MPG
+- Range = Remaining Fuel (gallons) x Average MPG
 
 DATA SAFETY:
 - Atomic writes (write to temp file, then rename) prevent corruption
@@ -23,7 +32,6 @@ DATA SAFETY:
 - Load validates data and falls back to backup on failure
 - Never overwrites good data with empty data (checks file on disk first)
 - Startup fuel guard ignores fuel readings until CAN data stabilizes
-- File locking prevents multi-instance corruption
 """
 
 import json
@@ -33,6 +41,11 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, List
 from pathlib import Path
+
+# The fuel model (stoichiometric AFR, gasoline density) is defined once, for both
+# the instant reading and this long-run total. If those constants ever change, both
+# numbers move together instead of drifting apart.
+from instant_mpg import GALLONS_PER_HOUR_PER_GPS, MIN_MAF_GPS
 
 
 @dataclass
@@ -45,29 +58,47 @@ class FuelMilestone:
 
 class MPGCalculator:
     """
-    Simplified MPG calculator using milestone-based tracking.
-    
+    Average fuel economy and range, from air flow first and the tank sender second.
+
     Strategy:
-    1. Track cumulative distance traveled
-    2. Record fuel level milestones when fuel drops by >= 1%
-    3. Calculate MPG from distance between milestones
-    4. Use rolling window of recent calculations for display
-    5. Persist data to survive restarts
-    
+    1. Sum fuel from MAF every loop iteration (the accurate path)
+    2. In parallel, track fuel-level milestones as a fallback and a cross-check
+    3. Report distance/fuel from the best source that has enough data
+    4. Persist both totals so a restart does not reset the tank average
+
     Data Safety:
     - Atomic writes prevent partial-write corruption
     - Backup file allows recovery from corruption
     - Refuses to overwrite higher-mileage data with empty/lower data
     - Startup fuel guard prevents false refuel detection from CAN init delay
     """
-    
+
     # MX5 NC (2006-2015) tank capacity
     TANK_CAPACITY_GAL = 12.7
-    
-    # Minimum fuel drop to register a milestone (percentage points)
-    # Using 2% threshold to filter fuel sensor noise (readings bounce ±4%)
+
+    # -- air-flow (MAF) accounting --
+    #
+    # Below this much summed fuel the average is not worth quoting. Air flow is a
+    # precise measurement (2 Hz, no sender quantisation), so this is only about not
+    # announcing a number from a handful of seconds; 0.05 gal is 0.4% of the tank,
+    # about two minutes of driving.
+    MIN_MAF_FUEL_FOR_AVERAGE = 0.05   # gallons
+    # ...and it must cover at least this much running time, so one unusual moment
+    # (a long downhill, say) cannot define the average.
+    MIN_MAF_SECONDS_FOR_AVERAGE = 30.0
+
+    # -- fuel-level (sender) accounting --
+
+    # Minimum fuel drop to register a milestone (percentage points). 2% of the tank
+    # is 0.25 gal; below that the sender's own noise dominates the measurement.
     FUEL_MILESTONE_THRESHOLD = 2.0
-    
+
+    # A rise this large means fuel went in. It used to be 10%, which meant a small
+    # top-up was invisible: the milestone stayed above the new level, every later
+    # drop read as negative, and the average silently stopped updating. 1% is just
+    # above what a one-minute average of the sender drifts on its own.
+    FUEL_RISE_DEADBAND = 1.0
+
     # Minimum distance between milestones (prevents noise at low speeds/idle)
     MIN_DISTANCE_FOR_MILESTONE = 1.0  # miles (increased from 0.5 to filter noise)
     
@@ -77,14 +108,21 @@ class MPGCalculator:
     # How often to save persistent data (seconds)
     SAVE_INTERVAL_SEC = 60.0
     
-    # Maximum reasonable MPG (sanity check)
-    MAX_REASONABLE_MPG = 50.0
-    MIN_REASONABLE_MPG = 10.0
+    # Rejection window for a single sender segment. A 2% drop over 1 mile can
+    # legitimately be 8 mpg (a climb) or 60 mpg (a long coast), so this only weeds
+    # out arithmetic that cannot be real - not merely bad economy.
+    MAX_REASONABLE_MPG = 60.0
+    MIN_REASONABLE_MPG = 8.0
+
+    # Clamp on the *reported average*, wide enough never to flatter or punish a real
+    # drive: this car does 15-35 mpg in normal use.
+    AVERAGE_MAX_MPG = 60.0
+    AVERAGE_MIN_MPG = 5.0
     
     # Number of recent MPG calculations to keep for rolling average
     MAX_RECENT_CALCULATIONS = 20
     
-    # EPA default for MX5 NC (used when no data available)
+    # EPA default for MX5 NC (used when no data available at all)
     EPA_DEFAULT_MPG = 26.0
     
     # Startup fuel stabilization period — ignore fuel data for this many seconds
@@ -92,17 +130,20 @@ class MPGCalculator:
     # detected as a "refuel" event)
     FUEL_STABILIZE_SECONDS = 10.0
     
-    def __init__(self, data_dir: str = "/home/pi/MX5-Telemetry/data"):
+    def __init__(self, data_dir: str = "/home/pi/MX5-Telemetry/data",
+                 verbose: bool = True):
         """
         Initialize MPG calculator.
-        
+
         Args:
             data_dir: Directory for persistent data storage
+            verbose: Print the periodic state line (tests switch it off)
         """
         self.data_dir = Path(data_dir)
         self.data_file = self.data_dir / "mpg_data.json"
         self.backup_file = self.data_dir / "mpg_data.json.bak"
         self.lock_file = self.data_dir / "mpg_data.lock"
+        self._verbose = verbose
         
         # Cumulative tracking
         self._total_distance = 0.0        # Lifetime distance
@@ -117,9 +158,24 @@ class MPGCalculator:
         self._recent_mpg_values: List[float] = []
         self._recent_distances: List[float] = []  # Distance for each MPG calculation
         
-        # Lifetime totals (for persistence)
+        # Lifetime totals from the fuel-level (sender) path, for persistence
         self._lifetime_miles = 0.0
         self._lifetime_gallons = 0.0
+
+        # Air-flow (MAF) totals. Distance is counted only over the intervals where
+        # the fuel flow was known, because the numerator and the denominator of an
+        # average have to cover the same time or the number is meaningless: counting
+        # miles we have no fuel figure for would inflate the average.
+        self._maf_fuel_gal = 0.0
+        self._maf_distance_mi = 0.0
+        self._maf_seconds = 0.0
+        self._maf_missing_seconds = 0.0   # engine running, no fresh MAF: for the log
+        self._runtime_seconds = 0.0       # engine-on seconds this session
+
+        # Which source produced the reported average: 'maf', 'fuel_gauge' or
+        # 'estimated'. Exposed so a field diagnosis can tell a real number from the
+        # EPA placeholder without reading the code.
+        self._average_source = 'estimated'
         
         # State tracking
         self._engine_was_running = False
@@ -149,7 +205,8 @@ class MPGCalculator:
         self._valid_fuel_readings = 0
         self._load_data()
         print(f"MPG Calculator started. Lifetime: {self._lifetime_miles:.1f} mi, "
-              f"{self._lifetime_gallons:.2f} gal, avg MPG: {self._average_mpg:.1f}")
+              f"{self._lifetime_gallons:.2f} gal, avg MPG: {self._average_mpg:.1f} "
+              f"({self._average_source})")
     
     def stop(self):
         """Stop the calculator and save data"""
@@ -157,17 +214,27 @@ class MPGCalculator:
         self._save_data()
         print("MPG Calculator stopped and data saved.")
     
-    @property
-    def instant_mpg(self) -> float:
-        """Get instantaneous MPG (same as average for now)"""
-        with self._lock:
-            return self._average_mpg
-    
+    # NOTE: there is deliberately no `instant_mpg` property here. Instantaneous fuel
+    # economy is a MAF-derived value recomputed every loop iteration; it lives in
+    # instant_mpg.py and is wired up in main.py. This class used to expose
+    # `instant_mpg` as a property returning the *average*, which is the exact kind of
+    # plausible-looking wrong number that ends up on a dash and never gets noticed.
     @property
     def average_mpg(self) -> float:
         """Get average MPG"""
         with self._lock:
             return self._average_mpg
+
+    @property
+    def average_mpg_source(self) -> str:
+        """Where `average_mpg` came from: 'maf', 'fuel_gauge' or 'estimated'.
+
+        'estimated' means no measurement exists yet and the EPA figure is being
+        reported. UIs show the same number either way; this is for the log and the
+        HTTP snapshot, so a surprising reading can be traced to its source.
+        """
+        with self._lock:
+            return self._average_source
     
     @property
     def range_miles(self) -> int:
@@ -192,15 +259,21 @@ class MPGCalculator:
         return self._session_distance
     
     def update(self, speed_mph: float, raw_fuel_pct: float, 
-               engine_running: bool, dt_seconds: float = None):
+               engine_running: bool, dt_seconds: float = None,
+               maf_gps: float = 0.0, maf_fresh: bool = False):
         """
         Update MPG calculations with latest CAN data.
-        
+
         Args:
             speed_mph: Current vehicle speed in MPH
-            raw_fuel_pct: Raw fuel level percentage from CAN (0-100)
+            raw_fuel_pct: Tank level percentage (0-100). Pass the *averaged* level,
+                not the hysteresis-filtered one the screen shows: the deadband exists
+                to stop the number twitching on the panel, and feeding it back into
+                the arithmetic throws away up to 1.5% of every measurement.
             engine_running: True if engine is running (RPM > 0)
             dt_seconds: Time since last update (auto-calculated if None)
+            maf_gps: Latest mass air flow sample in g/s (0 if none)
+            maf_fresh: True when that sample is recent enough to integrate
         """
         if not self._running:
             return
@@ -214,25 +287,45 @@ class MPGCalculator:
             else:
                 dt_seconds = 0.033  # Default to ~30Hz
         
-        # Clamp dt to reasonable range (handles pauses/delays)
+        # Clamp dt to reasonable range (handles pauses/delays). This also bounds how
+        # much distance or fuel a stalled iteration can invent.
         dt_seconds = min(dt_seconds, 1.0)
         self._last_update_time = current_time
-        
+
+        driving = engine_running and speed_mph >= self.MIN_DRIVING_SPEED_MPH
+        distance_increment = (speed_mph / 3600.0) * dt_seconds if driving else 0.0
+
+        # -- air-flow accounting: the accurate path -------------------------
+        # Fuel is summed from metered air, so it needs no tank level, no milestone
+        # and no waiting for a measurable drop. Distance is credited here only while
+        # the fuel flow is known, because an average whose numerator and denominator
+        # cover different intervals is not an average of anything.
+        if engine_running:
+            self._runtime_seconds += dt_seconds
+            if maf_fresh and maf_gps >= MIN_MAF_GPS:
+                self._maf_fuel_gal += (GALLONS_PER_HOUR_PER_GPS * maf_gps
+                                       * (dt_seconds / 3600.0))
+                self._maf_seconds += dt_seconds
+                self._maf_distance_mi += distance_increment
+            else:
+                self._maf_missing_seconds += dt_seconds
+
+        if distance_increment > 0:
+            self._session_distance += distance_increment
+            self._total_distance += distance_increment
+            self._lifetime_miles += distance_increment
+
         # Validate fuel reading — treat 0% as uninitialized (CAN hasn't sent data yet)
-        # Real fuel level will never be exactly 0.0% while engine is running
-        if raw_fuel_pct <= 0 or raw_fuel_pct > 100:
-            raw_fuel_pct = self._current_fuel_pct if self._current_fuel_pct > 0 else -1
+        # Real fuel level will never be exactly 0.0% while engine is running.
+        # `not (0 < x <= 100)` rather than `x <= 0 or x > 100` so a NaN frame fails
+        # the test instead of propagating into every figure below.
+        if not (0 < raw_fuel_pct <= 100):
+            raw_fuel_pct = self._current_fuel_pct if self._current_fuel_pct > 0 else 0.0
             if raw_fuel_pct <= 0:
-                # No valid fuel data yet — still accumulate distance but skip fuel tracking
-                if engine_running and speed_mph >= self.MIN_DRIVING_SPEED_MPH:
-                    distance_increment = (speed_mph / 3600.0) * dt_seconds
-                    self._session_distance += distance_increment
-                    self._total_distance += distance_increment
-                    self._lifetime_miles += distance_increment
-                # Periodic save (distance still matters)
-                if current_time - self._last_save_time >= self.SAVE_INTERVAL_SEC:
-                    self._save_data()
-                    self._last_save_time = current_time
+                # No tank reading yet. The air-flow average does not need one, so the
+                # displays can still show a real MPG before the fuel frame appears.
+                self._update_outputs(0.0)
+                self._maybe_save(current_time)
                 return
         
         # Fuel stabilization guard: after startup, wait for CAN fuel data to stabilize
@@ -253,20 +346,11 @@ class MPGCalculator:
                 print(f"MPG: Fuel stabilized at {raw_fuel_pct:.1f}% "
                       f"(after {time_since_start:.1f}s, {self._valid_fuel_readings} readings)")
             else:
-                # Still accumulate distance during stabilization
-                if engine_running and speed_mph >= self.MIN_DRIVING_SPEED_MPH:
-                    distance_increment = (speed_mph / 3600.0) * dt_seconds
-                    self._session_distance += distance_increment
-                    self._total_distance += distance_increment
-                    self._lifetime_miles += distance_increment
                 # Store fuel for display even before stabilized
                 with self._lock:
                     self._current_fuel_pct = raw_fuel_pct
                 self._update_outputs(raw_fuel_pct)
-                # Periodic save
-                if current_time - self._last_save_time >= self.SAVE_INTERVAL_SEC:
-                    self._save_data()
-                    self._last_save_time = current_time
+                self._maybe_save(current_time)
                 return
         
         # Store current fuel for display
@@ -278,148 +362,197 @@ class MPGCalculator:
             self._last_fuel_pct = raw_fuel_pct
             self._fuel_at_milestone = raw_fuel_pct
             print(f"MPG: Initialized fuel tracking at {raw_fuel_pct:.1f}%")
-        
-        # Accumulate distance if driving
-        if engine_running and speed_mph >= self.MIN_DRIVING_SPEED_MPH:
-            distance_increment = (speed_mph / 3600.0) * dt_seconds  # miles
-            self._session_distance += distance_increment
-            self._total_distance += distance_increment
-            self._lifetime_miles += distance_increment
-        
-        # Check for fuel milestone (fuel dropped by threshold)
-        fuel_drop = self._fuel_at_milestone - raw_fuel_pct if self._fuel_at_milestone else 0
-        
-        if (fuel_drop >= self.FUEL_MILESTONE_THRESHOLD and 
-            self._session_distance >= self.MIN_DISTANCE_FOR_MILESTONE):
-            
-            # Calculate MPG for this segment
-            gallons_used = (fuel_drop / 100.0) * self.TANK_CAPACITY_GAL
-            segment_mpg = self._session_distance / gallons_used if gallons_used > 0 else 0
-            
-            # Sanity check
-            if self.MIN_REASONABLE_MPG <= segment_mpg <= self.MAX_REASONABLE_MPG:
-                # Record this calculation
-                self._recent_mpg_values.append(segment_mpg)
-                self._recent_distances.append(self._session_distance)
-                
-                # Trim to max size
-                while len(self._recent_mpg_values) > self.MAX_RECENT_CALCULATIONS:
-                    self._recent_mpg_values.pop(0)
-                    self._recent_distances.pop(0)
-                
-                # Accumulate to lifetime
-                self._lifetime_gallons += gallons_used
-                
-                print(f"MPG: Milestone! Fuel {self._fuel_at_milestone:.1f}% -> {raw_fuel_pct:.1f}% "
-                      f"({fuel_drop:.1f}% drop = {gallons_used:.2f}gal), "
-                      f"distance: {self._session_distance:.1f}mi, MPG: {segment_mpg:.1f}, "
-                      f"lifetime: {self._lifetime_miles:.1f}mi / {self._lifetime_gallons:.2f}gal")
-            else:
-                print(f"MPG: Skipping unreasonable MPG: {segment_mpg:.1f} "
-                      f"(fuel drop {fuel_drop:.1f}%, distance {self._session_distance:.1f}mi)")
-            
-            # Reset for next segment
-            self._fuel_at_milestone = raw_fuel_pct
-            self._session_distance = 0.0
-        
-        # Detect refueling (fuel increased significantly)
-        # Only if we have valid prior data and the jump is large enough to be real
-        if (self._last_fuel_pct is not None and self._last_fuel_pct > 0 and
-                raw_fuel_pct > self._last_fuel_pct + 10.0):  # 10% increase = likely refueled
-            
-            # IMPORTANT: Count the fuel consumed between last milestone and refuel point.
-            # Without this, the "tail end" of each tank (last milestone → refuel) is lost,
-            # which causes gallons to be severely undercounted over time.
-            if self._fuel_at_milestone is not None and self._fuel_at_milestone > 0:
-                tail_drop = self._fuel_at_milestone - self._last_fuel_pct
-                if tail_drop > 0:
-                    tail_gallons = (tail_drop / 100.0) * self.TANK_CAPACITY_GAL
-                    self._lifetime_gallons += tail_gallons
-                    
-                    # Record MPG for this final segment if enough distance
-                    if self._session_distance >= self.MIN_DISTANCE_FOR_MILESTONE and tail_gallons > 0:
-                        tail_mpg = self._session_distance / tail_gallons
-                        if self.MIN_REASONABLE_MPG <= tail_mpg <= self.MAX_REASONABLE_MPG:
-                            self._recent_mpg_values.append(tail_mpg)
-                            self._recent_distances.append(self._session_distance)
-                            while len(self._recent_mpg_values) > self.MAX_RECENT_CALCULATIONS:
-                                self._recent_mpg_values.pop(0)
-                                self._recent_distances.pop(0)
-                    
-                    print(f"MPG: Refuel detected! {self._last_fuel_pct:.1f}% -> {raw_fuel_pct:.1f}%. "
-                          f"Counted tail: {self._fuel_at_milestone:.1f}% -> {self._last_fuel_pct:.1f}% "
-                          f"= {tail_gallons:.3f}gal over {self._session_distance:.1f}mi. "
-                          f"Lifetime: {self._lifetime_miles:.1f}mi / {self._lifetime_gallons:.2f}gal")
-                else:
-                    print(f"MPG: Refuel detected! {self._last_fuel_pct:.1f}% -> {raw_fuel_pct:.1f}% (no tail to count)")
-            else:
-                print(f"MPG: Refuel detected! {self._last_fuel_pct:.1f}% -> {raw_fuel_pct:.1f}%")
-            
-            self._fuel_at_milestone = raw_fuel_pct
-            self._session_distance = 0.0
-        
+
+        self._track_fuel_level(raw_fuel_pct)
+
         self._last_fuel_pct = raw_fuel_pct
         
         # Update output values
         self._update_outputs(raw_fuel_pct)
-        
-        # Periodic save
-        if current_time - self._last_save_time >= self.SAVE_INTERVAL_SEC:
-            self._save_data()
-            self._last_save_time = current_time
+        self._maybe_save(current_time)
         
         # Debug output periodically
         self._debug_counter += 1
-        if self._debug_counter >= 300:  # Every ~10 seconds at 30Hz
+        if self._verbose and self._debug_counter >= 300:  # Every ~10 seconds at 30Hz
             self._debug_counter = 0
             if engine_running:
                 print(f"MPG DEBUG: fuel={raw_fuel_pct:.1f}%, session_dist={self._session_distance:.2f}mi, "
-                      f"avg={self._average_mpg:.1f}, range={self._range_miles}mi, "
+                      f"avg={self._average_mpg:.1f} ({self._average_source}), "
+                      f"range={self._range_miles}mi, "
+                      f"maf={self._maf_fuel_gal:.2f}gal/{self._maf_distance_mi:.1f}mi, "
                       f"milestone_fuel={self._fuel_at_milestone:.1f}%, "
                       f"lifetime={self._lifetime_miles:.1f}mi")
+
+    # -- fuel-level accounting ---------------------------------------------
+
+    def _track_fuel_level(self, fuel_pct: float):
+        """Sender-based fuel accounting: the fallback and the cross-check.
+
+        Two things move the segment boundary: the level fell by a milestone's worth
+        (fuel was burned), or it rose (fuel was added). Only the first used to be
+        handled, and only a rise of 10% or more counted as a fill - so an ordinary
+        top-up left the milestone stranded above the new level, every later drop read
+        as negative, and the average quietly stopped updating until the tank went
+        below the old mark.
+        """
+        if not self._fuel_at_milestone or self._fuel_at_milestone <= 0:
+            self._fuel_at_milestone = fuel_pct
+            return
+
+        drop = self._fuel_at_milestone - fuel_pct
+        rise = fuel_pct - self._fuel_at_milestone
+
+        if drop >= self.FUEL_MILESTONE_THRESHOLD:
+            gallons_used = (drop / 100.0) * self.TANK_CAPACITY_GAL
+
+            # The fuel was burned whether or not there is a distance to divide it
+            # by, so it always counts toward the lifetime total. It used to count
+            # only when a sample was accepted, which silently dropped every idling,
+            # warming-up or crawling stretch out of the denominator and biased the
+            # average upward - the error this method is least able to afford.
+            self._lifetime_gallons += gallons_used
+
+            if self._session_distance >= self.MIN_DISTANCE_FOR_MILESTONE:
+                segment_mpg = self._session_distance / gallons_used if gallons_used > 0 else 0.0
+                if self.MIN_REASONABLE_MPG <= segment_mpg <= self.MAX_REASONABLE_MPG:
+                    self._record_recent(segment_mpg, self._session_distance)
+                    print(f"MPG: Milestone! Fuel {self._fuel_at_milestone:.1f}% -> {fuel_pct:.1f}% "
+                          f"({drop:.1f}% drop = {gallons_used:.2f}gal), "
+                          f"distance: {self._session_distance:.1f}mi, MPG: {segment_mpg:.1f}, "
+                          f"lifetime: {self._lifetime_miles:.1f}mi / {self._lifetime_gallons:.2f}gal")
+                else:
+                    print(f"MPG: Milestone with an implausible MPG: {segment_mpg:.1f} "
+                          f"(fuel drop {drop:.1f}% = {gallons_used:.2f}gal over "
+                          f"{self._session_distance:.1f}mi). Gallons still counted.")
+            else:
+                # Burned while parked or crawling: real fuel, no distance to divide
+                # by, so there is no sample to quote - but the gallons above are
+                # exactly what makes a stop-start drive read honestly.
+                print(f"MPG: Burned {gallons_used:.2f}gal ({drop:.1f}%) with only "
+                      f"{self._session_distance:.2f}mi covered. Gallons counted, "
+                      f"no MPG sample.")
+
+            self._fuel_at_milestone = fuel_pct
+            self._session_distance = 0.0
+            return
+
+        if rise >= self.FUEL_RISE_DEADBAND:
+            self._count_tail_to_fill(fuel_pct, rise)
+            self._fuel_at_milestone = fuel_pct
+            self._session_distance = 0.0
+
+    def _count_tail_to_fill(self, fuel_pct: float, rise: float):
+        """Count the fuel burned between the last milestone and the fill-up.
+
+        Without this the last slice of every tank (last milestone -> pump) is never
+        counted, which is the single largest way to undercount gallons and inflate
+        the average over a few tanks.
+        """
+        last = self._last_fuel_pct
+        if not last or last <= 0 or not self._fuel_at_milestone:
+            print(f"MPG: Fuel added ({fuel_pct:.1f}%, +{rise:.1f}%) with no prior level")
+            return
+
+        tail_drop = self._fuel_at_milestone - last
+        if tail_drop <= 0:
+            print(f"MPG: Fuel added {self._fuel_at_milestone:.1f}% -> {fuel_pct:.1f}% "
+                  f"(+{rise:.1f}%, no tail to count)")
+            return
+
+        tail_gallons = (tail_drop / 100.0) * self.TANK_CAPACITY_GAL
+        self._lifetime_gallons += tail_gallons
+
+        if self._session_distance >= self.MIN_DISTANCE_FOR_MILESTONE and tail_gallons > 0:
+            tail_mpg = self._session_distance / tail_gallons
+            if self.MIN_REASONABLE_MPG <= tail_mpg <= self.MAX_REASONABLE_MPG:
+                self._record_recent(tail_mpg, self._session_distance)
+
+        print(f"MPG: Fuel added {self._fuel_at_milestone:.1f}% -> {fuel_pct:.1f}% (+{rise:.1f}%). "
+              f"Counted tail {self._fuel_at_milestone:.1f}% -> {last:.1f}% "
+              f"= {tail_gallons:.3f}gal over {self._session_distance:.1f}mi. "
+              f"Lifetime: {self._lifetime_miles:.1f}mi / {self._lifetime_gallons:.2f}gal")
+
+    def _record_recent(self, mpg: float, distance: float):
+        """Keep the last few sender-derived samples for a responsive blend."""
+        self._recent_mpg_values.append(mpg)
+        self._recent_distances.append(distance)
+        while len(self._recent_mpg_values) > self.MAX_RECENT_CALCULATIONS:
+            self._recent_mpg_values.pop(0)
+            self._recent_distances.pop(0)
+
+    def _maybe_save(self, now: float):
+        if now - self._last_save_time >= self.SAVE_INTERVAL_SEC:
+            self._save_data()
+            self._last_save_time = now
     
     def _update_outputs(self, raw_fuel_pct: float):
-        """Update thread-safe output values"""
+        """Recompute the reported average and the range it implies."""
         with self._lock:
-            # Calculate average MPG from lifetime totals (most reliable)
-            # Recent milestones are used as a supplement for responsiveness
-            if self._lifetime_gallons > 0.5:
-                # Enough lifetime data — use 80% lifetime, 20% recent for some responsiveness
-                lifetime_mpg = self._lifetime_miles / self._lifetime_gallons
-                if self._recent_mpg_values and self._recent_distances:
-                    total_dist = sum(self._recent_distances)
-                    if total_dist > 0:
-                        weighted_sum = sum(mpg * dist for mpg, dist in 
-                                         zip(self._recent_mpg_values, self._recent_distances))
-                        recent_mpg = weighted_sum / total_dist
-                        self._average_mpg = 0.8 * lifetime_mpg + 0.2 * recent_mpg
-                    else:
-                        self._average_mpg = lifetime_mpg
-                else:
-                    self._average_mpg = lifetime_mpg
-            elif self._lifetime_gallons > 0.1:
-                # Some lifetime data — use it directly
-                self._average_mpg = self._lifetime_miles / self._lifetime_gallons
-            elif self._recent_mpg_values and self._recent_distances:
-                total_dist = sum(self._recent_distances)
-                if total_dist > 0:
-                    weighted_sum = sum(mpg * dist for mpg, dist in 
-                                     zip(self._recent_mpg_values, self._recent_distances))
-                    self._average_mpg = weighted_sum / total_dist
-            else:
-                # No data yet - use EPA default
-                self._average_mpg = self.EPA_DEFAULT_MPG
-            
-            # Clamp to reasonable range
-            self._average_mpg = max(self.MIN_REASONABLE_MPG, 
-                                   min(self._average_mpg, self.MAX_REASONABLE_MPG))
-            
-            # Calculate range
-            if raw_fuel_pct > 0:
+            self._average_mpg, self._average_source = self._choose_average()
+
+            # Range = remaining fuel x average. Only meaningful with a tank reading;
+            # 0 is reported otherwise and the UIs draw "--".
+            if 0 < raw_fuel_pct <= 100:
                 remaining_gal = (raw_fuel_pct / 100.0) * self.TANK_CAPACITY_GAL
                 self._range_miles = int(remaining_gal * self._average_mpg)
             else:
                 self._range_miles = 0
+
+    def _choose_average(self):
+        """Return (mpg, source), best source first.
+
+        Air flow wins whenever it has enough coverage, because it measures fuel
+        rather than inferring it from a sender with 0.13 gal steps. The sender total
+        still takes over when air flow is missing for a long stretch, so a MAF
+        failure degrades the number instead of freezing it.
+        """
+        maf_usable = (self._maf_fuel_gal >= self.MIN_MAF_FUEL_FOR_AVERAGE and
+                      self._maf_seconds >= self.MIN_MAF_SECONDS_FOR_AVERAGE)
+
+        # More than ten minutes and more than half the session spent with no air
+        # flow means the MAF path no longer describes what the car is doing.
+        if maf_usable and self._maf_missing_seconds > 600.0 and \
+                self._maf_missing_seconds > 0.5 * self._runtime_seconds:
+            maf_usable = False
+
+        if maf_usable:
+            return self._clamp_average(self._maf_distance_mi / self._maf_fuel_gal), 'maf'
+
+        if self._lifetime_gallons > 0.5:
+            # Enough sender data — mostly lifetime, with a little recent for
+            # responsiveness to how the car is being driven now.
+            lifetime_mpg = self._lifetime_miles / self._lifetime_gallons
+            recent_mpg = self._weighted_recent_mpg()
+            if recent_mpg is not None:
+                return self._clamp_average(0.8 * lifetime_mpg + 0.2 * recent_mpg), 'fuel_gauge'
+            return self._clamp_average(lifetime_mpg), 'fuel_gauge'
+
+        if self._lifetime_gallons > 0.1:
+            # Some lifetime data — use it directly
+            return self._clamp_average(
+                self._lifetime_miles / self._lifetime_gallons), 'fuel_gauge'
+
+        recent_mpg = self._weighted_recent_mpg()
+        if recent_mpg is not None:
+            return self._clamp_average(recent_mpg), 'fuel_gauge'
+
+        # Nothing measured yet. 26 mpg is the EPA figure for this car, not a
+        # measurement, which is why the source is reported alongside it.
+        return self.EPA_DEFAULT_MPG, 'estimated'
+
+    def _weighted_recent_mpg(self) -> Optional[float]:
+        """Distance-weighted mean of the recent sender segments, or None."""
+        if not self._recent_mpg_values or not self._recent_distances:
+            return None
+        total_dist = sum(self._recent_distances)
+        if total_dist <= 0:
+            return None
+        weighted_sum = sum(m * d for m, d in
+                           zip(self._recent_mpg_values, self._recent_distances))
+        return weighted_sum / total_dist
+
+    def _clamp_average(self, mpg: float) -> float:
+        return max(self.AVERAGE_MIN_MPG, min(mpg, self.AVERAGE_MAX_MPG))
     
     def _load_data(self):
         """Load persistent data from JSON file with backup fallback.
@@ -465,17 +598,18 @@ class MPGCalculator:
                     valid_dists.append(dist)
             self._recent_mpg_values = valid_mpgs
             self._recent_distances = valid_dists
-            
-            # Calculate initial average - prefer lifetime data
-            if self._lifetime_gallons > 0.1:
-                self._average_mpg = self._lifetime_miles / self._lifetime_gallons
-            elif self._recent_distances and sum(self._recent_distances) > 0:
-                total_dist = sum(self._recent_distances)
-                weighted_sum = sum(m * d for m, d in zip(self._recent_mpg_values, self._recent_distances))
-                self._average_mpg = weighted_sum / total_dist
-            
+
+            # Air-flow totals (absent in files written before they existed)
+            self._maf_fuel_gal = max(0.0, data.get('maf_fuel_gal', 0.0))
+            self._maf_distance_mi = max(0.0, data.get('maf_distance_mi', 0.0))
+            self._maf_seconds = max(0.0, data.get('maf_seconds', 0.0))
+
+            # Calculate the initial average from whatever survived validation
+            self._average_mpg, self._average_source = self._choose_average()
+
             print(f"MPG: Loaded from {source} — {len(self._recent_mpg_values)} recent calculations, "
                   f"lifetime: {self._lifetime_miles:.1f}mi / {self._lifetime_gallons:.2f}gal, "
+                  f"air flow: {self._maf_distance_mi:.1f}mi / {self._maf_fuel_gal:.2f}gal, "
                   f"session_dist: {self._session_distance:.2f}mi, "
                   f"fuel_at_milestone: {self._fuel_at_milestone}")
         else:
@@ -515,6 +649,9 @@ class MPGCalculator:
             data = {
                 'total_miles': self._lifetime_miles,
                 'total_gallons': self._lifetime_gallons,
+                'maf_fuel_gal': self._maf_fuel_gal,
+                'maf_distance_mi': self._maf_distance_mi,
+                'maf_seconds': self._maf_seconds,
                 'recent_mpg_values': self._recent_mpg_values,
                 'recent_distances': self._recent_distances,
                 'fuel_at_milestone': self._fuel_at_milestone,
@@ -522,7 +659,9 @@ class MPGCalculator:
                 'last_fuel_pct': self._last_fuel_pct,
                 'last_save_time': time.time(),
                 'calculated_avg_mpg': self._average_mpg,
-                '_comment': 'MPG data for MX5 Telemetry. Uses milestone-based tracking.'
+                'average_source': self._average_source,
+                '_comment': 'MPG data for MX5 Telemetry. Air-flow totals first, '
+                            'fuel-level milestones as the fallback.'
             }
             
             # Step 1: Back up current file (if it exists and has data)
@@ -551,11 +690,17 @@ class MPGCalculator:
         print("MPG: Resetting all data")
         self._lifetime_miles = 0.0
         self._lifetime_gallons = 0.0
+        self._maf_fuel_gal = 0.0
+        self._maf_distance_mi = 0.0
+        self._maf_seconds = 0.0
+        self._maf_missing_seconds = 0.0
+        self._runtime_seconds = 0.0
         self._recent_mpg_values = []
         self._recent_distances = []
         self._fuel_at_milestone = None
         self._session_distance = 0.0
         self._average_mpg = self.EPA_DEFAULT_MPG
+        self._average_source = 'estimated'
         self._save_data()
     
     def reset_trip(self):

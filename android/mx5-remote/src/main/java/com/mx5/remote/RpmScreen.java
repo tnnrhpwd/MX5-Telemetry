@@ -87,13 +87,13 @@ public class RpmScreen extends Screen {
         gauge.setCaption("RPM", "x1000");
         gauge.setValue(t.rpm, shiftAt, redlineAt);
 
-        String gearText = t.inNeutral ? "N"
-                : t.inReverse ? "R"
+        String gearText = t.inReverse ? "R"
+                : t.inNeutral ? "N"
                 : t.gear <= 0 ? "\u2013" : String.valueOf(t.gear);
         gear.set(gearText, OverviewScreen.gearColor(t));
         gear.setUnit(t.gearEstimated ? "est" : "");
 
-        speed.set(String.valueOf(Math.round(t.speedFor(mph ? 1 : 0))));
+        speed.set(String.valueOf(t.speedForDisplay(mph)));
         speed.setUnit(mph ? "mph" : "km/h");
         shift.set("6500");
         redline.set("7200");

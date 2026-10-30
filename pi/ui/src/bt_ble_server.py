@@ -24,6 +24,7 @@ notifications is reassembled by the client's own line buffer.
 import asyncio
 import logging
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,23 @@ TX_UUID = '6d783500-0003-4d58-3535-4d583554454c'
 # this stays under the common floor. Larger means fewer notifications but risks dropping
 # writes on a peer that negotiated a smaller MTU.
 CHUNK_BYTES = 180
+
+# The smallest notification worth sending: an ATT MTU of 23 carries 20 bytes of payload,
+# which is the floor every phone supports. A refused chunk halves down to this, then gives
+# up rather than looping.
+MIN_CHUNK_BYTES = 20
+
+# Pause between notifications, so the stack actually flushes each one before the next.
+NOTIFY_PACING_SECONDS = 0.005
+
+# Replies that may be waiting to be notified before new ones are dropped. The client asks
+# one question at a time, so anything above a handful means it has stopped reading.
+MAX_PENDING_REPLIES = 16
+
+# Silence after which a half-received line is assumed to be left over from a central that
+# went away. The app polls several times a second and writes one request per poll, so a
+# live session never leaves a fragment sitting for anywhere near this long.
+PEER_GAP_SECONDS = 5.0
 
 try:
     from bless import (BlessServer, GATTAttributePermissions,
@@ -76,6 +94,20 @@ class BleServer:
         self._start_error = None
         self._notifications = 0
         self._writes = 0
+
+        # Replies waiting to be notified, and the one task that sends them.
+        #
+        # One writer, not one task per reply. A reply is several notifications (about a
+        # kilobyte at ~180 bytes each), and two of those interleaving on the loop splice
+        # their chunks together: the central then reads a line that is half one reply and
+        # half another, skips it, and eventually times out and reconnects. That showed up
+        # as an occasional dropped poll rather than as anything that named itself.
+        self._replies = None
+        self._drain_task = None
+
+        # When the last write arrived, so a fragment left by a vanished central can be
+        # told apart from one belonging to a live request.
+        self._last_write = 0.0
 
     # -- diagnostics ---------------------------------------------------------
 
@@ -159,6 +191,9 @@ class BleServer:
         self._server.write_request_func = self._on_write
         self._server.read_request_func = self._on_read
 
+        self._replies = asyncio.Queue(maxsize=MAX_PENDING_REPLIES)
+        self._drain_task = self._loop.create_task(self._drain_replies())
+
         await self._server.add_new_service(SERVICE_UUID)
 
         # RX: the central writes request lines here.
@@ -215,6 +250,9 @@ class BleServer:
             await asyncio.sleep(0.5)
 
     async def _shutdown(self):
+        if self._drain_task is not None:
+            self._drain_task.cancel()
+            self._drain_task = None
         if self._server is not None:
             await self._server.stop()
 
@@ -259,6 +297,23 @@ class BleServer:
         self._writes += 1
         value = value.encode('utf-8') if isinstance(value, str) else bytes(value)
 
+        now = time.monotonic()
+        gap = now - self._last_write
+        self._last_write = now
+
+        # A half-received line left over from a central that went away would be spliced
+        # onto this one, so the first request of a reconnected phone is consumed as
+        # garbage and it times out once before working. BlueZ does not tell us when a
+        # central disconnects, so this is inferred: a live session never leaves a partial
+        # line sitting for seconds, because one request is a few hundred bytes written in
+        # a single burst.
+        if gap > PEER_GAP_SECONDS and self.link.session.pending_bytes():
+            logger.info("BLE: dropping %d bytes left by a previous central",
+                        self.link.session.pending_bytes())
+            # A new session, which also means a new login: the fragment came from a
+            # central that is no longer here.
+            self.link.reset()
+
         out = self.link.on_bytes(value)
         if out:
             self._notify_soon(out)
@@ -270,20 +325,42 @@ class BleServer:
             self.link.reset()
 
     def _notify_soon(self, payload):
-        """Schedule a reply on the server's own loop.
+        """Queue a reply for the single writer task.
 
-        The write callback is synchronous, so the notification has to be handed to the
-        loop rather than awaited here. run_coroutine_threadsafe is used rather than
+        The write callback is synchronous, so the payload has to be handed to the loop
+        rather than awaited here. run_coroutine_threadsafe is used rather than
         ensure_future so this stays correct if a future bless version dispatches the
         callback from another thread.
         """
-        if self._loop is None:
+        if self._loop is None or self._replies is None:
             logger.warning("BLE reply dropped: no event loop")
             return
         try:
-            asyncio.run_coroutine_threadsafe(self._notify(payload), self._loop)
+            asyncio.run_coroutine_threadsafe(self._enqueue(payload), self._loop)
         except Exception as e:
             logger.warning("BLE reply could not be scheduled: %s", e)
+
+    async def _enqueue(self, payload):
+        """Put one reply on the queue, dropping it rather than growing without bound."""
+        try:
+            self._replies.put_nowait(payload)
+        except asyncio.QueueFull:
+            # A central that has stopped reading. Dropping this reply is right: the client
+            # is already out of step and will time out, and holding it would only delay
+            # the replies behind it.
+            logger.warning("BLE reply dropped: %d already waiting to be sent",
+                           self._replies.maxsize)
+
+    async def _drain_replies(self):
+        """Send queued replies one at a time, preserving order and chunk boundaries."""
+        while True:
+            payload = await self._replies.get()
+            try:
+                await self._notify(payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("BLE reply abandoned: %s", e)
 
     async def _notify(self, payload):
         """Send a reply, chunked to fit the MTU. Order is preserved, so the central can
@@ -303,13 +380,31 @@ class BleServer:
             logger.warning("BLE reply dropped: no characteristic %s", TX_UUID)
             return
 
-        for i in range(0, len(payload), self.chunk_bytes):
-            tx.value = payload[i:i + self.chunk_bytes]
+        # Start at the configured size and shrink if the stack refuses a payload.
+        #
+        # The real ceiling is the negotiated MTU, and nothing in the Python API reports
+        # what that turned out to be: a phone that leaves it at the default 23 needs
+        # 20-byte notifications, and one that negotiated 517 is happy with 180. Sending
+        # 180 regardless works on most phones and fails completely on the ones that did
+        # not negotiate, so a refusal halves the chunk instead of abandoning the reply.
+        chunk = max(MIN_CHUNK_BYTES, min(self.chunk_bytes, len(payload)))
+        sent = 0
+        while sent < len(payload):
+            part = payload[sent:sent + chunk]
+            tx.value = part
             try:
                 self._server.update_value(SERVICE_UUID, TX_UUID)
             except Exception as e:
-                logger.warning("BLE reply stopped: update_value failed: %s", e)
+                if len(part) > MIN_CHUNK_BYTES:
+                    chunk = max(MIN_CHUNK_BYTES, chunk // 2)
+                    logger.warning(
+                        "BLE: %d-byte notification refused (%s), retrying at %d",
+                        len(part), e, chunk)
+                    continue
+                logger.warning("BLE reply stopped at byte %d of %d: %s",
+                               sent, len(payload), e)
                 return
             self._notifications += 1
+            sent += len(part)
             # Yield so the stack actually flushes between chunks.
-            await asyncio.sleep(0.005)
+            await asyncio.sleep(NOTIFY_PACING_SECONDS)

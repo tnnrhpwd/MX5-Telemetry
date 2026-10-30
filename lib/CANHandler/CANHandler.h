@@ -24,7 +24,10 @@ public:
     
     // Data accessors - Core Performance
     uint16_t getRPM() const { return currentRPM; }
-    uint8_t getSpeed() const { return vehicleSpeed; }
+    // int16_t, not uint8_t: OBD-II PID 0x0D is unsigned so this never goes
+    // negative today, but a signed type is the only one that can carry a reverse
+    // reading if this ever moves off the PID. `uint8_t` would report -3 km/h as 253.
+    int16_t getSpeed() const { return vehicleSpeed; }
     uint8_t getThrottle() const { return throttlePosition; }
     uint8_t getCalculatedLoad() const { return calculatedLoad; }
     
@@ -58,7 +61,7 @@ private:
     
     // Vehicle data - Core Performance
     volatile uint16_t currentRPM;
-    volatile uint8_t vehicleSpeed;
+    volatile int16_t vehicleSpeed;
     volatile uint8_t throttlePosition;
     volatile uint8_t calculatedLoad;
     

@@ -118,15 +118,18 @@ the UI on a car screen. The car is still the only real test on that point.
 ## Testing without a car
 
 ```powershell
-adb shell wm size 800x480
-adb shell wm density 160
+# the car: 919x480 at 209dpi is 700x367dp, and dp is what the layout uses
+adb shell wm size 919x480
+adb shell wm density 209
 # run, then dump and screenshot
 adb shell wm size reset
 adb shell wm density reset
 ```
 
 800x480 at 160dpi is Android Auto's canonical canvas, and the app's own probe reports
-`800x480 @160` when it gets it.
+`800x480 @160` when it gets it - but it is 113dp taller than this car's 367dp, and three
+pages clip at the real size while looking complete at the canonical one. Design against
+the car's numbers, or against `android/mimic/`, which now renders them.
 
 The DHU accepts commands typed into the terminal it runs in. `keycode home` returns to
 the AA app grid, `keycode back` steps back, `quit` shuts it down, `screenshot out.png`

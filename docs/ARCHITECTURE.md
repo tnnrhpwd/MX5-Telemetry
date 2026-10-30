@@ -157,7 +157,7 @@ The Pi maintains all user settings and syncs to devices on startup:
 | ID | Data | Bytes | Formula |
 |----|------|-------|---------|
 | `0x201` | RPM | 0-1 | Value ÷ 4 |
-| `0x201` | Speed | 4-5 | Value ÷ 100 (km/h) |
+| `0x201` | Speed | 4-5 | (Value − 10000) ÷ 100, km/h — **signed**: below 10000 is reverse. A raw value of 0x8000 or more is decoded as two's complement instead. |
 | `0x201` | Throttle | 6 | 0-200 (200=100%) |
 | `0x228` | Gear | 0 | Bit flags |
 | `0x420` | Coolant Temp | 0 | °C + 40 offset |

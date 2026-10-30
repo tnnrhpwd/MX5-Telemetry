@@ -197,8 +197,20 @@ class LinkProtocol:
 
     @staticmethod
     def _ok(req_id, data):
-        return json.dumps({'id': req_id, 'ok': True, 'data': data},
-                          separators=(',', ':'))
+        try:
+            return json.dumps({'id': req_id, 'ok': True, 'data': data},
+                              separators=(',', ':'))
+        except (TypeError, ValueError) as e:
+            # A payload with something JSON cannot carry - a set, an enum, a numpy float -
+            # used to raise straight out of handle_line. On SPP that closed the peer and on
+            # BLE it surfaced as an opaque ATT error, so one bad field anywhere in a
+            # snapshot cost the whole session: the phone reconnected, asked again, and was
+            # dropped again. This has happened for real in this project once already
+            # (a Screen enum reaching json.dumps). Answering with an error instead keeps
+            # the link up and puts the reason where a person can read it.
+            logger.exception("Link reply for id %r could not be encoded", req_id)
+            return LinkProtocol._error(
+                req_id, 'Reply could not be encoded: %s' % (e or type(e).__name__))
 
     @staticmethod
     def _error(req_id, message):
@@ -218,13 +230,38 @@ class LinkSession:
         self._buf = bytearray()
         self.closed = False
         self.close_reason = None
+        # Set after the buffer overflows: the bytes still arriving belong to a line we
+        # have already given up on, so they are discarded up to the next newline.
+        self._resync = False
 
     def feed(self, chunk):
         """Accept received bytes. Returns a list of reply lines to send, in order."""
         if self.closed:
             return []
 
+        if self._resync:
+            nl = chunk.find(b'\n')
+            if nl < 0:
+                return []            # still inside the abandoned line
+            chunk = chunk[nl + 1:]
+            self._resync = False
+
         self._buf.extend(chunk)
+
+        # The cap has to apply to the *unfinished* line too, not only to complete ones.
+        # A peer that sends no newline at all - a desynced stream, a crash that dumped
+        # binary at the socket - grew this buffer without bound, which is the one thing
+        # MAX_LINE_BYTES exists to prevent. Nothing legitimate is anywhere near 8 KB: the
+        # largest request this protocol carries is a few hundred bytes.
+        #
+        # One error, then silence until the newline: re-reporting every chunk turned a
+        # single disconnection into a stream of identical replies, and holding the tail
+        # meant the next real request was spliced onto the garbage and lost.
+        if len(self._buf) > MAX_LINE_BYTES and b'\n' not in self._buf:
+            self._buf = bytearray()
+            self._resync = True
+            return [json.dumps({'id': None, 'ok': False, 'error': 'Line too long'},
+                               separators=(',', ':'))]
 
         replies = []
         while b'\n' in self._buf:
@@ -239,7 +276,7 @@ class LinkSession:
                     separators=(',', ':')))
                 continue
 
-            reply = self._protocol.handle_line(line.decode('utf-8', 'replace'))
+            reply = self._handle(line.decode('utf-8', 'replace'))
             if reply:
                 replies.append(reply)
 
@@ -249,6 +286,25 @@ class LinkSession:
                 break
 
         return replies
+
+    def _handle(self, line):
+        """One line in, one reply out, whatever the protocol does.
+
+        The session outliving a bug matters more than the bug: an exception escaping here
+        closed the SPP peer and produced an opaque ATT error over BLE, so a single
+        unencodable field disconnected the phone and then did it again on every retry.
+        """
+        try:
+            return self._protocol.handle_line(line)
+        except Exception as e:                       # noqa: BLE001 - see the docstring
+            logger.exception("Link protocol raised on %r", line[:120])
+            try:
+                return json.dumps(
+                    {'id': None, 'ok': False,
+                     'error': 'Internal error: %s' % (e or type(e).__name__)},
+                    separators=(',', ':'))
+            except Exception:
+                return None
 
     def pending_bytes(self):
         """Bytes buffered without a newline yet, for a transport that wants to warn."""

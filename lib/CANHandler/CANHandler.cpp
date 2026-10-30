@@ -188,6 +188,9 @@ void CANHandler::parseOBDResponse(unsigned long rxId, unsigned char len, unsigne
                     break;
                 case PID_VEHICLE_SPEED:
                     if (len >= 4) {
+                        // PID 0x0D is a magnitude (0-255 km/h) with no sign, so this
+                        // path can never report reverse. Signed type kept anyway so a
+                        // negative value would survive if the source ever changes.
                         vehicleSpeed = rxBuf[3];
                     }
                     break;

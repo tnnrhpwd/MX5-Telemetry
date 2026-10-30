@@ -35,8 +35,12 @@ public final class PiClient {
      * connectGatt(), which is exactly the hammering that leaves Android's Bluetooth stack
      * refusing new connections until the app is restarted. It grows now and resets the
      * moment anything works.
+     *
+     * Ten seconds, not twenty: this is also the worst-case delay between the Pi finishing
+     * its boot and the app noticing it, which is the most common "it takes ages to link
+     * up" case there is. A hand-driven retry is one press away on the System screen.
      */
-    private static final long FAIL_BACKOFF_MAX_MS = 20000;
+    private static final long FAIL_BACKOFF_MAX_MS = 10000;
 
     /**
      * How long a single transport sits out after it fails.
@@ -50,6 +54,29 @@ public final class PiClient {
      */
     private static final long COOLDOWN_MIN_MS = 10000;
     private static final long COOLDOWN_MAX_MS = 60000;
+
+    /**
+     * How long one request may spend walking the fallback chain.
+     *
+     * Without a budget, a single poll could sit in three connects: the tether's 1.5s, an
+     * SPP connect that had to time out, and an 8s BLE open. The poll loop is what draws
+     * the link state, so the app went on showing the last reading, apparently frozen,
+     * for as long as fifteen seconds - which is indistinguishable from a hung app.
+     * Better to fail this poll quickly: the next one starts the attempt again, and the
+     * per-transport cooldowns above stop that from becoming hammering.
+     */
+    private static final long WALK_BUDGET_MS = 6000;
+
+    /**
+     * How long a link may go unproven before its connections are dropped on principle.
+     *
+     * While the app is hidden there is no polling, so the last success can be minutes
+     * old. By then the Pi may have rebooted, the phone may have left and come back, and
+     * the socket may be a half-open husk that looks perfectly healthy: writing to it
+     * succeeds and the reply never comes. Paying one reconnect is much cheaper than
+     * paying the reply timeout on the first request and again while the chain is walked.
+     */
+    private static final long STALE_LINK_MS = 60000;
 
     /**
      * Why each transport failed is logged, not just stored.
@@ -90,6 +117,22 @@ public final class PiClient {
     /** Consecutive "nothing reached the Pi" results, used to escalate the backoff. */
     private int failStreak;
 
+    /**
+     * When each transport last answered, so the next attempt can start where the link
+     * actually is rather than where the fixed chain says it should be.
+     *
+     * This is the difference between a hiccup and a demotion. Clearing the sticky
+     * transport after one dropped exchange used to send the next request to the head of
+     * the chain, which is the tether - and on a phone with no cable that is a wasted 1.5s
+     * connect on every recovery, twice over, while the Bluetooth link that had merely
+     * stuttered sat at the back of the queue.
+     */
+    private final java.util.IdentityHashMap<LinkTransport, Long> lastGood =
+            new java.util.IdentityHashMap<>();
+
+    /** When anything last answered, or 0 before the first success. */
+    private volatile long lastSuccessAt;
+
     private boolean allowed(LinkTransport t) {
         synchronized (health) {
             Health h = health.get(t);
@@ -97,10 +140,20 @@ public final class PiClient {
         }
     }
 
+    private long lastGoodAt(LinkTransport t) {
+        synchronized (health) {
+            Long when = lastGood.get(t);
+            return when == null ? 0L : when;
+        }
+    }
+
     private void markGood(LinkTransport t) {
+        long now = System.currentTimeMillis();
         synchronized (health) {
             health.remove(t);
+            lastGood.put(t, now);
         }
+        lastSuccessAt = now;
         failStreak = 0;
     }
 
@@ -131,14 +184,40 @@ public final class PiClient {
      *
      * Separate from configure() because it needs a Context and a device source, neither of
      * which the HTTP path has any use for.
+     *
+     * Any transports already here are closed, not just replaced. They hold a live RFCOMM
+     * socket or GATT client, and dropping the reference without closing it left a second
+     * client on the same peripheral: the Pi kept the old session and Android refused the
+     * next write with status 201. This is called again whenever the token changes or the
+     * permission is granted, so it has to be safe to call twice.
      */
     public void setBluetooth(Context context, BtTransport.DeviceSource devices, String token) {
+        closeBluetooth();
         this.token = token == null ? "" : token.trim();
         this.spp = new SppTransport(this.token, devices);
         this.ble = new BleTransport(context, this.token, devices);
         rebuildChain();
         active = null;
         retryAfter = 0;
+        synchronized (health) {
+            health.clear();
+            lastGood.clear();
+        }
+    }
+
+    private void closeBluetooth() {
+        for (LinkTransport t : new LinkTransport[]{spp, ble}) {
+            if (t == null) {
+                continue;
+            }
+            try {
+                t.close();
+            } catch (Exception ignored) {
+                // Replacing a transport is not a reason to fail.
+            }
+        }
+        spp = null;
+        ble = null;
     }
 
     /**
@@ -217,6 +296,54 @@ public final class PiClient {
         failStreak = 0;
         synchronized (health) {
             health.clear();
+            lastGood.clear();
+        }
+    }
+
+    /**
+     * Start on the transport that carried the link last time the app ran.
+     *
+     * Ignored when that transport cannot be used now, and it never overrides a working
+     * choice, because it is only called straight after the chain is rebuilt.
+     */
+    public void preferTransport(String label) {
+        if (label == null || label.isEmpty()) {
+            return;
+        }
+        for (LinkTransport t : chain) {
+            if (label.equals(t.label()) && t.isReady()) {
+                active = t;
+                Log.i(TAG, "starting on " + label + ", which is what worked last time");
+                return;
+            }
+        }
+    }
+
+    /**
+     * Drop every connection and forget the failure history, for a deliberate retry.
+     *
+     * This is what the System screen's Reconnect button calls. Closing the transports is
+     * the part that matters: it releases the RFCOMM socket and the GATT client, so the Pi
+     * frees the old session and the next request does a fresh hello instead of talking
+     * into a socket whose other end has gone. Without it the only way to get that was to
+     * force-stop the app.
+     */
+    public synchronized void reconnect() {
+        for (LinkTransport t : chain) {
+            try {
+                t.close();
+            } catch (Exception ignored) {
+                // Closing a transport during teardown is never worth failing over.
+            }
+        }
+        active = null;
+        retryAfter = 0;
+        lastError = "";
+        failStreak = 0;
+        lastSuccessAt = 0;
+        synchronized (health) {
+            health.clear();
+            lastGood.clear();
         }
     }
 
@@ -337,6 +464,8 @@ public final class PiClient {
             throw new IOException(lastError.isEmpty() ? "Waiting to retry" : lastError);
         }
 
+        dropStaleLinksIfIdle();
+
         IOException failure = null;
 
         LinkTransport sticky = active;
@@ -346,8 +475,12 @@ public final class PiClient {
                 if (retryAfter != 0) {
                     retryAfter = 0;
                 }
+                // Recorded here too, not just on the fallback path: this is the common
+                // path, and the staleness check and the recency ordering both read it.
+                markGood(sticky);
                 return out;
             } catch (LinkTransport.Refused e) {
+                markGood(sticky);
                 throw e;
             } catch (IOException e) {
                 Log.w(TAG, sticky.label() + " failed: " + e);
@@ -358,10 +491,14 @@ public final class PiClient {
             }
         }
 
-        // Prefer transports that are not sitting out a cooldown. If every remaining
-        // candidate is cooling down, ignore the cooldowns instead of declaring the Pi
-        // unreachable: that is the difference between recovering slowly and staying dead
-        // until the app is restarted.
+        // Prefer transports that are not sitting out a cooldown, then the one that
+        // answered most recently. Sorting on recency rather than walking a fixed order is
+        // what keeps a Bluetooth hiccup from being answered over the tether's slow
+        // connect timeout: the link that was working a second ago is tried first, and the
+        // ones that have never worked keep their chain order. If every remaining candidate
+        // is cooling down, ignore the cooldowns instead of declaring the Pi unreachable:
+        // that is the difference between recovering slowly and staying dead until the app
+        // is restarted.
         List<LinkTransport> ready = new ArrayList<>();
         List<LinkTransport> cooling = new ArrayList<>();
         for (LinkTransport t : chain) {
@@ -377,8 +514,15 @@ public final class PiClient {
         if (ready.isEmpty()) {
             ready.addAll(cooling);
         }
+        // List.sort is stable, so transports that have never answered keep their order.
+        ready.sort((a, b) -> Long.compare(lastGoodAt(b), lastGoodAt(a)));
 
+        long deadline = System.currentTimeMillis() + WALK_BUDGET_MS;
         for (LinkTransport t : ready) {
+            if (failure != null && System.currentTimeMillis() >= deadline) {
+                Log.w(TAG, "giving up this attempt after " + WALK_BUDGET_MS + "ms");
+                break;
+            }
             try {
                 String out = t.request(method, path, body);
                 active = t;
@@ -429,6 +573,35 @@ public final class PiClient {
         }
         retryAfter = System.currentTimeMillis() + backoff;
         throw failure != null ? failure : new IOException(lastError);
+    }
+
+    /**
+     * Release the Bluetooth connections when the link has gone unproven for a long time.
+     *
+     * Called at the top of every request, so it only ever runs on the thread that is
+     * about to use the link, never behind another caller's back. The tether is left alone:
+     * it opens a connection per request and holds nothing.
+     */
+    private void dropStaleLinksIfIdle() {
+        long last = lastSuccessAt;
+        long idle = System.currentTimeMillis() - last;
+        if (last == 0 || idle < STALE_LINK_MS) {
+            return;
+        }
+        active = null;
+        lastSuccessAt = System.currentTimeMillis();
+        for (LinkTransport t : chain) {
+            if (t instanceof HttpTransport) {
+                continue;
+            }
+            try {
+                t.close();
+            } catch (Exception ignored) {
+                // Closing a possibly dead transport is never worth failing over.
+            }
+        }
+        Log.d(TAG, "dropped idle Bluetooth connections after " + (idle / 1000)
+                + "s without a reply");
     }
 
     private String firstUnavailableReason() {

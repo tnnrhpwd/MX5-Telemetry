@@ -95,15 +95,18 @@ public class OverviewScreen extends Screen {
     @Override
     public void bind(Telemetry t) {
         boolean mph = host == null || host.useMph();
-        speed.set(String.valueOf(Math.round(t.speedFor(mph ? 1 : 0))));
+        speed.set(String.valueOf(t.speedForDisplay(mph)));
         speed.setUnit(mph ? "mph" : "km/h");
         rpm.setLevel(String.valueOf(t.rpm), t.rpm >= 6500 ? Ui.Stat.FAULT : Ui.Stat.OK);
 
         String gearText;
-        if (t.inNeutral) {
-            gearText = "N";
-        } else if (t.inReverse) {
+        if (t.inReverse) {
+            // Reverse is checked before neutral: the neutral switch lags the gear
+            // lever by a frame or two, and showing "N" while the car rolls back was
+            // one half of the R/N flicker. The ESP32 tests the flag first too.
             gearText = "R";
+        } else if (t.inNeutral) {
+            gearText = "N";
         } else if (t.gear <= 0) {
             gearText = "\u2013";
         } else {

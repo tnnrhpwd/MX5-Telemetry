@@ -72,6 +72,11 @@ extern bool themeDark;
 void applyTheme(const char* scheme, bool dark);
 void applyDefaultTheme();
 
+// Theme enumeration. The firmware only ever applies what the phone sends; this is
+// for previews and diagnostics (the native simulator renders one frame per scheme).
+int ui_themeCount();
+const char* ui_themeId(int index);
+
 #define COLOR_BG          (g_theme.bg)
 #define COLOR_BG_DARK     (g_theme.bgDark)
 #define COLOR_BG_CARD     (g_theme.bgCard)
@@ -127,7 +132,7 @@ struct TelemetryData {
     bool engineRunning;
     bool connected;           // Serial connection to Pi is active
     bool hasDiagnosticData;   // Received actual diagnostic data from Pi
-    bool hasReceivedTelemetry; // Flag to track if we've ever received TEL: data
+    bool hasReceivedTelemetry; // True while telemetry is arriving. False once the link goes stale - that is what makes the readouts show "--" and, past the boot countdown, hands the panel to ui_linkLostFrame()
     // Gear estimation (for vehicles without gear sensor)
     bool gearEstimated;       // True if gear was estimated from speed/RPM
     bool clutchEngaged;       // True if clutch appears to be pressed
@@ -257,10 +262,45 @@ extern bool navLocked;        // Navigation lock state (from Pi SWC handler)
 const int PI_BOOT_COUNTDOWN = 30;  // Seconds to countdown from
 extern unsigned long bootStartTime;   // Set in setup()
 extern bool piDataReceived;           // Set true when first valid telemetry data arrives
-extern int lastBootCountdown;         // Track countdown for redraw detection
-extern int currentLoadingMessage;
-extern unsigned long lastMessageChange;
 const int NUM_LOADING_MESSAGES = 20;
+
+// ============================================================================
+// Startup animation - power-on to the first Overview frame
+// ============================================================================
+// One frame renderer driven by an explicit clock, so the firmware and the
+// desktop simulator (tools/simulators/native) play the same sequence.
+//   t     milliseconds since power-on
+//   seek  true = repaint the state at t from a clean screen instead of
+//         advancing an existing sequence (used by the simulator's stills)
+// The sequence is UI_BOOT_ANIM_MS long and ends with the "MX5 TELEMETRY /
+// READY" frame, which the caller then hands over to the boot wait.
+extern const unsigned long UI_BOOT_ANIM_MS;
+void ui_startupFrame(unsigned long t, bool seek = false);
+
+// The wait that follows, until the first telemetry line (or PI_BOOT_COUNTDOWN
+// expiring). `totalEl` is milliseconds since power-on, not since the intro ended:
+// the caption counts the real 30 s while the ring restarts empty at the hand-off.
+// Draws the same boot screen still running: filling ring, orbiting comet, breathing
+// emblem, rotating loading message and the seconds remaining. Idempotent, so any
+// instant can be rendered on its own.
+void ui_bootWaitFrame(unsigned long totalEl);
+
+// ============================================================================
+// Link-lost screen - the Pi stopped talking while the car was running
+// ============================================================================
+// A takeover screen: the dispatcher draws this *instead of* whatever screen is
+// selected, so a dead Pi can never leave a frozen dashboard on the panel.
+extern unsigned long lastPiDataMs;  // stamped by the serial parser on every line
+
+// True when the panel should stop showing telemetry: a link that was up has gone
+// silent, or the boot countdown expired with nothing ever arriving. False in demo
+// mode, which has no Pi to wait for.
+bool ui_linkLostActive();
+
+// One frame of the waiting animation: radar sweep on the dial, the emblem, and
+// "WAITING FOR PI / CANBUS" over the seconds since the last packet. Idempotent,
+// so it can be called at the display's frame rate for as long as the link is down.
+void ui_linkLostFrame();
 
 // ============================================================================
 // Page transition animation state

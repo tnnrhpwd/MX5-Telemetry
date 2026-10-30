@@ -41,7 +41,6 @@ final class BleTransport extends BtTransport {
     /** Diagnostics. This transport had no logging at all, so a refused write said nothing. */
     private static final String TAG = "MX5Ble";
 
-    private static final long OPEN_TIMEOUT_MS = 8000;
     private static final long WRITE_TIMEOUT_MS = 2000;
 
     /**
@@ -51,6 +50,15 @@ final class BleTransport extends BtTransport {
      * that a stack which never reports the disconnect cannot pin a client for ever.
      */
     private static final long RETIRE_TIMEOUT_MS = 4000;
+
+    /**
+     * How long to wait for a retired client's disconnect before opening a new one.
+     *
+     * Short on purpose: this is the difference between a 133 and a working link, not a
+     * place to wait for the full retire timeout, which exists only to free a client whose
+     * callback never arrives.
+     */
+    private static final long RETIRE_SETTLE_MS = 1200;
 
     /** BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY: another write is outstanding. */
     private static final int GATT_WRITE_REQUEST_BUSY = 201;
@@ -76,6 +84,20 @@ final class BleTransport extends BtTransport {
 
     /** Ask for a large MTU so telemetry needs fewer round trips. */
     private static final int WANTED_MTU = 517;
+
+    /** How long to wait for the MTU answer before carrying on at whatever we have. */
+    private static final long MTU_TIMEOUT_MS = 1500;
+
+    /**
+     * The whole of open(), from retiring the old client to the first usable link.
+     *
+     * Each step had its own generous timeout - connect, service discovery, the descriptor
+     * write, the MTU exchange - and they add up to about twenty seconds when the Pi is
+     * away. That is time the poll thread spends inside one transport, and it is why the
+     * app could sit on the last reading for half a minute before saying anything. One
+     * budget for the lot makes the worst case the same as the best case's timeout.
+     */
+    private static final long OPEN_BUDGET_MS = 9000;
 
     private final Context context;
     private final DeviceSource devices;
@@ -153,6 +175,8 @@ final class BleTransport extends BtTransport {
             throw new IOException(devices.reason());
         }
 
+        long deadline = System.currentTimeMillis() + OPEN_BUDGET_MS;
+
         clearReceived();
         mtu = 23;
         connectLatch = new CountDownLatch(1);
@@ -167,6 +191,15 @@ final class BleTransport extends BtTransport {
         // next write with status 201 and by delivering the old client's callbacks here.
         closeGatt();
 
+        // Give that client a moment to actually go away before asking for a new one.
+        //
+        // Opening a second connection while the stack still believes the first is up is
+        // what produces status 133, and once it does it tends to do it to every attempt
+        // after it - the "only a process restart frees the stack" failure. The disconnect
+        // is agreed with the peripheral, so it takes a link round trip, not a scheduler
+        // tick; waiting for it here is cheaper than losing the whole reconnect.
+        awaitRetired(RETIRE_SETTLE_MS);
+
         try {
             // autoConnect=false: a direct connection to an already-bonded device, which
             // also means no scanning and therefore no scan permission.
@@ -178,7 +211,7 @@ final class BleTransport extends BtTransport {
             throw new IOException("Could not open a GATT connection");
         }
 
-        if (!await(connectLatch, OPEN_TIMEOUT_MS)) {
+        if (!await(connectLatch, remaining(deadline))) {
             closePipe();
             throw new IOException("BLE connect timed out");
         }
@@ -194,7 +227,7 @@ final class BleTransport extends BtTransport {
                     : "BLE connection was refused (status " + status + ")");
         }
 
-        if (!gatt.discoverServices() || !await(servicesLatch, OPEN_TIMEOUT_MS)) {
+        if (!gatt.discoverServices() || !await(servicesLatch, remaining(deadline))) {
             closePipe();
             throw new IOException("BLE service discovery failed");
         }
@@ -213,17 +246,63 @@ final class BleTransport extends BtTransport {
                     + "link running on the Pi?");
         }
 
-        enableNotifications(tx);
+        enableNotifications(tx, deadline);
 
-        // Deliberately no requestMtu() here.
+        // Ask for a large MTU, but only now, after the subscription is complete.
         //
-        // The Pi asks for a large MTU itself the moment a central connects, and Android
-        // reports the result through onMtuChanged, so asking cost nothing and bought
-        // nothing: an HCI capture showed zero MTU requests from this side on every
-        // connection while the link still ended up at 517. What it did do was sit between
-        // the subscribe and the first write, and the write that followed it never reported
-        // completion. A smaller MTU only costs more notifications, and the line protocol
-        // already tolerates a reply split across several of them.
+        // Chunk size is mtu - 3, so at the default 23 a telemetry snapshot of about a
+        // kilobyte becomes fifty notifications instead of six, at four polls a second.
+        // The phone's own behaviour here is not something to rely on: some Android
+        // versions negotiate 517 by themselves and some leave it at 23, and the difference
+        // is the difference between a link that keeps up and one that feels like it is
+        // dragging. Asking explicitly makes it the same on every phone.
+        //
+        // It is deliberately the last step. It was previously skipped because placing it
+        // between the subscribe and the first write made that write never report
+        // completion; nothing follows it now, so that cannot happen, and a refusal is
+        // ignored because a smaller MTU only costs more notifications.
+        requestMtu(deadline);
+    }
+
+    /** What is left of the open() budget, or 1ms once it has run out. */
+    private static long remaining(long deadline) {
+        return Math.max(1, deadline - System.currentTimeMillis());
+    }
+
+    /**
+     * Ask for the wanted MTU and wait briefly for the answer.
+     *
+     * Never fatal. On a peripheral that rejects the request, or a stack that answers late,
+     * the link keeps working at whatever MTU it already had.
+     */
+    @SuppressWarnings("deprecation")
+    private void requestMtu(long deadline) {
+        BluetoothGatt g = gatt;
+        if (g == null) {
+            return;
+        }
+        mtuLatch = new CountDownLatch(1);
+        boolean asked;
+        try {
+            asked = g.requestMtu(WANTED_MTU);
+        } catch (Exception e) {
+            Log.d(TAG, "requestMtu refused: " + e);
+            return;
+        }
+        if (!asked) {
+            Log.d(TAG, "requestMtu was not accepted, staying at mtu=" + mtu);
+            return;
+        }
+        long wait = Math.min(MTU_TIMEOUT_MS, remaining(deadline));
+        try {
+            if (!await(mtuLatch, wait)) {
+                Log.d(TAG, "no MTU answer in " + wait + "ms, staying at mtu=" + mtu);
+            }
+        } catch (IOException e) {
+            // Interrupted: the connect is being abandoned, and open() will say so.
+            return;
+        }
+        Log.d(TAG, "mtu now " + mtu);
     }
 
     private BluetoothGattCharacteristic findCharacteristic(UUID service, UUID characteristic) {
@@ -250,7 +329,8 @@ final class BleTransport extends BtTransport {
     }
 
     @SuppressWarnings("deprecation")
-    private void enableNotifications(BluetoothGattCharacteristic c) throws IOException {
+    private void enableNotifications(BluetoothGattCharacteristic c, long deadline)
+            throws IOException {
         if (!gatt.setCharacteristicNotification(c, true)) {
             throw new IOException("Could not subscribe to the Pi's replies");
         }
@@ -275,7 +355,7 @@ final class BleTransport extends BtTransport {
 
         // Wait for the descriptor write. Until its callback arrives the connection stays
         // busy, so the next operation, which is the first request, would be dropped.
-        if (!await(descriptorLatch, WRITE_TIMEOUT_MS)) {
+        if (!await(descriptorLatch, Math.min(WRITE_TIMEOUT_MS, remaining(deadline)))) {
             throw new IOException("Timed out enabling reply notifications");
         }
         int status = descriptorStatus;
@@ -382,6 +462,30 @@ final class BleTransport extends BtTransport {
             // Already gone.
         }
         scheduleRetireClose(g);
+    }
+
+    /**
+     * Wait, briefly, for every retired client to report its own disconnect.
+     *
+     * Polls rather than using a latch because several clients can be retiring at once and
+     * the callbacks arrive on a binder thread. A timeout here is not an error: the delayed
+     * close in scheduleRetireClose() still frees the client, and connectGatt() will
+     * report 133 if the stack really is still holding it.
+     */
+    private void awaitRetired(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (!retiring.isEmpty() && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        if (!retiring.isEmpty()) {
+            Log.d(TAG, retiring.size()
+                    + " retired GATT client(s) still holding a link, connecting anyway");
+        }
     }
 
     /** Close a retired client that never reported its disconnect. */

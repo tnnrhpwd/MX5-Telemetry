@@ -97,6 +97,12 @@ except ImportError:
     MPGCalculator = None
     print("Warning: mpg_calculator not found. MPG features disabled.")
 
+# Instantaneous MPG from MAF. Stdlib-only and unprefixed on purpose: it holds no
+# persisted state, so unlike the fuel-level calculator above there is no reason for
+# it to ever be unavailable - and the INST MPG card must not go blank because a
+# different feature failed to import.
+from instant_mpg import InstantMPG, MAX_MAF_AGE_SEC, MPG_PER_GPS_AIR
+
 # Try to import ADS1115 voltage monitor (optional on non-Pi systems)
 try:
     from voltage_monitor import VoltageMonitor, ADS1115_AVAILABLE
@@ -180,6 +186,8 @@ class TelemetryData:
     gear_color: str = 'green'     # Color indicator: red/blue/green/yellow/cyan
     is_in_neutral: bool = False   # True if CAN neutral signal detected
     is_in_reverse: bool = False   # True if speed is negative (reverse detected)
+    speed_raw: int = 0            # Raw 0x201 speed field, for diagnosing reverse (see ISSUE-14)
+    transmission_range: int = -1  # Raw 0x231 range code; 0 = neutral, -1 = not seen yet
     throttle_percent: int = 0
     brake_percent: int = 0
     coolant_temp_f: int = 0
@@ -188,6 +196,9 @@ class TelemetryData:
     maf: float = 0.0  # Mass air flow (g/s) via OBD-II PID 0x10
     maf_timestamp: float = 0.0  # time.time() of last valid MAF sample (staleness guard)
     fuel_level_percent: float = 0.0
+    # Plain 60 s rolling mean of the fuel level, without the display deadband.
+    # The fuel accounting needs this; the panel keeps `fuel_level_percent`.
+    fuel_level_average: float = 0.0
     voltage: float = 0.0
     tire_pressure: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     tire_temp: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
@@ -202,6 +213,8 @@ class TelemetryData:
     instant_mpg: float = 0.0
     instant_mpg_valid: bool = False  # False = no MAF/speed reading (show "--")
     average_mpg: float = 0.0
+    # 'maf', 'fuel_gauge' or 'estimated' (the EPA figure, no measurement yet)
+    average_mpg_source: str = 'estimated'
     range_miles: int = 0
     
     # Diagnostics data
@@ -228,6 +241,17 @@ class TelemetryData:
     
     # Wheel slip (for traction display)
     wheel_slip: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
+
+
+def display_speed_value(speed_kmh, use_mph):
+    """Speed as it should be printed, with the sign kept.
+
+    int() truncates toward zero, so a -0.4 km/h reverse reading printed as 0 and
+    the car looked stopped. Negatives are floored, which is what the ESP32 and the
+    phone do, so all three screens show the same number.
+    """
+    speed = speed_kmh * 0.621371 if use_mph else speed_kmh
+    return int(math.floor(speed)) if speed < 0 else int(speed)
 
 
 # LED Sequence modes (must match Arduino enum)
@@ -257,7 +281,7 @@ class Settings:
     coolant_warn_f: int = 220
     demo_mode: bool = False  # False = use real CAN data, True = simulated data
     led_sequence: int = LED_SEQ_CENTER_OUT  # LED sequence mode (1-4)
-    # LED strip colour configuration, forwarded verbatim to the Arduino.
+    # LED strip color configuration, forwarded verbatim to the Arduino.
     #
     # The phone owns the theme palette, so it sends the ramp rather than the Pi keeping
     # a second copy of every scheme. Empty means "never received": the strip then keeps
@@ -265,7 +289,7 @@ class Settings:
     led_ramp: str = ""              # "<rpm>:<rrggbb>,..." ending at the full-illumination rpm
     led_theme_dim: int = -1         # -1 = unset, 1 = dimmer (dark mode), 0 = full brightness
     led_brightness: int = -1        # -1 = leave the strip alone, else 0-255
-    # Behaviour that used to be compiled into the Nano. Kept here as well so the phone can
+    # Behavior that used to be compiled into the Nano. Kept here as well so the phone can
     # read back what it set, and so state/led_settings.json can restore it after a reboot.
     led_enabled: int = 1            # 0 = strip dark
     led_color_mode: int = 0         # 0 = position (flowing gradient), 1 = rpm (one wash)
@@ -453,7 +477,7 @@ class PiDisplayApp:
         global PI_WIDTH, PI_HEIGHT
         self.headless = headless
         if headless:
-            # SDL picks its video driver when the video subsystem initialises, so this
+            # SDL picks its video driver when the video subsystem initializes, so this
             # has to be set before pygame.init(). The dummy driver means no X connection
             # and no HDMI output, but pygame still works, which keeps every caller of
             # pygame that is not drawing happy.
@@ -583,6 +607,10 @@ class PiDisplayApp:
         # MPG calculator for fuel efficiency tracking
         self.mpg_calculator = None
 
+        # Instantaneous MPG from mass air flow. Deliberately separate from the
+        # calculator above: it only needs the CAN reader's MAF sample.
+        self.instant_mpg_calc = InstantMPG()
+
         # ADS1115 voltage monitor (12V source voltage)
         self.voltage_monitor = None
         
@@ -627,7 +655,7 @@ class PiDisplayApp:
             self.mpg_calculator.start()
             print(f"  ✓ MPG calculator started (avg: {self.mpg_calculator.average_mpg:.1f} MPG)")
         
-        # Arduino serial (LED strip) is initialised *after* the ESP32 handler: it has to
+        # Arduino serial (LED strip) is initialized *after* the ESP32 handler: it has to
         # know which port the display owns so it never writes LED commands into the
         # display's telemetry stream. See _init_arduino_serial().
         
@@ -927,7 +955,24 @@ class PiDisplayApp:
             print("  - Bluetooth link disabled (MX5_BT=off)")
             return
 
-        if self.bt_link.start():
+        # Start it off the display's critical path.
+        #
+        # BtLink.start() waits for the BLE advertisement to register, and when a previous
+        # instance's advertisement has not been released yet that wait is the full 35s
+        # timeout before it gives up. This runs inside __init__, so on those boots the
+        # display showed nothing at all for 35s - and it was the boots where the link was
+        # already in trouble. The link coming up a second later costs nothing: the phone
+        # polls for it.
+        threading.Thread(target=self._run_bt_link, name='bt-link-start',
+                         daemon=True).start()
+
+    def _run_bt_link(self):
+        """Start the transports and report what is actually listening."""
+        try:
+            if not self.bt_link.start():
+                print(f"  ✗ Bluetooth link did not start: {self.bt_link.errors}")
+                return
+
             # Report what is actually listening, not just what was configured. The two
             # differ: SPP needs an SDP record that this BlueZ cannot publish, so a Pi
             # configured for `both` may be reachable over BLE only.
@@ -937,8 +982,10 @@ class PiDisplayApp:
                   f"(configured mode={self.bt_link.mode})")
             for transport, why in (self.bt_link.errors or {}).items():
                 print(f"    - {transport.upper()} not up: {why}")
-        else:
-            print(f"  ✗ Bluetooth link did not start: {self.bt_link.errors}")
+        except Exception as e:
+            # A link failure must never take the display, the web remote or the tether
+            # with it.
+            print(f"  ✗ Bluetooth link failed to start: {e}")
     
     def _on_esp32_screen_change(self, screen_index: int):
         """Callback when ESP32 display changes screen via touch (bidirectional sync)"""
@@ -1035,9 +1082,9 @@ class PiDisplayApp:
             print(f"Pi: Failed to send LED sequence to Arduino: {e}")
     
     def _send_led_config(self):
-        """Send the ramp / brightness / dimming / behaviour configuration to the Arduino.
+        """Send the ramp / brightness / dimming / behavior configuration to the Arduino.
 
-        The strip's colours used to be compiled in. They are now runtime settings so it
+        The strip's colors used to be compiled in. They are now runtime settings so it
         can follow the phone's theme, which means the Pi has to forward them on connect
         and whenever one changes. A missing link is not an error: the strip simply keeps
         the values it already has.
@@ -1308,47 +1355,50 @@ class PiDisplayApp:
             # Real mode: CAN handler reads data automatically in background thread
             # Real mode: ESP32 handler receives TPMS/IMU data automatically
             
-            # Update MPG calculator with latest telemetry data
+            # Update MPG calculator with latest telemetry data.
+            # speed_kmh is km/h throughout the system; everything MPG-shaped is MPH.
+            speed_mph = self.telemetry.speed_kmh * 0.621371
+            maf = self.telemetry.maf
+            maf_age = time.time() - self.telemetry.maf_timestamp
+            maf_fresh = maf_age <= MAX_MAF_AGE_SEC
+
             if self.mpg_calculator:
-                # speed_kmh is km/h throughout the system; this calculator works in MPH.
-                speed_mph = self.telemetry.speed_kmh * 0.621371
                 engine_running = self.telemetry.rpm > 0
                 
                 # Update calculator
                 self.mpg_calculator.update(
                     speed_mph=speed_mph,
-                    raw_fuel_pct=self.telemetry.fuel_level_percent,
-                    engine_running=engine_running
+                    # The averaged tank level, not the hysteresis-filtered one the
+                    # panel shows: the deadband is there to stop the number
+                    # twitching, and it would be a 1.5% measurement error here.
+                    raw_fuel_pct=self.telemetry.fuel_level_average,
+                    engine_running=engine_running,
+                    maf_gps=maf,
+                    maf_fresh=maf_fresh,
                 )
                 
                 # Copy calculated values back to telemetry for display/transmission
                 self.telemetry.average_mpg = self.mpg_calculator.average_mpg
                 self.telemetry.range_miles = self.mpg_calculator.range_miles
+                self.telemetry.average_mpg_source = self.mpg_calculator.average_mpg_source
 
-                # Instantaneous MPG from mass air flow (OBD-II PID 0x10):
-                #   fuel flow (gal/hr) = MAF(g/s) * 3600 / (AFR * lb/gal * g/lb)
-                #                       = MAF * 3600 / (14.7 * 6.17 * 454)
-                #                       = MAF / 11.438
-                #   MPG = speed_mph / GPH = 11.438 * speed_mph / MAF
-                #
-                # "No reading" and "0 mpg" are different states: 0 is a real value
-                # (idling), while a missing MAF or a stopped car is unknown. The
-                # validity flag lets the UIs show "--" instead of a fake zero.
-                maf = self.telemetry.maf
-                maf_age = time.time() - self.telemetry.maf_timestamp
-                # abs(): reversing consumes fuel over distance just like driving forwards,
-                # and speed_kmh is negative in reverse, so a plain `> 1.0` test silently
-                # disabled instant MPG whenever the car was backing up.
-                speed_for_mpg = abs(speed_mph)
-                if speed_for_mpg > 1.0 and maf > 0.5 and maf_age < 2.0:
-                    inst = 11.438 * speed_for_mpg / maf
-                    if inst > 99.0:
-                        inst = 99.0  # clamp fuel-cut / coasting spikes
-                    self.telemetry.instant_mpg = inst
-                    self.telemetry.instant_mpg_valid = True
-                else:
-                    self.telemetry.instant_mpg = 0.0
-                    self.telemetry.instant_mpg_valid = False
+            # Instantaneous MPG from mass air flow (OBD-II PID 0x10).
+            #
+            # This used to sit inside the `if self.mpg_calculator:` block above,
+            # which made one feature depend on an unrelated one: the calculator's
+            # import is optional, and a missing/broken mpg_calculator.py would
+            # blank the INST MPG card while the MAF data it needs was arriving
+            # perfectly. It is computed here, outside that block, from the sample
+            # the CAN reader stores.
+            #
+            # The formula, the guards and the "no reading vs 0 mpg" distinction
+            # all live in instant_mpg.py so they can be tested without a car.
+            self.telemetry.instant_mpg = self.instant_mpg_calc.update(
+                speed_mph=speed_mph,
+                maf_gps=maf,
+                maf_age_sec=maf_age,
+            )
+            self.telemetry.instant_mpg_valid = self.instant_mpg_calc.valid
             
             # Update lap timer if running (independent of demo mode)
             if self.lap_timer_running:
@@ -1986,7 +2036,19 @@ class PiDisplayApp:
         # Throttle/brake simulation
         self.telemetry.throttle_percent = int(50 + math.sin(t * 2) * 50)
         self.telemetry.brake_percent = int(max(0, -math.sin(t * 2) * 30))
-        
+
+        # Mass air flow, and through it the INST MPG card. The demo is not a physics
+        # model: it picks a believable economy figure from the throttle (about 34 mpg
+        # cruising, about 12 under load) and inverts the MAF formula to get the
+        # airflow that would produce it. What matters here is that the card shows a
+        # number a driver recognises instead of "--", and that the real MAF -> MPG
+        # math and its guards run on the bench - that chain is what has shipped
+        # broken before.
+        target_mpg = 34.0 - 0.22 * self.telemetry.throttle_percent
+        self.telemetry.maf = (MPG_PER_GPS_AIR * abs(self.telemetry.speed_kmh) * 0.621371
+                              / max(target_mpg, 8.0))
+        self.telemetry.maf_timestamp = time.time()
+
         # Engine temperatures (simulate warm engine with slight variation)
         self.telemetry.coolant_temp_f = int(195 + math.sin(t * 0.1) * 10)  # 185-205°F
         self.telemetry.oil_temp_f = int(210 + math.sin(t * 0.08) * 15)     # 195-225°F
@@ -1995,7 +2057,9 @@ class PiDisplayApp:
         self.telemetry.ambient_temp_f = 72  # Static ambient temp
         
         # Fuel and voltage
-        self.telemetry.fuel_level_percent = max(0, 65 - (t % 3600) * 0.001)  # Slowly decreasing
+        demo_fuel = max(0, 65 - (t % 3600) * 0.001)  # Slowly decreasing
+        self.telemetry.fuel_level_percent = demo_fuel
+        self.telemetry.fuel_level_average = demo_fuel
         self.telemetry.voltage = 14.2 + math.sin(t * 0.5) * 0.3  # 13.9-14.5V
         
         # TPMS simulation (slight variations in tire pressure/temp)
@@ -2251,9 +2315,7 @@ class PiDisplayApp:
         self.screen.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 55)))
         
         # Speed below gear
-        speed = self.telemetry.speed_kmh
-        if self.settings.use_mph:
-            speed = int(speed * 0.621371)
+        speed = display_speed_value(self.telemetry.speed_kmh, self.settings.use_mph)
         unit = "MPH" if self.settings.use_mph else "KMH"
         txt = self.font_medium.render(f"{speed:.0f} {unit}", True, COLOR_WHITE)
         self.screen.blit(txt, txt.get_rect(center=(left_panel_x + left_panel_w//2, TOP + 120)))
@@ -2403,9 +2465,7 @@ class PiDisplayApp:
         # Speed card
         pygame.draw.rect(self.screen, COLOR_BG_CARD, (right_x, TOP, 340, 150))
         
-        speed = self.telemetry.speed_kmh
-        if self.settings.use_mph:
-            speed = int(speed * 0.621371)
+        speed = display_speed_value(self.telemetry.speed_kmh, self.settings.use_mph)
         
         txt = self.font_huge.render(str(speed), True, COLOR_WHITE)
         self.screen.blit(txt, txt.get_rect(center=(right_x + 170, TOP + 60)))

@@ -1,4 +1,4 @@
-# Bluetooth link: the car app without the USB cable
+﻿# Bluetooth link: the car app without the USB cable
 
 The car app normally reaches the Pi over the USB tether at
 `http://192.168.42.100:5000`. That needs the phone plugged in. This adds a Bluetooth
@@ -114,6 +114,36 @@ hciconfig -a                             # note the BD Address
 `hciconfig -a` must print a `BD Address`. If it does not, the adapter is down or the
 kernel has no driver for it, and nothing below will work.
 
+Then set the three `[General]` keys that decide whether a reconnect is quick and whether a
+phone can re-pair without being forgotten first. None of them can be set at runtime, and a
+Pi missing them looks completely healthy:
+
+```ini
+# /etc/bluetooth/main.conf
+[General]
+FastConnectable = true        # the phone's reconnect is much quicker
+AutoEnable = true             # the adapter comes up after a reboot on its own
+JustWorksRepairing = always   # a phone can re-pair; no "forget this device" needed
+
+[Policy]
+AutoEnable = true
+```
+
+```bash
+sudo systemctl restart bluetooth
+```
+
+`tools/bt/doctor.py` checks all three and prints the exact lines to add. Why they matter:
+
+- Without `FastConnectable`, BlueZ pages on the default 1.28 s interval, so reconnecting
+  from the phone can add more than a second before anything is even attempted.
+- Without `AutoEnable`, a rebooted Pi comes up with the adapter powered off, which from
+  the phone is indistinguishable from a Pi that is not there.
+- Without `JustWorksRepairing = always`, a bond that the Pi lost (reflash, a wiped
+  `/var/lib/bluetooth`, a re-pair on another phone) cannot be re-established: the phone
+  keeps its half, the Pi rejects it, and the only cure is forgetting the Pi on the phone
+  and pairing again.
+
 Bluetooth and the CAN interface do not conflict here: `setup_can_bus.sh` leaves
 `dtoverlay=disable-bt` commented out, so the UART is not stolen from Bluetooth. If you
 ever enable that line to free the UART, the Bluetooth link stops working.
@@ -158,6 +188,7 @@ Everything below is optional, and also belongs in that environment:
 | `MX5_BT_SPP_CHANNEL` | `3` | RFCOMM channel, must match the SDP record |
 | `MX5_BT_ADDRESS` | auto | Local adapter MAC, if `hciconfig` cannot be read |
 | `MX5_BT_NAME` | `MX5 Pi Link` | Name advertised over BLE |
+| `MX5_BT_IDLE_TIMEOUT` | `300` | Seconds of silence before an SPP session is reclaimed |
 
 ### 4. Pair the phone
 
@@ -198,8 +229,12 @@ covered by tests that need no Bluetooth stack:
 
 ```bash
 cd pi/ui/src
-python3 test_link_protocol.py         # 47 checks: protocol, service, SPP server over TCP
+python3 test_link_protocol.py         # 64 checks: protocol, service, SPP server over TCP
+python3 test_bt_ble_server.py         # 10 checks: BLE reply order, stale fragments, chunk sizing
 python3 test_web_server_parity.py /tmp/after.json
+
+cd ..                                 # pi/
+python3 test_bt_agent.py              # 17 checks: the agent's own decisions
 ```
 
 ## How it is built
@@ -213,10 +248,12 @@ that differs between SPP and BLE.
 | --- | --- |
 | `link_service.py` | Every read and command, with no transport in it |
 | `link_protocol.py` | The JSON-line protocol, plus `StreamLink`: bytes in, bytes out |
-| `bt_spp_server.py` | RFCOMM server, with an injectable listener so it is testable on a desk |
+| `bt_spp_server.py` | RFCOMM server: concurrent peers, idle reaping, injectable listener so it is testable on a desk |
 | `bt_ble_server.py` | GATT server, via `bless` |
 | `bt_link.py` | Starts both, configured by environment, contains failures |
-| `test_link_protocol.py` | 47 checks that need no Bluetooth at all |
+| `test_link_protocol.py` | 64 checks that need no Bluetooth at all |
+| `test_bt_ble_server.py` | 10 checks for BLE reply ordering, stale fragments and chunk sizing |
+| `../test_bt_agent.py` | 17 checks for the agent's own decisions, with D-Bus stubbed out |
 
 `web_server.py` no longer holds any of this logic: its routes and the Bluetooth link are
 two adapters over `LinkService`. Because that meant rewriting a working API, it was proved
@@ -233,25 +270,67 @@ the setting actually applied. 40 cases, 0 differing.
 | `BtTransport.java` | Shared framing, authentication, and path-to-op translation |
 | `SppTransport.java` | RFCOMM client |
 | `BleTransport.java` | GATT client |
-| `BtDevices.java` | Finding the Pi among the paired devices |
+| `BtDevices.java` | Finding the Pi among the paired devices, and the device source both surfaces share |
 | `PiClient.java` | Owns the ordered chain and the failover |
 
 `PiClient`'s public methods are deliberately unchanged from when it was HTTP-only, so no
 screen had to be touched. Every request the screens make is still expressed as a path, and
 the Bluetooth transports translate that into a protocol op internally.
 
+### Staying connected
+
+A link that only works on the first attempt is not a link you can rely on in a car, and
+every fault below used to present as **"close and reopen the app"** or **"forget the Pi and
+pair it again"**. Each one is now either impossible or self-healing, and each is named here
+so a later change does not reintroduce it by accident.
+
+| Fault | What it looked like | What stops it now |
+| --- | --- | --- |
+| The SPP server served one peer inline, inside `recv()` | The phone reconnected and got no answer; only restarting the display app cleared it | Each peer gets its own thread and its own session, so an abandoned socket cannot block anyone |
+| A peer vanished without a clean disconnect | A zombie session held the only slot | Sessions are read with a 1 s timeout and reclaimed after `MX5_BT_IDLE_TIMEOUT` (300 s) of silence; a newcomer reclaims the longest-idle session rather than being refused |
+| RFCOMM `connect()` and `write()` have no timeout | A Pi that was off, or a link that died mid-write, held the poll thread for ever and nothing could recover it | Both run on a worker with a deadline (6 s connect, 2.5 s write), and the socket is closed to break the call |
+| `bluetoothd` restarting dropped the SDP record, and nothing noticed | Every SPP connect failed with "service discovery failed" over a healthy radio | `mx5-bt-agent` checks for the record every 60 s and republishes it |
+| The agent restarted `mx5-display` whenever no BLE advertisement existed | On a Pi configured `MX5_BT=spp` the advertisement never exists, so a working SPP link was dropped every 90 s, three times | The watchdog only acts when the app was actually asked to run BLE, read from the running process's own environment |
+| A new GATT client opened while the old one was still connected | Status 133, then 133 on every attempt afterwards until the process died | `open()` waits for the retired client's disconnect before connecting again |
+| A wrong token reopened the socket several times a second | A connect storm that left the stack refusing connections | A refused `hello` pauses that transport for 10 s; editing the token rebuilds the transports and clears it |
+| The phone slept through the Pi rebooting | The next request wrote into a half-open socket and paid the reply timeout first | Links unproven for 60 s are closed before the next attempt, so it reconnects instead of waiting |
+| Only force-stopping the app would clear a stuck link | All of the above | **Reconnect** on the System screen closes every transport and forgets the failure history |
+| The in-motion app had **no Bluetooth at all** | "--" for every value the moment the cable was out, in the one app that exists for driving | Both surfaces build the chain now, through the shared `BtDevices.source()`; the drive app previously only ever got it from its phone activity, which a head-unit launch never runs |
+| A token typed on the System screen worked on the cable and was refused over Bluetooth | The transports hold the token they were built with, so the new one never reached them | `applyConnection` rebuilds the Bluetooth transports as well, and `setBluetooth` closes the old ones instead of dropping the reference |
+| One dropped poll after a BLE reconnect | A fragment left by the vanished central was spliced onto the next request, which was then discarded as malformed | A fragment that has sat for `PEER_GAP_SECONDS` is dropped and the session starts fresh |
+| An occasional malformed reply on BLE | Two replies' notification chunks interleaved when the MTU was small | One writer task drains a queue, so a reply's chunks are never spliced with another's |
+| A reply containing a non-ASCII character was dropped as malformed | Each incoming chunk was decoded as UTF-8 on its own, splitting characters that straddled a 20-byte boundary | Framing is done on bytes and each finished line is decoded whole |
+| After a Pi-side restart of the display app the phone reported a refusal and stayed dead | The Pi had forgotten the session; the app treated "not authenticated" as a refusal | It re-sends `hello` once instead, which is invisible and always correct |
+| The Pi showed nothing on its display for up to 35 s at boot | The Bluetooth link was started inside `PiDisplayApp.__init__` and waits up to 35 s for the BLE advertisement | The link starts on its own thread, so the first frame is never held behind it |
+| A slow roof command demoted a working link | One reply deadline covered every op, and a roof exchange is 0.35 s of settle plus up to 2 s of reply, sometimes twice | `/api/roof/*` gets its own 8 s deadline |
+| A missing `bluez-tools` silently stopped **every** watchdog | `hciconfig` is used to hold the adapter class, and its absence raised out of the agent's timer, which PyGObject then removes: no class, no advertisement watch, no SDP republish, for the life of the process | Each step of the tick is isolated, and the missing tool is reported once |
+| A phone that left the MTU at its default got truncated BLE replies | Notifications were always 180 bytes, and nothing in the Python API reports the negotiated MTU | A refused notification halves the chunk down to 20 bytes and the reply is delivered whole |
+| **One field JSON could not encode disconnected the phone, for ever** | `json.dumps` raised out of the protocol, which closed the SPP peer and surfaced as an opaque ATT error over BLE, so every retry was dropped the same way | The reply becomes `ok: false` with its id and the reason, and the session carries on; `LinkSession` is a backstop for anything else that escapes |
+
 ### How the failover behaves
 
 The chain is ordered `HTTP, SPP, BLE`. The transport that last worked is remembered and
 tried first, so the normal case costs one attempt; the rest are only tried after that one
-fails. When every transport has failed the client backs off for four seconds, so a poll
-loop does not re-walk three dead links twenty times a second.
+fails. When every transport has failed the client backs off, so a poll loop does not
+re-walk three dead links twenty times a second.
 
 One distinction matters more than any other. A **refusal** — the Pi answered and said no,
 which includes any HTTP status code — must never cause a fallback. If it did, an
 out-of-range value would silently move a working link onto a slower transport and nothing
 on screen would say so. Refusals are therefore a distinct exception type, and the
 Bluetooth transports classify `ok: false` as one.
+
+Two smaller rules exist so that a hiccup is not mistaken for a dead link:
+
+- **The candidate order is by recency, not by the fixed chain.** After a dropped exchange
+  the next request tries whichever transport answered most recently, so a Bluetooth
+  link that stuttered is retried before the tether's connect timeout. Transports that
+  have never answered keep their chain order.
+- **One request may only spend 6 s walking the chain**, and each transport bounds its own
+  connect as well: 6 s for SPP's create-and-connect, 9 s for the whole of a BLE open. Failing
+  a poll quickly is better than holding the poll thread through three connects, because the
+  poll loop is what draws the link state: a request that takes fifteen seconds looks exactly
+  like a hung app.
 
 ### Permissions
 
@@ -261,11 +340,20 @@ Bluetooth transports classify `ok: false` as one.
 to an already-bonded device needs no scan, so the app never scans. Refusing the permission
 is a legitimate choice and is reported rather than nagged about.
 
+**The two installs are separate packages, and a permission grant is per package.** MX5
+Remote (`com.mx5.remote`) and MX5 Drive (`com.mx5.remote.drive`) each need their own. The
+in-motion screen is drawn by a `CarAppService` with no activity of its own, and a car Screen
+cannot raise a permission dialog, so the grant has to come from the phone activity in the
+same package: **open MX5 Drive once on the phone** after installing it. Until then that
+app's Bluetooth transports report "Needs the Nearby devices permission" on the System
+screen, and only the USB tether will work. Both apps now build the Bluetooth chain
+themselves, so this is the only step that cannot be skipped.
+
 ## The mimic harness
 
 Iterating a car UI by installing onto a phone and squinting at it is slow, and it needs the
-phone held sideways. `android/mimic/` renders the app in a browser at the resolution the
-head unit gets, so the design can be screenshotted and measured directly.
+phone held sideways. `android/mimic/` renders the app in a browser at the geometry the head
+unit gets, so the design can be screenshotted and measured directly.
 
 ```bash
 cd android/mimic
@@ -276,12 +364,25 @@ python extract_tokens.py          # regenerate tokens.js from the Java sources
 #   index.html?all=1              # all nine screens at half scale, for consistency
 #   index.html?narrow=1&drawer=1  # the phone shell, drawer open
 #   index.html?battery=8          # battery states; also &charging=1 and &clock=14:32
+#   index.html?headunit=1&edge=0  # the head unit's own button bar, over the left edge
+#   index.html?edge=88            # move the shell clear of that bar, as the EDGE chip does
+#   index.html?canvas=800x480     # the old, too-tall canvas, for a comparison
 ```
 
-It renders two canvases, because the app has two shells: 800x480 for the car, and 400x832
+It renders two canvases, because the app has two shells: **700x367 for the car**, and 400x832
 when you pass `narrow=1`. Rendering the phone shell in the car's frame clips the drawer and
 makes a working layout look broken, which is worth remembering before believing a
 screenshot.
+
+700x367 is the number that matters: the AVH reports **919x480 at 209dpi**, which is
+700x367dp, and `Ui.java` lays out in dp. The harness used to render 800x480, which is 113dp
+taller than the car, and three pages looked complete in a browser while being clipped in the
+car. `?canvas=800x480` brings the old frame back for a side-by-side.
+
+`headunit=1` draws the Pioneer's own strip of on-screen buttons over the left of the
+projection - it is the head unit's UI, not Android Auto's, and nothing in the app can detect
+it. `edge=<dp>` is the inset the app carries to stay out from under it, and `bar=<px>` sets
+how wide the drawn bar is.
 
 `battery`, `charging` and `clock` exist so a screenshot is reproducible. A real clock in a
 screenshot makes two runs differ for no reason, which is how a real regression gets missed.
@@ -309,7 +410,7 @@ python tools/bt/doctor.py --host 10.62.26.67   # the hotspot address
 ```
 
 It reports PASS / WARN / FAIL per check alongside the command it ran, so a failure is
-attributable instead of re-derived. Two checks are worth knowing about:
+attributable instead of re-derived. Three checks are worth knowing about:
 
 - It reads the token out of the **running process's own environment**, not out of a config
   file. A token that never reached the app is invisible from everywhere else, and it fails
@@ -317,6 +418,9 @@ attributable instead of re-derived. Two checks are worth knowing about:
   to start).
 - It separates `sdptool` being missing from the SDP record being missing, because those
   have the same symptom and different fixes.
+- It reads `/etc/bluetooth/main.conf` for `FastConnectable`, `AutoEnable` and
+  `JustWorksRepairing`, and prints the lines to add. Those three decide how quickly the
+  phone reconnects and whether it can re-pair at all, and no running process reveals them.
 
 Run it first. If it is clean, start the full test at Stage 4.
 
@@ -368,7 +472,7 @@ Bluetooth.
 ssh $PI 'cd ~/MX5-Telemetry/pi/ui/src && python3 test_link_protocol.py'
 ```
 
-Expect `47/47 passed`.
+Expect `64/64 passed`.
 
 ### Stage 3 — the SDP record, which is the fragile part
 
@@ -490,6 +594,11 @@ have.
 | Send an out-of-range setting | Refused **without** the footer changing transport |
 | Leave the app open and drive out of range | Goes OFFLINE, then reconnects on return without a restart |
 | Reboot the Pi with the app connected | The app recovers once the display app and the link come back |
+| `sudo systemctl restart bluetooth` on the Pi | SPP's SDP record is republished by the agent within a couple of minutes and the phone reconnects; nothing needs repairing |
+| Leave the app hidden for five minutes, then reopen it | The first poll reconnects rather than timing out on a socket the Pi has already forgotten |
+| Press **Reconnect** on the System screen | Drops both Bluetooth sockets and comes back with a fresh `hello`; no app restart |
+| `sudo systemctl restart mx5-display` with the app connected | The app re-authenticates by itself instead of reporting a refusal; no restart of the app |
+| Launch **MX5 Drive** from the head unit with the cable out, after opening it once on the phone | Live values over Bluetooth, not `--` |
 
 That last row finds the bugs, because the adapter and the SDP record both have to come back
 in the right order.
@@ -539,15 +648,38 @@ presence of a car.
 | A screen or setting never updates over Bluetooth, and the log shows `Object of type Screen is not JSON serializable` | The app's `Screen` enum reached `json.dumps` un-unwrapped. Use `link_service.screen_index()` / `screen_name()` wherever a screen number is wanted. |
 | The startup line claims success for a transport that is not working | Both transports used to report `start()` success without checking. SPP now fails when its SDP record could not be published, and BLE fails when the advertisement could not be registered, so the banner names only what is actually listening. |
 | Everything worked, then stopped after a config edit | `dtoverlay=disable-bt` was enabled, which takes the UART from Bluetooth. |
+| **The app only reconnects if it is closed and reopened** | Fixed in three places, so check which one you are on. On the Pi, the SPP server used to serve one peer at a time and could wedge for ever on an abandoned socket (`journalctl -u mx5-display \| grep 'SPP:'` shows `reclaiming` or `refusing` if that is happening). In the app, `Reconnect` on the System screen now does what reopening did, without the restart. |
+| In-motion app shows `--` for every value, but the parked app works over Bluetooth | The two apps are separate packages and the permission grant is per package. Open **MX5 Drive** once on the phone to grant Nearby devices; a head-unit launch cannot ask for it. |
+| A token typed on the System screen works on the cable but not over Bluetooth | It now reaches both: `applyConnection` rebuilds the Bluetooth transports. On an older build it did not, and only an app restart applied it. |
+| **The phone has to be unpaired and paired again** | A lost bond cannot be re-established unless BlueZ is willing to repair. Set `JustWorksRepairing = always` under `[General]` in `/etc/bluetooth/main.conf` and restart `bluetooth`. `tools/bt/doctor.py` reports it. |
+| **Connecting takes several seconds every time** | Two causes. Without `FastConnectable = true` BlueZ pages on a 1.28 s interval. And a cold start used to try the tether first, which costs a 1.5 s connect timeout with no cable; the app now remembers the transport that last worked and starts there. |
+| The link drops at intervals of about 90 s | `mx5-bt-agent` was restarting `mx5-display` because no BLE advertisement existed. On a Pi configured `MX5_BT=spp` that is normal and the watchdog no longer acts on it. Update the agent and restart it. |
+| `BLE connect failed (133)` | The stack still holds a client for the previous connection. The app now waits for the retired client's disconnect first; if 133 persists, `btmon` will show whether the disconnect ever reached the Pi. |
+| Every SPP connect fails with "service discovery failed", but the Pi is fine | The SDP record is gone, which happens after any `bluetoothd` restart. `sudo sdptool add --channel=3 SP`, or let `mx5-bt-agent` republish it within a minute. |
 
 ## What is verified, and what is not
 
 Verified on a desk, with no Bluetooth hardware and no car:
 
-- The protocol, authentication and every operation (47 checks).
+- The protocol, authentication and every operation (64 checks).
+- That a payload the encoder cannot handle costs **a reply, not the session**: the error
+  comes back with its id, and the next request on the same session still works. This is
+  the fault that once stopped every Bluetooth request when a `Screen` enum reached
+  `json.dumps`, and it is pinned from both layers now.
+- The agent's own decisions (17 checks): which transport mode it reads out of the running
+  process, the three-way answer from the SDP server (present, missing, unreachable), that
+  it republishes only when a listener is actually behind the record and backs off instead
+  of shouting every minute, and that a missing `hciconfig` cannot take the whole timer
+  down with it.
+- The BLE server's own bookkeeping (10 checks): replies are drained one at a time in order,
+  a fragment left by a vanished central cannot eat the next request, a fragment belonging
+  to a live request is not dropped, the reply queue is bounded, and a notification the
+  stack refuses is retried smaller until it fits.
 - The whole SPP accept/serve/connection-isolation loop, driven over a TCP socket through
   the server's own injected listener. Only the three lines that create the Bluetooth
-  socket are untested.
+  socket are untested. That includes the failure paths this link used to need a restart
+  for: a silent peer cannot block the next one, an idle peer is reclaimed, and a newcomer
+  takes the slot from a stale session instead of being refused.
 - That the link **refuses to start with no token**, and that `MX5_BT_ALLOW_NO_TOKEN=1`
   switches that refusal off. Pinned from both sides, and confirmed to fail against the
   previous behavior rather than passing vacuously.
@@ -559,6 +691,13 @@ Verified on a desk, with no Bluetooth hardware and no car:
   after the transport chain replaced the old single HTTP client.
 - The Android chrome that carries the link's state: the System screen's address and token
   fields persist, and the footer names the active transport once it is not the tether.
+
+**Not verified without a phone and a Pi.** The two socket deadlines (a 6 s SPP connect and a
+2.5 s write), the BLE MTU request and the re-authentication retry are only compiled and
+reasoned about: Android's own behaviour there is what they are compensating for, so Stage 9
+and Stage 10 are what settle them. The `Reconnect` button, and the in-motion app's Bluetooth
+chain, are likewise compiled only - the latter needs the drive package installed on the
+phone and granted Nearby devices to test at all.
 
 **Settled on the car's own Pi (2026-10-14).** Three of the questions below are now answered,
 and two of them answered badly:
@@ -573,7 +712,7 @@ and two of them answered badly:
   So SPP fails here for two independent reasons: the daemon's own claim on channel 3, and
   a missing SDP server. That is the argument for having written the BLE transport at all.
 - The protocol, authentication and every operation pass unmodified on the real hardware:
-  **47/47**, run on the Pi rather than on a desk.
+  **64/64**, run on the Pi rather than on a desk.
 
 **Settled over the air, from a laptop (2026-10-14).** The BLE transport was driven end to end
 by `tools/bt/ble_probe.py`, a client that scans, connects, authenticates and calls the

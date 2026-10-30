@@ -142,6 +142,27 @@ public class SystemScreen extends Screen {
         transportList = Ui.label(c, 9f, p.textDim);
         transportList.setLineSpacing(0f, 1.35f);
         panel.body.addView(transportList);
+
+        // Reconnect drops the sockets rather than waiting for them to be found dead.
+        //
+        // Without it, a link that went stale in a way the phone cannot see - the Pi
+        // rebooted, bluetoothd restarted, the phone slept through the disconnect - leaves
+        // a socket that still looks connected: writes go into it, no reply comes back, and
+        // every request pays the reply timeout before anything reconnects. The old cure
+        // was to force-stop the app so the sockets were closed for it.
+        LinearLayout transportRow = Ui.row(c);
+        TextView reconnect = button(c, p, "Reconnect", p.warn);
+        reconnect.setOnClickListener(v -> new Thread(() -> {
+            host.pi().reconnect();
+            panel.post(() -> {
+                host.toast("Reconnecting", false);
+                refreshTransport();
+            });
+            host.refreshNow();
+        }).start());
+        transportRow.addView(reconnect, Ui.cell(c, 2));
+        panel.body.addView(transportRow);
+
         refreshTransport();
 
         return panel;

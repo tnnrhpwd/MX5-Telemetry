@@ -11,6 +11,10 @@
  *
  * URL parameters, for driving it from Playwright without any clicking:
  *   ?screen=rpm&scheme=ocean&mode=light&narrow=1&offline=1
+ *   ?edge=0            left inset in dp; default 64, mirroring MainActivity
+ *   ?headunit=1&bar=80 draw the head unit's own button bar over the left edge
+ *   ?canvas=800x480    the old, too-tall canvas, for a side-by-side
+ *   ?all=1             every screen at half scale
  */
 (function () {
   'use strict';
@@ -757,6 +761,17 @@
       // A phone is not a car canvas. See the .device.phone rule.
       device.className = 'device phone';
     }
+    // The car's edge inset, mirroring MainActivity.edgeInset(): the phone has none.
+    device.style.setProperty('--edge-left', (narrow ? 0 : opts.edge) + 'px');
+    if (opts.canvas && !narrow) {
+      device.style.width = opts.canvas[0] + 'px';
+      device.style.height = opts.canvas[1] + 'px';
+    }
+
+    // The head unit's own button bar, over the top of everything the app draws.
+    if (opts.headunit && !narrow) {
+      device.style.setProperty('--headunit-bar', opts.headunitBar + 'px');
+    }
 
     // title row
     var titleRow = el('div', 'title-row');
@@ -776,6 +791,9 @@
       titleRow.appendChild(buildStatusChip(opts));
       titleRow.appendChild(el('div', 'chip-button', p.name));
       titleRow.appendChild(el('div', 'chip-button', opts.mode === 'dark' ? 'Dark' : 'Light'));
+      // Mirrors MainActivity's EDGE chip: the head unit's own bar can be over the left of
+      // the projection, and this is what moves the shell clear of it.
+      titleRow.appendChild(el('div', 'chip-button', 'Edge ' + opts.edge));
       titleRow.appendChild(el('div', 'exit-button', 'Exit'));
     }
     device.appendChild(titleRow);
@@ -813,7 +831,26 @@
     if (narrow && opts.drawer) {
       device.appendChild(buildDrawer(opts, p));
     }
+
+    if (opts.headunit && !narrow) {
+      device.appendChild(buildHeadUnitBar());
+    }
     return device;
+  }
+
+  /**
+   * The head unit's button bar.
+   *
+   * A black strip of virtual buttons over the left edge, which is what the Pioneer AVH
+   * draws on top of the projection. Included so the mimic can answer the only question that
+   * matters about a layout: does the bar eat anything the driver needs?
+   */
+  function buildHeadUnitBar() {
+    var bar = el('div', 'headunit-bar');
+    ['\u2302', '\u266B', '\u25C0', '\u25B6', '\u2699'].forEach(function (glyph) {
+      bar.appendChild(el('div', 'headunit-key', glyph));
+    });
+    return bar;
   }
 
   /**
@@ -836,7 +873,11 @@
           scheme: opts.scheme,
           mode: opts.mode,
           narrow: false,
-          offline: opts.offline
+          offline: opts.offline,
+          edge: opts.edge,
+          canvas: opts.canvas,
+          headunit: opts.headunit,
+          headunitBar: opts.headunitBar
         }));
         cell.appendChild(frame);
         sheet.appendChild(cell);
@@ -856,6 +897,9 @@
     var idx = 0;
     SCREENS.forEach(function (s, i) { if (s.id === id || s.rail.toLowerCase() === id.toLowerCase()) { idx = i; } });
     var bat = parseInt(q.get('battery'), 10);
+    var edge = parseInt(q.get('edge'), 10);
+    var canvas = (q.get('canvas') || '').split('x');
+    var bar = parseInt(q.get('bar'), 10);
     return {
       screenIndex: idx,
       scheme: q.get('scheme') || 'aurora',
@@ -864,6 +908,14 @@
       offline: q.get('offline') === '1',
       all: q.get('all') === '1',
       drawer: q.get('drawer') === '1',
+      // Mirrors MainActivity.EDGE_LEFT_CAR_DP. ?edge=0 shows what the car looked like
+      // before the inset existed.
+      edge: isNaN(edge) ? 64 : edge,
+      // ?canvas=800x480 gets the old, too-tall canvas back for a side-by-side.
+      canvas: canvas.length === 2 && parseInt(canvas[0], 10) > 0
+        ? [parseInt(canvas[0], 10), parseInt(canvas[1], 10)] : null,
+      headunit: q.get('headunit') === '1',
+      headunitBar: isNaN(bar) ? 80 : bar,
       // Both are overridable so a screenshot is reproducible. A real clock in a screenshot
       // makes two runs differ for no reason, which is how a real regression gets missed.
       battery: isNaN(bat) ? 72 : bat,

@@ -2,14 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>MX5 car app mimic (800x480)</title>
+<title>MX5 car app mimic (700x367dp)</title>
 <!--
-  The car app rendered in a browser at the exact Android Auto resolution, so the design can
+  The car app rendered in a browser at the head unit's real dp geometry, so the design can
   be iterated and screenshot without a phone.
 
   Open directly from disk; there is no build step and no server:
 
       android/mimic/index.html?screen=rpm&scheme=ocean&mode=light
+
+  700x367 is 919x480 at the car's 209dpi, which is the size Ui.java's dp maths actually
+  lays out in: the old 800x480 canvas here was 113dp taller than the car, and three
+  screens were clipped in the car while looking complete in a browser. ?canvas=800x480
+  brings the old one back for comparison.
 
   Colors come from tokens.js, which extract_tokens.py generates from Palette.java, so the
   palette here is the app's palette rather than a copy of it. The DOM is hand-written to

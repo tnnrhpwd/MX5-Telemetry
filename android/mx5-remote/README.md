@@ -109,6 +109,37 @@ The fastest way to find this class of bug is a hierarchy dump, not a screenshot:
 dark empty panel and a dark empty *page* look the same in a screenshot, but the dump
 shows the nodes are simply missing.
 
+## The car's real geometry, and the head unit's own bar
+
+The AVH projects the app at **919x480 at 209dpi**, which is **700x367dp** - and dp is what
+this code lays out in. `android/mimic/` renders exactly that, so a page that looks complete
+there is complete on the car.
+
+Two things follow from it.
+
+**Some pages are taller than the car.** At 367dp the Overview, RPM, TPMS, Engine, G-Force
+and Diagnostics pages fit exactly; System, Roof and Settings are taller than the panel and
+their last rows are laid out past the bottom edge, where a `LinearLayout` does not lay them
+out at all. They are listed in
+[KNOWN_ISSUES](../../docs/KNOWN_ISSUES.md#issue-17--three-pages-are-taller-than-the-head-unit).
+
+**The head unit can draw over the app.** The Pioneer puts a strip of its own on-screen
+buttons down the left edge of the projected image. It belongs to the head unit, not to
+Android Auto, so the display the app is handed still starts at x=0 and the rail of page
+names is drawn underneath it: the names are simply gone. Nothing reports that strip's width,
+so the shell carries a **left edge inset** instead:
+
+- `KEY_EDGE_LEFT_DP` in `shared_prefs` ("mx5"), default **64dp** on a car screen and 0 on a
+  phone, applied as extra left padding on the root view (`edgeInset()`), clamped to 160dp.
+- The **EDGE** chip in the top bar steps it through 0 / 40 / 64 / 88 / 112 / 144 and shows the
+  current value. It is applied to the root's padding rather than by rebuilding the shell, so
+  the names come out from under the bar while you watch - and it lives in the top bar rather
+  than a settings page because the bar would cover that page's own left edge.
+
+64dp is the default because the strip on this unit is about 80dp and the first rail label
+already starts about 19dp in. If a head unit's strip is wider, tap EDGE until the names clear
+it; the setting is remembered.
+
 ## Build and install
 
 Two apps come out of this module. Install whichever the car needs — both, usually.
@@ -128,16 +159,19 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
 ## Checking it without a car
 
-The phone's display can be temporarily set to the car's canonical canvas, which is
-exactly what the head unit gets:
+The phone's display can be temporarily set to the geometry the head unit actually
+reports - 919x480 at 209dpi, which is 700x367dp - so the app lays out at the car's size:
 
 ```powershell
-adb shell wm size 800x480
-adb shell wm density 160
+adb shell wm size 919x480
+adb shell wm density 209
 # run and capture
 adb shell wm size reset
 adb shell wm density reset
 ```
+
+800x480 at 160dpi is Android Auto's *canonical* canvas, but it is 113dp taller than this
+car's, and pages that clip at 367dp look complete at 480. Use the car's numbers.
 
 Two gotchas learned doing this: the screen must be **unlocked and awake** or the dump
 returns the lock screen instead of your app, and `uiautomator dump` is a better check

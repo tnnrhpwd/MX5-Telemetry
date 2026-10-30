@@ -38,7 +38,6 @@
 #include "Display_ST77916.h"
 #include "Touch_CST816.h"
 #include "QMI8658.h"
-#include "boot_logo.h"
 #include "background_image.h"
 #include "car_image.h"
 #include "ui_core/ui_core.h"
@@ -46,6 +45,18 @@
 // I2C pins for IMU (QMI8658)
 #define IMU_SDA 11
 #define IMU_SCL 10
+
+// How long the Pi may go quiet before the display stops believing the last frame.
+//
+// `telemetry.connected` was only ever set to true, so a dead Pi left every value
+// frozen on screen for ever - including a negative speed and the `R` marker. 3 s is
+// several hundred telemetry lines at the 30 Hz the Pi sends, so it cannot trip on a
+// dropped line, only on a link that is actually gone.
+#define PI_STALE_MS 3000
+
+// lastPiDataMs (ui_core) is the millis() of the last complete line from the Pi;
+// 0 means nothing has arrived yet. The parser stamps it, this file's watchdog
+// times out on it, and the link-lost screen counts the seconds since it.
 
 // ESP32 internal temperature sensor for ambient temp fallback
 temperature_sensor_handle_t temp_sensor = NULL;
@@ -222,88 +233,24 @@ static inline bool serialHasRoom(int bytes) {
 // ---------------------------------------------------------------------------
 // Boot animation
 // ---------------------------------------------------------------------------
-// Three beats, ~1.4 s total: the logo zooms in, a tach-style arc sweeps to full
-// and settles back to zero, then the title appears. Every frame is timed from a
-// single start stamp so the whole sequence has a fixed length regardless of how
-// long any individual draw takes.
+// The sequence itself lives in ui_core.cpp (ui_startupFrame) so the desktop
+// simulator renders exactly what the panel renders. All this does is hold the
+// real clock against the animation's clock.
+//
+// The loop is deliberately non-blocking beyond the frame it is waiting for: it
+// polls millis() instead of sleeping a fixed interval, so a frame that takes
+// longer than its slot (a slow QSPI transfer, a first-touch of the PSRAM
+// buffers) delays the sequence instead of silently stretching it. Nothing here
+// can outlive UI_BOOT_ANIM_MS plus one frame.
 static void playStartupAnimation() {
     const unsigned long t0 = millis();
-
-    // ---- 1. logo zoom-in (0 - 260 ms) ----
-    for (int step = 0; step <= 3; step++) {
-        float k = 0.40f + 0.20f * step;          // 40% -> 100%
-        int w = (int)(SCREEN_WIDTH * k);
-        int h = (int)(SCREEN_HEIGHT * k);
-        int x = (SCREEN_WIDTH - w) / 2;
-        int y = (SCREEN_HEIGHT - h) / 2;
-
-        LCD_Clear(COLOR_BG);
-        LCD_DrawImageScaled(BOOT_LOGO_DATA_WIDTH, BOOT_LOGO_DATA_HEIGHT, boot_logo_data,
-                            x, y, w, h);
-
-        unsigned long due = t0 + (step + 1) * 65;
-        while (millis() < due) { delay(1); }
+    for (;;) {
+        unsigned long t = millis() - t0;
+        if (t > UI_BOOT_ANIM_MS) t = UI_BOOT_ANIM_MS;
+        ui_startupFrame(t);
+        if (t >= UI_BOOT_ANIM_MS) break;
+        delay(1);
     }
-
-    // ---- 2. tach self-test sweep (260 - 940 ms) ----
-    // Same 135 deg start / 270 deg sweep as the RPM screen, so the boot gesture
-    // matches the gauge the driver is about to see.
-    const int cx = CENTER_X;
-    const int cy = CENTER_Y;
-    const int r  = 120;
-    const int segs = 36;
-
-    unsigned long sweepStart = t0 + 260;
-    for (int i = 0; i <= segs; i++) {
-        float t = (float)i / segs;
-        uint16_t col = (t >= 0.85f) ? MX5_RED
-                     : (t >= 0.60f) ? MX5_ORANGE
-                     : (t >= 0.35f) ? MX5_YELLOW : MX5_GREEN;
-        LCD_DrawThickArc(cx, cy, r, 5,
-                         (uint16_t)(135.0f + 270.0f * ((float)(i - 1) / segs)),
-                         (uint16_t)(135.0f + 270.0f * t), col);
-
-        // Pace the sweep over 400 ms, then hold at full for the remaining time.
-        unsigned long due = sweepStart + (unsigned long)(t * 400.0f);
-        while (millis() < due) { delay(1); }
-    }
-
-    // Settle: wipe the sweep back to empty, which is where the gauge starts.
-    unsigned long settle = millis();
-    while (millis() - settle < 140) {
-        float t = (millis() - settle) / 140.0f;
-        int active = (int)(segs * t);
-        for (int i = 0; i < active; i++) {
-            float tt = (float)i / segs;
-            LCD_DrawThickArc(cx, cy, r, 5,
-                             (uint16_t)(135.0f + 270.0f * tt - 7.0f),
-                             (uint16_t)(135.0f + 270.0f * tt + 7.0f), COLOR_BG);
-        }
-        delay(10);
-    }
-    LCD_DrawThickArc(cx, cy, r, 5, 135.0f, 405.0f, COLOR_BG);
-
-    // ---- 3. title (940 ms -> ~1.4 s) ----
-    LCD_FillRect(0, 40, SCREEN_WIDTH, 30, COLOR_BG);
-    LCD_FillRect(0, 290, SCREEN_WIDTH, 40, COLOR_BG);
-
-    // A short underline that grows outward from the centre.
-    for (int i = 0; i <= 12; i++) {
-        int w = i * 6;
-        LCD_FillRect(CENTER_X - w / 2, 72, w, 2, MX5_ACCENT);
-        delay(8);
-    }
-
-    unsigned long titleDue = t0 + 1180;
-    while (millis() < titleDue) { delay(1); }
-
-    LCD_DrawString(CENTER_X - 71, 250, "MX5 TELEMETRY", MX5_WHITE, COLOR_BG, 2);
-    LCD_DrawString(CENTER_X - 14, 272, "READY", MX5_GRAY, COLOR_BG, 1);
-
-    // Hold the finished frame just long enough to read, then hand over to the
-    // normal Overview screen. Capped so boot never feels slower than it used to.
-    unsigned long endDue = t0 + 1450;
-    while (millis() < endDue) { delay(1); }
 }
 
 void setup() {
@@ -339,8 +286,14 @@ void setup() {
     Serial.println("Display initialized!");
 
     // Restore the theme before anything is painted, so the boot animation is
-    // already in the phone's colours (or dark aurora on a first boot).
+    // already in the phone's colors (or dark aurora on a first boot).
     loadThemeFromNVS();
+
+    // The countdown starts at power-on, not when the animation ends: the intro is
+    // long enough (UI_BOOT_ANIM_MS) to eat most of it, so the seconds the driver
+    // watches after the hand-off have to be the real ones.
+    bootStartTime = millis();
+    piDataReceived = false;
 
     playStartupAnimation();
     
@@ -374,13 +327,9 @@ void setup() {
     
     needsRedraw = true;
     needsFullRedraw = true;
-    
-    // Start boot countdown timer
-    bootStartTime = millis();
-    piDataReceived = false;
-    currentLoadingMessage = random(NUM_LOADING_MESSAGES);  // Start with random message
-    lastMessageChange = millis();
-    
+
+    // bootStartTime was stamped before the intro, so the countdown is already
+    // part-spent by the time loop() starts: the wait picks up the real seconds.
     Serial.println("Setup complete!");
     
     // Initialize BLE TPMS scanner (after display is ready)
@@ -456,6 +405,24 @@ void loop() {
         }
     }
     
+    // The link-lost screen paints the whole panel, so *leaving* it has to repaint
+    // the whole panel too - the returning screen cannot be drawn as a delta over
+    // it. Detected here because the Pi's first line back only sets needsRedraw.
+    // It is also an animation, so while it is up it owns the frame clock, on
+    // whatever screen the driver had selected.
+    static bool linkLostShown = false;
+    static unsigned long lastLinkFrame = 0;
+    bool linkLost = ui_linkLostActive();
+    if (linkLostShown && !linkLost) {
+        needsFullRedraw = true;
+        needsRedraw = true;
+    }
+    linkLostShown = linkLost;
+    if (linkLost && millis() - lastLinkFrame >= 100) {
+        lastLinkFrame = millis();
+        needsRedraw = true;
+    }
+
     // Update display at ~60Hz for smooth G-force ball movement
     // Note: Other screens redraw immediately on data change (event-driven)
     if (millis() - lastUpdate > 16) {
@@ -463,22 +430,51 @@ void loop() {
         
         // Only G-Force screen needs frequent periodic updates (smooth ball movement)
         // All other screens redraw immediately when new telemetry arrives
-        if (currentScreen == SCREEN_GFORCE) {
+        if (currentScreen == SCREEN_GFORCE && !linkLost) {
             needsRedraw = true;
             // G-Force handles its own partial redraw, no needsFullRedraw
         }
         
-        // During boot countdown, keep redrawing Overview screen to update countdown
-        // Check once per second (1000ms) to trigger countdown redraw
-        static unsigned long lastCountdownCheck = 0;
+        // The boot screen is animated (self-test sweep, breathing emblem, filling
+        // ring, orbiting comet), so it needs frames while the Pi comes up. The
+        // intro runs at 20 fps from setup(); the wait that follows is a full-frame
+        // repaint of the whole screen, so it runs at 8 fps - about a tenth of the
+        // panel's bandwidth. Once telemetry arrives the Overview is event-driven
+        // again.
+        static unsigned long lastBootFrame = 0;
         if (!piDataReceived && currentScreen == SCREEN_OVERVIEW) {
-            if (millis() - lastCountdownCheck >= 1000) {
-                lastCountdownCheck = millis();
-                needsRedraw = true;  // Trigger redraw for countdown update
+            unsigned long bootElapsed = millis() - bootStartTime;
+            unsigned long frameMs = (bootElapsed < UI_BOOT_ANIM_MS) ? 50 : 125;
+            if (millis() - lastBootFrame >= frameMs) {
+                lastBootFrame = millis();
+                needsRedraw = true;
             }
         }
     }
     
+    // A Pi that stops talking must not leave its last frame on the screen. Check a
+    // few times a second; the state only changes once, when the deadline passes.
+    static unsigned long lastLinkCheck = 0;
+    if (millis() - lastLinkCheck >= 250) {
+        lastLinkCheck = millis();
+        if (!settings.demoMode && lastPiDataMs && telemetry.connected &&
+            millis() - lastPiDataMs > PI_STALE_MS) {
+            telemetry.connected = false;
+            telemetry.hasReceivedTelemetry = false;  // RPM, speed and gear fall back to "--"
+            telemetry.rpm = 0;
+            telemetry.speed = 0;
+            telemetry.gear = 0;
+            telemetry.isInReverse = false;
+            telemetry.gearEstimated = false;
+            telemetry.clutchEngaged = false;
+            telemetry.engineRunning = false;
+            telemetry.throttle = 0;
+            telemetry.brake = 0;
+            needsFullRedraw = true;
+            needsRedraw = true;
+        }
+    }
+
     // Update page transition animation
     if (isTransitioning()) {
         updateTransition();
@@ -489,8 +485,14 @@ void loop() {
     if (needsRedraw) {
         needsRedraw = false;
         
+        // A dead link outranks the selected screen: whatever the driver was
+        // looking at is stale, so the waiting animation takes the whole panel.
+        if (linkLost) {
+            ui_linkLostFrame();
+            needsFullRedraw = false;
+        }
         // If transitioning, draw transition effect
-        if (isTransitioning()) {
+        else if (isTransitioning()) {
             // First draw the destination screen (it will be revealed by the wipe)
             ScreenMode savedScreen = currentScreen;
             currentScreen = transitionToScreen;
@@ -741,13 +743,13 @@ void updateIMU() {
     float gyroRoll = orientationRoll + gyroRollRate * step;
 
     // Complementary filter, with the weight expressed as a TIME CONSTANT rather than as a
-    // per-sample alpha. A fixed alpha silently changes behaviour whenever the sample rate
+    // per-sample alpha. A fixed alpha silently changes behavior whenever the sample rate
     // does; `alpha = dt / (dt + tau)` does not.
     //
     // The time constants are deliberately long. tau is how long the tilt estimate waits
     // before believing the accelerometer, and the accelerometer cannot distinguish
     // sideways force from sideways tilt. When tau was short the filter treated a corner as
-    // a bank and subtracted it back out as gravity, so linearAccelX collapsed towards zero
+    // a bank and subtracted it back out as gravity, so linearAccelX collapsed toward zero
     // and the scatter showed almost nothing. Trusting the gyro (which is blind to
     // acceleration, because it measures rotation) keeps the corner as acceleration.
     float tau;
@@ -758,12 +760,12 @@ void updateIMU() {
         // Real braking or cornering: almost all gyro.
         tau = 45.0f;
     } else {
-        // Hard manoeuvre, bumps, kerbs: the accelerometer is not a tilt sensor here.
+        // Hard maneuver, bumps, curbs: the accelerometer is not a tilt sensor here.
         tau = 180.0f;
     }
     float alpha = step / (step + tau);
 
-    // Complementary filter: gyro-integrated tilt, nudged slowly towards gravity.
+    // Complementary filter: gyro-integrated tilt, nudged slowly toward gravity.
     orientationPitch = (1.0f - alpha) * gyroPitch + alpha * accelPitch;
     orientationRoll = (1.0f - alpha) * gyroRoll + alpha * accelRoll;
 
@@ -925,6 +927,7 @@ void handleSerialCommands() {
 
 void parseCommand(String cmd) {
     cmd.trim();
+    lastPiDataMs = millis();
     
     // Only log screen-related commands for debugging
     if ((cmd.startsWith("SCREEN") || cmd == "LEFT" || cmd == "RIGHT" || cmd == "UP" || cmd == "DOWN")
@@ -1142,7 +1145,7 @@ void parseCommand(String cmd) {
             telemetry.absWarning = values[1] != 0;
             telemetry.oilWarning = values[2] != 0;
             telemetry.batteryWarning = values[3] != 0;
-            // New headlight indicators (backwards compatible)
+            // New headlight indicators (backward compatible)
             if (idx >= 6) {
                 telemetry.headlightsOn = values[4] != 0;
                 telemetry.highBeamsOn = values[5] != 0;
