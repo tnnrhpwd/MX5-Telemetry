@@ -625,7 +625,7 @@ static int predictedRpm(int gear, float speedKmh) {
 // MPG/FUEL/RANGE cards end at y=244, so the block starts at 250 and the clear
 // rectangle begins below that edge. Starting any higher wiped the right card's
 // bottom corner and put the first row under "RANGE".
-static void drawGearLadder() {
+static void drawGearLadder(bool forceFullRepaint) {
     const int rowW = 146;
     const int gutter = 4;
     const int cellW = (rowW - gutter) / 2;
@@ -635,16 +635,44 @@ static void drawGearLadder() {
     const int blockH = rowH * 3 + rowGap * 2;
     const int x = CENTER_X - rowW / 2;
 
-    // Clear the whole ladder area first: the rows are shorter than the block.
-    LCD_FillRect(x - 4, startY - 4, rowW + 8, blockH + 8, COLOR_BG);
-
     float speed = telemetry.speed;
     if (speed < 0) speed = 0;
 
-    if (speed < 1.0f || telemetry.isInReverse) {
-        LCD_FillRoundRect(x, startY, rowW, rowH, 8, COLOR_BG_CARD);
-        drawCentered(CENTER_X, startY + 8, telemetry.isInReverse ? "REVERSE" : "STOPPED",
-                     MX5_GRAY, COLOR_BG_CARD, 1);
+    const bool placeholder = (speed < 1.0f || telemetry.isInReverse);
+
+    // What is on screen right now, so a repaint can be limited to what actually changed.
+    // Erasing the whole block on every speed change is what made the ladder visibly
+    // flash: the erase is on screen for a frame, and speed changes constantly.
+    static int8_t ladderMode = -1;          // -1 unknown, 0 placeholder, 1 grid
+    static uint16_t lastCellRpm[6] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+    static uint16_t lastCellColor[6] = {0, 0, 0, 0, 0, 0};
+    static int8_t lastCellCurrent[6] = {-1, -1, -1, -1, -1, -1};
+    static int8_t lastPlaceholderKind = -1;
+
+    // A theme change or a screen re-entry repaints everything underneath us, so the
+    // cached state above no longer describes the panel.
+    if (forceFullRepaint) ladderMode = -1;
+
+    const int mode = placeholder ? 0 : 1;
+    if (mode != ladderMode) {
+        LCD_FillRect(x - 4, startY - 4, rowW + 8, blockH + 8, COLOR_BG);
+        ladderMode = (int8_t)mode;
+        for (int i = 0; i < 6; i++) {
+            lastCellRpm[i] = 0xFFFF;
+            lastCellColor[i] = 0;
+            lastCellCurrent[i] = -1;
+        }
+        lastPlaceholderKind = -1;
+    }
+
+    if (placeholder) {
+        const int8_t kind = telemetry.isInReverse ? 1 : 0;
+        if (kind != lastPlaceholderKind) {
+            lastPlaceholderKind = kind;
+            LCD_FillRoundRect(x, startY, rowW, rowH, 8, COLOR_BG_CARD);
+            drawCentered(CENTER_X, startY + 8, kind ? "REVERSE" : "STOPPED",
+                         MX5_GRAY, COLOR_BG_CARD, 1);
+        }
         return;
     }
 
@@ -664,17 +692,32 @@ static void drawGearLadder() {
         else if (rpm > GEAR_BAND_HIGH)                    rpmColor = MX5_RED;
         else                                              rpmColor = MX5_BLUE;
 
-        LCD_FillRoundRect(cx, y, cellW, rowH, 8, bg);
+        // The cell only needs repainting when it becomes (or stops being) the current
+        // gear; the rest of the time the background is already correct.
+        if (lastCellCurrent[i] != (int8_t)isCurrent) {
+            lastCellCurrent[i] = (int8_t)isCurrent;
+            LCD_FillRoundRect(cx, y, cellW, rowH, 8, bg);
 
-        char gearStr[6];
-        snprintf(gearStr, sizeof(gearStr), "%d", gear);
-        LCD_DrawString(cx + 8, y + 5, gearStr, isCurrent ? MX5_WHITE : MX5_GRAY, bg, 2);
+            char gearStr[6];
+            snprintf(gearStr, sizeof(gearStr), "%d", gear);
+            LCD_DrawString(cx + 8, y + 5, gearStr, isCurrent ? MX5_WHITE : MX5_GRAY, bg, 2);
 
-        // Size 1 for the RPM: a cell is only ~71 px wide, and the number can reach five
-        // digits (1st gear at motorway speed). At size 2 that would overrun the gutter.
-        char rpmStr[10];
-        snprintf(rpmStr, sizeof(rpmStr), "%d", rpm);
-        drawRightAligned(cx + cellW - 6, y + 8, rpmStr, rpmColor, bg, 1);
+            lastCellRpm[i] = 0xFFFF;       // the rpm text was just wiped with the cell
+        }
+
+        if (rpm != lastCellRpm[i] || rpmColor != lastCellColor[i]) {
+            // Size 1 for the RPM: a cell is only ~71 px wide, and the number can reach five
+            // digits (1st gear at motorway speed). At size 2 that would overrun the gutter.
+            //
+            // Padded to a fixed five characters so the glyph background always covers the
+            // same field: a shrinking number ("1000" -> "999") would otherwise leave the
+            // old leading digit behind.
+            char rpmStr[8];
+            snprintf(rpmStr, sizeof(rpmStr), "%5d", rpm);
+            drawRightAligned(cx + cellW - 6, y + 8, rpmStr, rpmColor, bg, 1);
+            lastCellRpm[i] = (uint16_t)rpm;
+            lastCellColor[i] = rpmColor;
+        }
     }
 }
 
@@ -1068,7 +1111,7 @@ void drawOverviewScreen() {
     // of service until the 315 MHz ones are fitted, so the space shows the three
     // most likely gears for the current road speed and the RPM each would sit at.
     if (needsFullRedraw || speedChanged || gearChanged || reverseChanged) {
-        drawGearLadder();
+        drawGearLadder(needsFullRedraw);
     }
 
     if (needsFullRedraw) {

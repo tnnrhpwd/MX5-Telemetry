@@ -44,23 +44,21 @@
 
 | ID | Issue | Device(s) | Type | Severity | Status |
 |----|-------|-----------|------|----------|--------|
-| [ISSUE-01](#issue-01--reverse-gear-not-detected-on-esp32) | Reverse gear not detected when speed goes backwards | ESP32-S3 | Bug | 🟠 High | ❌ **Still broken in the car** — see ISSUE-14 |
+| [ISSUE-01](#issue-01--reverse-gear-not-detected-on-esp32) | Reverse gear not detected when speed goes backwards | ESP32-S3 | Bug | 🟠 High | ❌ Still open in the car — see ISSUE-14 |
 | [ISSUE-02](#issue-02--esp32-theme-does-not-match-the-android-app) | ESP display theme/dark-light mode does not match the Android app | ESP32-S3 | Feature | 🟡 Medium | ✅ Fixed (unverified in car) |
-| [ISSUE-03](#issue-03--intake-air-temperature-always-zero-on-android) | Intake air temperature always 0 | Android | Bug | 🟡 Medium | ❌ **Root cause found** — CAN interface is listen-only, the PID request is never sent |
+| [ISSUE-03](#issue-03--intake-air-temperature-always-zero-on-android) | Intake air temperature always 0 | Android | Bug | 🟡 Medium | ✅ **Fixed, verified live** — `IAT: 89F` |
 | [ISSUE-04](#issue-04--throttle-and-brake-wrong-on-the-rpm-page) | Throttle and brake wrong on the RPM page | Android (+ ESP) | Bug | 🟠 High | ✅ Fixed (needs CAN log) |
 | [ISSUE-05](#issue-05--esp32-gyro-screen-still-uses-the-old-visualization) | Gyro screen still uses the old display code | ESP32-S3 | Bug | 🟡 Medium | ✅ Fixed (unverified in car) |
 | [ISSUE-06](#issue-06--android-speed-reads-about-two-thirds-of-actual) | Speed reads ~⅔ of actual | Android | Bug | 🔴 Critical | ✅ Fixed (unverified in car) |
 | [ISSUE-07](#issue-07--startup-animation-is-plain) | Startup animation needs polish | ESP32-S3 | Polish | ⚪ Low | 🟡 Improved, **not done** — wants a proper, impressive animation |
 | [ISSUE-08](#issue-08--fuel-percentage-is-not-stable) | Fuel % jumps around; needs averaging | Pi / all UIs | Bug | 🟡 Medium | ✅ Fixed (unverified in car) |
-| [ISSUE-09](#issue-09--app-is-not-available-while-driving) | App not viewable while driving | Android Auto | Feature | 🟠 High | ❌ **Still unreachable** — manifest meta-data missing, and AA no longer lists sideloaded templated apps |
-| [ISSUE-10](#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder) | Instantaneous MPG always shows `---` | ESP32-S3 / Pi | Bug | 🟡 Medium | ❌ **Still `---`** — confirmed: HS-CAN is listen-only |
-| [ISSUE-11](#issue-11--tpms-card-should-become-a-gear--rpm-card) | TPMS card on Overview → 3-gear RPM view | ESP32-S3 | Feature | 🟡 Medium | 🟡 Works, **wrong order** — see ISSUE-13 |
-| [ISSUE-12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient) | LED strip laggy; flat colours, no gradient | Arduino Nano | Bug / Polish | 🟠 High | ❌ **Reopened: permanently blue** — see [LED_REVAMP_PLAN.md](LED_REVAMP_PLAN.md) |
-here is my idea for the arduino led strip. firstly, it should reference the andriod app color scheme colors, so the leds match the color scheme, when in dark color mode, it shuold be dimmer than when in color scheme light mode. the andriod mx5 app settings shoudl be able to enable/disable this feature, going to hard color and brightness settings instead. addistionally, i want to be able to set the Rpm scale that goes from 1-10 or whatever the range is on the outside in rpm led color leds basically, so it is fully iluminated at different rpm customizable. also, i want it to change colors more seemlessly rather than going from red to blue for example instantly, it should do that over a range of rpmssmoothly. the led rpm is also still very delayed, compared to even the esp displayed rpm. I want a very high refresh rate on the arduino leds, without changing the baud rate or anything that would break it. 
-
-| **ISSUE-13** | Overview gear ladder is not in numeric order | ESP32-S3 | Bug | 🟡 Medium | ⏳ Open (new, 2026-10-30) |
-| **ISSUE-14** | Reverse shows a **positive** speed and gear 1, never `R` | Pi → ESP32-S3 | Bug | 🟠 High | ⏳ Open (new, 2026-10-30) |
-| **ISSUE-15** | LED control surface is one chip row; needs a real settings screen | Android + Arduino | Feature | 🟠 High | ⏳ Planned — [LED_REVAMP_PLAN.md](LED_REVAMP_PLAN.md) |
+| [ISSUE-09](#issue-09--app-is-not-available-while-driving) | App not viewable while driving | Android Auto | Feature | 🟠 High | 🟡 **Descriptor added + installed** — needs the head unit, then possibly a Play track |
+| [ISSUE-10](#issue-10--instantaneous-mpg-always-shows-the-empty-placeholder) | Instantaneous MPG always shows `---` | ESP32-S3 / Pi | Bug | 🟡 Medium | ✅ **Fixed, verified live** — MAF and IAT answer |
+| [ISSUE-11](#issue-11--tpms-card-should-become-a-gear--rpm-card) | TPMS card on Overview → 3-gear RPM view | ESP32-S3 | Feature | 🟡 Medium | ✅ Fixed — numeric order, see ISSUE-13 |
+| [ISSUE-12](#issue-12--led-strip-is-laggy-and-lacks-a-gradient) | LED strip laggy; flat colours, no gradient | Arduino Nano | Bug / Polish | 🟠 High | ✅ **Verified working on the strip** — full gradient at 6500 rpm |
+| **ISSUE-13** | Overview gear ladder is not in numeric order | ESP32-S3 | Bug | 🟡 Medium | ✅ **Fixed, flashed** — 2 × 3 grid |
+| **ISSUE-14** | Reverse shows a **positive** speed and gear 1, never `R` | Pi → ESP32-S3 | Bug | 🟠 High | ⏳ Open — probe tool ready, capture pending |
+| **ISSUE-15** | LED control surface is one chip row; needs a real settings screen | Android + Arduino | Feature | 🟠 High | 🟡 In progress — firmware + Pi forwarding done, app screen to build |
 
 **Status key:** ✅ code complete and building · ❌ **verified still broken in the car** ·
 🟡 works but wrong/misleading · ⚠️ partially addressed, see the issue · ⏳ open.
@@ -1049,11 +1047,27 @@ strip's `STATUS` line back for a diagnostics row.
 **Reported:** "I want to totally revamp the LED logic, but need to develop the plan more,
 specifically improving the Android MX5 app settings menu for the LEDs."
 
+**Owner's requirements, verbatim (2026-10-30).** Kept word for word so the intent cannot
+drift while the plan is implemented — the design answer for each is in
+[LED_REVAMP_PLAN.md §2.1](LED_REVAMP_PLAN.md#21-owners-requirements-2026-10-30-verbatim-intent).
+
+> here is my idea for the arduino led strip. firstly, it should reference the andriod app
+> color scheme colors, so the leds match the color scheme, when in dark color mode, it
+> shuold be dimmer than when in color scheme light mode. the andriod mx5 app settings
+> shoudl be able to enable/disable this feature, going to hard color and brightness
+> settings instead. addistionally, i want to be able to set the Rpm scale that goes from
+> 1-10 or whatever the range is on the outside in rpm led color leds basically, so it is
+> fully iluminated at different rpm customizable. also, i want it to change colors more
+> seemlessly rather than going from red to blue for example instantly, it should do that
+> over a range of rpmssmoothly. the led rpm is also still very delayed, compared to even
+> the esp displayed rpm. I want a very high refresh rate on the arduino leds, without
+> changing the baud rate or anything that would break it.
+
 **What exists:** `SettingsScreen` has a `LED STRIP` group containing one 4-way *Sequence*
 chip row ([SettingsScreen.java](../android/mx5-remote/src/main/java/com/mx5/remote/SettingsScreen.java#L115)).
 Brightness in that screen controls the **Pi display**, not the strip. Everything else about
-the strip — zone boundaries, redline, colours, shift point, brightness — is compiled into
-the Nano's firmware, and no state comes back from it.
+the strip — zone boundaries, redline, colours, shift point, brightness — was compiled into
+the Nano's firmware, and no state came back from it.
 
 **What the revamp replaces it with:** a dedicated `LED STRIP` screen (phone-only,
 `piScreen() == -1`) with strip enable + brightness, fill pattern, colour mode, a 6-stop
