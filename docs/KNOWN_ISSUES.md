@@ -1632,6 +1632,32 @@ Additional findings not on that list: the Overview gear ladder's ordering is con
 (ISSUE-13), the drive app is still not reachable (ISSUE-09), and the boot animation is not
 impressive enough yet (ISSUE-07).
 
+### Deploy pass — LED revamp, car displays, device links (2026-10-30, evening)
+
+Everything from the four commits since that run (`6596edd`, `9e74df2`, `daec02d`) was put
+on the hardware with `push-hardware.ps1` and checked against each device's own reporting
+rather than against a log line that says it worked.
+
+| Check | Result |
+|-------|--------|
+| Pi at `origin/main`, service active | ✅ 200 Hz loop, `ser=1`, `drops=0`, no tracebacks |
+| All eight round-display screens | ✅ each `POST /api/screen/<n>` confirmed by the ESP32; first draw of a page costs 41-133 ms, then back to `draw=0` |
+| `GET /api/telemetry` | ✅ CAN live (`0x201`), voltage 12.2 V, fuel 42.8 %, range 210 mi |
+| LED strip over the new wiring | ✅ `connected`, `can`, `fps≈700`, `full_rpm=6800`, `last_id=0x201` |
+| `POST /api/led/command` allow-list | ✅ `PING`, `CFG?`, `DEMO:<rpm>`, `IDENTIFY`, `SELFTEST` accepted; `CFG:reset` and `DEMO:99999` refused with 400 |
+| `DEMO:<rpm>` round trip | ✅ 4000 → `rpm=4000`, 5000 → `rpm=5000`, `DEMO:OFF` → `rpm=0`, `demo_rpm=null` |
+| `POST /api/mpg/reset` | ✅ totals zeroed, average falls back to `26.0 (estimated)`, range recomputed from the sender |
+| `POST /api/settings/update` LED keys | ✅ ramp, `theme_dim`, `brightness`, `enabled`, shift rpm/hz/colour all reach the strip; malformed ramp, non-hex colour and `hz=99` refused with 400 |
+| BLE transport (`tools/bt/ble_probe.py`) | ✅ 9/9 — advertising as `MX5 Pi Link`, MTU 517, `hello` accepted, `ping`/`status`/`telemetry`/`roof.status` answered |
+| SPP transport | ❌ still impossible on this install — the local SDP server is unreachable (`sdptool add` exits 255); BLE carries the link, as the doctor says |
+| Android parked + drive | ✅ both build and install on `R5CY139PV9X` |
+| Native firmware tests (`pio test -e native_sim`, on the Pi) | ✅ 14/14 |
+
+Two things this pass could not do, and what they need: the app has to be opened with the
+phone unlocked to exercise the phone side of the BLE link (the screen was locked, so the
+activity paused before its second transport walk reached BLE), and `parity_check.py` /
+`wire_check.py` need MSVC, which this machine does not have — they still report SKIPPED.
+
 **Next deploy delta** (nothing else needs reflashing):
 
 | Step | Target | Action |
@@ -1664,8 +1690,12 @@ impressive enough yet (ISSUE-07).
   (`tools/can/reverse_probe.py diff park reverse`, no `python-can` needed) and picks the
   byte that actually discriminates; what is missing is the one 8-second capture in each
   state.
-- **ISSUE-15 / 12:** built end to end — one device pass to confirm every control moves the
-  strip and survives a power cycle on both ends.
+- **ISSUE-15 / 12:** ✅ **confirmed on the hardware (2026-10-30).** Every LED control was
+  driven from the app's endpoint and checked against the strip's own `STATUS` line
+  (`en`, `dim`, `mode`, `shift`, `hz`, ramp, plus `SELFTEST` / `IDENTIFY` / `DEMO`), and
+  `shift=6800@11 Hz` came back after restarting both ends — the Pi logged
+  `Restored 9 LED settings from led_settings.json` and re-sent them to a Nano that had
+  just been reset by the port opening.
 - **ISSUE-09:** check the drive package on the head unit; a Play internal test track if the
   host refuses sideloaded templated apps.
 - **ISSUE-04:** confirm the `0x201` byte-6 throttle layout with a pedal log.
