@@ -39,10 +39,20 @@ build/
 .history/
 
 # ============================================================================
-# Local Environment Variables
+# Local Environment Variables / Secrets
 # ============================================================================
-.env.local
+.env
+.env.*
+!.env.example
+*.env.local
 *.local.env
+# Private keys and certificates (never commit key material)
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
 
 # ============================================================================
 # Compiled Object Files
@@ -66,6 +76,24 @@ build/
 Thumbs.db
 
 # ============================================================================
+# Crash / core dumps
+# ============================================================================
+hs_err_pid*.log
+replay_pid*.log
+/core
+core.[0-9]*
+*.dmp
+
+# ============================================================================
+# Java / Gradle (android/)
+# ============================================================================
+.gradle/
+gradle-app.setting
+*.class
+*.hprof
+# NOTE: android/gradle/wrapper/gradle-wrapper.jar is intentionally tracked.
+
+# ============================================================================
 # Local build output / install staging (not source)
 # ============================================================================
 dist/
@@ -82,17 +110,43 @@ android/build-mx5/
 # LOG_*.CSV
 
 # ============================================================================
-# Python (for data analysis scripts)
+# Python (pi/, tools/, scripts/, display/scripts/)
 # ============================================================================
+# Bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .Python
+*.so
+# Virtual environments (see also build-automation/venv/)
+.venv/
 venv/
 env/
 ENV/
-.venv
+.venv-*/
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.hypothesis/
+.tox/
+.nox/
+.cache/
+# Packaging / install artifacts
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+pip-log.txt
+# Test / coverage output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+nosetests.xml
+# Notebook checkpoints
+.ipynb_checkpoints/
 
 # ============================================================================
 # Wokwi Simulator
@@ -133,6 +187,10 @@ docs/.doctrees/
 *~.nib
 *.sublime-project
 *.sublime-workspace
+*.code-workspace
+.vscode-test/
+.clangd/
+compile_commands.json
 
 # ============================================================================
 # Backup Files

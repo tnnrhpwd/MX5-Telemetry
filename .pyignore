@@ -1,0 +1,94 @@
+# ============================================================================
+# MX5-Telemetry .pyignore
+# ============================================================================
+# Single source of truth for "Python artifacts that must never be stored".
+#
+# There is no Python tool that reads a file literally named `.pyignore`, so this
+# file serves two purposes:
+#   1. It documents the Python half of the ignore rules. The same patterns are
+#      mirrored in .gitignore (which is what actually keeps git clean).
+#   2. It is a ready-to-use pattern list for tools that accept an exclude file
+#      or pattern list, e.g.
+#         ruff check --extend-exclude "<pattern>"
+#         mypy --exclude "(^|/)(__pycache__|\.venv)/"
+#         pytest --ignore=<path>
+#      Keeping the lists here stops them from drifting between tools.
+#
+# Syntax: gitignore-style, relative to the repository root. Paths use `/`.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Bytecode / interpreter caches
+# ----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# ----------------------------------------------------------------------------
+# Virtual environments (venv, build-automation/venv, .venv, .venv-*)
+# ----------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.venv-*/
+
+# ----------------------------------------------------------------------------
+# Tool caches
+# ----------------------------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.hypothesis/
+.tox/
+.nox/
+.cache/
+
+# ----------------------------------------------------------------------------
+# Packaging / install artifacts
+# ----------------------------------------------------------------------------
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+pip-log.txt
+*.whl
+
+# ----------------------------------------------------------------------------
+# Test and coverage output
+# ----------------------------------------------------------------------------
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+nosetests.xml
+
+# ----------------------------------------------------------------------------
+# Notebook checkpoints (docs/, tools/ analysis notebooks)
+# ----------------------------------------------------------------------------
+.ipynb_checkpoints/
+
+# ----------------------------------------------------------------------------
+# Local runtime state written by the Python tools (never source)
+# ----------------------------------------------------------------------------
+# Web remote signing key (data/)
+data/web_secret_key
+# Pi web remote credentials
+pi/.web-env
+# Cached JSON written at runtime by the Pi / tools
+data/tpms_cache.json
+data/mpg_data.json
+
+# ----------------------------------------------------------------------------
+# Sensitive local config (Python tools read these; never commit them)
+# ----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.env.local
+*.local.env
+tools/lib/pi_config.json
