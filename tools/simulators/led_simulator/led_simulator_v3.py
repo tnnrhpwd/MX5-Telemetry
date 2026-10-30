@@ -356,11 +356,11 @@ class LedSimulator(tk.Tk):
         self.sweep_direction = 1
         self.sweep_speed = 900          # rpm per second
         self.last_tick = self.started
-        # True only while the user has the RPM thumb held down. Tk fires a Scale's
-        # command for programmatic .set() too - and can deliver it after the call
-        # returns - so the drag itself is the only reliable signal that a new value is an
-        # instruction rather than the sweep moving the thumb.
-        self._dragging = False
+        # What the "engine" is reporting, before the firmware's filter. The filter is the
+        # difference between a slider and a strip, so the target and the rendered value are
+        # deliberately separate: with smoothing on, the bar chases this over a few frames
+        # exactly as it does in the car.
+        self.feed_target = 0
 
         self.engine = LedEngine(cfg=LedConfig(led_count=led_count), rpm=0)
 
@@ -546,7 +546,7 @@ class LedSimulator(tk.Tk):
                                       padx=12, pady=3, cursor="hand2",
                                       command=self.toggle_shift)
         self.shift_button.pack(side="right")
-        self.shift_rpm = Slider(section.body, "Start at", 3000, 8000,
+        self.shift_rpm = Slider(section.body, "Start at", 2000, 8000,
                                 self.engine.cfg.shift_rpm, " rpm", step=100,
                                 on_change=self._on_shift_rpm, colour=BAD)
         self.shift_rpm.pack(fill="x")
@@ -603,25 +603,37 @@ class LedSimulator(tk.Tk):
         """A drag on the RPM track: the user is driving, so stop any sweep."""
         self.sweeping = False
         self._render_sweep_button()
-        self.engine.set_rpm(value)
+        self._set_target(value)
 
     def set_rpm(self, rpm: int, from_scale: bool = False) -> None:
         rpm = max(0, min(9000, int(rpm)))
         self.sweeping = False
         self._render_sweep_button()
+        self._set_target(rpm)
+
+    def _set_target(self, rpm: int) -> None:
+        """Move the engine to this rpm and show it immediately.
+
+        With smoothing on, `_tick` will run the value through the firmware's filter; a
+        large jump snaps either way, and a small one settles over a frame or two, which is
+        the behaviour the checkbox is there to demonstrate.
+        """
+        self.feed_target = rpm
         self.engine.set_rpm(rpm)
-        self.rpm_control.set(rpm)
+        self._set_rpm_scale(rpm)
 
     def _set_rpm_scale(self, rpm: int) -> None:
         self.rpm_control.set(rpm)
 
     def nudge(self, delta: int) -> None:
-        self.set_rpm(self.engine.rpm + delta)
+        # From the target, not the rendered value: with the filter on, the bar trails the
+        # target for a frame, and nudging from the trail would compound the lag.
+        self.set_rpm(self.feed_target + delta)
 
     def toggle_sweep(self) -> None:
         self.sweeping = not self.sweeping
         if self.sweeping:
-            self.sweep_direction = 1 if self.engine.rpm < self.engine.cfg.full_rpm else -1
+            self.sweep_direction = 1 if self.feed_target < self.engine.cfg.full_rpm else -1
         self._render_sweep_button()
 
     def _render_sweep_button(self) -> None:
@@ -717,8 +729,8 @@ class LedSimulator(tk.Tk):
         self.legend.redraw()
 
     def _on_smooth(self) -> None:
-        if not self.smooth_var.get():
-            self.engine.smoothed_rpm = float(self.engine.rpm)
+        """Turning the filter off drops straight to the target; on, it re-seeds from it."""
+        self.engine.smoothed_rpm = float(self.engine.rpm)
 
     def _on_led_count(self, value: int) -> None:
         value = max(5, min(60, value))
@@ -807,15 +819,20 @@ class LedSimulator(tk.Tk):
         self.last_tick = now
 
         if self.sweeping:
-            cfg = self.engine.cfg
-            span = cfg.full_rpm
-            target = self.engine.rpm + self.sweep_direction * self.sweep_speed * elapsed
+            span = self.engine.cfg.full_rpm
+            target = self.feed_target + self.sweep_direction * self.sweep_speed * elapsed
             if target >= span:
                 target, self.sweep_direction = span, -1
             elif target <= 0:
                 target, self.sweep_direction = 0, 1
-            self.engine.set_rpm(int(target))
+            self.feed_target = int(target)
+
+        # The strip only ever sees rpm through this filter, so the simulator does too.
+        if self.smooth_var.get():
+            self.engine.feed_rpm(self.feed_target)
             self._set_rpm_scale(self.engine.rpm)
+        else:
+            self.engine.set_rpm(self.feed_target)
 
         self._paint()
         self.after(TICK_MS, self._tick)

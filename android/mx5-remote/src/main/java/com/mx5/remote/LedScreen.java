@@ -117,7 +117,7 @@ public class LedScreen extends Screen {
         });
         left.addView(pillRow(c, p, "Strip on", enabled));
 
-        brightness = new SliderRow(c, p, "Brightness", 0, 255, 5, 180, "", p.accent, null)
+        brightness = new SliderRow(c, p, "Brightness", 0, 255, 5, 255, "", p.accent, null)
                 .onRelease(() -> push("led_brightness", brightness.value()));
         left.addView(brightness);
 
@@ -176,7 +176,7 @@ public class LedScreen extends Screen {
         });
         right.addView(pillRow(c, p, "Flash on shift", shiftOn));
 
-        shiftRpm = new SliderRow(c, p, "Start at", 3000, 7500, 100, 6300, " rpm", p.bad, null)
+        shiftRpm = new SliderRow(c, p, "Start at", 2000, 8000, 100, 6300, " rpm", p.bad, null)
                 .onRelease(() -> {
                     if (shiftOn.isOn()) {
                         push("led_shift_rpm", shiftRpm.value());
@@ -280,8 +280,11 @@ public class LedScreen extends Screen {
             return;
         }
         enabled.setOn(s.optInt("led_enabled", 1) != 0);
-        int level = s.optInt("led_brightness", 180);
-        brightness.setValue(level < 0 ? 180 : level);
+        // -1 means the Pi has never been told, so the strip is still on its own default.
+        // Showing the firmware's boot value is the only honest guess; 180 was an invented
+        // number that disagreed with the strip the moment the screen opened.
+        int level = s.optInt("led_brightness", -1);
+        brightness.setValue(level < 0 ? 255 : level);
         sequence.select(s.optInt("led_sequence", 1));
         colorMode.select(s.optInt("led_color_mode", 0));
 
