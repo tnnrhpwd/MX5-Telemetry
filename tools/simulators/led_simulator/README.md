@@ -224,12 +224,40 @@ also asserts, mechanically, that:
 - the **shift-light color is the theme's**, not an alarm color and not the firmware's red.
 
 All three were confirmed to fail when the old behavior is put back (`stop 2 is 22c55e in 12
-dark schemes — the ramp is not following the theme`, `shift colour is the fixed red default`).
+dark schemes — the ramp is not following the theme`, `shift color is the fixed red default`).
 
 Requires a JDK (`javac` and `java` on `PATH`). Without one it reports `SKIPPED` and exits
 0, like the compiler check above.
 
-### 4. What is deliberately *not* modeled
+### 4. The wire: the strip's own parser is compiled and fed the app's payloads
+
+```bash
+python tools/simulators/led_simulator/wire_check.py
+```
+
+The theme logic lives in the phone, not the strip: the Nano renders whichever ramp and shift
+color it was last sent, and has no idea what a "scheme" is. So the only part of the chain
+that can break without anyone editing the firmware is the **wire format** — and when it
+breaks it fails quietly, because a rejected `RAMP:` leaves the old table in place and looks
+like the theme did nothing at all.
+
+`wire_check.py` extracts the firmware's `RAMP:` and `CFG:scol=` parsing blocks out of
+`arduino/src/main.cpp` by brace matching, compiles them with the strip's own constants, and
+feeds them the exact payloads the app now produces — uppercase hex, six stops, the scheme's
+shift color — for all 12 schemes in both modes. **48 payloads, 48 replies**, each parsed back
+to the table the app intended, with "full" landing on the last stop.
+
+It also checks the negative direction: a one-stop ramp, a truncated color, a trailing comma
+and a truncated `scol=` must leave the live table *and* the shift color exactly as they were.
+They now do — the parser stages the rows and only copies them in once the whole line is
+accepted, because writing straight into `rampStops[]` used to leave a rejected command half
+applied.
+
+Proven not vacuous the same way: deleting the `'A'`–`'F'` branch from the firmware — so the
+app's uppercase hex stops parsing — makes every one of the 48 fail with the strip's old table
+still in place.
+
+### 5. What is deliberately *not* modeled
 
 Nothing here changes a pixel, but claiming "identical" without saying this would be
 overclaiming:

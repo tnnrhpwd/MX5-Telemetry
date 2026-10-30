@@ -771,7 +771,7 @@ class LedSimulator(tk.Tk):
         if value == 0:
             self.engine.cfg.ramp = engine.DEFAULT_RAMP
             self.engine.cfg.full_rpm = engine.DEFAULT_RAMP[-1][0]
-            # The firmware's own flash colour, since this source means "the strip's
+            # The firmware's own flash color, since this source means "the strip's
             # compiled-in defaults" and the theme that would have replaced it is off.
             self.engine.cfg.shift_color = LedConfig().shift_color
             self._show_shift_colour()
@@ -786,7 +786,7 @@ class LedSimulator(tk.Tk):
         `MainActivity.ledRampFor()` uses six fixed stops ending at 6800, so applying it
         also sets the strip's full-illumination rpm to 6800 - which is what happens in the
         car, and worth seeing rather than hiding. `pushThemeToPi()` sends the scheme's
-        shift colour at the same time.
+        shift color at the same time.
         """
         ident = app_palette.SCHEMES[self.scheme_index][0]
         pal = app_palette.palette(ident, self.scheme_dark)
@@ -859,11 +859,11 @@ class LedSimulator(tk.Tk):
     def _choose_shift_colour(self) -> None:
         current = _hex(self.engine.cfg.shift_color)
         _rgb, chosen = colorchooser.askcolor(color=current, parent=self,
-                                             title="Shift light colour")
+                                             title="Shift light color")
         if not chosen:
             return
         self.engine.cfg.shift_color = engine.rgb_of_hex(chosen.lstrip("#"))
-        # A hand-picked flash colour is no longer the scheme's, exactly as in the phone's
+        # A hand-picked flash color is no longer the scheme's, exactly as in the phone's
         # LED screen, where picking one switches "Follow theme" off.
         self._note_custom()
         self._show_shift_colour()

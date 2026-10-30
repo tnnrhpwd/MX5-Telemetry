@@ -190,7 +190,7 @@ def main() -> int:
                                 % (scheme_id, "dark" if dark_flag else "light",
                                    " ".join(java_stops), " ".join(py_stops)))
             if java_shift != py_shift:
-                problems.append("%s (%s) shift colour: java %s, python %s"
+                problems.append("%s (%s) shift color: java %s, python %s"
                                 % (scheme_id, "dark" if dark_flag else "light",
                                    java_shift, py_shift))
 
@@ -280,11 +280,11 @@ def check_theme_follows() -> List[str]:
         packed = int(value, 16)
         for name, alarm in ALARM_COLORS.items():
             if packed == alarm:
-                problems.append("%s/%s shift colour is the fixed %s alarm color - the flash "
+                problems.append("%s/%s shift color is the fixed %s alarm color - the flash "
                                 "follows the theme"
                                 % (ident, "dark" if dark else "light", name))
         if value == "ff0000":
-            problems.append("%s/%s shift colour is the fixed red default - the flash is not "
+            problems.append("%s/%s shift color is the fixed red default - the flash is not "
                             "following the theme" % (ident, "dark" if dark else "light"))
     return problems
 

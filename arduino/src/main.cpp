@@ -547,6 +547,11 @@ void handleSerialCommands() {
                 }
                 else if (strncmp(cmdBuffer, "RAMP:", 5) == 0) {
                     // RAMP:<rpm>:<rrggbb>,<rpm>:<rrggbb>,...  (the last stop is "full")
+                    // Parsed into a staging table and copied in only once the whole line has
+                    // been accepted: writing straight into rampStops[] meant a malformed
+                    // command left the live ramp partly rewritten, a mixture of old and new
+                    // that no command ever asked for.
+                    RampStop staged[RAMP_STOP_COUNT];
                     uint8_t count = 0;
                     char* p = cmdBuffer + 5;
                     while (*p && count < RAMP_STOP_COUNT) {
@@ -568,14 +573,17 @@ void handleSerialCommands() {
                             digits++;
                         }
                         if (digits != 6) break;
-                        rampStops[count].rpm = rpm;
-                        rampStops[count].r = (uint8_t)(rgb >> 16);
-                        rampStops[count].g = (uint8_t)(rgb >> 8);
-                        rampStops[count].b = (uint8_t)rgb;
+                        staged[count].rpm = rpm;
+                        staged[count].r = (uint8_t)(rgb >> 16);
+                        staged[count].g = (uint8_t)(rgb >> 8);
+                        staged[count].b = (uint8_t)rgb;
                         count++;
                         if (*p == ',') { p++; } else { break; }
                     }
                     if (count >= 2) {
+                        for (uint8_t i = 0; i < count; i++) {
+                            rampStops[i] = staged[i];
+                        }
                         rampStopCount = count;
                         rpmFull = rampStops[count - 1].rpm;
                         lastRenderedRPM = 0xFFFF;   // force a repaint
