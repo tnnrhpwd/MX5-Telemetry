@@ -1,4 +1,10 @@
-"""
+"""SUPERSEDED - do not trust this file's LED output.
+
+This version draws a six-state LED program from the old lib/LEDController
+architecture (white pepper, green edges, orange stall pulse, red flashing gap)
+that the shipping firmware no longer has. The strip now runs a runtime colour
+ramp, and led_simulator_v3.py is a port of it. Kept for reference only.
+
 MX5-Telemetry LED Simulator v2.1 - Mirrored Progress Bar System
 ================================================================
 Interactive simulator for testing LED strip logic before uploading to Arduino.

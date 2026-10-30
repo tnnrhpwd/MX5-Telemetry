@@ -307,25 +307,36 @@ The defaults below are what the firmware boots with, and they are also what the 
 
 ---
 
-## LED Simulator Integration
+## LED Simulator
 
-A Python-based LED simulator allows testing without physical hardware:
+[`tools/simulators/led_simulator/led_simulator_v3.py`](../../tools/simulators/led_simulator/led_simulator_v3.py)
+shows the strip without the hardware: drag the rpm and the bar follows. It is not a
+lookalike — every frame comes from
+[`led_engine.py`](../../tools/simulators/led_simulator/led_engine.py), a line-by-line port
+of the rendering in [`arduino/src/main.cpp`](../arduino/src/main.cpp), so the ramp, the
+fill geometry, the fractional tip, the dim scale and the brightness math are the same code.
 
-**Location:** `tools/simulators/led_simulator.py`
-
-**Features:**
-- Visual LED strip simulation
-- Real-time Arduino connection via serial
-- RPM slider control
-- Supports all 4 LED patterns
-- Debug mode for development
+**What it can show:** every fill pattern, gradient vs wash, the "Full at" scale, all six
+ramp stops, dark-mode dimming, the shift light, the CAN-offline pattern, the error scanner,
+self test and identify.
 
 **Usage:**
 ```bash
-python tools/simulators/led_simulator.py
+python tools/simulators/led_simulator/led_simulator_v3.py
+python tools/simulators/led_simulator/led_simulator_v3.py --leds 30   # longer strip
+python tools/simulators/led_simulator/led_simulator_v3.py --pi 192.168.42.100:5000
+                                                        # start from the car's settings
 ```
 
-See [tools/simulators/README.md](../../tools/simulators/README.md) for simulator documentation.
+Windows: [`LED_Simulator.bat`](../../tools/simulators/led_simulator/LED_Simulator.bat)
+(double-click) or
+[`run_simulator.bat`](../../tools/simulators/led_simulator/run_simulator.bat) (keeps the
+console). See [the simulator README](../../tools/simulators/led_simulator/README.md).
+
+**Keep it honest:** after changing `arduino/src/main.cpp`, mirror the change in
+`led_engine.py` and run
+`python tools/simulators/led_simulator/test_led_engine.py`. Those 43 tests encode the
+firmware's arithmetic, so a failure means the simulator has drifted from the strip.
 
 ---
 

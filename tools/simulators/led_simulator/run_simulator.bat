@@ -1,55 +1,34 @@
 @echo off
 REM ============================================================================
-REM MX5-Telemetry LED Simulator Launcher (Windows)
+REM MX5-Telemetry LED simulator launcher (Windows), for running from anywhere
 REM ============================================================================
-REM This script launches the LED simulator for testing LED logic before upload
+REM Keeps a console open so anything the simulator prints is visible. Arguments
+REM are passed through, e.g.  run_simulator.bat --leds 30
 REM ============================================================================
 
-echo ====================================
-echo MX5-Telemetry LED Simulator
-echo ====================================
-echo.
-
-REM Check for Python
-python --version >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [X] Python not found!
-    echo.
-    echo Please install Python 3.7 or higher from:
-    echo https://www.python.org/downloads/
-    echo.
-    echo Make sure to check "Add Python to PATH" during installation.
+set "HERE=%~dp0"
+set "PY="
+if exist "%HERE%..\..\..\venv\Scripts\python.exe" set "PY=%HERE%..\..\..\venv\Scripts\python.exe"
+if not defined PY (
+    where python >nul 2>&1
+    if %ERRORLEVEL% EQU 0 set "PY=python"
+)
+if not defined PY (
+    echo [X] Python not found. Install Python 3.8+ and tick "Add Python to PATH".
     pause
     exit /b 1
 )
 
-echo [*] Python found
+echo MX5-Telemetry LED simulator
+echo.
+echo   Up / Down        +/- 100 rpm
+echo   PageUp / PageDn  +/- 500 rpm
+echo   Home / End       0 and full rpm
+echo   Space            auto-sweep
+echo   S / M / E        sequence / colour mode / strip on-off
+echo   T / I            self test / identify
+echo   Esc              quit
 echo.
 
-REM Check if we're in the right directory
-if not exist "tools\LED_Simulator\led_simulator_v2.1.py" (
-    echo [X] Error: Must run from project root directory
-    echo.
-    echo Current directory: %CD%
-    echo Expected: MX5-Telemetry root folder
-    pause
-    exit /b 1
-)
-
-echo [*] Launching LED Simulator...
-echo.
-echo Controls:
-echo   - Arrow Up: Gas Pedal
-echo   - Arrow Down: Brake
-echo   - Arrow Right: Shift Up
-echo   - Arrow Left: Shift Down
-echo   - Shift Key: Clutch
-echo   - ESC: Quit
-echo.
-
-REM Launch the simulator
-python tools\LED_Simulator\led_simulator_v2.1.py
-
-echo.
-echo Simulator closed.
-pause
+"%PY%" "%HERE%led_simulator_v3.py" %*
+if %ERRORLEVEL% NEQ 0 pause

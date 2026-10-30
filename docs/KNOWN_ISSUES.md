@@ -922,8 +922,10 @@ progression from "low" at the bottom to "high" at the top.
    [LED simulator](../tools/simulators/led_simulator/README.md) to match.
 
 **Needs hardware:** Ideally yes — the perceived smoothness is a real-world judgement. The
-[LED simulator](../tools/simulators/led_simulator/README.md) and its canned car logs cover
-most of the iteration, though the actual `strip.show()` timing is Nano-specific.
+[LED simulator](../tools/simulators/led_simulator/README.md) covers the colour and geometry
+(its frames come from a port of the firmware, so they are the strip's own arithmetic), and
+with the engine off it is the only way to see the ramp move at all. The `strip.show()`
+timing itself is still Nano-specific and cannot be judged from a desktop.
 
 **Done when:** Full-throttle blips in neutral track the tachometer with no visible delay;
 the strip shows a continuous bottom-to-top gradient; and the top of the strip reaches red
@@ -1204,6 +1206,8 @@ What was actually run after the LED-screen round (2026-10-30, no car, no phone, 
 | Android app (both flavors) | `gradlew --offline :mx5-remote:assembleParkedDebug :mx5-remote:assembleDriveDebug` | ✅ BUILD SUCCESSFUL |
 | Pi link protocol + LED keys | `python pi/ui/src/test_link_protocol.py` | ✅ **58/58** passed (was 50; +8 for the new settings and the LED command allow-list) |
 | Reverse probe analysis | `python tools/can/test_reverse_probe.py` | ✅ **7/7** passed |
+| LED simulator engine | `python tools/simulators/led_simulator/test_led_engine.py` | ✅ **43/43** passed — the port is pinned to values worked out by hand from `arduino/src/main.cpp` |
+| LED simulator GUI | driven headlessly through every control | ✅ all eleven controls and the sweep/slider interaction behave; screenshots reviewed |
 | Pi LED persistence | ad-hoc round trip | ✅ save → load identical; missing file and corrupt JSON both fall back to defaults without raising |
 | Pi modules | `python -m py_compile main.py link_service.py web_server.py link_protocol.py` | ✅ clean |
 

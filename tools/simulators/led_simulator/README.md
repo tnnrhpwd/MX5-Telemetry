@@ -1,230 +1,104 @@
-# MX5-Telemetry Tools
+# LED strip simulator
 
-This folder contains development tools for the MX5-Telemetry project.
+![The simulator at 3400 rpm](screenshot.png)
 
-## 🆕 Auto-Sync Feature (Latest Update)
+Drag the rpm and watch the bar. Every pixel in that picture is computed by
+[`led_engine.py`](led_engine.py), a line-by-line port of the LED rendering in
+[`arduino/src/main.cpp`](../../../arduino/src/main.cpp) — the same 20 pixels, the same
+ramp table, the same fill geometry, the same truncation.
 
-**The simulator now automatically reads LED configuration from Arduino code!**
-
-- ✅ Edit only `lib/Config/LEDStates.h` - Python syncs automatically
-- ✅ No manual copying of constants
-- ✅ Impossible to get out of sync
-- ✅ Speed-aware State 1: Only shows stall warning when vehicle is moving
-
-**See** `parse_arduino_led_config.py` for the parser that makes this possible.
-
-**Documentation**: `docs/LED_AUTO_SYNC.md` for full details.
-
-## LED Simulator v2.1
-
-Interactive GUI simulator for testing LED strip logic before uploading to Arduino.
-
-### New in v2.1 🎉
-
-- **🔊 Engine Sound Synthesis**: Real-time audio that changes pitch with RPM (optional, requires pyaudio)
-- **⚠️ Engine Stalling**: Realistic stall when RPM drops too low without clutch
-- **🌊 Realistic Speed Decay**: Natural deceleration from drag and rolling resistance
-- **📊 Enhanced Physics**: Accurate stall detection and warnings
-
-### Features from v2.0
-
-- **🚗 Car Configuration Files**: Load custom JSON files with vehicle specs
-- **🔑 Engine Start/Stop**: Toggle engine on/off with button control
-- **📂 Multiple Car Support**: Switch between different vehicle configurations
-- **📊 Accurate Physics**: Each car uses its own gear ratios, RPM limits, and performance data
-
-### Features
-
-- **Real-time LED visualization**: See exactly how your LED strip will look
-- **Realistic physics**: Simulates actual transmission with accurate gear ratios
-- **Interactive controls**: Keyboard-based gas, brake, clutch, and shifting
-- **Dual gauges**: RPM and speed displayed as analog gauges
-- **Live gear indicator**: Shows current gear selection (N when engine off)
-- **30-LED strip simulation**: Matches your WS2812B strip configuration
-- **Custom car profiles**: Load any vehicle configuration from JSON files
-
-### Quick Start
-
-#### First Time Setup
-
-Create a Python virtual environment in the project root:
-
-```powershell
-# From MX5-Telemetry root directory
-py -m venv venv
-```
-
-This creates an isolated Python environment (already excluded in `.gitignore`).
-
-#### Windows
-
-**Option 1: Using virtual environment (recommended)**
-```powershell
-.\venv\Scripts\Activate.ps1
-python tools\led_simulator_v2.1.py
-```
-
-**Option 2: Batch launcher**
-```batch
-tools\run_simulator.bat
-```
-
-**With Audio Support (optional):**
-```powershell
-.\venv\Scripts\Activate.ps1
-pip install pyaudio
-python tools\led_simulator_v2.1.py
-```
-
-#### Manual Launch (all platforms)
+That matters because the thing you cannot do on a bench with the engine off is judge the
+colour ramp: whether a stop is in a sensible place, whether the "full at" scale makes the
+bar feel quick enough, whether the shift point lands where you expect. This is the tool for
+that.
 
 ```bash
-python tools/LED_Simulator/led_simulator_v2.1.py
+python tools/simulators/led_simulator/led_simulator_v3.py
 ```
 
-**Note**: All versions available:
-- `led_simulator_v2.1.py` - **Recommended** (sounds, stalling, realistic physics)
-- `led_simulator_v2.py` - Basic car config support
-- `led_simulator.py` - Original version (v1)
+Windows: double-click [`LED_Simulator.bat`](LED_Simulator.bat), or run
+[`run_simulator.bat`](run_simulator.bat) if you want the console output.
 
-### Requirements
+## What it simulates
 
-- Python 3.7 or higher (comes with Windows 11)
-- tkinter (included with Python)
-- Virtual environment (optional but recommended)
+| Control | What it does | Firmware equivalent |
+|---|---|---|
+| **Engine speed** | the rpm the strip is rendering | `currentRPM` |
+| **Sweep** | ramps 0 → full → 0 continuously | n/a (bench convenience) |
+| **Strip on** | off = the strip goes dark; decoding is unaffected | `CFG:en=` |
+| **Brightness** | 0-255, applied the way `show()` applies it | `CFG:bright=` |
+| **Fill pattern** | Center out / Left→right / Right→left / Center in | `SEQ:` |
+| **Gradient / Wash** | per-LED gradient vs one wash of colour | `CFG:mode=` |
+| **Theme dim** | dark-mode dimming (170/255) | `CFG:theme=` |
+| **Full at** | the rpm at which the strip is completely lit | last `RAMP:` stop |
+| **Stop colours 1-6** | the ramp itself | `RAMP:` |
+| **Shift light** | start rpm, flash rate, colour | `CFG:shift/hz/scol=` |
+| **Self test / Identify** | the two bench patterns | `SELFTEST`, `IDENTIFY` |
+| **CAN: online / dead** | the CAN-offline pattern (two orange pixels at 1 Hz) | `!canInitialized` |
+| **No engine frames** | the error scanner | `displayErrorMode` |
+| **RPM smoothing** | the asymmetric filter on incoming rpm | `readCANMessages()` |
+| **LEDs** | how many pixels the strip has | `LED_COUNT` build flag |
 
-### Controls
+Keys: `Up`/`Down` ±100 rpm, `PageUp`/`PageDown` ±500, `Home`/`End` for 0 and full,
+`Space` sweeps, `S` cycles the fill pattern, `M` toggles the colour mode, `E` the strip,
+`T` self test, `I` identify, `Esc` quits.
 
-| Key | Action |
-|-----|--------|
-| ↑ Up Arrow | Gas Pedal (increase RPM) |
-| ↓ Down Arrow | Brake (decrease RPM) |
-| → Right Arrow | Shift Up (1st → 6th) |
-| ← Left Arrow | Shift Down (6th → 1st) |
-| Shift | Clutch (hold while shifting or revving) |
-| ESC | Quit (with confirmation) |
+## Starting from the car's real settings
 
-### How to Use
+With the Pi reachable, this loads what the strip is actually configured with — ramp,
+brightness, fill pattern, colour mode, shift light — so you are looking at your car rather
+than at the defaults:
 
-1. **Launch the simulator** using `run_simulator.bat` or directly with Python
-2. **Click "START ENGINE"** button (engine starts at idle, gear shows "1")
-3. **Optional: Load different car** using "Load Car File" button
-4. **Hold Shift (clutch)** and press Up Arrow to rev the engine
-5. **Release clutch** and continue holding Up Arrow to accelerate
-6. **Shift up** with Right Arrow (use clutch for smooth shifts)
-7. **Watch the LEDs** change color and count as RPM increases:
-   - 🟢 Green: Low RPM (1000-3000)
-   - 🟡 Yellow: Mid RPM (3000-5000)
-   - 🟠 Orange: High RPM (5000-6500)
-   - 🔴 Red Flash: Shift light (6500+)
-8. **Click "STOP ENGINE"** to turn off the engine
-
-### Car Configuration Files
-
-The simulator supports loading custom car configurations from JSON files in the `cars/` directory.
-
-**Default Car**: 2008 Mazda MX-5 NC (auto-loaded on startup)
-
-**Creating Custom Cars**:
-1. See `cars/README.md` for complete file format documentation
-2. Copy an existing car file (e.g., `cars/2008_miata_nc.json`)
-3. Modify values to match your vehicle
-4. Load in simulator using "Load Car File" button
-
-**Included Cars**:
-- `2008_miata_nc.json` - 2008 Mazda MX-5 NC (170hp, 6-speed manual)
-- `example_sports_car.json` - Generic performance car (400hp, turbocharged)
-
-### Customizing LED Logic
-
-The LED color algorithm is in `led_simulator.py`:
-
-```python
-def get_rpm_color(rpm):
-    """Calculate LED color based on RPM."""
-    # Modify this function to change LED colors
-    # Returns RGB tuple (0-255, 0-255, 0-255)
-```
-
-**To test your changes:**
-1. Edit `led_simulator.py`
-2. Run the simulator
-3. Test the LED behavior
-4. When satisfied, apply the same logic to Arduino code in `lib/LEDController/LEDController.cpp`
-
-### Configuration
-
-Match these values with your `lib/Config/config.h`:
-
-```python
-LED_COUNT = 20              # Number of LEDs in strip
-RPM_IDLE = 800             # Idle RPM
-RPM_MIN_DISPLAY = 1000     # Minimum RPM to light LEDs
-RPM_MAX_DISPLAY = 7000     # Maximum RPM for gradient
-RPM_SHIFT_LIGHT = 6500     # Shift light activation RPM
-RPM_REDLINE = 7200         # Absolute redline
-```
-
-### Physics Simulation
-
-The simulator includes realistic MX-5 NC physics:
-
-- **Gear Ratios**: Authentic 6-speed manual ratios
-- **Final Drive**: 4.100:1
-- **Tire Size**: 205/45R17
-- **Acceleration**: Realistic RPM climb rate
-- **Engine Braking**: RPM follows speed in gear
-
-### Troubleshooting
-
-#### Python Not Found
-
-Install Python from [python.org](https://www.python.org/downloads/):
-- ✅ Check "Add Python to PATH" during installation
-- Restart terminal after installation
-
-#### tkinter Not Found
-
-Tkinter should come with Python. If missing:
-
-**Windows:**
-```batch
-python -m pip install tk
-```
-
-**Linux:**
 ```bash
-sudo apt-get install python3-tk
+python led_simulator_v3.py --pi 192.168.42.100:5000
+# with a token if the API requires one
+python led_simulator_v3.py --pi 192.168.42.100:5000 --token <token>
+# or set MX5_WEB_TOKEN
 ```
 
-**macOS:**
+It reads `GET /api/status` once and applies the `led_*` keys. Nothing is written back: this
+is a viewer, so it cannot change the car.
+
+## Why the port, and how it is checked
+
+A simulator that merely *looks* like the strip is worse than none, because it produces
+confident answers that the hardware then contradicts. So the engine keeps the firmware's
+arithmetic exactly — including float32 rounding via a `struct` round trip, because
+`(uint8_t)` truncation after a float multiply lands on a different integer when the product
+sits near a whole number.
+
+[`test_led_engine.py`](test_led_engine.py) pins it down with values worked out by hand from
+the C++ expressions, each test naming the firmware line it came from:
+
 ```bash
-brew install python-tk
+python tools/simulators/led_simulator/test_led_engine.py     # 43 tests
+python tools/simulators/led_simulator/test_led_engine.py --self-check   # dump one frame
 ```
 
-#### Window Not Responding
+If you change `arduino/src/main.cpp`, change `led_engine.py` to match and run that. A test
+failing is the simulator telling you it has drifted from the firmware, which is exactly the
+alarm you want.
 
-- Make sure to click on the window after launch
-- Keyboard focus must be on the simulator window
+## Reading the screen
 
-### Tips
+- **The strip** is the physical order, pixel 0 at the left. The small number under each
+  pixel is its *rank* — how far along the fill it sits — which is what the four fill
+  patterns actually change.
+- **The gradient bar** under it is the ramp itself, with the stop rpms marked and the shift
+  point drawn as a dashed line. A stop that never gets reached, or two stops out of order,
+  shows up here without touching the rpm at all.
+- **What the firmware computes** is the arithmetic behind the current frame: the fill in
+  LED units, the fractional tip, the colour at the present rpm, and a per-pixel dump you
+  can compare against a real strip read back over serial.
 
-1. **Realistic shifting**: Hold clutch (Shift key) while changing gears
-2. **Rev matching**: Blip throttle (Up Arrow) while downshifting with clutch held
-3. **Test shift light**: Accelerate in 1st gear with clutch held to quickly reach redline
-4. **Test all gears**: Each gear has different RPM characteristics
-5. **Color testing**: Focus on 3000-7000 RPM range for most driving
+## Legacy versions
 
-### Files
+`led_simulator.py`, `led_simulator_v2.py` and `led_simulator_v2.1.py` are kept for
+reference only and are **superseded**. They simulate a six-state LED program (white pepper
+inward, steady green edges, orange stall pulse, yellow bar, red flashing gap, solid red)
+that lived in the old `lib/LEDController` architecture and no longer exists in the shipping
+firmware. They also drive a gearbox/physics model rather than the current ramp, and they
+read `lib/Config/LEDStates.h`, which nothing builds any more.
 
-- `led_simulator.py` - Main simulator application
-- `run_simulator.bat` - Windows launcher script
-- `README.md` - This file
-
-### Development Notes
-
-The simulator matches the Arduino implementation in:
-- `lib/LEDController/LEDController.cpp` - LED update logic
-- `lib/Config/config.h` - Configuration constants
-
-Any changes to LED logic should be tested here first before uploading to Arduino.
+Use `led_simulator_v3.py`. If you need the physics model back for a different purpose, it is
+still there — but do not trust its LED output.

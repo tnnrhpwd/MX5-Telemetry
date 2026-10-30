@@ -109,8 +109,11 @@ pio run -d arduino --target upload
 
 ### Simulators & Monitoring
 ```powershell
-# Run LED Simulator
-python tools/simulators/led_simulator/led_simulator_v2.1.py
+# LED strip simulator - drag the rpm and watch the bar
+python tools/simulators/led_simulator/led_simulator_v3.py
+
+# Same, starting from the settings currently on the car
+python tools/simulators/led_simulator/led_simulator_v3.py --pi 192.168.42.100:5000
 
 # Monitor serial output (local device)
 pio device monitor -b 115200
