@@ -252,28 +252,90 @@ function Resolve-Gradle {
     return $null
 }
 
-function Ensure-AndroidSdkEnv {
-    if ($env:ANDROID_HOME) { return }
-    $localProps = Join-Path $RepoRoot 'android\local.properties'
-    if (Test-Path $localProps) {
-        $line = Get-Content $localProps | Where-Object { $_ -match '^\s*sdk\.dir\s*=' } | Select-Object -First 1
-        if ($line) {
-            # local.properties is a Java properties file, so the path arrives escaped:
-            # `sdk.dir=C\:\\Users\\me\\AndroidBuild\\sdk`. Replacing only the separators
-            # left `C\:\Users\...` behind, and Join-Path then reported
-            # "Cannot find drive C\", which surfaced as "adb not found" - the APKs were
-            # built and never installed.
-            $value = ($line -replace '^\s*sdk\.dir\s*=', '').Trim()
-            $value = $value.Replace('/', '\')
-            $value = $value -replace '\\\\', '\'
-            $value = $value -replace '\\:', ':'
-            $env:ANDROID_HOME = $value.TrimEnd('\')
-            Write-Info "ANDROID_HOME=$env:ANDROID_HOME (from android/local.properties)"
-            return
+function Resolve-JdkHome {
+    # Gradle needs JAVA_HOME, and this machine has no java on PATH and no JAVA_HOME set,
+    # so the build died with "JAVA_HOME is not set" after the script had already located
+    # the SDK. Look for a JDK the same way the SDK is found instead of demanding setup.
+    if ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\java.exe'))) {
+        return $env:JAVA_HOME
+    }
+
+    $onPath = Get-Command java -ErrorAction SilentlyContinue
+    if ($onPath) {
+        # <jdk>\bin\java.exe -> <jdk>
+        $home = Split-Path (Split-Path $onPath.Source -Parent) -Parent
+        if (Test-Path (Join-Path $home 'bin\java.exe')) { return $home }
+    }
+
+    $candidates = New-Object System.Collections.ArrayList
+    if ($env:ANDROID_HOME) {
+        # The SDK and a JDK unpacked side by side, which is what this repo's setup does.
+        $sdkParent = Split-Path $env:ANDROID_HOME -Parent
+        foreach ($name in @('jdk', 'jre')) {
+            $dir = Join-Path $sdkParent $name
+            [void]$candidates.Add($dir)
+            if (Test-Path $dir) {
+                foreach ($sub in @(Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue)) {
+                    [void]$candidates.Add($sub.FullName)
+                }
+            }
         }
     }
-    $fallback = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
-    if (Test-Path $fallback) { $env:ANDROID_HOME = $fallback }
+    foreach ($root in @(
+        (Join-Path $env:ProgramFiles 'Android\Android Studio\jbr'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Android Studio\jbr'),
+        (Join-Path $env:ProgramFiles 'Java'),
+        (Join-Path $env:ProgramFiles 'Eclipse Adoptium'),
+        (Join-Path $env:ProgramFiles 'Microsoft')
+    )) {
+        if (-not (Test-Path $root)) { continue }
+        if (Test-Path (Join-Path $root 'bin\java.exe')) { [void]$candidates.Add($root); continue }
+        # Versioned containers: take the newest first.
+        foreach ($sub in @(Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
+                           Sort-Object Name -Descending)) {
+            [void]$candidates.Add($sub.FullName)
+        }
+    }
+
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path (Join-Path $c 'bin\java.exe'))) { return $c }
+    }
+    return $null
+}
+
+function Ensure-AndroidSdkEnv {
+    if (-not $env:ANDROID_HOME) {
+        $localProps = Join-Path $RepoRoot 'android\local.properties'
+        if (Test-Path $localProps) {
+            $line = Get-Content $localProps | Where-Object { $_ -match '^\s*sdk\.dir\s*=' } | Select-Object -First 1
+            if ($line) {
+                # local.properties is a Java properties file, so the path arrives escaped:
+                # `sdk.dir=C\:\\Users\\me\\AndroidBuild\\sdk`. Replacing only the separators
+                # left `C\:\Users\...` behind, and Join-Path then reported
+                # "Cannot find drive C\", which surfaced as "adb not found" - the APKs were
+                # built and never installed.
+                $value = ($line -replace '^\s*sdk\.dir\s*=', '').Trim()
+                $value = $value.Replace('/', '\')
+                $value = $value -replace '\\\\', '\'
+                $value = $value -replace '\\:', ':'
+                $env:ANDROID_HOME = $value.TrimEnd('\')
+                Write-Info "ANDROID_HOME=$env:ANDROID_HOME (from android/local.properties)"
+            }
+        }
+        if (-not $env:ANDROID_HOME) {
+            $fallback = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
+            if (Test-Path $fallback) { $env:ANDROID_HOME = $fallback }
+        }
+    }
+
+    $jdk = Resolve-JdkHome
+    if ($jdk) {
+        $env:JAVA_HOME = $jdk
+        Write-Info "JAVA_HOME=$env:JAVA_HOME"
+    }
+    elseif (-not $env:JAVA_HOME) {
+        Write-Warn 'No JDK found (set JAVA_HOME); Gradle will fail without one.'
+    }
 }
 
 # ---------------------------------------------------------------------------

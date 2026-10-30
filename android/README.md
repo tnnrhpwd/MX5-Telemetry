@@ -19,6 +19,11 @@ JDK 21, AGP 8.7.3, Gradle 8.11.1, compileSdk/targetSdk 35, minSdk 26.
 Gradle lives at `%LOCALAPPDATA%\Android\gradle-8.11.1` and the SDK at
 `%LOCALAPPDATA%\Android\Sdk`.
 
+[`../scripts/push-hardware.ps1`](../scripts/push-hardware.ps1) resolves both the SDK and a
+JDK itself — the SDK from `local.properties`, the JDK from `JAVA_HOME`, `java` on `PATH`, a
+`jdk`/`jre` folder beside the SDK, or a standard install — so a machine with neither
+variable set can still build. The manual commands below assume you set them.
+
 The one dependency is `androidx.car.app:app:1.4.0` (Car App Library). It is what
 makes the drive-accessible surface possible — see below.
 
