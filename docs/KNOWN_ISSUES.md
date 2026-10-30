@@ -544,8 +544,9 @@ no seam, and the simulator can render any instant of the wait on its own. The fi
 it at 8 fps from `loop()` (the intro runs at 20 fps inside `setup()`); once the first
 telemetry line arrives (or the 30 s runs out) the Overview takes over with one full repaint.
 
-If the link never arrives, the countdown expiring hands the panel to the link-lost screen
-(below), not a boot screen forever and not a dashboard full of `--`.
+If the link never arrives, the countdown expiring does **not** show the link-lost screen — the
+Overview's own "no link" state takes the panel (chips and gear `--`, ladder `WAITING`). That
+is a known-absent Pi, not a fault, and claiming a lost link there would be a lie.
 
 ### When the link dies (any screen, any time)
 
@@ -556,7 +557,7 @@ rather than inside any one screen — the driver may be on any of the eight scre
 Pi drops:
 
 ```cpp
-if (ui_linkLostActive()) {   // link that was up has gone silent, or boot countdown spent
+if (ui_linkLostActive()) {   // a link that WAS up has been silent for 5 s
     ui_linkLostFrame();      // radar sweep, emblem, WAITING FOR / PI / CANBUS, seconds
 } else switch (currentScreen) { ... }
 ```
@@ -565,16 +566,22 @@ if (ui_linkLostActive()) {   // link that was up has gone silent, or boot countd
 |---------|--------|
 | Ring, r=150 | a radar sweep: a hot head plus an 11-dot tail laps the dial every 2 s and never fills it, so it reads as "still looking", not "30 % done". The idle dots breathe and a slow wave chases around them |
 | Emblem | the same disc at 168 px (smaller than the boot's 200, so the state is distinct at a glance), breathing on a 2.6 s sine |
-| Caption | `WAITING FOR` (grey) / `PI / CANBUS` (amber, size 2) / the seconds since the last packet — `4s`, then `1m 05s` |
+| Caption | `WAITING FOR` (grey) / `PI / CANBUS` (amber, size 2) / the seconds since the last packet — `5s`, then `1m 10s` |
 | Colour | semantic warning **amber** in every scheme, not the phone's accent: this is a state, not decoration, so a crimson theme does not paint "NO DATA" in the same crimson as everything that is fine |
 
 Details that matter:
 
+- **It only fires on a link that existed.** `ui_linkLostActive()` requires
+  `piDataReceived` — i.e. real data arrived at some point — so it can never appear during the
+  boot animation or the 30 s Pi countdown, when the Pi is known to be absent. Never-connected
+  stays the Overview's `--` state.
 - **Phase comes from the silence, not the wall clock.** The sweep position is derived from
-  `millis() - lastPiDataMs`, so a still rendered at "4.2 s since the last packet" is identical
+  `millis() - lastPiDataMs`, so a still rendered at "6.4 s since the last packet" is identical
   on the panel and in the simulator.
-- **3 s of silence before it appears** (`PI_STALE_MS` in main.cpp, several hundred lines at
-  the Pi's 30 Hz). A single dropped line must never flash the screen; a dead link must.
+- **5 s of silence before it appears** (`PI_LINK_TIMEOUT_MS` in ui_core.h, ~150 telemetry
+  lines at the Pi's 30 Hz). A single dropped line must never flash the screen; a dead link
+  must. The same constant drives the watchdog in main.cpp that clears the readings, so the
+  numbers and the screen can never disagree.
 - **Leaving the screen repaints everything.** The Pi's first line back only sets
   `needsRedraw`, which would draw a delta over the takeover screen, so the falling edge sets
   `needsFullRedraw` explicitly.
@@ -588,8 +595,8 @@ Details that matter:
 ```bat
 tools\simulators\native\startup.bat      rem boot_*.bmp, wait_*.bmp, live_*.bmp, linklost_*.bmp
 tools\simulators\native\run.bat          rem the window plays it on launch; B replays,
-                                         rem Enter/Space ends the wait early, P kills/restores
-                                         rem the Pi link to see the takeover
+                                         rem Enter/Space ends the wait early, P kills the
+                                         rem Pi link (5 s hold, then the takeover)
 ```
 
 The window plays the real phase machine: animation → 30 s wait → live Overview. `--startup`
@@ -1727,12 +1734,19 @@ already fixed; AVG MPG, FUEL and RANGE are the remaining three numbers on the sa
   in the journal and in `/api/telemetry`, so a surprising number can be traced without
   reading the code.
 - **Range** is tank contents × average, computed once, on the Pi, from the averaged level.
+- **The totals can be cleared.** The web remote's Settings panel has *Clear stored MPG and
+  range totals* (`POST /api/mpg/reset`, also an `mpg.reset` op on the Bluetooth link).
+  Until now a contaminated average could only be cleared by deleting the JSON over SSH, and
+  the in-process reset that existed was a no-op: it writes fewer miles than the disk holds,
+  which the overwrite guard reads as "another instance has more data" and reloads. The reset
+  now writes with an explicit force, and both behaviours are tested.
 
 ### Accuracy, stated plainly
 
 - Air-flow average: limited by the AFR assumption (14.7, closed loop; richer at wide-open
-  throttle reads ~5% optimistic) and by MAF sample coverage. Expected within a few percent
-  of pump-to-pump.
+  throttle reads ~5% optimistic), by overrun fuel cut (air is still pumped through a
+  closed throttle, so engine braking counts a little phantom fuel and reads slightly
+  pessimistic), and by MAF sample coverage. Expected within a few percent of pump-to-pump.
 - Sender fallback: limited by the sender's 0.13 gal resolution and its non-linearity at the
   ends of the scale. Good to a few percent over a tank, not per segment.
 - Range: inherited from the above **plus** any error in what "50%" of the tank means. The

@@ -121,7 +121,7 @@ class FakeTelemetry:
         self.instant_mpg = 0.0
         self.instant_mpg_valid = False
         self.average_mpg = 0.0
-        self.average_mpg_source = 'estimated'
+        self.average_mpg_source = 'maf'
         self.range_miles = 0
         self.check_engine_light = False
         self.abs_warning = False
@@ -187,6 +187,22 @@ class FakeEsp32:
         self.calibrated += 1
 
 
+class FakeMpgCalc:
+    """Stands in for MPGCalculator: only what the reset op touches."""
+
+    def __init__(self):
+        self.resets = 0
+        self.average_mpg = 21.5
+        self.average_mpg_source = 'maf'
+        self.range_miles = 180
+
+    def reset_lifetime_data(self):
+        self.resets += 1
+        self.average_mpg = 26.0
+        self.average_mpg_source = 'estimated'
+        self.range_miles = 0
+
+
 class FakeDisplayApp:
     def __init__(self):
         self.screen_names = ['Overview', 'RPM', 'TPMS', 'Engine',
@@ -199,6 +215,7 @@ class FakeDisplayApp:
         self.swc_handler = FakeSwc()
         self.sound = FakeSound()
         self.esp32_handler = FakeEsp32()
+        self.mpg_calculator = FakeMpgCalc()
         self.can_handler = object()
         self.screen_changes = []
         self.data_source_inits = 0
@@ -537,6 +554,29 @@ def test_calibrate_imu_reports_a_missing_esp32():
     reply = ask(session, id=21, op='calibrate_imu')
     assert reply['data']['success'] is False
     assert 'ESP32' in reply['data']['message']
+
+
+def test_mpg_reset_clears_the_stored_totals():
+    """The lifetime average has no other way back if it is ever contaminated."""
+    app, _, _, session = build()
+    hello(session)
+    assert app.telemetry.average_mpg_source == 'maf'   # from the fake calculator
+
+    reply = ask(session, id=22, op='mpg.reset')
+    assert reply['data']['success'] is True
+    assert app.mpg_calculator.resets == 1
+    # The snapshot reflects it immediately rather than at the next loop iteration.
+    assert app.telemetry.average_mpg_source == 'estimated'
+    assert app.telemetry.range_miles == 0
+
+
+def test_mpg_reset_reports_a_missing_calculator():
+    app, _, _, session = build()
+    hello(session)
+    app.mpg_calculator = None
+    reply = ask(session, id=23, op='mpg.reset')
+    assert reply['data']['success'] is False
+    assert 'calculator' in reply['data']['message'].lower()
 
 
 # -- roof controller ---------------------------------------------------------
@@ -989,6 +1029,53 @@ def test_spp_describe_reports_peer_health():
             assert info['refused'] == 0
             assert info['reaped'] == 0
             assert info['idle_timeout'] > 0
+        finally:
+            _close_peer(conn, f)
+    finally:
+        server.stop()
+
+
+def test_a_stopped_spp_server_binds_a_fresh_listener_when_started_again():
+    """stop() used to leave the server holding its closed listener.
+
+    start() only creates a listener when there is none, so a second start produced an
+    accept loop that failed on its first call and gave up: a link that was dead with no
+    message and no way back short of restarting the process.
+    """
+    import socket as _socket
+    from bt_spp_server import SppServer
+
+    class Reinitable(SppServer):
+        """Builds its own listener over TCP, the way the Pi does over RFCOMM."""
+
+        def __init__(self, *a, **k):
+            super().__init__(*a, listener=None, publish_sdp=False, **k)
+            self.port = None
+
+        def _make_listener(self):
+            sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            sock.bind(('127.0.0.1', 0))
+            sock.listen(2)
+            self.port = sock.getsockname()[1]
+            return sock
+
+    server = Reinitable(LinkService(FakeDisplayApp()), token=TOKEN)
+    server.start()
+    conn, f = _connect(server.port)
+    try:
+        assert _rpc(f, id=1, op='hello', token=TOKEN)['ok'] is True
+    finally:
+        _close_peer(conn, f)
+
+    server.stop()
+    assert server._listener is None, 'stop() kept the closed listener'
+
+    server.start()
+    try:
+        conn, f = _connect(server.port)
+        try:
+            assert _rpc(f, id=2, op='hello', token=TOKEN)['ok'] is True
         finally:
             _close_peer(conn, f)
     finally:

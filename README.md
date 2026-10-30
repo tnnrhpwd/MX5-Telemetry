@@ -137,6 +137,7 @@ MX5-Telemetry/
 │
 ├── docs/                       # 📚 Documentation
 ├── build-automation/           # 🔧 Build scripts
+├── scripts/                    # 🚀 push-hardware.ps1 + env backup/restore
 └── tools/                      # 🛠️ Simulators & utilities
 ```
 
@@ -149,11 +150,45 @@ MX5-Telemetry/
 
 ### 🔌 Deployment Overview
 
+**One command updates every device:**
+
+```powershell
+.\scripts\push-hardware.ps1
+```
+
+It commits and pushes whatever is pending, then puts that exact commit on the hardware:
+
+| Target | What the script does |
+|--------|----------------------|
+| **Android** | Builds `MX5 Remote` (parked) + `MX5 Drive` and `adb install -r`s both to the plugged-in phone |
+| **Arduino Nano** | Builds and uploads the LED firmware to the Nano on this PC's USB port |
+| **ESP32-S3** | Builds and flashes the round-display firmware on the Pi's USB (`/dev/ttyACM0`) |
+| **Raspberry Pi** | `git pull` + `systemctl restart mx5-display` |
+
+Only devices whose sources changed since the last push are reflashed, so repeat runs are
+fast. Useful switches:
+
+```powershell
+.\scripts\push-hardware.ps1 -DryRun                  # show the commands, change nothing
+.\scripts\push-hardware.ps1 -Targets esp32,pi        # display firmware + Pi only
+.\scripts\push-hardware.ps1 -Force                   # reflash everything, even if unchanged
+.\scripts\push-hardware.ps1 -NoGit                   # deploy the current tree, no commit/push
+.\scripts\push-hardware.ps1 -RemoteArduino           # flash the Nano wired to the Pi instead
+```
+
+Run `Get-Help .\scripts\push-hardware.ps1 -Detailed` for the full parameter list. The Pi
+is auto-discovered (`$env:PI_HOST` → `mx5pi.local` → `192.168.1.23` → `10.62.26.67`);
+override with `-PiHost`.
+
+<details>
+<summary>Per-device manual commands (what the script runs)</summary>
+
 | Device | Upload Method | Connection |
 |--------|---------------|------------|
 | **Arduino Nano** | **Local** (plug into PC) | USB to PC |
 | **ESP32-S3** | **Remote** via Pi SSH | USB to Pi (192.168.1.23) |
 | **Pi Application** | **Remote** via SSH | Git pull + systemctl |
+| **Android** | **Local** via adb | USB to PC (or `adb connect`) |
 
 ### Arduino Nano (Requires Local Connection)
 
@@ -192,6 +227,8 @@ ssh pi@192.168.1.23 'cd ~/MX5-Telemetry && git pull && sudo systemctl restart mx
 ```
 
 Or use VS Code task: **Pi: Git Pull & Restart UI**
+
+</details>
 
 ## 🔌 Hardware Requirements
 
@@ -233,6 +270,9 @@ Or use VS Code task: **Pi: Git Pull & Restart UI**
 ## 🔧 VS Code Tasks
 
 Use `Ctrl+Shift+P` → "Tasks: Run Task" to access:
+
+**Deploy:**
+- Push to Hardware (All) — runs `scripts/push-hardware.ps1`
 
 **Arduino:**
 - PlatformIO: Build Arduino

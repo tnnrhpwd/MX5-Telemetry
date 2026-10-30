@@ -71,6 +71,9 @@ Thumbs.db
 dist/
 android/build-mx5/
 
+# Bookkeeping for scripts/push-hardware.ps1 (last commit pushed to each device)
+.push-state.json
+
 # ============================================================================
 # Test Data and Logs (CSV files from SD card logging)
 # ============================================================================

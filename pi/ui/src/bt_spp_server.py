@@ -147,6 +147,9 @@ class SppServer:
         self.channel = channel
         self.address = address
         self._listener = listener
+        # Whether this server created the listening socket, and therefore whether stop()
+        # may discard it. An injected listener belongs to the caller.
+        self._owns_listener = listener is None
         self.publish_sdp = publish_sdp
         self.idle_timeout = float(idle_timeout)
         self.max_peers = max(1, int(max_peers))
@@ -307,6 +310,15 @@ class SppServer:
                 self._listener.close()
         except OSError:
             pass
+
+        # Forget our own listening socket, so a later start() binds a fresh one.
+        #
+        # It used to be left holding the closed socket, and start() only creates a
+        # listener when there is none - so stop() followed by start() produced a server
+        # whose accept loop failed on its first call and gave up. That is a silent death
+        # for anything that adds a "restart the link" action.
+        if self._owns_listener:
+            self._listener = None
 
         # Join the accept thread first, so nothing new can arrive while peers are being
         # closed out from under it.

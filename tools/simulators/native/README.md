@@ -33,8 +33,8 @@ The interactive window plays the **real power-on path**: the 22 s (`UI_BOOT_ANIM
 startup film, then the rest of the `PI_BOOT_COUNTDOWN` (30 s) with the boot screen
 still running — filling ring, orbiting comet, breathing emblem, rotating loading message
 and the seconds remaining — then the live Overview. **Enter/Space** ends the wait early
-("the Pi came up"), **B** replays the whole thing, **P** kills the Pi link (and restores
-it) to watch the link-lost takeover from any screen.
+("the Pi came up"), **B** replays the whole thing, **P** kills the Pi link (5 s later the
+link-lost screen takes over) and restores it.
 
 `startup.bat` (or `esp32_ui_simulator.exe --startup`) renders the whole
 power-on path to stills:
@@ -81,8 +81,9 @@ only thing that differs between them is where the radar sweep happens to be.
 esp32_ui_simulator.exe --screenshot --stale     rem writes stale_0..7.bmp
 ```
 
-In the interactive window, `P` kills the Pi link and `P` again restores it, so the
-takeover and the return to the live screen can be watched from any screen.
+In the interactive window, `P` kills the Pi link and `P` again restores it. The kill is
+faithful: the dashboard holds its last readings for the full `PI_LINK_TIMEOUT_MS` (5 s) and
+then the takeover screen appears, which is exactly what the panel does.
 
 `--speed=<kmh>` overrides the demo road speed, which is how the Overview gear ladder is
 checked where its predicted RPMs run to five digits:

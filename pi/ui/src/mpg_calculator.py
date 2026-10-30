@@ -615,7 +615,7 @@ class MPGCalculator:
         else:
             print("MPG: No existing data file, starting fresh")
     
-    def _save_data(self):
+    def _save_data(self, force: bool = False):
         """Save persistent data using atomic write with backup.
         
         Safety measures:
@@ -623,6 +623,10 @@ class MPGCalculator:
            (another instance may have accumulated more data)
         2. Back up the current file before overwriting
         3. Write to a temp file first, then atomically rename
+
+        `force` skips (1). A deliberate reset writes *less* than the disk holds, so
+        the guard would otherwise treat the reset as data loss and reload the very
+        totals it was asked to clear - which is exactly what it used to do.
         """
         try:
             # Ensure directory exists
@@ -630,7 +634,7 @@ class MPGCalculator:
             
             # Safety check: don't overwrite higher-mileage data
             # This protects against instance A (with stale data) overwriting instance B's good data
-            if self.data_file.exists():
+            if not force and self.data_file.exists():
                 try:
                     with open(self.data_file, 'r') as f:
                         existing = json.load(f)
@@ -686,7 +690,12 @@ class MPGCalculator:
             print(f"MPG: Error saving data: {e}")
     
     def reset_lifetime_data(self):
-        """Reset all lifetime statistics (use with caution)"""
+        """Reset all lifetime statistics.
+
+        Deliberately writes with `force`: the on-disk totals are about to be larger
+        than the ones in memory, and the overwrite guard would otherwise read that as
+        "another instance has more data" and reload them, making the reset a no-op.
+        """
         print("MPG: Resetting all data")
         self._lifetime_miles = 0.0
         self._lifetime_gallons = 0.0
@@ -701,7 +710,8 @@ class MPGCalculator:
         self._session_distance = 0.0
         self._average_mpg = self.EPA_DEFAULT_MPG
         self._average_source = 'estimated'
-        self._save_data()
+        self._range_miles = 0
+        self._save_data(force=True)
     
     def reset_trip(self):
         """Reset current session data"""

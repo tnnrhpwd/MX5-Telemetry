@@ -285,6 +285,26 @@ function initSettings() {
                 .catch(() => showToast('Calibration failed', 'error'));
         });
     }
+
+    const resetMpg = document.getElementById('btn-reset-mpg');
+    if (resetMpg) {
+        // Destructive and irreversible, so it asks first - this is the lifetime
+        // average and range, not a trip meter.
+        resetMpg.addEventListener('click', () => {
+            if (!confirm('Clear the stored MPG and range totals?')) return;
+            fetch('/api/mpg/reset', { method: 'POST', headers: AUTH_HEADERS })
+                .then((r) => r.json())
+                .then((d) => {
+                    if (d.success) {
+                        showToast('Gas totals cleared', 'success');
+                        vibrate();
+                    } else {
+                        showToast(d.message || 'Reset failed', 'error');
+                    }
+                })
+                .catch(() => showToast('Reset failed', 'error'));
+        });
+    }
 }
 
 function postSetting(name, value) {

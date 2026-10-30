@@ -51,7 +51,7 @@ Configuration file: `/etc/wpa_supplicant/wpa_supplicant.conf`
 
 ## Deployment
 
-The `flash_all_updates.ps1` script automatically tries all network addresses:
+`scripts/push-hardware.ps1` automatically tries all network addresses:
 1. mx5pi.local (mDNS)
 2. 192.168.1.23 (home WiFi static)
 3. 10.62.26.67 (typical hotspot IP)

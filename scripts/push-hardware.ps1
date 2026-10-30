@@ -30,6 +30,9 @@
     Pi address to use instead of auto-discovery. Auto-discovery tries $env:PI_HOST,
     mx5pi.local, 192.168.1.23 and 10.62.26.67.
 
+.PARAMETER PiUser
+    SSH user on the Pi. Default pi.
+
 .PARAMETER CommitMessage
     Commit message for the auto-commit. Defaults to a generated one that lists the
     areas that changed.
@@ -117,6 +120,8 @@ $script:Failures = New-Object System.Collections.ArrayList
 $script:Warnings = New-Object System.Collections.ArrayList
 $script:Status   = [ordered]@{}
 $script:PiTarget = $null
+$script:PiUnreachable = $false
+$script:NeedsRemote   = $false
 
 # ---------------------------------------------------------------------------
 # Output helpers
@@ -162,7 +167,8 @@ function Invoke-Native {
     param(
         [Parameter(Mandatory)][string]$Exe,
         [string[]]$Arguments = @(),
-        [switch]$QuietOnSuccess
+        [switch]$QuietOnSuccess,
+        [switch]$Silent
     )
 
     Write-Cmd ("{0} {1}" -f $Exe, ($Arguments -join ' '))
@@ -171,12 +177,15 @@ function Invoke-Native {
     $output = & $Exe @Arguments 2>&1
     $code = $LASTEXITCODE
 
-    if ($code -eq 0 -and $QuietOnSuccess) {
+    if ($code -eq 0 -and $Silent) {
+        # callers print their own success line
+    }
+    elseif ($code -eq 0 -and $QuietOnSuccess) {
         $last = @($output) | Where-Object { "$_" -match '\S' } | Select-Object -Last 1
         if ($last) { Write-Info "$last" }
     }
     else {
-        foreach ($line in @($output)) { Write-Host "    $_" -ForegroundColor DarkGray }
+        foreach ($line in @($output)) { Write-Host "    $line" -ForegroundColor DarkGray }
     }
     return $code
 }
@@ -201,7 +210,7 @@ function Invoke-Ssh {
     $sshArgs = Get-SshArgs
     $output = & ssh @sshArgs $script:PiTarget $Command 2>&1
     $code = $LASTEXITCODE
-    foreach ($line in @($output)) { Write-Host "    $_" -ForegroundColor DarkGray }
+    foreach ($line in @($output)) { Write-Host "    $line" -ForegroundColor DarkGray }
     return $code
 }
 
@@ -288,7 +297,10 @@ function Get-ChangedAreas([string[]]$Porcelain) {
         @{ Pattern = 'display/'; Label = 'ESP32' },
         @{ Pattern = 'arduino/'; Label = 'Arduino' },
         @{ Pattern = 'lib/';     Label = 'FirmwareLibs' },
-        @{ Pattern = 'pi/';      Label = 'Pi' }
+        @{ Pattern = 'pi/';      Label = 'Pi' },
+        @{ Pattern = 'tools/';   Label = 'Tools' },
+        @{ Pattern = 'scripts/'; Label = 'Scripts' },
+        @{ Pattern = 'docs/';    Label = 'Docs' }
     )
     foreach ($m in $map) {
         if ($Porcelain -match ([regex]::Escape($m.Pattern))) { [void]$areas.Add($m.Label) }
@@ -321,7 +333,12 @@ function Invoke-GitSync {
         }
 
         if ($NoGit) {
-            Write-Warn "Working tree is dirty and -NoGit was used; the Pi/ESP32 will only see commits already on origin."
+            if ($script:NeedsRemote) {
+                Write-Warn "Working tree is dirty and -NoGit was used; the Pi/ESP32 will only see commits already on origin."
+            }
+            else {
+                Write-Info 'Working tree changes stay local (-NoGit).'
+            }
         }
         elseif ($DryRun) {
             Write-Info "Would commit all changes as: $message"
@@ -355,7 +372,12 @@ function Invoke-GitSync {
         }
 
         if ($ahead -eq 0) {
-            Write-Info "Nothing to push; origin/$branch is up to date."
+            if ($DryRun -and $porcelain.Count -gt 0 -and -not $NoGit) {
+                Write-Info "Would push the new commit to origin/$branch."
+            }
+            else {
+                Write-Info "Nothing to push; origin/$branch is up to date."
+            }
         }
         else {
             $pushArgs = @('-C', $RepoRoot, 'push')
@@ -413,6 +435,13 @@ function Test-ComponentChanged {
     $paths = $ComponentPaths[$Component]
     if (-not $paths) { return $true }
 
+    # Uncommitted or untracked work under this component always counts as a change
+    # (matters for -NoGit, where HEAD does not move).
+    $dirty = Invoke-Git (@('status', '--porcelain', '--') + $paths)
+    if ($dirty.Code -eq 0 -and @($dirty.Output | Where-Object { "$_" -match '\S' }).Count -gt 0) {
+        return $true
+    }
+
     $lastSha = $null
     if ($State -and $State.PSObject.Properties.Name -contains $Component) {
         $lastSha = $State.$Component.sha
@@ -440,6 +469,7 @@ function Set-ComponentDeployed {
 # ---------------------------------------------------------------------------
 function Resolve-PiTarget {
     if ($script:PiTarget) { return $script:PiTarget }
+    if ($script:PiUnreachable) { return $null }
 
     $candidates = New-Object System.Collections.ArrayList
     foreach ($c in @($PiHost, $env:PI_HOST, 'mx5pi.local', '192.168.1.23', '10.62.26.67')) {
@@ -462,6 +492,7 @@ function Resolve-PiTarget {
             return $script:PiTarget
         }
     }
+    $script:PiUnreachable = $true
     return $null
 }
 
@@ -487,7 +518,7 @@ function Invoke-AndroidDeploy {
     Write-Info 'Building both flavors...'
     $buildArgs = @('-p', (Join-Path $RepoRoot 'android'), '--console=plain', '-q',
                    ':mx5-remote:assembleParkedDebug', ':mx5-remote:assembleDriveDebug')
-    $buildCode = Invoke-Native -Exe $gradle -Arguments $buildArgs -QuietOnSuccess
+    $buildCode = Invoke-Native -Exe $gradle -Arguments $buildArgs -Silent
     if ($buildCode -ne 0) {
         Write-Fail 'Gradle build failed.'
         Set-Status 'Android' 'FAILED (build)'
@@ -597,7 +628,7 @@ function Invoke-ArduinoDeploy {
 
     if ($port) {
         Write-Info "Local Nano detected on $port"
-        $code = Invoke-Native -Exe $pio -Arguments @('run', '-d', $ArduinoDir, '--target', 'upload', '--upload-port', $port)
+        $code = Invoke-Native -Exe $pio -Arguments @('run', '-d', $ArduinoDir, '-e', 'nano', '--target', 'upload', '--upload-port', $port)
         if ($code -ne 0) {
             Write-Fail "Upload to $port failed (close the serial monitor, or try -RemoteArduino)."
             Set-Status 'Arduino' "FAILED (upload $port)"
@@ -616,7 +647,7 @@ function Invoke-ArduinoDeploy {
             return $false
         }
         Write-Info 'Flashing the Nano attached to the Pi (/dev/ttyUSB0)'
-        $cmd = "cd $PiRepoDir && git pull --ff-only && { PIO=`$HOME/.local/bin/pio; [ -x `"`$PIO`" ] || PIO=pio; `"`$PIO`" run -d arduino --target upload --upload-port /dev/ttyUSB0; }"
+        $cmd = "cd $PiRepoDir && git pull --ff-only && { PIO=`$HOME/.local/bin/pio; [ -x `$PIO ] || PIO=pio; `$PIO run -d arduino -e nano --target upload --upload-port /dev/ttyUSB0; }"
         $code = Invoke-Ssh -Command $cmd
         if ($code -ne 0) {
             Write-Fail 'Remote Arduino flash failed.'
@@ -629,7 +660,7 @@ function Invoke-ArduinoDeploy {
     }
 
     Write-Warn 'No Nano detected on this PC. Building only; pass -RemoteArduino to flash the one wired to the Pi.'
-    $code = Invoke-Native -Exe $pio -Arguments @('run', '-d', $ArduinoDir) -QuietOnSuccess
+    $code = Invoke-Native -Exe $pio -Arguments @('run', '-d', $ArduinoDir, '-e', 'nano') -QuietOnSuccess
     if ($code -ne 0) {
         Write-Fail 'Arduino build failed.'
         Set-Status 'Arduino' 'FAILED (build)'
@@ -670,7 +701,7 @@ function Invoke-Esp32Deploy {
         return $false
     }
 
-    $flashCmd = "cd $PiRepoDir && { PIO=`$HOME/.local/bin/pio; [ -x `"`$PIO`" ] || PIO=pio; `"`$PIO`" run -d display --target upload --upload-port $Esp32Port; }"
+    $flashCmd = "cd $PiRepoDir && { PIO=`$HOME/.local/bin/pio; [ -x `$PIO ] || PIO=pio; `$PIO run -d display --target upload --upload-port $Esp32Port; }"
     $code = Invoke-Ssh -Command $flashCmd
 
     Write-Info 'Restarting the display service'
@@ -755,6 +786,7 @@ if ($Force)     { Write-Info 'Mode    : FORCE (every selected device is reflashe
 if ($NoGit)     { Write-Info 'Mode    : NO GIT (nothing committed or pushed)' }
 
 $started = Get-Date
+$script:NeedsRemote = $needsRemote
 
 # --- 1. Git sync -----------------------------------------------------------
 Write-Step 'Syncing the repository'
@@ -765,9 +797,12 @@ if (-not $gitOk) {
     if ($needsRemote) {
         Write-Fail 'Cannot update the Pi/ESP32 without a pushed commit.'
     }
-    $wantsEsp32 = $wantsEsp32 -and $false
-    $wantsPi = $wantsPi -and $false
-    if ($wantsArduino -and $RemoteArduino) { $wantsArduino = $false; Write-Info 'Remote Arduino flash skipped.' }
+    if ($wantsEsp32) { Set-Status 'ESP32' 'FAILED (git sync)' }
+    if ($wantsPi)    { Set-Status 'Pi'    'FAILED (git sync)' }
+    if ($wantsArduino -and $RemoteArduino) { Set-Status 'Arduino' 'FAILED (git sync)' }
+    $wantsEsp32 = $false
+    $wantsPi = $false
+    if ($wantsArduino -and $RemoteArduino) { $wantsArduino = $false }
 }
 
 # --- 2. Change detection ---------------------------------------------------

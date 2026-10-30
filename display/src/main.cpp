@@ -49,10 +49,10 @@
 // How long the Pi may go quiet before the display stops believing the last frame.
 //
 // `telemetry.connected` was only ever set to true, so a dead Pi left every value
-// frozen on screen for ever - including a negative speed and the `R` marker. 3 s is
-// several hundred telemetry lines at the 30 Hz the Pi sends, so it cannot trip on a
-// dropped line, only on a link that is actually gone.
-#define PI_STALE_MS 3000
+// frozen on screen for ever - including a negative speed and the `R` marker. The
+// deadline itself is PI_LINK_TIMEOUT_MS (ui_core.h) because the link-lost screen
+// has to agree with it: this watchdog clears the readings, that screen takes the
+// panel.
 
 // lastPiDataMs (ui_core) is the millis() of the last complete line from the Pi;
 // 0 means nothing has arrived yet. The parser stamps it, this file's watchdog
@@ -458,7 +458,7 @@ void loop() {
     if (millis() - lastLinkCheck >= 250) {
         lastLinkCheck = millis();
         if (!settings.demoMode && lastPiDataMs && telemetry.connected &&
-            millis() - lastPiDataMs > PI_STALE_MS) {
+            millis() - lastPiDataMs > (unsigned long)PI_LINK_TIMEOUT_MS) {
             telemetry.connected = false;
             telemetry.hasReceivedTelemetry = false;  // RPM, speed and gear fall back to "--"
             telemetry.rpm = 0;

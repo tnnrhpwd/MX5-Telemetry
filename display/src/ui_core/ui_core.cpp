@@ -1105,11 +1105,16 @@ void ui_bootWaitFrame(unsigned long totalEl) {
 bool ui_linkLostActive() {
     if (settings.demoMode) return false;
     if (telemetry.hasReceivedTelemetry) return false;
-    // A link that was up and is now silent is always news. Before the countdown
-    // ends the boot screen still owns the panel, and after it an empty dashboard
-    // is just a screen full of "--".
-    if (piDataReceived) return true;
-    return (millis() - bootStartTime) >= (unsigned long)PI_BOOT_COUNTDOWN * 1000UL;
+
+    // Only a link that *existed* and then went silent counts. Nothing has ever
+    // arrived means the Pi is still booting (the boot screen owns the panel) or
+    // it was never there at all (the Overview's own "--" state owns it) - in both
+    // cases this screen would be claiming a fault that has not happened.
+    if (!piDataReceived) return false;
+
+    // ...and only after the full timeout, so a single dropped line cannot flash
+    // the screen. main.cpp's watchdog trips on the same constant.
+    return (millis() - lastPiDataMs) > (unsigned long)PI_LINK_TIMEOUT_MS;
 }
 
 void ui_linkLostFrame() {

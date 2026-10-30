@@ -413,6 +413,33 @@ class LinkService:
             logger.exception("Failed to calibrate IMU")
             return {'success': False, 'message': 'Internal error'}, 500
 
+    def reset_mpg(self):
+        """Clear the stored fuel totals behind AVG MPG and RANGE.
+
+        Those totals are a lifetime average. One contaminated stretch - a sender
+        glitch, a MAF drop-out on the first drive - would otherwise skew the number
+        for ever, with no way back short of deleting the JSON by hand over SSH. This
+        is also how a tank can be compared against the pump from a clean slate.
+        """
+        app = self.display_app
+        calc = getattr(app, 'mpg_calculator', None)
+        if calc is None:
+            return {'success': False, 'message': 'MPG calculator not available'}, 503
+        try:
+            calc.reset_lifetime_data()
+            # Reflect it now rather than at the next loop iteration.
+            app.telemetry.average_mpg = calc.average_mpg
+            app.telemetry.average_mpg_source = calc.average_mpg_source
+            app.telemetry.range_miles = calc.range_miles
+            return {
+                'success': True,
+                'average_mpg': calc.average_mpg,
+                'average_mpg_source': calc.average_mpg_source,
+            }, 200
+        except Exception:
+            logger.exception("Failed to reset MPG totals")
+            return {'success': False, 'message': 'Internal error'}, 500
+
     def sleep(self):
         """Put the display to sleep."""
         self.display_app.sleeping = True

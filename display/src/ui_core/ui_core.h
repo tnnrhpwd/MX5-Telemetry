@@ -260,6 +260,13 @@ extern bool navLocked;        // Navigation lock state (from Pi SWC handler)
 // Boot countdown - Pi takes ~37 seconds to boot and send data
 // ============================================================================
 const int PI_BOOT_COUNTDOWN = 30;  // Seconds to countdown from
+
+// Silence from the Pi before the panel gives up on the link and shows the
+// waiting screen. 5 s is ~150 telemetry lines at the Pi's 30 Hz, so a dropped
+// line, a serial hiccup or a busy loop cannot trip it - only a link that is
+// actually gone. Owned here because both the firmware's watchdog and the
+// screen's own predicate have to agree on it.
+const int PI_LINK_TIMEOUT_MS = 5000;
 extern unsigned long bootStartTime;   // Set in setup()
 extern bool piDataReceived;           // Set true when first valid telemetry data arrives
 const int NUM_LOADING_MESSAGES = 20;
@@ -292,9 +299,10 @@ void ui_bootWaitFrame(unsigned long totalEl);
 // selected, so a dead Pi can never leave a frozen dashboard on the panel.
 extern unsigned long lastPiDataMs;  // stamped by the serial parser on every line
 
-// True when the panel should stop showing telemetry: a link that was up has gone
-// silent, or the boot countdown expired with nothing ever arriving. False in demo
-// mode, which has no Pi to wait for.
+// True when the panel should stop showing telemetry: a link that *was* up has
+// been silent for PI_LINK_TIMEOUT_MS. False in demo mode (no Pi to wait for),
+// and false when nothing has ever arrived - that is the boot screen's job, not a
+// fault to report.
 bool ui_linkLostActive();
 
 // One frame of the waiting animation: radar sweep on the dial, the emblem, and

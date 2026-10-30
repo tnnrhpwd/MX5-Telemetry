@@ -229,7 +229,7 @@ covered by tests that need no Bluetooth stack:
 
 ```bash
 cd pi/ui/src
-python3 test_link_protocol.py         # 64 checks: protocol, service, SPP server over TCP
+python3 test_link_protocol.py         # 66 checks: protocol, service, SPP server over TCP
 python3 test_bt_ble_server.py         # 10 checks: BLE reply order, stale fragments, chunk sizing
 python3 test_web_server_parity.py /tmp/after.json
 
@@ -251,7 +251,7 @@ that differs between SPP and BLE.
 | `bt_spp_server.py` | RFCOMM server: concurrent peers, idle reaping, injectable listener so it is testable on a desk |
 | `bt_ble_server.py` | GATT server, via `bless` |
 | `bt_link.py` | Starts both, configured by environment, contains failures |
-| `test_link_protocol.py` | 64 checks that need no Bluetooth at all |
+| `test_link_protocol.py` | 66 checks that need no Bluetooth at all |
 | `test_bt_ble_server.py` | 10 checks for BLE reply ordering, stale fragments and chunk sizing |
 | `../test_bt_agent.py` | 17 checks for the agent's own decisions, with D-Bus stubbed out |
 
@@ -306,6 +306,9 @@ so a later change does not reintroduce it by accident.
 | A missing `bluez-tools` silently stopped **every** watchdog | `hciconfig` is used to hold the adapter class, and its absence raised out of the agent's timer, which PyGObject then removes: no class, no advertisement watch, no SDP republish, for the life of the process | Each step of the tick is isolated, and the missing tool is reported once |
 | A phone that left the MTU at its default got truncated BLE replies | Notifications were always 180 bytes, and nothing in the Python API reports the negotiated MTU | A refused notification halves the chunk down to 20 bytes and the reply is delivered whole |
 | **One field JSON could not encode disconnected the phone, for ever** | `json.dumps` raised out of the protocol, which closed the SPP peer and surfaced as an opaque ATT error over BLE, so every retry was dropped the same way | The reply becomes `ok: false` with its id and the reason, and the session carries on; `LinkSession` is a backstop for anything else that escapes |
+| A peer that stopped sending newlines grew the Pi's buffer without limit | The size cap only applied to *complete* lines, so a desynced stream could exhaust the Pi's memory | The cap covers the unfinished line too, is reported once, and discards to the next newline so the following request is answered rather than spliced onto the garbage |
+| Both apps polling at once starved each other's replies | BlueZ notifies every subscribed central, so each app sees the other's replies as foreign lines; the allowance was eight, which a 4 Hz neighbour fills in two seconds | The wait is bounded by the deadline instead, with a much larger sanity cap |
+| `stop()` then `start()` left the SPP server permanently deaf | `stop()` closed the listener but kept the reference, and `start()` only binds when there is none, so the second accept loop died on its first call | The listener is forgotten when the server owns it, so a restart binds a fresh one |
 
 ### How the failover behaves
 
@@ -472,7 +475,7 @@ Bluetooth.
 ssh $PI 'cd ~/MX5-Telemetry/pi/ui/src && python3 test_link_protocol.py'
 ```
 
-Expect `64/64 passed`.
+Expect `66/66 passed`.
 
 ### Stage 3 — the SDP record, which is the fragile part
 
@@ -661,11 +664,16 @@ presence of a car.
 
 Verified on a desk, with no Bluetooth hardware and no car:
 
-- The protocol, authentication and every operation (64 checks).
+- The protocol, authentication and every operation (66 checks).
 - That a payload the encoder cannot handle costs **a reply, not the session**: the error
   comes back with its id, and the next request on the same session still works. This is
   the fault that once stopped every Bluetooth request when a `Screen` enum reached
   `json.dumps`, and it is pinned from both layers now.
+- That a peer which never sends a newline cannot exhaust the Pi's memory, that the
+  overflow is reported once rather than per chunk, and that the first request after the
+  garbage's newline is answered rather than spliced onto it.
+- That an SPP server can be stopped and started again and still serve a client, which it
+  could not before: the second start reused the closed listener and died silently.
 - The agent's own decisions (17 checks): which transport mode it reads out of the running
   process, the three-way answer from the SDP server (present, missing, unreachable), that
   it republishes only when a listener is actually behind the record and backs off instead
@@ -712,7 +720,7 @@ and two of them answered badly:
   So SPP fails here for two independent reasons: the daemon's own claim on channel 3, and
   a missing SDP server. That is the argument for having written the BLE transport at all.
 - The protocol, authentication and every operation pass unmodified on the real hardware:
-  **64/64**, run on the Pi rather than on a desk.
+  **66/66**, run on the Pi rather than on a desk.
 
 **Settled over the air, from a laptop (2026-10-14).** The BLE transport was driven end to end
 by `tools/bt/ble_probe.py`, a client that scans, connects, authenticates and calls the

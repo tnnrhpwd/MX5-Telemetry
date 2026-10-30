@@ -37,8 +37,18 @@ abstract class BtTransport implements LinkTransport {
      */
     private static final long ROOF_REPLY_TIMEOUT_MS = 8000;
 
-    /** Stray lines tolerated while waiting for our own reply. */
-    private static final int MAX_SKIPPED_LINES = 8;
+    /**
+     * Stray lines tolerated while waiting for our own reply.
+     *
+     * Generous on purpose. Over BLE the Pi notifies *every* subscribed central, so a
+     * second app on the same phone (the parked dashboard and the in-motion one are
+     * separate packages) sees this app's replies as lines that are not ours: about four a
+     * second at its own poll rate. The old value of eight meant such a client could burn
+     * its allowance and time out on a link that was working perfectly, reconnect, and do
+     * it again. The deadline is what bounds the wait now; this only stops a pathological
+     * stream from spinning.
+     */
+    private static final int MAX_SKIPPED_LINES = 128;
 
     private static final String TAG = "MX5Link";
 
@@ -80,6 +90,15 @@ abstract class BtTransport implements LinkTransport {
 
     /** Ceiling on a line with no newline in it, so a desynced peer cannot grow it. */
     private static final int MAX_LINE_BYTES = 65536;
+
+    /**
+     * Ceiling on complete lines waiting to be read.
+     *
+     * One request consumes its own reply, so the queue is empty at rest. A peer that
+     * talks faster than we ask - or a second app whose notifications BlueZ broadcasts to
+     * us as well - must not be able to make this grow without bound.
+     */
+    private static final int MAX_QUEUED_LINES = 32;
 
     /** Where the last newline search stopped, so a growing buffer is not rescanned. */
     private int scanned;
@@ -146,6 +165,9 @@ abstract class BtTransport implements LinkTransport {
                 start = i + 1;
                 if (!line.isEmpty()) {
                     lines.offer(line);
+                    while (lines.size() > MAX_QUEUED_LINES) {
+                        lines.poll();       // drop the oldest; it is already stale
+                    }
                 }
             }
             scanned = buf.length;

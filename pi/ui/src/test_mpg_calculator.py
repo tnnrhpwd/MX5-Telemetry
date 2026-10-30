@@ -285,6 +285,46 @@ def test_the_source_name_tells_the_truth():
     assert calc.average_mpg_source == 'maf'
 
 
+def test_reset_actually_clears_the_file():
+    """The overwrite guard must not resurrect the totals a reset just cleared.
+
+    A reset writes less than the disk holds, which is exactly the shape of "another
+    instance has more data" - so without an explicit force the guard reloaded the
+    old totals and the reset silently did nothing.
+    """
+    tmpdir = tempfile.mkdtemp(prefix='mx5_mpg_test_')
+    calc = MPGCalculator(data_dir=tmpdir, verbose=False)
+    calc.start()
+    Clock(calc).run(180.0, maf=20.0, speed_mph=60.0)
+    calc._save_data()
+    assert calc._maf_fuel_gal > 0
+
+    calc.reset_lifetime_data()
+
+    with open(os.path.join(tmpdir, 'mpg_data.json')) as f:
+        saved = json.load(f)
+    assert saved['maf_fuel_gal'] == 0.0
+    assert saved['total_miles'] == 0.0
+    assert calc._maf_fuel_gal == 0.0
+
+
+def test_the_overwrite_guard_still_protects_a_higher_mileage_file():
+    """A stale instance must not overwrite a file with more miles on it."""
+    tmpdir = tempfile.mkdtemp(prefix='mx5_mpg_test_')
+    with open(os.path.join(tmpdir, 'mpg_data.json'), 'w') as f:
+        json.dump({'total_miles': 500.0, 'total_gallons': 20.0}, f)
+
+    calc = MPGCalculator(data_dir=tmpdir, verbose=False)
+    calc.start()
+    calc._lifetime_miles = 10.0          # a stale instance
+    calc._save_data()
+
+    with open(os.path.join(tmpdir, 'mpg_data.json')) as f:
+        saved = json.load(f)
+    assert saved['total_miles'] == 500.0
+    assert calc._lifetime_miles == 500.0, "it reloads rather than overwriting"
+
+
 # -- runner -----------------------------------------------------------------
 
 def _main():

@@ -7,7 +7,9 @@
 - **Phone Hotspot:** `ssh pi@10.62.26.67`
 - **Web Interface:** `http://<pi-ip>:5000` (e.g., http://192.168.1.23:5000 or http://10.62.26.67:5000)
 
-**Quick Deploy:** Run `flash_all_updates.ps1` (auto-detects Pi network)
+**Quick Deploy:** `.\scripts\push-hardware.ps1` — commits + pushes, then builds and installs
+on the Android phone, the Nano, the ESP32 and the Pi in one go (auto-detects the Pi on
+either network).
 
 ---
 
@@ -85,9 +87,46 @@ See [hardware/HARDWARE.md](hardware/HARDWARE.md) for complete wiring diagrams, p
 | **ESP32-S3** | **Remote** (via Pi SSH) | USB-C to Pi (`/dev/ttyACM0`) | Permanently connected to Pi |
 | **Pi App** | **Remote** (SSH) | Network | Home: 192.168.1.23, Hotspot: 10.62.26.67 |
 
+### Method 0: One Command (Recommended) ⭐⭐
+
+```powershell
+.\scripts\push-hardware.ps1
+```
+
+| Step | Target | What happens |
+|------|--------|--------------|
+| 1 | git | Uncommitted work is committed and pushed (the Pi deploys by pulling) |
+| 2 | Android | `MX5 Remote` + `MX5 Drive` built with Gradle, then `adb install -r` on the attached phone |
+| 3 | Arduino Nano | Built and uploaded over this PC's USB port |
+| 4 | ESP32-S3 | Display service stopped on the Pi, firmware built + flashed over the Pi's USB, service restarted |
+| 5 | Pi | `git pull` + `systemctl restart mx5-display`, then the service state is verified |
+
+Devices whose sources did not change since the previous successful push are skipped
+(bookkeeping in the gitignored `.push-state.json`).
+
+Useful switches:
+
+| Switch | Effect |
+|--------|--------|
+| `-DryRun` | Print every command, change nothing |
+| `-Targets android,esp32` | Update only the named devices (`android`, `arduino`, `esp32`, `pi`) |
+| `-Force` | Reflash even when nothing changed |
+| `-NoGit` | Do not commit or push (Pi/ESP32 then only get commits already on origin) |
+| `-PiHost 10.62.26.67` | Skip auto-discovery |
+| `-AdbSerial <serial>` | Pick a phone when several are attached |
+| `-ArduinoPort COM5` | Pick the Nano's port when auto-detection guesses wrong |
+| `-RemoteArduino` | Flash the Nano wired to the Pi (`/dev/ttyUSB0`) instead of the local one |
+| `-Esp32Port /dev/ttyACM1` | If the ESP32 enumerates somewhere other than `/dev/ttyACM0` |
+| `-InstallPiDeps` | Also `pip install -r pi/ui/requirements.txt` on the Pi |
+
+`.\pi\scripts\flash_all_updates.ps1` still works — it forwards to the same script.
+
 ### Method 1: VS Code Tasks (Recommended) ⭐
 
 Press `Ctrl+Shift+P` → "Tasks: Run Task":
+
+#### Deploy
+- **Push to Hardware (All)** - runs `scripts/push-hardware.ps1` (Android + Nano + ESP32 + Pi)
 
 #### Remote Deployment (ESP32 & Pi)
 - **Deploy All: Build, Push, Flash ESP32, Restart Pi** - Full deployment
@@ -176,7 +215,8 @@ The workspace includes preconfigured tasks for rapid deployment:
 
 | Task | What It Does | When To Use |
 |------|--------------|-------------|
-| `Deploy All: Build, Push, Flash ESP32, Restart Pi` | Complete system deployment | After code changes to any component |
+| `Push to Hardware (All)` | Builds + installs on Android, Nano, ESP32 and Pi in one run | After code changes to any component |
+| `Deploy All: Build, Push, Flash ESP32, Restart Pi` | Legacy: push + ESP32 + Pi only | Legacy, prefer the push script |
 | `Pi: Flash ESP32 (Remote)` | Updates ESP32 firmware only | ESP32 display changes only |
 | `Pi: Git Pull & Restart UI` | Updates Pi display only | Pi display changes only |
 | `Pi: SSH Connect` | Opens SSH session | Manual Pi debugging |

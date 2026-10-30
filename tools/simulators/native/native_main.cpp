@@ -52,6 +52,9 @@ static SimPhase g_phase = PHASE_LIVE;
 static unsigned long g_phaseStart = 0;
 static int g_waitShown = -1;      // last countdown second painted
 static bool g_waitHinted = false;
+// P pressed: millis() of the kill, while the demo waits out the real link timeout.
+// 0 = the link is not being held open.
+static unsigned long g_linkKillAt = 0;
 
 // Everything the device has before the first telemetry line.
 static void clearTelemetry() {
@@ -109,12 +112,16 @@ static bool tickPowerOn() {
     }
 
     if (g_phase == PHASE_PI_WAIT) {
-        unsigned long elapsed = millis() - g_phaseStart;
-        if (elapsed >= (unsigned long)PI_BOOT_COUNTDOWN * 1000UL) {
+        // The countdown is measured from power-on, like the firmware's: the intro
+        // already ate 22 s of the 30, so this phase only lasts the remaining 8 s.
+        // Timing it from g_phaseStart instead would make the power-on sequence 22
+        // + 30 s here and 30 s on the panel.
+        if (millis() - bootStartTime >= (unsigned long)PI_BOOT_COUNTDOWN * 1000UL) {
             connectNow();
             return false;
         }
         // The wait is animated at 8 fps, exactly like the firmware's loop.
+        unsigned long elapsed = millis() - g_phaseStart;
         unsigned long frame = elapsed / 125UL;
         if ((int)frame != g_waitShown) {
             g_waitShown = (int)frame;
@@ -280,12 +287,22 @@ static void handleKey(WPARAM key) {
             if (ui_linkLostActive()) {
                 initDemoTelemetry();
                 lastPiDataMs = millis();
+                g_linkKillAt = 0;
                 printf("[SIM] Link restored - back to the live screen.\n");
             } else {
-                telemetry.connected = false;
-                telemetry.hasReceivedTelemetry = false;
-                lastPiDataMs = millis() - 3600UL;  // already past the 3 s watchdog
-                printf("[SIM] Pi link lost - link-lost screen takes the panel.\n");
+                // "The Pi died while driving": stop refreshing the link and let the
+                // panel's own 5 s timeout run, so the demo holds the last readings
+                // and then hands over exactly like the firmware does. During the
+                // boot wait there are no readings to hold, so make it live first.
+                if (g_phase == PHASE_PI_WAIT) {
+                    g_phase = PHASE_LIVE;
+                    initDemoTelemetry();
+                }
+                piDataReceived = true;
+                lastPiDataMs = millis();
+                g_linkKillAt = millis();
+                printf("[SIM] Pi link lost - holding for %d s, then the link-lost screen.\n",
+                       PI_LINK_TIMEOUT_MS / 1000);
             }
             needsFullRedraw = true;
             needsRedraw = true;
@@ -477,12 +494,14 @@ static int runStartupCapture() {
 
     // The link-lost takeover, at two depths of silence, plus a few sweep phases so
     // the radar can be checked without opening the window.
-    captureLinkLost(4200,  "linklost_dark.bmp");
-    captureLinkLost(9000,  "linklost_1m.bmp");
+    // Silence past the panel's own timeout (5 s), far enough into the sweep that
+    // the radar trail is visible in the still.
+    captureLinkLost(6400,  "linklost_dark.bmp");
+    captureLinkLost(70000, "linklost_1m.bmp");   // past a minute: "1m 10s", not "70s"
     for (int i = 0; i < 4; i++) {
         char sweep[64];
         snprintf(sweep, sizeof(sweep), "linklost_sweep_%d.bmp", i);
-        captureLinkLost(3000 + (unsigned long)i * 500, sweep);
+        captureLinkLost(6000 + (unsigned long)i * 500, sweep);
     }
 
     // Two seconds of the sweep at the firmware's 10 fps, for a film/GIF. The
@@ -491,7 +510,7 @@ static int runStartupCapture() {
     for (int i = 0; i < 20; i++) {
         char seq[64];
         snprintf(seq, sizeof(seq), "linklost_frames\\l%02d.bmp", i);
-        captureLinkLost(3000 + (unsigned long)i * 100, seq);
+        captureLinkLost(6000 + (unsigned long)i * 100, seq);
     }
 
     // The same beats in the light theme: the boot title used to be drawn in
@@ -506,7 +525,7 @@ static int runStartupCapture() {
     saveBMP("boot_light_final.bmp");
     captureBootWait(26, "wait_light.bmp");
     captureLiveOverview("live_light.bmp");
-    captureLinkLost(6500, "linklost_light.bmp");
+    captureLinkLost(8200, "linklost_light.bmp");
 
     applyDefaultTheme();
     return 0;
@@ -569,10 +588,10 @@ static int runHeadless(bool reverse, bool stale, int demoSpeed) {
         telemetry.throttle = 0;
         telemetry.brake = 0;
         telemetry.engineRunning = false;
-        // 4.2 s of silence: past PI_STALE_MS, and far enough into the sweep that
-        // the radar trail is visible in the still.
+        // 6.4 s of silence: past the panel's 5 s link timeout, and far enough
+        // into the sweep that the radar trail is visible in the still.
         bootStartTime = millis() - 60000UL;
-        lastPiDataMs = millis() - 4200UL;
+        lastPiDataMs = millis() - 6400UL;
     }
     const char* prefix = reverse ? "rev_" : (stale ? "stale_" : "shot_");
     char name[64];
@@ -648,6 +667,23 @@ int main(int argc, char** argv) {
             if (msg.message == WM_QUIT) return 0;
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
+        }
+
+        // The demo's stale watchdog: what display/src/main.cpp does at the same
+        // instant the timeout expires - clear the readings, keep the stamp, and
+        // let the dispatcher hand the panel to the link-lost screen.
+        if (g_linkKillAt && millis() - g_linkKillAt > (unsigned long)PI_LINK_TIMEOUT_MS) {
+            lastPiDataMs = g_linkKillAt;
+            g_linkKillAt = 0;
+            telemetry.connected = false;
+            telemetry.hasReceivedTelemetry = false;
+            telemetry.rpm = 0;
+            telemetry.speed = 0;
+            telemetry.gear = 0;
+            telemetry.engineRunning = false;
+            printf("[SIM] %d s of silence - link-lost screen takes the panel.\n",
+                   PI_LINK_TIMEOUT_MS / 1000);
+            g_dirty = true;
         }
 
         if (tickPowerOn()) {

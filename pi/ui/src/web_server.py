@@ -255,6 +255,13 @@ class WebRemoteServer:
             payload, status = self.link.calibrate_imu()
             return jsonify(payload), status
 
+        @self.app.route('/api/mpg/reset', methods=['POST'])
+        @self._require_auth
+        def reset_mpg():
+            """Clear the stored fuel totals behind AVG MPG and RANGE."""
+            payload, status = self.link.reset_mpg()
+            return jsonify(payload), status
+
         @self.app.route('/api/telemetry')
         @self._require_auth
         def get_telemetry():
