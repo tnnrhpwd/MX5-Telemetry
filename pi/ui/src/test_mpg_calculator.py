@@ -308,6 +308,29 @@ def test_reset_actually_clears_the_file():
     assert calc._maf_fuel_gal == 0.0
 
 
+def test_a_reset_survives_a_restart():
+    """A reset has to reach the backup file, not just the main one.
+
+    _load_data() prefers whichever file holds the higher total, which is what stops a
+    stale instance overwriting a good file. A reset leaves the old totals in `.bak`, so
+    the next boot loaded them back and the reset looked like it had never happened.
+    """
+    tmpdir = tempfile.mkdtemp(prefix='mx5_mpg_test_')
+    calc = MPGCalculator(data_dir=tmpdir, verbose=False)
+    calc.start()
+    calc._lifetime_miles = 500.0
+    calc._lifetime_gallons = 12.0
+    calc._save_data()
+
+    calc.reset_lifetime_data()
+
+    fresh = MPGCalculator(data_dir=tmpdir, verbose=False)
+    fresh.start()
+    assert fresh._lifetime_miles == 0.0
+    assert fresh._lifetime_gallons == 0.0
+    assert fresh.average_mpg_source == 'estimated'
+
+
 def test_the_overwrite_guard_still_protects_a_higher_mileage_file():
     """A stale instance must not overwrite a file with more miles on it."""
     tmpdir = tempfile.mkdtemp(prefix='mx5_mpg_test_')

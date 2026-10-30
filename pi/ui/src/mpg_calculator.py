@@ -695,6 +695,13 @@ class MPGCalculator:
         Deliberately writes with `force`: the on-disk totals are about to be larger
         than the ones in memory, and the overwrite guard would otherwise read that as
         "another instance has more data" and reload them, making the reset a no-op.
+
+        Saving twice is not redundant. The first save backs the pre-reset totals up into
+        `.bak` and writes zeros to the main file; `_load_data()` then prefers whichever
+        file holds the *higher* total (that rule is what stops a stale instance from
+        overwriting a good file), so on the next boot it read the backup and the reset
+        silently undid itself. The second save copies the zeroed main file over the
+        backup, which is what makes a reset a real starting point.
         """
         print("MPG: Resetting all data")
         self._lifetime_miles = 0.0
@@ -711,6 +718,7 @@ class MPGCalculator:
         self._average_mpg = self.EPA_DEFAULT_MPG
         self._average_source = 'estimated'
         self._range_miles = 0
+        self._save_data(force=True)
         self._save_data(force=True)
     
     def reset_trip(self):
