@@ -12,7 +12,7 @@ How it works
    retyped - and dropped into a small C++ translation unit with stubs for the Arduino bits
    (a pixel buffer instead of NeoPixel, a settable `millis()`).
 2. That file is compiled with MSVC and run over a matrix of cases: every fill pattern, both
-   colour modes, dim on and off, several "full at" scales, ramps including the default and
+   color modes, dim on and off, several "full at" scales, ramps including the default and
    deliberately uneven ones, the idle/shift/offline/error/self-test states, and the
    brightness scale.
 3. The same cases go through `led_engine.py`, and every pixel of every frame must match
@@ -379,7 +379,7 @@ def _ramp_variants() -> List[Tuple[Tuple[int, engine.RGB], ...]]:
                      (7000, (250, 251, 252))))
     # Out-of-order and duplicated stops. `rampColorAtRpm` returns at the first stop whose
     # rpm is >= the request, so a descending table makes the later stops unreachable and a
-    # duplicate pair collapses span to 0 (t = 1, so the later colour wins). The Pi accepts
+    # duplicate pair collapses span to 0 (t = 1, so the later color wins). The Pi accepts
     # any order, so this is reachable in the car and worth pinning.
     variants.append(((0, (0, 0, 255)), (3000, (0, 255, 0)), (1500, (255, 0, 0))))
     variants.append(((0, (9, 9, 9)), (2000, (10, 20, 30)), (2000, (200, 100, 50))))
@@ -408,7 +408,7 @@ def build_cases(count: int, rng: random.Random) -> List[dict]:
     for case in cases:
         pass
 
-    # Hand-picked edges: every fill pattern, both colour modes, dim on and off, across the
+    # Hand-picked edges: every fill pattern, both color modes, dim on and off, across the
     # rpm range including the frame boundaries.
     for sequence in (engine.SEQ_CENTER_OUT, engine.SEQ_LEFT_TO_RIGHT,
                      engine.SEQ_RIGHT_TO_LEFT, engine.SEQ_CENTER_IN):
@@ -735,7 +735,7 @@ def library_scale_problems() -> List[str]:
                         "emulation in apply_brightness() is stale")
     if "if (brightness) {" not in text:
         problems.append("library no longer gates the scale on `if (brightness)` - the "
-                        "255-means-no-scaling behaviour may have changed")
+                        "255-means-no-scaling behavior may have changed")
     return problems
 
 
@@ -797,7 +797,7 @@ def main() -> int:
     try:
         source = _read_main()
         # 20 is the strip that exists; odd counts are where the mirrored geometry gets
-        # interesting (the centre pixel has no partner), so check those too.
+        # interesting (the center pixel has no partner), so check those too.
         led_counts = sorted({args.led_count, 20, 21, 5})
         total_cases = 0
         total_frames = 0

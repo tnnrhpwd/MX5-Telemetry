@@ -7,7 +7,7 @@
  * Serial output:
  *   "315.000 MHz   RSSI=-76 dBm"   -> RSSI line (webapp chart + events)
  *   "CAP <samples> <micros> <hex>" -> raw capture window (saved by webapp)
- *   "FREQ_OK 434.000" / "MOD_OK 2" -> command acknowledgements
+ *   "FREQ_OK 434.000" / "MOD_OK 2" -> command acknowledgments
  *
  * Serial commands (from the webapp):
  *   "FREQ 434.0" -> retune
@@ -365,7 +365,7 @@ void txFobBurst() {
 
 // Transmit a synthetic TPMS sensor burst.
 //
-// A tyre sensor's signature is its CADENCE: it sends a short group of identical
+// A tire sensor's signature is its CADENCE: it sends a short group of identical
 // frames, then repeats that group on a slow timeout (tens of seconds), which is
 // what makes its Repeat column metronomic and a fob's sporadic. So this sends
 // six identical frames back to back - one group - rather than one long burst.
@@ -516,7 +516,7 @@ void txLoopback(int spb) {
 //
 // doTx=0 runs the identical timing loop with no strobes at all, giving the
 // silent control measured in the same instant - without it a low edge count
-// cannot be attributed to the TX rather than to a desensitised RX.
+// cannot be attributed to the TX rather than to a desensitized RX.
 //
 // doTx=2 is the sharper control: the SAME init and the SAME number of SPI
 // strobes at the SAME instants, but 0x3D (SNOP) is a no-operation strobe so the
@@ -767,7 +767,7 @@ void configRadio(float mhz) {
 // those writes are skipped the TX chip stays at power-on defaults and radiates
 // nothing - which is exactly what the SPI-free RXDIFF test measured: the RX
 // output is bit-for-bit unchanged whether the carrier is keyed on or off, at
-// both 315 and 433.92 MHz, while a real fob a metre away is demodulated fine.
+// both 315 and 433.92 MHz, while a real fob a meter away is demodulated fine.
 void configureTx(float mhz) {
   rawTxStrobe(CC1101_SRES);
   delay(10);
@@ -890,7 +890,7 @@ void handleCommands() {
       if (f >= 200.0f && f <= 930.0f) {
         // Skip a redundant retune to the SAME frequency: re-writing the FREQ
         // registers while already in RX at that frequency glitches the AGC /
-        // RSSI path (315 OOK reads flat -138 afterwards). The webapp sends
+        // RSSI path (315 OOK reads flat -138 afterward). The webapp sends
         // "FREQ 315.000" before "MOD 2" on connect, so this skip is what
         // keeps the fob path live.
         if (fabs(f - currentMHz) >= 0.5f) {
@@ -1028,7 +1028,7 @@ void handleCommands() {
       // on a perfectly healthy board. But IF they are tied, every strobe "to the
       // TX" also lands on the RX, and configureTx() STARTS with an SRES - so
       // each TX experiment would be resetting the RECEIVER. That would explain
-      // the bistable railed-or-live behaviour and why the loopback never saw a
+      // the bistable railed-or-live behavior and why the loopback never saw a
       // carrier from our own transmitter.
       //
       // The RX is its own CONTROL: resetting it through ITS OWN chip select must
@@ -1262,7 +1262,7 @@ void loop() {
   // a press at ~3 captures, and telling a complete frame from a fragment needs
   // far more windows than that. 60 ms gives ~5 captures/sec, so a 1 s press now
   // yields several windows instead of three. The serial link runs at ~50%
-  // utilisation at this rate, which the blocking Serial.print self-limits.
+  // utilization at this rate, which the blocking Serial.print self-limits.
   static unsigned long lastCap = 0;
   if (probeSignal() && millis() - lastCap > 60) {
     lastCap = millis();

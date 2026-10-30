@@ -41,7 +41,7 @@ public class BatteryIcon extends View {
         super(c);
     }
 
-    /** Colours come from the palette, so the gauge follows the scheme and the theme. */
+    /** Colors come from the palette, so the gauge follows the scheme and the theme. */
     public void setColors(int track, int fill, int low, int charge) {
         this.trackColor = track;
         this.fillColor = fill;
@@ -111,7 +111,7 @@ public class BatteryIcon extends View {
         }
 
         if (charging) {
-            // Punched out of the fill in the chip's own colour, and the box is close to square
+            // Punched out of the fill in the chip's own color, and the box is close to square
             // because the bolt's arms are only ~12% of its width: a wide box flattens it into
             // a wedge. Two light inks laid over each other at this size would be a smudge, so
             // the knockout is the legible option; the fallback ink covers a fill too short to
@@ -131,7 +131,7 @@ public class BatteryIcon extends View {
         return level <= LOW_PERCENT ? lowColor : fillColor;
     }
 
-    /** The classic seven-point bolt, normalised so it scales with the icon. */
+    /** The classic seven-point bolt, normalized so it scales with the icon. */
     private void drawBolt(Canvas canvas, RectF box) {
         float x = box.left;
         float y = box.top;

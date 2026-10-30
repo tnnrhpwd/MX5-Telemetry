@@ -3,7 +3,7 @@
 Why this matters: `configureTx()` STARTS with an SRES. If the TX and RX chip
 selects are tied together, then every TX experiment this project has run has also
 been resetting the RECEIVER - which would explain the bistable railed-or-live
-behaviour, the varying payloads, and why the loopback never saw a carrier from
+behavior, the varying payloads, and why the loopback never saw a carrier from
 our own transmitter.
 
 Why it is a controlled test: the obvious observable, "the output goes quiet

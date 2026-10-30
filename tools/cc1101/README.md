@@ -68,7 +68,7 @@ Stop the webapp first: it holds COM3.
 
 Note that the CC1101's registers cannot be read back reliably on this board: the
 two modules share MISO, so `dump_regs.py` and the firmware's `DUMP` command
-return bit-shifted garbage. Verify a config change behaviourally instead.
+return bit-shifted garbage. Verify a config change behaviorally instead.
 
 ## Tests
 

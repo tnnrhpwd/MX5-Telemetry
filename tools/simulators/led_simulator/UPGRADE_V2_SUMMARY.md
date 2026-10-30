@@ -132,7 +132,7 @@ Each car has unique:
 - Top speed limits
 - RPM thresholds
 
-## Backwards Compatibility
+## Backward Compatibility
 
 - Original `led_simulator.py` preserved as v1
 - New `led_simulator_v2.py` is standalone

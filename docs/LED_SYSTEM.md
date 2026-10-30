@@ -2,8 +2,8 @@
 
 This document covers the complete LED RPM visualization system running on the Arduino Nano.
 
-> ⚠️ **Being replaced.** The behaviour below is what the firmware did before the revamp.
-> The strip now takes its colour ramp at runtime from the Pi (`RAMP:`) so it can follow the
+> ⚠️ **Being replaced.** The behavior below is what the firmware did before the revamp.
+> The strip now takes its color ramp at runtime from the Pi (`RAMP:`) so it can follow the
 > phone's theme, reports health once a second (`STATUS:`), and can be driven without the
 > engine (`DEMO:<rpm>`). The authoritative specification is
 > [LED_REVAMP_PLAN.md](LED_REVAMP_PLAN.md); this page describes the states and sequences,
@@ -134,13 +134,13 @@ Instead of discrete on/off steps, LEDs use sub-LED resolution:
 **Result:** 2x effective resolution (~40 visual steps from 20 LEDs)
 
 ### Smooth Color Gradients
-The strip is a **positional gradient**, not a single colour that changes hue:
-each LED is assigned the colour of its own place on the RPM scale
+The strip is a **positional gradient**, not a single color that changes hue:
+each LED is assigned the color of its own place on the RPM scale
 (`scaleColorAt()` in `arduino/src/main.cpp`). As RPM rises, more of that fixed
 ramp lights up instead of the whole bar recolouring at once.
 
 - Blue → cyan → green → yellow → orange → red, continuously interpolated
-- The leading edge always shows the colour of the RPM it represents
+- The leading edge always shows the color of the RPM it represents
 - The top of the strip is red at the redline, which is what makes it a shift light
 
 **Anti-Flicker Threshold:** 5% minimum brightness prevents LED flickering
@@ -238,7 +238,7 @@ table is the quick reference. Every line is `\n`-terminated and every command re
 | **Set Sequence** | `SEQ:n` | Select LED pattern (1-4) | `SEQ:2` |
 | **Query Sequence** | `SEQ?` | Get current pattern | `SEQ?` |
 | **Ping** | `PING` | Connection test and identity check | `PING` |
-| **Colour ramp** | `RAMP:<rpm>:<rrggbb>,…` | 2–6 stops; the last stop is also the rpm at which the strip is full | `RAMP:0:0000ff,2800:32d782,6800:ff0000` |
+| **Color ramp** | `RAMP:<rpm>:<rrggbb>,…` | 2–6 stops; the last stop is also the rpm at which the strip is full | `RAMP:0:0000ff,2800:32d782,6800:ff0000` |
 | **Configuration** | `CFG:<k>=<v>,…` | `bright` 0-255, `theme` 0/1, `full` rpm, `pot` 0/1, `en` 0/1, `mode` 0/1, `shift` rpm (0 = off), `hz` 2-15, `scol` rrggbb | `CFG:en=1,mode=0,shift=6300,hz=8,scol=ff0000` |
 | **Query config** | `CFG?` | Prints the live configuration as one `CFG:` line | `CFG?` |
 | **Persist** | `CFG:save` | Writes the config block to EEPROM (explicit, so a slider drag cannot wear it) | `CFG:save` |
@@ -272,11 +272,11 @@ only — rpm is decoded by the Nano from CAN, so it never goes over this link.
 #define ENABLE_BRIGHTNESS   true    // Potentiometer control
 ```
 
-### RPM Thresholds (Colour Scale)
+### RPM Thresholds (Color Scale)
 
 The zone boundaries are **not** compile-time constants any more: they live in the runtime
 ramp table (`rampStops[]`), which the Pi replaces with `RAMP:` — that is what lets the
-strip follow the phone's theme, or six hand-picked colours, without a reflash.
+strip follow the phone's theme, or six hand-picked colors, without a reflash.
 
 ```cpp
 #define RPM_MAX             6800    // default rpm at which the strip is completely full
@@ -286,7 +286,7 @@ strip follow the phone's theme, or six hand-picked colours, without a reflash.
 The defaults below are what the firmware boots with, and they are also what the app's
 `LED STRIP` screen starts from:
 
-| RPM | Default colour | Why |
+| RPM | Default color | Why |
 |-----|----------------|-----|
 | 0 | `#0000ff` | idle |
 | 1400 | `#00dcff` | pulling away |

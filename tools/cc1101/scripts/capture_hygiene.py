@@ -122,7 +122,7 @@ def main():
     print("usable      : %d captures (of %d lines)" % (len(caps), len(lines)))
     print()
     if not caps:
-        print("Nothing usable to analyse.")
+        print("Nothing usable to analyze.")
         return 0
 
     print("enrolled    : %s"

@@ -12,12 +12,12 @@ explanations demand different fixes -
 
 Only a sweep separates them. Each sweep dwells on one rate long enough for
 several presses, and the server tags every capture it logs with the rate in
-force (`DRATE=`), so nothing needs bookkeeping here - compare afterwards with
+force (`DRATE=`), so nothing needs bookkeeping here - compare afterward with
 `pwm_decode.py --by-drate`.
 
 This talks to the running webapp over HTTP rather than opening COM3, so the
 server does not have to be stopped. (scripts/rate_sweep.py is the older
-direct-serial variant: it needs COM3 exclusively and analyses run lengths with
+direct-serial variant: it needs COM3 exclusively and analyzes run lengths with
 the two-cluster timing model this project has since abandoned.)
 
 Usage:

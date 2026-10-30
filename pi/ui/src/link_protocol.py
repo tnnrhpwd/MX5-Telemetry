@@ -22,7 +22,7 @@ Authentication: the first request must be
     -> {"id": 1, "op": "hello", "token": "<access token>"}
 
 Pairing is not treated as the security boundary, because pairing makes a device trusted
-for the profile rather than authorising this application's commands. The token is the
+for the profile rather than authorizing this application's commands. The token is the
 same one the HTTP API uses, so one secret covers both transports.
 """
 

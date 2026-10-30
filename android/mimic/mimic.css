@@ -1,6 +1,6 @@
 /* Mimic harness styles.
  *
- * Colours are never written here: they arrive as custom properties computed from the
+ * Colors are never written here: they arrive as custom properties computed from the
  * Android Palette by mimic.js, so a palette change cannot leave this file behind. Only
  * geometry and typography live here.
  *
@@ -179,8 +179,8 @@ html, body {
   border-radius: 1.5px;
 }
 
-/* Knocked out of the fill in the chip's own colour, in a near-square box: the bolt's arms
- * are only ~12% of its width, so a wide box flattens it into a wedge. Same seven normalised
+/* Knocked out of the fill in the chip's own color, in a near-square box: the bolt's arms
+ * are only ~12% of its width, so a wide box flattens it into a wedge. Same seven normalized
  * points as BatteryIcon.drawBolt. */
 .battery-bolt {
   position: absolute;

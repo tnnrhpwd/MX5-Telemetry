@@ -186,6 +186,6 @@ for tag in sorted(groups):
                 print("    %s" % ref[i:i + 60])
         else:
             print("  -> the payload CHANGES between captures: ROLLING code, so")
-            print("     no stored message can recognise one fob from another.")
+            print("     no stored message can recognize one fob from another.")
     else:
         print("\n  no period repeated near-identically -> no fixed message here")

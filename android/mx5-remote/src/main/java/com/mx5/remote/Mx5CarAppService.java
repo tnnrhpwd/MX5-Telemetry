@@ -8,7 +8,7 @@ import androidx.car.app.validation.HostValidator;
 /**
  * The drive-flavor entry point.
  *
- * The parked build is declared as a "game", which Android Auto deliberately greys out
+ * The parked build is declared as a "game", which Android Auto deliberately grays out
  * while the car is moving, and android:appCategory applies to the whole package - so the
  * two surfaces cannot share an APK. This service only exists in the "drive" build
  * (src/drive/AndroidManifest.xml), where the package has no appCategory at all and the

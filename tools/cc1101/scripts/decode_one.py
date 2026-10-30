@@ -1,7 +1,7 @@
 """Decode ONE capture, from the raw samples up, showing every step.
 
 No thresholds hidden, nothing assumed about the encoding beyond the one property
-every OOK remote has: it quantises its pulses to a clock. So:
+every OOK remote has: it quantizes its pulses to a clock. So:
 
   1. pick the capture with the most structured burst in the log,
   2. print the burst's raw bit string (0/1), so the waveform is visible,

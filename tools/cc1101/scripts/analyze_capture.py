@@ -136,7 +136,7 @@ def find_signal_region(bits, T):
 def manchester_decode(bits, B, phase):
     """Decode with bit period B and a bit-boundary phase.
 
-    Returns (decoded_bits, violation_count). Each bit is sampled at the centre
+    Returns (decoded_bits, violation_count). Each bit is sampled at the center
     of its first half; a missing mid-bit transition (s1 == s2) is a violation.
     The first-half level IS the bit value for IEEE Manchester; the complement
     is G.E. Thomas Manchester.

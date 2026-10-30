@@ -3,14 +3,14 @@ package com.mx5.remote;
 import android.graphics.Color;
 
 /**
- * The webapp's twelve colour schemes, ported, plus the resolved colours the UI
+ * The webapp's twelve color schemes, ported, plus the resolved colors the UI
  * actually paints with.
  *
  * The webapp derives everything from two seed hues with OKLCH and CSS
  * color-mix. There is no OKLCH in the Android view toolkit, so the same idea is
  * approximated here with simple sRGB blends: the scheme supplies two hues, the
  * mode decides whether they are lifted (dark) or sunk (light), and the surface
- * colours stay fixed per mode. It is close enough that a scheme is recognisable
+ * colors stay fixed per mode. It is close enough that a scheme is recognizable
  * across the webapp and the car, which is the point.
  *
  * Alert stays orange in every scheme. That mirrors the standard's rule that the
@@ -138,7 +138,7 @@ public final class Palette {
                 Math.round(Color.blue(a) * u + Color.blue(b) * t));
     }
 
-    /** A translucent version of a colour, for washes and glows. */
+    /** A translucent version of a color, for washes and glows. */
     public static int alpha(int c, float a) {
         return Color.argb(Math.round(255 * a), Color.red(c), Color.green(c), Color.blue(c));
     }
@@ -154,7 +154,7 @@ public final class Palette {
     }
 
     /**
-     * The top of the page gradient: the page colour nudged toward the scheme
+     * The top of the page gradient: the page color nudged toward the scheme
      * accent. A flat page reads as unbranded; a 10% lift gives the app an
      * atmosphere without competing with the panels.
      */

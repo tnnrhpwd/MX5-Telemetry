@@ -250,7 +250,7 @@ class SppServer:
                 continue
 
             self._connections += 1
-            # Serialise: one peer at a time. RFCOMM is point-to-point in practice, and a
+            # Serialize: one peer at a time. RFCOMM is point-to-point in practice, and a
             # shared session would let two phones see each other's replies.
             self._serve(conn, peer)
 

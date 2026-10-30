@@ -85,7 +85,7 @@ public class GaugeView extends View {
         invalidate();
     }
 
-    /** The band colour for a given rpm, which the readout and needle also use. */
+    /** The band color for a given rpm, which the readout and needle also use. */
     public int zoneColor(float value) {
         if (value >= 5500) {
             return C_HIGH;
@@ -142,7 +142,7 @@ public class GaugeView extends View {
                     cx + cos * (tickOuter - length), cy + sin * (tickOuter - length), stroke);
         }
 
-        // The filled portion, in segments so the colour changes at each zone boundary.
+        // The filled portion, in segments so the color changes at each zone boundary.
         stroke.setStrokeWidth(thickness);
         float[] bounds = {0f, 2000f, 3000f, 4500f, 5500f, scaleMax};
         int[] colors = {C_IDLE, C_ECO, C_NORMAL, C_SPIRITED, C_HIGH};
@@ -173,7 +173,7 @@ public class GaugeView extends View {
                 cy + (float) Math.sin(needleAngle) * needleLen, stroke);
         stroke.setStrokeCap(Paint.Cap.BUTT);
 
-        // Hub, with the zone colour showing through its collar.
+        // Hub, with the zone color showing through its collar.
         paint.setColor(Palette.alpha(zone, 0.35f));
         canvas.drawCircle(cx, cy, size * 0.05f, paint);
         paint.setColor(zone);

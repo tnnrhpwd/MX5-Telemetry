@@ -634,7 +634,7 @@ def test_malformed_json_gets_an_error_not_a_dropped_link():
     assert reply['ok'] is False
     assert 'JSON' in reply['error']
     assert session.closed is False
-    # and the link still works afterwards
+    # and the link still works afterward
     assert ask(session, id=34, op='ping')['ok'] is True
 
 

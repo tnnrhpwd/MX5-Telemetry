@@ -3,6 +3,6 @@
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
     <!-- Themed icons on Android 13+. The system reads the alpha of this layer, so
-         the same coloured vector works as a silhouette. -->
+         the same colored vector works as a silhouette. -->
     <monochrome android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>

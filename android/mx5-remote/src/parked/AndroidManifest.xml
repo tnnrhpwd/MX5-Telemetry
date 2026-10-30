@@ -3,7 +3,7 @@
 
   android:appCategory="game" plus android.intent.category.CAR_LAUNCHER is the
   documented way to put a full custom dashboard on the head unit. Android Auto
-  greys it out as soon as the car moves, which is the whole reason the drive
+  grays it out as soon as the car moves, which is the whole reason the drive
   flavor exists as a separate package. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Optional per the car games guidance, and required=false because not every

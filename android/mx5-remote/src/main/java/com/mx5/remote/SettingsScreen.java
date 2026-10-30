@@ -95,7 +95,7 @@ public class SettingsScreen extends Screen {
         // Both halves are attached at the end, because how they are arranged depends on the
         // width, and that is not known until here.
 
-        // -- right: vehicle thresholds and LED behaviour ---------------------
+        // -- right: vehicle thresholds and LED behavior ---------------------
         LinearLayout right = Ui.column(c);
         right.addView(sectionLabel(c, p, "TIRE PRESSURE"));
 
@@ -113,7 +113,7 @@ public class SettingsScreen extends Screen {
 
         right.addView(sectionGap(c, p, "LED STRIP", 1));
         // One line that says what the strip is doing and gets out of the way. Everything
-        // that used to be edited here - pattern, colours, brightness, shift point - moved
+        // that used to be edited here - pattern, colors, brightness, shift point - moved
         // to its own screen, because eleven controls in a settings column is not a control
         // surface, and the strip's own health had nowhere to appear at all.
         ledSummary = Ui.label(c, 11f, p.accent);

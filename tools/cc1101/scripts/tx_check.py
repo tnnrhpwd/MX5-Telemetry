@@ -1,7 +1,7 @@
 """Does a keyed carrier from our TX reach our RX's demodulator?
 
 The loopback calibration could not tell WHY it failed: a railed capture is what
-you get both when the TX radiates nothing AND when the RX is desensitised. A
+you get both when the TX radiates nothing AND when the RX is desensitized. A
 level cannot distinguish those, because with no signal the OOK demod output sits
 at a single level anyway.
 

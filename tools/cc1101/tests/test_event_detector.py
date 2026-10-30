@@ -12,7 +12,7 @@ no fob row, nothing.
 The fix accepts a single above-threshold sample when the deviation is
 unambiguous (>= 1.5x EVENT_RISE_DB) while keeping the three-sample rule for
 marginal deviations, so ordinary noise still cannot open an event. This test
-pins both halves of that behaviour - a test that only checked the first half
+pins both halves of that behavior - a test that only checked the first half
 would pass just as happily against a detector with no noise rejection at all.
 
 Usage:  python tests/test_event_detector.py
@@ -107,7 +107,7 @@ def main():
     L.fobburst_at = L.START_TIME + 9.0
     L.tpmsburst_at = L.START_TIME + 9.5
     rows = feed([FLOOR] * 6 + [STRONG] + [FLOOR] * 6, t0=10.0)
-    ok &= check("TPMS pressed last -> labelled tpms",
+    ok &= check("TPMS pressed last -> labeled tpms",
                 bool(rows) and rows[0]["label"] == "tpms (TX test)",
                 "got %r" % (rows[0]["label"] if rows else None))
 
@@ -115,7 +115,7 @@ def main():
     L.fobburst_at = L.START_TIME + 9.5
     L.tpmsburst_at = L.START_TIME + 9.0
     rows = feed([FLOOR] * 6 + [STRONG] + [FLOOR] * 6, t0=10.0)
-    ok &= check("Fob pressed last -> labelled fob",
+    ok &= check("Fob pressed last -> labeled fob",
                 bool(rows) and rows[0]["label"] == "fob (TX test)",
                 "got %r" % (rows[0]["label"] if rows else None))
 

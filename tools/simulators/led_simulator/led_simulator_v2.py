@@ -2,7 +2,7 @@
 
 This version draws a six-state LED program from the old lib/LEDController
 architecture (white pepper, green edges, orange stall pulse, red flashing gap)
-that the shipping firmware no longer has. The strip now runs a runtime colour
+that the shipping firmware no longer has. The strip now runs a runtime color
 ramp, and led_simulator_v3.py is a port of it. Kept for reference only.
 
 MX5-Telemetry LED Simulator v2.0

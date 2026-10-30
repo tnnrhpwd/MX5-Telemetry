@@ -92,7 +92,7 @@ def _u16(value: int) -> int:
     return int(value) & 0xFFFF
 
 
-# -- colour -------------------------------------------------------------------
+# -- color -------------------------------------------------------------------
 
 
 def ramp_color_at_rpm(rpm: int, ramp: Sequence[Tuple[int, RGB]]) -> RGB:
@@ -138,16 +138,16 @@ def parse_ramp(text: str) -> Tuple[Tuple[int, RGB], ...]:
     """Parse the firmware's `RAMP:<rpm>:<rrggbb>,...` payload.
 
     The same rules the Pi enforces before forwarding: 2-6 stops, a run of digits for the
-    rpm, six hex digits for the colour. Ordering is *not* checked, because neither the Pi
+    rpm, six hex digits for the color. Ordering is *not* checked, because neither the Pi
     nor the firmware checks it - a descending table is legal, just mostly unreachable
     (see `ramp_color_at_rpm`).
     """
     stops = []
     for part in (piece for piece in text.split(",") if piece.strip()):
-        rpm_text, _, colour = part.strip().partition(":")
+        rpm_text, _, color = part.strip().partition(":")
         if not rpm_text.isdigit():
             raise ValueError("ramp rpm %r is not a run of digits" % rpm_text)
-        stops.append((int(rpm_text), rgb_of_hex(colour)))
+        stops.append((int(rpm_text), rgb_of_hex(color)))
     if not 2 <= len(stops) <= 6:
         raise ValueError("a ramp needs 2-6 stops, got %d" % len(stops))
     return tuple(stops)
@@ -158,21 +158,21 @@ def format_ramp(ramp: Sequence[Tuple[int, RGB]]) -> str:
 
 
 def ramp_from_fractions(full_rpm: int,
-                        colours: Sequence[RGB]) -> Tuple[Tuple[int, RGB], ...]:
+                        colors: Sequence[RGB]) -> Tuple[Tuple[int, RGB], ...]:
     """The ramp `LedScreen.pushRamp()` builds from "Full at" and six swatches.
 
     Mirrors the app exactly, including the rounding to 100 rpm and the floor of 100 rpm
     on every stop after the first, so what the simulator shows is what the app sends.
     """
-    fractions = STOP_FRACTIONS[:len(colours)]
+    fractions = STOP_FRACTIONS[:len(colors)]
     stops: List[Tuple[int, RGB]] = []
-    for index, colour in enumerate(colours):
+    for index, color in enumerate(colors):
         rpm = round(full_rpm * fractions[index] / 100.0) * 100
-        if index == len(colours) - 1:
+        if index == len(colors) - 1:
             rpm = full_rpm
         if index > 0 and rpm <= 0:
             rpm = 100
-        stops.append((int(rpm), tuple(colour)))
+        stops.append((int(rpm), tuple(color)))
     return tuple(stops)
 
 
@@ -223,12 +223,12 @@ class LedConfig:
     shift_color: RGB = (255, 0, 0)
     ramp: Tuple[Tuple[int, RGB], ...] = DEFAULT_RAMP
 
-    def with_ramp_from_colours(self, colours: Sequence[RGB]) -> "LedConfig":
-        return replace(self, ramp=ramp_from_fractions(self.full_rpm, colours))
+    def with_ramp_from_colours(self, colors: Sequence[RGB]) -> "LedConfig":
+        return replace(self, ramp=ramp_from_fractions(self.full_rpm, colors))
 
 
 def render_bar(rpm: int, cfg: LedConfig) -> List[RGB]:
-    """Mirror of `renderBar()`: the flowing colour bar."""
+    """Mirror of `renderBar()`: the flowing color bar."""
     if rpm > cfg.full_rpm:
         rpm = cfg.full_rpm
 
@@ -255,7 +255,7 @@ def render_bar(rpm: int, cfg: LedConfig) -> List[RGB]:
             p = 1.0
 
         # Position mode samples each LED's share of the current rpm, so the gradient
-        # flows; wash mode paints the whole bar the colour of the present rpm.
+        # flows; wash mode paints the whole bar the color of the present rpm.
         looked_up = rpm if cfg.color_mode else _u16(int(_f32(p * rpm)))
         r, g, b = ramp_color_at_rpm(looked_up, cfg.ramp)
 
@@ -287,8 +287,8 @@ def shift_frame(now_ms: int, cfg: LedConfig) -> List[RGB]:
     """Mirror of the shift-light overlay: the whole strip blinks as one."""
     half_period = 500 // (cfg.shift_hz if cfg.shift_hz else 1)
     on = ((now_ms // half_period) & 1) == 0
-    colour = tuple(cfg.shift_color) if on else (0, 0, 0)
-    return [colour] * cfg.led_count  # type: ignore[list-item]
+    color = tuple(cfg.shift_color) if on else (0, 0, 0)
+    return [color] * cfg.led_count  # type: ignore[list-item]
 
 
 def can_offline_frame(now_ms: int, led_count: int = DEFAULT_LED_COUNT) -> List[RGB]:
@@ -305,8 +305,8 @@ def self_test_frame(elapsed_ms: int, mode: int,
     """Mirror of `drawSelfTest()`: a white sweep, or the identify blink."""
     frame: List[RGB] = [(0, 0, 0)] * led_count
     if mode == SELF_TEST_IDENTIFY:
-        colour: RGB = (255, 0, 255) if ((elapsed_ms // 125) & 1) == 0 else (0, 0, 0)
-        return [colour] * led_count
+        color: RGB = (255, 0, 255) if ((elapsed_ms // 125) & 1) == 0 else (0, 0, 0)
+        return [color] * led_count
     if mode == SELF_TEST_SWEEP:
         lit = int((elapsed_ms * led_count) / SELF_TEST_MS) + 1
         for index in range(led_count):

@@ -95,7 +95,7 @@ the UI on a car screen. The car is still the only real test on that point.
 - **Driving means templates.** A templated session may only return host-rendered
   templates (`PaneTemplate` here). Custom `View` hierarchies — which is what the parked
   dashboard is — are not available in motion. Anything added to the drive surface must
-  stay glanceable: a few labelled rows, no lists to scroll, no interaction needed to
+  stay glanceable: a few labeled rows, no lists to scroll, no interaction needed to
   reach a critical number.
 - **Parked categories.** Games work on Android Auto *and* Automotive OS. Video and
   Browsers are Automotive-only. Games are the only AA-supported parked category.

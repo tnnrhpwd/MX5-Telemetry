@@ -1,7 +1,7 @@
 /* Mimic harness: renders the car app in a browser at 800x480.
  *
  * Two jobs. First, turn the tokens extracted from Palette.java into CSS custom properties,
- * so the colours here are the app's colours and not a second copy of them. Second, build
+ * so the colors here are the app's colors and not a second copy of them. Second, build
  * the shell and the nine screens as DOM, mirroring the Java view code's structure.
  *
  * The parts that mirror Java deliberately keep the Java shape and names (panel, grid,
@@ -21,7 +21,7 @@
     return;
   }
 
-  // ---------------------------------------------------------------- colour maths
+  // ---------------------------------------------------------------- color maths
   // Mirrors Palette.mix / lift / sink / alpha exactly, in sRGB with integer rounding,
   // because a mismatch here would make the harness subtly wrong rather than obviously so.
 
@@ -189,19 +189,19 @@
     return p;
   }
 
-  function sliderBlock(label, value, min, max, colour) {
+  function sliderBlock(label, value, min, max, color) {
     var b = el('div', 'slider-block');
     var head = el('div', 'slider-head');
     head.appendChild(el('span', null, label));
     var v = el('span', 'val', value);
-    v.style.color = 'var(--' + (colour || 'accent') + ')';
+    v.style.color = 'var(--' + (color || 'accent') + ')';
     head.appendChild(v);
     b.appendChild(head);
 
     var track = el('div', 'slider-track');
     var knob = el('div', 'slider-knob');
     knob.style.left = ((value - min) / (max - min) * 100) + '%';
-    knob.style.background = 'var(--' + (colour || 'accent') + ')';
+    knob.style.background = 'var(--' + (color || 'accent') + ')';
     track.appendChild(knob);
     b.appendChild(track);
     return b;
@@ -243,14 +243,14 @@
       return [cx + Math.cos(rad) * radius, cy + Math.sin(rad) * radius];
     }
 
-    function arc(from, to, width, colour, cap) {
+    function arc(from, to, width, color, cap) {
       var p1 = polar(from, r), p2 = polar(to, r);
       var large = (to - from) > 180 ? 1 : 0;
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', 'M ' + p1[0] + ' ' + p1[1] +
         ' A ' + r + ' ' + r + ' 0 ' + large + ' 1 ' + p2[0] + ' ' + p2[1]);
       path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', colour);
+      path.setAttribute('stroke', color);
       path.setAttribute('stroke-width', width);
       path.setAttribute('stroke-linecap', cap || 'round');
       svg.appendChild(path);
@@ -295,11 +295,11 @@
     dot.setAttribute('fill', 'var(--accent)');
     svg.appendChild(dot);
 
-    function text(y, content, sizePx, colour, weight) {
+    function text(y, content, sizePx, color, weight) {
       var t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       t.setAttribute('x', cx); t.setAttribute('y', y);
       t.setAttribute('text-anchor', 'middle');
-      t.setAttribute('fill', colour);
+      t.setAttribute('fill', color);
       t.setAttribute('font-size', sizePx);
       t.setAttribute('font-weight', weight || 600);
       t.setAttribute('font-family', 'Segoe UI, Roboto, sans-serif');
@@ -321,32 +321,32 @@
     svg.setAttribute('viewBox', '0 0 ' + size + ' ' + size);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
-    function circle(radius, colour, width, dash, fill) {
+    function circle(radius, color, width, dash, fill) {
       var c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', radius);
       c.setAttribute('fill', fill || 'none');
-      c.setAttribute('stroke', colour);
+      c.setAttribute('stroke', color);
       c.setAttribute('stroke-width', width);
       if (dash) { c.setAttribute('stroke-dasharray', dash); }
       svg.appendChild(c);
       return c;
     }
 
-    function line(x1, y1, x2, y2, colour, width, opacity) {
+    function line(x1, y1, x2, y2, color, width, opacity) {
       var l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       l.setAttribute('x1', x1); l.setAttribute('y1', y1);
       l.setAttribute('x2', x2); l.setAttribute('y2', y2);
-      l.setAttribute('stroke', colour);
+      l.setAttribute('stroke', color);
       l.setAttribute('stroke-width', width);
       if (opacity !== undefined) { l.setAttribute('opacity', opacity); }
       svg.appendChild(l);
     }
 
-    function label(x, y, text, colour) {
+    function label(x, y, text, color) {
       var t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       t.setAttribute('x', x); t.setAttribute('y', y);
       t.setAttribute('text-anchor', 'middle');
-      t.setAttribute('fill', colour);
+      t.setAttribute('fill', color);
       t.setAttribute('font-size', size * 0.05);
       t.setAttribute('font-weight', 700);
       t.setAttribute('letter-spacing', '0.08em');
@@ -355,7 +355,7 @@
       svg.appendChild(t);
     }
 
-    // A pad behind the rings. Without it the dial was thin grey circles adrift in a large
+    // A pad behind the rings. Without it the dial was thin gray circles adrift in a large
     // empty square, which read as an unfinished panel rather than an instrument.
     circle(outer, 'none', 0, null, 'var(--tile)');
 
@@ -689,7 +689,7 @@
    *
    * The battery is DOM rather than a glyph for the same reason BatteryIcon.java draws it: a
    * font that lacks the character is worse than no readout at all. The geometry matches the
-   * Java one, including the bolt's clip-path, which is the same seven normalised points.
+   * Java one, including the bolt's clip-path, which is the same seven normalized points.
    */
   function buildStatusChip(opts) {
     var chip = el('div', 'status-chip');

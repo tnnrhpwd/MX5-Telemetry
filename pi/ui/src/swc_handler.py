@@ -189,7 +189,7 @@ class SWCHandler:
         return buttons
     
     def get_on_off_hold_progress(self) -> float:
-        """Get progress towards lock toggle (0.0 to 1.0)
+        """Get progress toward lock toggle (0.0 to 1.0)
         
         Returns 0.0 if ON/OFF not held, 1.0 when lock will toggle.
         Can be used to show visual feedback while holding.

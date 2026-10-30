@@ -454,7 +454,7 @@
       <span class="pill pill-live" id="status">live</span>
       <button class="icon-btn" id="txBtn" type="button" title="Transmit a continuous carrier from the second module. Use it to prove the receiver hears something: the level should jump, then switch it straight back off. Leave OFF while trying to receive a fob.">TX Off</button>
       <button class="icon-btn" id="fobBtn" type="button" title="Transmit a synthetic OOK key-fob burst, so you can test the receiver and the decode path without a real key in your hand.">Fob Burst</button>
-      <button class="icon-btn" id="tpmsBtn" type="button" title="Transmit a synthetic TPMS sensor burst: a group of identical frames, which is what a tyre sensor emits per timeout and why its Repeat column is metronomic while a fob's is sporadic. Real TPMS is usually FSK and this transmitter can only key its carrier on/off, so treat it as an OOK stand-in for the decode and UI path rather than a clone of a sensor.">TPMS Burst</button>
+      <button class="icon-btn" id="tpmsBtn" type="button" title="Transmit a synthetic TPMS sensor burst: a group of identical frames, which is what a tire sensor emits per timeout and why its Repeat column is metronomic while a fob's is sporadic. Real TPMS is usually FSK and this transmitter can only key its carrier on/off, so treat it as an OOK stand-in for the decode and UI path rather than a clone of a sensor.">TPMS Burst</button>
       <button class="icon-btn" id="scanBtn" type="button" title="Sweep 300-470 MHz and plot signal strength against frequency, to find which band a device is transmitting on. Pauses the live monitor while it runs; press again to stop.">Scan</button>
       <button class="icon-btn" id="recBtn" type="button" title="Log every reading to record_log.csv for offline analysis. Stays on while you change band, modulation or data rate, so one file can cover a whole tuning session.">Record</button>
       <button class="icon-btn" id="pauseBtn" type="button" title="Freeze the chart so you can read it. Data keeps streaming and being logged underneath; press again to resume.">Pause</button>
@@ -509,7 +509,7 @@
       <div class="freq-select">
         <span class="meta-label">Band</span>
         <div class="segmented" id="freqSeg">
-          <button class="seg-btn active" data-mhz="315" type="button" title="315 MHz - most North-American car key fobs, TPMS tyre sensors, and many gate/garage remotes.">315 MHz</button>
+          <button class="seg-btn active" data-mhz="315" type="button" title="315 MHz - most North-American car key fobs, TPMS tire sensors, and many gate/garage remotes.">315 MHz</button>
           <button class="seg-btn" data-mhz="433.92" type="button" title="433.92 MHz - European and Asian key fobs, gate and garage remotes, weather stations, and TPMS in some regions.">433.92 MHz</button>
         </div>
         <span class="meta-label">Modulation</span>
@@ -518,7 +518,7 @@
              mode for the moment before the first /data poll and invites a
              click to "fix" a mode that was never wrong. -->
         <div class="segmented" id="modSeg">
-          <button class="seg-btn" data-mod="0" type="button" title="2-FSK (frequency shift keying). Use for TPMS tyre sensors and FSK car fobs - Nissan, Mazda, Honda and Toyota tyre sensors are commonly FSK at 315 MHz. Best paired with the 10k data rate.">FSK</button>
+          <button class="seg-btn" data-mod="0" type="button" title="2-FSK (frequency shift keying). Use for TPMS tire sensors and FSK car fobs - Nissan, Mazda, Honda and Toyota tire sensors are commonly FSK at 315 MHz. Best paired with the 10k data rate.">FSK</button>
           <button class="seg-btn active" data-mod="2" type="button" title="ASK/OOK (amplitude keying). Use for nearly every simple key fob, gate/garage remote and fixed-code remote. Start at the 10k data rate.">ASK/OOK</button>
         </div>
         <span class="meta-label">Data rate</span>
@@ -559,7 +559,7 @@
             <span class="filter-label">Type</span>
             <div class="segmented segmented-sm" id="typeFilter">
               <button class="seg-btn active" data-v="all" type="button" title="Show both sustained transmissions and brief blips.">All</button>
-              <button class="seg-btn" data-v="signal" type="button" title="Show only sustained transmissions - a device that keeps transmitting, like a fob held down or a tyre sensor.">Signal</button>
+              <button class="seg-btn" data-v="signal" type="button" title="Show only sustained transmissions - a device that keeps transmitting, like a fob held down or a tire sensor.">Signal</button>
               <button class="seg-btn" data-v="noise" type="button" title="Show only brief blips - handy for seeing what the Signal filter is throwing away.">Noise</button>
             </div>
           </div>
@@ -580,8 +580,8 @@
               <th>Time</th>
               <th>ID</th>
               <th>Code</th>
-              <th title="Shortest pulse measured in the capture, in microseconds. One over this is a rough symbol rate: a slow fixed-code remote comes out at hundreds of us, a fast tyre sensor at tens.">Pulse</th>
-              <th title="Time since the previous transmission on this frequency. A tyre sensor repeats metronomically (around 60 s); a fob press is sporadic. This separates your own gear from a city full of other people's far better than signal strength does.">Repeat</th>
+              <th title="Shortest pulse measured in the capture, in microseconds. One over this is a rough symbol rate: a slow fixed-code remote comes out at hundreds of us, a fast tire sensor at tens.">Pulse</th>
+              <th title="Time since the previous transmission on this frequency. A tire sensor repeats metronomically (around 60 s); a fob press is sporadic. This separates your own gear from a city full of other people's far better than signal strength does.">Repeat</th>
               <th title="How many times the device retransmitted inside the capture (frames separated by a real ~5 ms gap). A fixed-code fob held down repeats the same frame over and over; a one-shot device or a passing car sends a single burst.">Bursts</th>
               <th>Peak</th>
               <th>Duration</th>
@@ -750,7 +750,7 @@ function draw() {
 var filters = { band: 'all', type: 'all', level: 'all' };
 
 // Signal-over-time view while the sweep is active: one line per frequency,
-// all drawn at once. Each line's COLOUR encodes its FREQUENCY (blue=300 MHz,
+// all drawn at once. Each line's COLOR encodes its FREQUENCY (blue=300 MHz,
 // red=470 MHz) and its HEIGHT is the dBm at that frequency. When a fob
 // transmits, its frequency's line spikes above the rest.
 function drawSweep() {
@@ -782,7 +782,7 @@ function drawSweep() {
 
   // The scan_history is in sweep order (300 -> 470 MHz every ~24 ms), so
   // connecting consecutive samples in time gives a continuous trace. Each
-  // short segment is coloured by the frequency it was measured at; the line
+  // short segment is colored by the frequency it was measured at; the line
   // breaks when the sweep folds back (470 -> 300) so each pass is its own line.
   ctx.lineWidth = 1.5;
   ctx.lineJoin = 'round';

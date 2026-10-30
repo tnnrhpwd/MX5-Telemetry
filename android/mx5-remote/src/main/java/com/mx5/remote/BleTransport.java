@@ -64,7 +64,7 @@ final class BleTransport extends BtTransport {
      * the app is never told. The connection therefore stayed busy for ever after the first
      * chunk, and every later chunk was refused with 201 no matter how long it retried.
      *
-     * A write *command* needs no acknowledgement, so nothing is left outstanding and the
+     * A write *command* needs no acknowledgment, so nothing is left outstanding and the
      * next chunk can follow. The Pi's reply to the request is what confirms the bytes
      * arrived, and request() already waits for exactly that. The Pi's RX characteristic
      * accepts both write types so a client that prefers requests still works.

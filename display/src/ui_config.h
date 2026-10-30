@@ -22,7 +22,7 @@
 //
 // The live palette now lives in display/src/ui_core/ui_core.h as the runtime
 // ThemePalette (so the display can follow the phone app's scheme). These copies
-// are kept only for old references; do not add colour to this file, or the
+// are kept only for old references; do not add color to this file, or the
 // display will end up with two ideas of what the theme is.
 // =============================================================================
 // Helper macro to convert RGB888 to RGB565

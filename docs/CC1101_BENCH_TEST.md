@@ -41,7 +41,7 @@ drawn in this project.
 - Remove the mechanical variable: solder the modules down, or fit good sockets. The
   readback has flipped between working and broken purely from re-seating.
 - **Gate:** `00` and `14` from both chips, ten consecutive reads, and stable across a re-seat.
-- **Consequence:** on this board, verify configuration **behaviourally** (does changing a
+- **Consequence:** on this board, verify configuration **behaviorally** (does changing a
   setting change the output?) — never by reading registers back.
 
 ### 1. Prove the receive chain against a known signal
@@ -95,7 +95,7 @@ contents you already know. Without this, nothing can distinguish "this fob is un
 - **Receiver as a data output: none obtained.** A known transmission produces no usable capture.
 - **Transmitter: no measurable effect at the receiver** on any setting tried.
 - **Register readback: unusable** (`PARTNUM` = `VERSION`), so it is not evidence either way.
-- Working habits worth keeping: verify behaviourally; **snapshot the capture log before
+- Working habits worth keeping: verify behaviorally; **snapshot the capture log before
   restarting the webapp** (it has been wiped mid-session several times); record the settings
   (`MOD=`, `DRATE=`, `FREQ=`) with every capture.
 

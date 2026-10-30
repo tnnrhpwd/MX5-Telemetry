@@ -167,7 +167,7 @@ Added to `physics` section:
 - **Memory**: +5 MB for audio buffers
 - **Frame Rate**: Solid 60 FPS maintained
 
-## 🔄 Backwards Compatibility
+## 🔄 Backward Compatibility
 
 - All v2.0 car files work in v2.1
 - New physics parameters have defaults if missing

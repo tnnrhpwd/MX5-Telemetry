@@ -62,7 +62,7 @@ public class EngineScreen extends Screen {
         coolant.set(String.valueOf(t.coolantTempF), coolantColor);
         coolantBar.set(coolantFraction, t.coolantTempF + "\u00b0F", coolantColor);
 
-        // Normal values take the theme's text colour. A literal white is invisible on
+        // Normal values take the theme's text color. A literal white is invisible on
         // the light theme, where the tiles are near-white.
         int intakeColor = t.intakeTempF >= 150 ? palette.warn : palette.text;
         intake.set(String.valueOf(t.intakeTempF), intakeColor);

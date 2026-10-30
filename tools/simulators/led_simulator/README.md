@@ -8,7 +8,7 @@ Drag the rpm and watch the bar. Every pixel in that picture is computed by
 ramp table, the same fill geometry, the same truncation.
 
 That matters because the thing you cannot do on a bench with the engine off is judge the
-colour ramp: whether a stop is in a sensible place, whether the "full at" scale makes the
+color ramp: whether a stop is in a sensible place, whether the "full at" scale makes the
 bar feel quick enough, whether the shift point lands where you expect. This is the tool for
 that.
 
@@ -28,11 +28,11 @@ Windows: double-click [`LED_Simulator.bat`](LED_Simulator.bat), or run
 | **Strip on** | off = the strip goes dark; decoding is unaffected | `CFG:en=` |
 | **Brightness** | 0-255, applied the way `show()` applies it | `CFG:bright=` |
 | **Fill pattern** | Center out / Left→right / Right→left / Center in | `SEQ:` |
-| **Gradient / Wash** | per-LED gradient vs one wash of colour | `CFG:mode=` |
+| **Gradient / Wash** | per-LED gradient vs one wash of color | `CFG:mode=` |
 | **Theme dim** | dark-mode dimming (170/255) | `CFG:theme=` |
 | **Full at** | the rpm at which the strip is completely lit | last `RAMP:` stop |
-| **Stop colours 1-6** | the ramp itself | `RAMP:` |
-| **Shift light** | start rpm, flash rate, colour | `CFG:shift/hz/scol=` |
+| **Stop colors 1-6** | the ramp itself | `RAMP:` |
+| **Shift light** | start rpm, flash rate, color | `CFG:shift/hz/scol=` |
 | **Self test / Identify** | the two bench patterns | `SELFTEST`, `IDENTIFY` |
 | **CAN: online / dead** | the CAN-offline pattern (two orange pixels at 1 Hz) | `!canInitialized` |
 | **No engine frames** | the error scanner | `displayErrorMode` |
@@ -40,7 +40,7 @@ Windows: double-click [`LED_Simulator.bat`](LED_Simulator.bat), or run
 | **LEDs** | how many pixels the strip has | `LED_COUNT` build flag |
 
 Keys: `Up`/`Down` ±100 rpm, `PageUp`/`PageDown` ±500, `Home`/`End` for 0 and full,
-`Space` sweeps, `S` cycles the fill pattern, `M` toggles the colour mode, `E` the strip,
+`Space` sweeps, `S` cycles the fill pattern, `M` toggles the color mode, `E` the strip,
 `T` self test, `I` identify, `Esc` quits.
 
 **RPM smoothing** runs every rendered value through the firmware's own asymmetric filter
@@ -51,7 +51,7 @@ response.
 ## Starting from the car's real settings
 
 With the Pi reachable, this loads what the strip is actually configured with — ramp,
-brightness, fill pattern, colour mode, shift light — so you are looking at your car rather
+brightness, fill pattern, color mode, shift light — so you are looking at your car rather
 than at the defaults:
 
 ```bash
@@ -84,9 +84,9 @@ compiles it with MSVC. Then it drives both that binary and the port and requires
 pixel of every frame to match exactly**:
 
 - **1524 cases, 2724 frames**, at **LED counts 5, 20 and 21**. Odd widths matter: at 21 the
-  centre pixel has no partner, and the firmware's mirrored geometry leaves it dark at full
+  center pixel has no partner, and the firmware's mirrored geometry leaves it dark at full
   rpm — a quirk the port has to reproduce, not fix.
-- Every fill pattern, both colour modes, dim on and off, five "full at" scales, and **eight
+- Every fill pattern, both color modes, dim on and off, five "full at" scales, and **eight
   ramps** including out-of-order and duplicated stops. A descending table makes the later
   stops unreachable (the lookup returns at the first stop at or above the request), and the
   Pi accepts any order, so that is reachable in the car.
@@ -139,7 +139,7 @@ being shown; a ramp that arrived with fewer than six stops silently ignored edit
 
 It is not vacuous: drifting `DIM_SCALE` to 169 makes it exit 1 and name the firmware line.
 
-### 3. What is deliberately *not* modelled
+### 3. What is deliberately *not* modeled
 
 Nothing here changes a pixel, but claiming "identical" without saying this would be
 overclaiming:
@@ -163,7 +163,7 @@ overclaiming:
   point drawn as a dashed line. A stop that never gets reached, or two stops out of order,
   shows up here without touching the rpm at all.
 - **What the firmware computes** is the arithmetic behind the current frame: the fill in
-  LED units, the fractional tip, the colour at the present rpm, and a per-pixel dump you
+  LED units, the fractional tip, the color at the present rpm, and a per-pixel dump you
   can compare against a real strip read back over serial.
 
 ## Legacy versions

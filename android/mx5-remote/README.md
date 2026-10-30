@@ -82,8 +82,8 @@ them from the top bar, **Light/Dark** toggles the mode, and both persist.
 The webapp derives its palette from two seed hues with OKLCH and CSS `color-mix`.
 There is no OKLCH in the Android view toolkit, so `Palette.java` approximates the same
 idea with sRGB blends: the scheme supplies two hues, the mode lifts them for dark and
-sinks them for light, and the surface colours are fixed per mode. It is close enough
-that a scheme is recognisable across both.
+sinks them for light, and the surface colors are fixed per mode. It is close enough
+that a scheme is recognizable across both.
 
 Alert stays orange in every scheme, matching the standard's rule that the alert hue
 must not follow the decor.

@@ -24,7 +24,7 @@ import android.widget.TextView;
  *     picking its own. The eyebrow and caption sizes carry letter spacing so they read
  *     as labels rather than as small text.
  *
- * Everything is built in code because almost every colour is derived from the runtime
+ * Everything is built in code because almost every color is derived from the runtime
  * palette, so a theme or scheme change simply rebuilds the screen.
  *
  * Note on sizing: unlike the webapp there is no `--nav-size` unit here, and that is
@@ -238,7 +238,7 @@ public final class Ui {
 
     /**
      * A titled surface. The head is an accent wash, so each panel announces its own
-     * colour and the eye can find a panel without reading it.
+     * color and the eye can find a panel without reading it.
      */
     public static class Panel extends LinearLayout {
 
@@ -308,7 +308,7 @@ public final class Ui {
      */
     public static class Stat extends LinearLayout {
 
-        /** Severity of a value, for colouring it from the palette. */
+        /** Severity of a value, for coloring it from the palette. */
         public static final int OK = 0, CAUTION = 1, FAULT = 2;
 
         private final TextView value;
@@ -321,7 +321,7 @@ public final class Ui {
         public Stat(Context c, Palette p, String captionText, String unitText) {
             super(c);
             setOrientation(VERTICAL);
-            // Centres the caption and value as a block, so a tile that has been given
+            // Centers the caption and value as a block, so a tile that has been given
             // extra height reads as a card rather than as text stuck to the top.
             setGravity(Gravity.CENTER_VERTICAL);
             setBackground(rounded(c, p.tile, 9f));
@@ -363,9 +363,9 @@ public final class Ui {
         }
 
         /**
-         * Sets the value and colours it by severity, drawing the colours from the palette.
-         * A value coloured with a hardcoded white is legible on the dark theme and
-         * invisible on the light one, so severity rather than colour is what callers say.
+         * Sets the value and colors it by severity, drawing the colors from the palette.
+         * A value colored with a hardcoded white is legible on the dark theme and
+         * invisible on the light one, so severity rather than color is what callers say.
          */
         public void setLevel(String text, int severity) {
             value.setTextColor(severity == FAULT ? faultColor

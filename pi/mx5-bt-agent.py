@@ -22,7 +22,7 @@ there is only a single thing running.
    nothing beyond an encrypted link.
 
 2. HOLD THE ADAPTER DEVICE CLASS
-   bluetoothd clears the class while it initialises the adapter, and BlueZ 5.50 does not
+   bluetoothd clears the class while it initializes the adapter, and BlueZ 5.50 does not
    persist it: no Class key is ever written to /var/lib/bluetooth/<id>/settings (checked
    - the key is simply absent), and Class in /etc/bluetooth/main.conf is misapplied as
    0x00000100. A class of 0x000000 is not cosmetic: Android filters class-0 devices out
@@ -72,11 +72,11 @@ class Agent(dbus.service.Object):
 
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="")
     def RequestAuthorization(self, device):
-        log.info("auto-authorising %s", device)
+        log.info("auto-authorizing %s", device)
 
     @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
-        log.info("auto-authorising service %s for %s", uuid, device)
+        log.info("auto-authorizing service %s for %s", uuid, device)
 
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
     def RequestPinCode(self, device):
@@ -90,7 +90,7 @@ class Agent(dbus.service.Object):
 
     @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
     def Cancel(self):
-        log.info("pairing cancelled")
+        log.info("pairing canceled")
 
 
 def register_agent(bus):

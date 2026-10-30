@@ -317,7 +317,7 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print()
-        print_info("Diagnostic cancelled")
+        print_info("Diagnostic canceled")
     except Exception as e:
         print_error(f"Diagnostic failed: {e}")
         import traceback

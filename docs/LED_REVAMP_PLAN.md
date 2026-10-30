@@ -1,6 +1,6 @@
 # LED strip revamp — plan
 
-**Status:** **Phases 0–3 are done; Phase 4 is partially in (shift light, colour mode).**
+**Status:** **Phases 0–3 are done; Phase 4 is partially in (shift light, color mode).**
 See [§4.1](#41-what-is-already-implemented) for exactly what is in the firmware, the Pi
 and the app right now.
 **Supersedes:** the "Fixed" verdict on
@@ -40,7 +40,7 @@ idle pattern while the car is being driven.
 | # | Fault | Effect |
 |---|-------|--------|
 | S1 | The app's **Brightness** slider writes `settings.brightness`, which only drives the *Pi display*. The Nano reads a pot on `A6` with no pull-up (`ENABLE_BRIGHTNESS true`, [main.cpp](../arduino/src/main.cpp#L83)) | Strip brightness is random/uncontrollable from the phone; the app appears broken |
-| S2 | Only one setting ever reaches the Nano: `SEQ:n` (`_send_led_sequence_to_arduino()`) | Zone boundaries, colours, redline and shift point are compile-time `#define`s |
+| S2 | Only one setting ever reaches the Nano: `SEQ:n` (`_send_led_sequence_to_arduino()`) | Zone boundaries, colors, redline and shift point are compile-time `#define`s |
 | S3 | The Pi **never reads** the Nano's serial output (`arduino_serial` is write-only) | No health, no version, no error — a dead strip is indistinguishable from a working one |
 | S4 | The Pi has **no settings file** (`Settings` is a dataclass with defaults, nothing persisted) | Every restart reverts to defaults unless the Nano's EEPROM disagrees |
 | S5 | `SEQUENCE` names are duplicated in three places: `main.py`, `LCD`/tft screen list, Android `SettingsScreen.LED_NAMES` | Easy to drift |
@@ -52,10 +52,10 @@ idle pattern while the car is being driven.
 - **G1 — Never silent.** Every failure state has its own unmistakable pattern
   (boot, CAN offline, no Pi, bad config). A dead strip must not look like idle.
 - **G2 — Everything tunable is a setting**, not a `#define`: brightness, ramp stops,
-  fill sequence, colour mode, shift light, idle/error behaviour, strip length.
+  fill sequence, color mode, shift light, idle/error behavior, strip length.
 - **G3 — The Android app owns the UI** (`LED STRIP` screen), edits apply live.
 - **G4 — One source of truth: the Pi.** Phone and ESP32 both write to the Pi; the Pi
-  serialises to the Nano. The Nano keeps reading CAN directly for `<1 ms` latency.
+  serializes to the Nano. The Nano keeps reading CAN directly for `<1 ms` latency.
 - **G5 — Failure is visible in the app too**: "LED strip: OK / no CAN / not answering".
 
 ### 2.1 Owner's requirements (2026-10-30, verbatim intent)
@@ -65,33 +65,33 @@ design answer each one gets. They extend G2/G3 rather than replace them.
 
 | # | Requirement | Design answer |
 |---|---|---|
-| R1 | **Follow the app's colour scheme.** The strip should use the same colours as the Android app's active theme, and be **dimmer in dark mode, brighter in light mode**. | The phone already owns the theme (`theme_scheme`, `theme_dark` are mirrored to the Pi). The Pi derives the ramp from the theme palette plus a day/night brightness factor and sends it as one `CFG:`+`RAMP:` burst. The app gets a **Follow theme** switch; off = the fixed colour/brightness sliders (R2). |
-| R2 | **Hard colour + brightness settings** as the alternative to R1. | Six editable ramp stops + one brightness value, already in the plan (§6.3, §7.3). The switch in R1 decides which source wins. |
+| R1 | **Follow the app's color scheme.** The strip should use the same colors as the Android app's active theme, and be **dimmer in dark mode, brighter in light mode**. | The phone already owns the theme (`theme_scheme`, `theme_dark` are mirrored to the Pi). The Pi derives the ramp from the theme palette plus a day/night brightness factor and sends it as one `CFG:`+`RAMP:` burst. The app gets a **Follow theme** switch; off = the fixed color/brightness sliders (R2). |
+| R2 | **Hard color + brightness settings** as the alternative to R1. | Six editable ramp stops + one brightness value, already in the plan (§6.3, §7.3). The switch in R1 decides which source wins. |
 | R3 | **Configurable RPM scale.** "Set the RPM scale that goes from 1-10 or whatever the range is … so it is fully illuminated at different rpm." | `RPM_FULL` becomes a setting (default 6800, range 2000–8000): the rpm at which the strip is completely full. Every LED therefore represents `RPM_FULL / LEDs-per-side` rpm — lowering it makes the bar more granular and *visibly more responsive*. |
-| R4 | **Smooth colour motion, not instant jumps.** "Change colours more smoothly rather than going from red to blue instantly … over a range of rpm." | New mapping (see 2.2): each lit LED's colour is sampled from *its own share of the current rpm* rather than from a fixed position, so colours **flow** along the strip and every LED's colour changes continuously as rpm changes. Plus a short temporal blend (~80 ms) so a step never snaps. |
+| R4 | **Smooth color motion, not instant jumps.** "Change colors more smoothly rather than going from red to blue instantly … over a range of rpm." | New mapping (see 2.2): each lit LED's color is sampled from *its own share of the current rpm* rather than from a fixed position, so colors **flow** along the strip and every LED's color changes continuously as rpm changes. Plus a short temporal blend (~80 ms) so a step never snaps. |
 | R5 | **Very high refresh, no protocol change.** "The LED rpm is still very delayed compared to even the ESP's displayed rpm … without changing the baud rate." | The strip is already fed at CAN frame rate (~320 fps); the *apparent* delay is granularity plus the `show()` cadence, not the bus. Fix: sample on **every** CAN frame, keep `show()` gated only on an actual pixel change, cut per-frame work (precomputed ramp LUT), drop the 10 ms poll gate, and reduce the falling-RPM filter. Baud rate is untouched — it only carries settings, not rpm. |
 
-### 2.2 Colour mapping — why the current one feels wrong
+### 2.2 Color mapping — why the current one feels wrong
 
-Today each LED owns a **fixed** colour: LED *i* is painted with `ramp(i / (n-1))` and
+Today each LED owns a **fixed** color: LED *i* is painted with `ramp(i / (n-1))` and
 just switches on when rpm passes its threshold. Two consequences the owner noticed:
 
-- The bar is a static rainbow that grows; the *colours* never move, so nothing looks like
+- The bar is a static rainbow that grows; the *colors* never move, so nothing looks like
   it is following the engine.
-- When the leading edge crosses into the next zone, that one pixel changes colour in a
+- When the leading edge crosses into the next zone, that one pixel changes color in a
   single step — "red to blue instantly".
 
-The fix is to make the colour a function of **rpm**, evaluated per LED:
+The fix is to make the color a function of **rpm**, evaluated per LED:
 
 ```
 for each lit LED i, with f = (i - firstLit) / (lastLit - firstLit)   // 0 at the root, 1 at the tip
-    colour(i) = ramp(f * rpm)        // absolute rpm at that share of the bar
+    color(i) = ramp(f * rpm)        // absolute rpm at that share of the bar
 ```
 
-Now the tip is always `ramp(rpm)` (the true current colour), the root is `ramp(small)`
-(blue), and every LED's colour slides continuously as rpm rises — a gradient that moves.
+Now the tip is always `ramp(rpm)` (the true current color), the root is `ramp(small)`
+(blue), and every LED's color slides continuously as rpm rises — a gradient that moves.
 `ramp()` is a 6-stop linear interpolation over `RPM_FULL`, and a short temporal blend
-between the previous and new colour removes the remaining step at high frame rates.
+between the previous and new color removes the remaining step at high frame rates.
 
 ---
 
@@ -105,7 +105,7 @@ grew a `STATUS` line — reported:
 STATUS:CAN=1,RPM=0,SEQ=1,ERR=0,FPS=305,LAST=0x201
 ```
 
-That is a **healthy** strip: MCP2515 initialised, ~320 CAN frames/second arriving, the
+That is a **healthy** strip: MCP2515 initialized, ~320 CAN frames/second arriving, the
 engine frame `0x201` being decoded, `ERR=0`. Driving the strip with the firmware's new
 bench override then lit **all 20 LEDs in a full gradient at 6500 rpm**. So the LED chain
 was never broken; what was broken was that *nothing said so*, and the "always blue"
@@ -132,7 +132,7 @@ Nothing else in this plan is worth doing until we know *why* the strip is blue.
 | Change | Detail |
 |---|---|
 | Watchdog ungate | `if (!canInitialized \|\| (nowMs - lastCANData > TIMEOUT_MS))` and a distinct **CAN OFFLINE** pattern, not the scanner |
-| Boot status | On boot, one LED shows a colour code: green = CAN init OK, orange = CAN init failed |
+| Boot status | On boot, one LED shows a color code: green = CAN init OK, orange = CAN init failed |
 | Heartbeat | A single dim pixel at position `LED_COUNT-1` blinks 1 Hz while the firmware is alive (proves "alive but no data" vs "not powered") |
 | Serial report | Nano prints `STATUS:CAN=1,RPM=812,SEQ=1,ERR=0,FPS=320,LAST=0x201,FULL=6800,DIM=0` at 1 Hz. Harmless today (Pi ignores it) and the foundation for Phase 2 |
 | Remove the pot | `ENABLE_BRIGHTNESS false` until a pot is actually fitted and pull-upped; brightness comes from the app |
@@ -148,10 +148,10 @@ Done and verified on the car:
 |---|---|
 | Watchdog ungated + `drawCanOffline()` (orange blink) | ✅ in firmware |
 | `STATUS:` line with `CAN, RPM, SEQ, ERR, FPS, LAST, FULL, DIM[, DEMO]` | ✅ in firmware, verified at ~320 fps |
-| Runtime colour ramp (`RAMP:`) — 2–6 `<rpm>:<rrggbb>` stops, last stop = full-illumination rpm | ✅ in firmware, verified |
+| Runtime color ramp (`RAMP:`) — 2–6 `<rpm>:<rrggbb>` stops, last stop = full-illumination rpm | ✅ in firmware, verified |
 | `CFG:bright=,theme=,full=,pot=` | ✅ in firmware, verified |
 | `DEMO:<rpm>` / `DEMO:OFF` bench override (self-clearing after 60 s) | ✅ in firmware — this is how the strip was validated with the engine off |
-| Flowing colour mapping (each LED samples its share of the current rpm) + fractional tip | ✅ in firmware |
+| Flowing color mapping (each LED samples its share of the current rpm) + fractional tip | ✅ in firmware |
 | Snappier tracking: `RPM_SNAP_DELTA` 400→250, falling alpha 0.60→0.75 | ✅ in firmware |
 | Pi→Nano link: identity-checked (`PING`/`PONG`), retries through a reset, never grabs the ESP32's port | ✅ in `main.py` |
 | Pi→Nano config forwarding: `led_ramp`, `led_theme_dim`, `led_brightness` settings → `RAMP:`/`CFG:` | ✅ in `main.py` + `link_service.py`, verified through the API |
@@ -159,9 +159,9 @@ Done and verified on the car:
 | A 128-byte serial command buffer (the old 32 truncated a full `RAMP:` line and silently produced a 2-stop ramp capped at 1400 rpm) | ✅ fixed |
 | `CFG:save` / `CFG?` / `CFG:reset` — ramp, dim, brightness and full-illumination rpm survive a power cycle (EEPROM block behind a magic byte + CRC) | ✅ in firmware, **verified across a watchdog reboot**: `full=4200,dim=1,bright=200` + a 3-stop ramp came back identical |
 | The Pi reads the strip's `STATUS:` line and exposes it as `led` in `/api/telemetry` | ✅ live: `{"connected":true,"can":true,"fps":300,"last_id":"0x201","full_rpm":6800,"dim":false,"error":false,"rpm":0}` |
-| `CFG:en=`, `CFG:mode=`, `CFG:shift=`, `CFG:hz=`, `CFG:scol=` — strip enable, colour mode, shift point/rate/colour | ✅ firmware; EEPROM block extended (magic byte bumped to `0x5B`, so an older block is rejected rather than half-read) |
+| `CFG:en=`, `CFG:mode=`, `CFG:shift=`, `CFG:hz=`, `CFG:scol=` — strip enable, color mode, shift point/rate/color | ✅ firmware; EEPROM block extended (magic byte bumped to `0x5B`, so an older block is rejected rather than half-read) |
 | `SELFTEST` / `IDENTIFY` bench commands | ✅ firmware; 4 s white sweep / 3 s magenta blink, both self-clearing |
-| Shift light (whole strip flashes at the configured rpm, rate and colour) and colour mode (per-LED gradient vs single wash) | ✅ firmware — the shift overlay deliberately bypasses the "same rpm, nothing to do" repaint gate because it changes with time, not with rpm |
+| Shift light (whole strip flashes at the configured rpm, rate and color) and color mode (per-LED gradient vs single wash) | ✅ firmware — the shift overlay deliberately bypasses the "same rpm, nothing to do" repaint gate because it changes with time, not with rpm |
 | Pi keys `led_enabled`, `led_color_mode`, `led_shift_rpm`, `led_shift_hz`, `led_shift_color` | ✅ `LinkService.update_setting()` validates each (a 400, not a clamp), `/api/status` exposes them, `/api/telemetry.led` carries them back from the strip |
 | `POST /api/led/command` (+ the `led.command` op over Bluetooth) | ✅ allow-list: `SELFTEST`, `IDENTIFY`, `PING`, `CFG?`, `DEMO:<rpm>`, `DEMO:OFF`. `CFG:reset` is deliberately absent — it reboots the board |
 | Pi persistence: `state/led_settings.json` | ✅ written on change, restored on connect; identical payloads are skipped so a drag cannot hammer the disk. `state/` is gitignored |
@@ -227,7 +227,7 @@ Pi side work:
 
 ---
 
-## 6. Behaviour spec v2
+## 6. Behavior spec v2
 
 ### 6.1 States (in precedence order)
 
@@ -235,23 +235,23 @@ Pi side work:
 |---|---|---|---|
 | 1 | OFF | app "Enable" off, or ignition off | all pixels off |
 | 2 | CAN OFFLINE | `!canInitialized` or no frame > 3 s | two edge pixels, orange, triple-flash 1 Hz |
-| 3 | BOOT | power-on | existing startup sweep, then a colour-coded "CAN OK/FAIL" pixel |
+| 3 | BOOT | power-on | existing startup sweep, then a color-coded "CAN OK/FAIL" pixel |
 | 4 | CONFIG ERR | `ERR:CFG` pending | edges blink magenta until the next good `CFG:` |
 | 5 | SHIFT | `rpm >= shiftRpm` | whole strip flashes `shiftColor` at `shiftHz` (default 8 Hz) |
 | 6 | ENGINE OFF | `rpm == 0` and CAN alive | single blue pixel per the selected sequence |
-| 7 | RUNNING | otherwise | ramp fill per sequence + colour mode |
+| 7 | RUNNING | otherwise | ramp fill per sequence + color mode |
 
-### 6.2 Colour modes
+### 6.2 Color modes
 
 - `mode=0` **Position** (default, current look): each LED shows its own place on the ramp,
   so the bar runs blue at the bottom to red at the top and the leading edge always shows
   the RPM it represents.
-- `mode=1` **RPM** (legacy): the whole lit bar takes the colour of the current RPM.
-  Kept because it is one line of code and some people prefer a single wash of colour.
+- `mode=1` **RPM** (legacy): the whole lit bar takes the color of the current RPM.
+  Kept because it is one line of code and some people prefer a single wash of color.
 
 ### 6.3 Default ramp (anchored to the engine, not round numbers)
 
-| RPM | Colour | Why |
+| RPM | Color | Why |
 |---|---|---|
 | 800 | `#00B0FF` | idle |
 | 1400 | `#00DCFF` | pulling away |
@@ -282,20 +282,20 @@ convention), added to the screen list in `MainActivity` next to `new SettingsScr
 | **Strip** | Enable | Pill | on/off | on |
 | | Brightness | SliderRow | 0–255 (shown as %) | 180 |
 | | Fill pattern | Chips | Center out / L→R / R→L / Center in | Center out |
-| | Colour mode | Chips | Position / RPM | Position |
-| **Ramp** | 6 × (RPM + colour) | Slider + swatch | 500–7500, 100 rpm steps | see §6.3 |
+| | Color mode | Chips | Position / RPM | Position |
+| **Ramp** | 6 × (RPM + color) | Slider + swatch | 500–7500, 100 rpm steps | see §6.3 |
 | | Reset to defaults | Button | — | — |
 | **Shift light** | Start RPM | SliderRow | 3000–7500 | 6300 |
 | | Flash rate | SliderRow | 2–15 Hz | 8 |
-| | Colour | Swatch | — | red |
+| | Color | Swatch | — | red |
 | **Diagnostics** | Status line | Text | `CAN ok · 812 rpm · fw v2` / `no CAN` / `not answering` | — |
 | | Run self-test | Button | sends `SELFTEST` | — |
 | | Identify strip | Button | sends `IDENTIFY` | — |
 
 ### 7.2 Rules
 
-- Colour pickers are a compact 8-swatch grid (red/orange/yellow/green/cyan/blue/white/purple),
-  not a full HSV wheel — the strip has 8-bit colour and a driver has no business with a
+- Color pickers are a compact 8-swatch grid (red/orange/yellow/green/cyan/blue/white/purple),
+  not a full HSV wheel — the strip has 8-bit color and a driver has no business with a
   hue wheel at 70 mph.
 - **Live preview:** while dragging a ramp RPM slider, push on release only (not per-tick) to
   keep the 9600 baud link from queueing.
@@ -365,7 +365,7 @@ is doing instead of lying in blue — so it is worth shipping before the rest.
   numbers and `parity_check.py` the logic.
 - **Unit-ish:** move the ramp/geometry maths into a header that the `native_sim` env can
   compile ([test/test_telemetry.cpp](../test/test_telemetry.cpp) already runs on the host).
-  Assert: bar length is monotonic in rpm, colour at a stop equals the stop colour,
+  Assert: bar length is monotonic in rpm, color at a stop equals the stop color,
   `shiftRpm > redline` is rejected. *(Partly covered: `parity_check.py` compiles the real
   functions with MSVC and compares them against the port, but nothing yet asserts these
   properties of the compiled firmware in CI.)*
@@ -381,7 +381,7 @@ is doing instead of lying in blue — so it is worth shipping before the rest.
 | Risk | Mitigation |
 |---|---|
 | Writing to the car's HS-CAN from the Nano | It stays `MCP_LISTENONLY`; nothing in this plan transmits |
-| Flash size on the ATmega328P (already `-Os`, 20 LEDs, gradient maths) | Config parser and colour table must fit; the `native_sim` build catches size regressions early, and if needed the EEPROM-stored ramp is 6 entries, not a table of 20 |
+| Flash size on the ATmega328P (already `-Os`, 20 LEDs, gradient maths) | Config parser and color table must fit; the `native_sim` build catches size regressions early, and if needed the EEPROM-stored ramp is 6 entries, not a table of 20 |
 | 9600 baud is slow (~960 B/s) | `CFG:` bursts are rare; `BRIGHT` is rate-limited; `STATUS:` is 1 Hz and TX-only |
 | Two writers (phone + ESP32) | The Pi is authoritative and the last write wins; the app re-reads state on focus |
 | App and firmware drift | Version byte in `STATUS`; the app disables controls it cannot verify |

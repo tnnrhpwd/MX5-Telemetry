@@ -18,11 +18,11 @@
     --white0: #f4f7fd;
     --white1: #faf7fb;
     --dark-blue0: #101b22;
-    --grey0: #e0e2e8;
-    --grey1: #bbbdc2;
-    --grey3-accessible: #4a4a4d;
-    --grey5: #151516;
-    --grey6: #353535;
+    --gray0: #e0e2e8;
+    --gray1: #bbbdc2;
+    --gray3-accessible: #4a4a4d;
+    --gray5: #151516;
+    --gray6: #353535;
     --red0: #dc0000;
     --link-color-accessible: #0066cc;
     --link-color-dark-accessible: #4da6ff;
@@ -89,7 +89,7 @@ body.light-theme {
     --fg-mint: rgb(0, 193, 193);
 
     --text-color: var(--dark-blue0);
-    --text-color-accent: var(--grey3-accessible);
+    --text-color-accent: var(--gray3-accessible);
     --text-color-inv: #ffffff;
     --border-nav: #7a7a7d;
 
@@ -120,7 +120,7 @@ body.light-theme {
 }
 
 body.dark-theme {
-    --bg-page: var(--grey5);
+    --bg-page: var(--gray5);
     --bg-1: rgba(45, 45, 46, 0.95);
     --bg-accent: rgb(58, 58, 61);
     --bg-orange: rgb(98, 63, 0);
@@ -177,7 +177,7 @@ body.dark-theme {
 
     /* The one action ramp: two stops INSIDE the scheme's primary hue, re-pinned
        in lightness so the label clears AA. The plain line is the fallback for a
-       browser without relative colour syntax. */
+       browser without relative color syntax. */
     --action: linear-gradient(135deg, var(--scheme-primary), var(--fg-pink));
     --action: linear-gradient(
         135deg,
@@ -209,7 +209,7 @@ body[data-scheme] {
     --scheme-l-primary: var(--scheme-l);
     --scheme-c-primary: var(--scheme-c);
 
-    /* Plain lines first: the fallback for a browser without relative colour
+    /* Plain lines first: the fallback for a browser without relative color
        syntax. The oklch lines are the real ones. */
     --scheme-accent: var(--scheme-hue-accent);
     --scheme-primary: var(--scheme-hue-primary);
@@ -250,7 +250,7 @@ body[data-scheme='forest']    { --scheme-hue-accent: #4d8c57; --scheme-hue-prima
 
 /* The one scheme with no hue at all, so its two roles are told apart by
    LIGHTNESS instead: the primary is pushed away from the page. `--scheme-c: 0`
-   is the load-bearing line and it has to be in BOTH blocks, or a grey handed
+   is the load-bearing line and it has to be in BOTH blocks, or a gray handed
    chroma at hue 0 comes out pink in dark mode. */
 body[data-scheme='neutral'] {
     --scheme-hue-accent: #808080;
@@ -422,7 +422,7 @@ button, input, select { font: inherit; color: inherit; }
 
 /* --------------------------------------------------------------- 7 panes */
 /* A pane is translucent land with its head a saturated plane of the scheme's
-   ACCENT, so every pane on the page is the same colour and changing scheme
+   ACCENT, so every pane on the page is the same color and changing scheme
    moves all of them together. The blocks are kept apart by a TONE step rather
    than a second hue: the panes already sit apart on the room with a gap
    between them, and one hue across all three is the look that was asked for. */

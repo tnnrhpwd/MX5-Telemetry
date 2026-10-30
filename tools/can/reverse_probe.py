@@ -4,7 +4,7 @@
 Why this exists
 ---------------
 The Pi detects reverse from a negative speed in `0x201`, and the car does not do that:
-driving backwards still reports a positive speed, so the gear estimator picks 1st and
+driving backward still reports a positive speed, so the gear estimator picks 1st and
 the ESP never shows `R`. Guessing which frame carries reverse is not realistic - the
 NC's backup-lamp switch is reported by a body module, not by the engine ECU - so this
 tool records the bus twice and reports exactly which bytes changed between the two

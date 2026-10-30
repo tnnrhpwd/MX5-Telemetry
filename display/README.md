@@ -14,7 +14,7 @@ The large gear character (`R`, `N`, `C`, `S`, `1`–`6`, `-`) is set in a real
 typeface, not in the bitmap text fonts and not in hand-drawn strokes.
 
 [`gear_font.h`](src/ui_core/gear_font.h) holds 8-bit coverage masks that were
-rasterised from **Arimo** 700 — the SIL Open Font License design that is
+rasterized from **Arimo** 700 — the SIL Open Font License design that is
 metric-compatible with Arial. Arial itself is Monotype-proprietary and cannot be
 embedded, so Arimo supplies the same letterforms and the same widths.
 
@@ -35,7 +35,7 @@ Get `Arimo[wght].ttf` from <https://github.com/google/fonts/tree/main/ofl/arimo>
 The generator re-derives the em size from the cap height, condenses horizontally
 just enough for the widest letter to fit the cell, and fails loudly if any glyph
 would be clipped. `Arimo-OFL.txt` must ship with the firmware — it is the
-licence for the embedded letterforms.
+license for the embedded letterforms.
 
 The focused simulator (`tools/simulators/native`) renders the real code, so glyph
 changes can be checked on the desktop.
@@ -52,7 +52,7 @@ The G-Force screen visualizes car dynamics using the QMI8658 IMU (gyroscope + ac
      │                 │
      │   ┌─────────┐   │
      │   │  ESP32  │   │  ← Screen faces DRIVER
-     │   │ Display │   │  ← Top points UP (towards roof)  
+     │   │ Display │   │  ← Top points UP (toward roof)  
      │   │         │   │  ← USB port points DOWN
      │   └─────────┘   │
      │                 │
@@ -113,8 +113,8 @@ The bottom info box shows:
 Mounting & Axis Mapping:
   - ESP32 is VERTICAL: screen faces driver, USB port down, top points up
   - IMU Y-axis → Car Z-axis (both point up)
-  - IMU Z-axis → Car -Y-axis (Z points back towards driver, Y forward)
-  - IMU X-axis → Car X-axis (both point right towards passenger)
+  - IMU Z-axis → Car -Y-axis (Z points back toward driver, Y forward)
+  - IMU X-axis → Car X-axis (both point right toward passenger)
 
 Orientation Tracking (Position):
   - Gyroscope data (°/sec) is integrated over time to get pitch/roll in degrees

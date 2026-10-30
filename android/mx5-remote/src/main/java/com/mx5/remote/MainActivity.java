@@ -575,7 +575,7 @@ public class MainActivity extends Activity implements Screen.Host {
     /**
      * The way out.
      *
-     * Tinted with the alert colour rather than the neutral chip, because it is the one control
+     * Tinted with the alert color rather than the neutral chip, because it is the one control
      * in this row that is not a cosmetic toggle and should not be mistaken for one. It sits at
      * the far right edge, which is both the conventional place for a close and the easiest
      * target to reach without looking away from the road.
@@ -863,7 +863,7 @@ public class MainActivity extends Activity implements Screen.Host {
      * Mirror the app's scheme and dark/light mode onto the Pi.
      *
      * The Pi caches settings for the ESP32, so this is what makes the round display
-     * follow the phone: the Pi forwards it as THEME:<scheme>,<0|1> and the ESP keeps
+     * follow the phone: the Pi forward it as THEME:<scheme>,<0|1> and the ESP keeps
      * it in NVS. Without a phone ever connecting, both default to dark aurora.
      *
      * Fire-and-forget on a worker thread - a theme change must never wait on the
@@ -873,7 +873,7 @@ public class MainActivity extends Activity implements Screen.Host {
         final String scheme = schemeId;
         final int darkFlag = dark ? 1 : 0;
         // Following the theme is the default; the LED screen can switch it off, in which
-        // case the strip keeps whatever hard colours the user picked.
+        // case the strip keeps whatever hard colors the user picked.
         final boolean followTheme = prefs == null || prefs.getBoolean("led_follow_theme", true);
         final String ramp = followTheme ? ledRampFor(Palette.of(scheme, dark)) : null;
         new Thread(() -> {
@@ -894,9 +894,9 @@ public class MainActivity extends Activity implements Screen.Host {
     }
 
     /**
-     * The LED strip's colour ramp for a palette, as the firmware's RAMP: payload.
+     * The LED strip's color ramp for a palette, as the firmware's RAMP: payload.
      *
-     * The phone owns the colours, so it sends them rather than letting the Pi keep a
+     * The phone owns the colors, so it sends them rather than letting the Pi keep a
      * second copy of every scheme. Stops are (rpm:rrggbb) pairs ordered by rpm; the last
      * one is also the rpm at which the strip is completely full, so "fully lit" tracks
      * the theme's redline rather than a hardcoded 6800.
@@ -906,15 +906,15 @@ public class MainActivity extends Activity implements Screen.Host {
      * of being an unrelated rainbow bolted onto it.
      */
     private static String ledRampFor(Palette p) {
-        int[] colours = {p.accent, p.primary, p.good, p.warn, p.bad, p.alert};
+        int[] colors = {p.accent, p.primary, p.good, p.warn, p.bad, p.alert};
         int[] rpms = {0, 1400, 2800, 4500, 5800, 6800};
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < colours.length; i++) {
+        for (int i = 0; i < colors.length; i++) {
             if (i > 0) {
                 sb.append(',');
             }
             sb.append(rpms[i]).append(':')
-              .append(String.format("%06X", colours[i] & 0xFFFFFF));
+              .append(String.format("%06X", colors[i] & 0xFFFFFF));
         }
         return sb.toString();
     }
@@ -1227,7 +1227,7 @@ public class MainActivity extends Activity implements Screen.Host {
         // Coming back into view clears the failure backoff and any transport cooldown. The
         // Pi may well have been power-cycled while the app was hidden, and making the first
         // poll of a resume wait out a timer that built up in the background is exactly the
-        // "stuck, close it and reopen" behaviour this link used to have.
+        // "stuck, close it and reopen" behavior this link used to have.
         if (pi != null) {
             pi.clearBackoff();
         }

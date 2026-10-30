@@ -63,7 +63,7 @@ class BleServer:
         self.chunk_bytes = chunk_bytes
 
         # One session for the peripheral. A BLE central disconnecting is not always
-        # signalled, so the session is reset when a new central connects (see _on_connect).
+        # signaled, so the session is reset when a new central connects (see _on_connect).
         from link_protocol import StreamLink
         self.link = StreamLink(service, token, require_token, label='ble')
 
@@ -167,9 +167,9 @@ class BleServer:
         # occupies the client's single GATT operation slot until its own write callback
         # arrives, and on at least one phone that callback never comes, so the connection
         # stayed busy for ever after the first chunk and every later chunk was refused.
-        # A write *command* needs no acknowledgement, so nothing is left outstanding. The
+        # A write *command* needs no acknowledgment, so nothing is left outstanding. The
         # protocol already replies to the request itself, so dropping the ATT-level
-        # acknowledgement costs nothing.
+        # acknowledgment costs nothing.
         await self._server.add_new_characteristic(
             SERVICE_UUID, RX_UUID,
             GATTCharacteristicProperties.write

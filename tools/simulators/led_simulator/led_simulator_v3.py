@@ -3,11 +3,11 @@
 
 This replaces the v1/v2 simulators, which drew a six-state program (white pepper, steady
 green edges, orange stall pulse, red flashing gap) that no longer exists in the firmware.
-The shipping strip has a runtime colour ramp the phone can replace, and every frame here
+The shipping strip has a runtime color ramp the phone can replace, and every frame here
 comes from `led_engine.py`, which is a line-by-line port of `arduino/src/main.cpp`.
 
 The point of the tool is the one thing you cannot do on a bench with the engine off:
-drag the RPM around and watch the bar, so the colour ramp, the fill pattern, the "full at"
+drag the RPM around and watch the bar, so the color ramp, the fill pattern, the "full at"
 scale and the shift point can be judged before they are flashed.
 
     python led_simulator_v3.py                  # 20 LEDs, defaults from the firmware
@@ -16,7 +16,7 @@ scale and the shift point can be judged before they are flashed.
                                                 # start from the car's live settings
 
 Keys: Up/Down 100 rpm, PageUp/PageDown 500 rpm, Home/End 0 and full, Space sweeps,
-S sequences, M colour mode, E enable, T self test, I identify, Esc quits.
+S sequences, M color mode, E enable, T self test, I identify, Esc quits.
 """
 
 from __future__ import annotations
@@ -115,8 +115,8 @@ class StripView(tk.Canvas):
 class RampLegend(tk.Canvas):
     """A picture of the ramp itself, with the stop rpms marked.
 
-    The bar shows the colour the ramp returns at that rpm, evaluated the same way the
-    strip does - so a mis-ordered stop or a colour that never gets reached is obvious
+    The bar shows the color the ramp returns at that rpm, evaluated the same way the
+    strip does - so a mis-ordered stop or a color that never gets reached is obvious
     without moving the RPM slider at all.
     """
 
@@ -135,9 +135,9 @@ class RampLegend(tk.Canvas):
             return
         for offset in range(0, steps, 2):
             rpm = int(cfg.full_rpm * offset / steps)
-            colour = engine.ramp_color_at_rpm(rpm, cfg.ramp)
+            color = engine.ramp_color_at_rpm(rpm, cfg.ramp)
             self.create_rectangle(left + offset, top, left + offset + 2, top + height,
-                                  fill=_hex(colour), outline="")
+                                  fill=_hex(color), outline="")
         self.create_rectangle(left, top, right, top + height, outline=EDGE)
         for rpm, _colour in cfg.ramp:
             x = left + (right - left) * (rpm / cfg.full_rpm if cfg.full_rpm else 0)
@@ -174,7 +174,7 @@ class Slider(tk.Frame):
     """A label, a live value and a track you can drag.
 
     Deliberately not a `tk.Scale`: on Windows that widget paints its thumb in the widget
-    background colour, so on a dark panel the thumb is invisible, and it fires its command
+    background color, so on a dark panel the thumb is invisible, and it fires its command
     for programmatic .set() as well as for real drags. A canvas gives the same control a
     filled track - which reads as "how much of the range is used" at a glance - and makes
     a drag unambiguous.
@@ -183,13 +183,13 @@ class Slider(tk.Frame):
     KNOB = 7
 
     def __init__(self, parent, label: str, low: int, high: int, value: int,
-                 unit: str = "", step: int = 1, on_change=None, colour: str = ACCENT,
+                 unit: str = "", step: int = 1, on_change=None, color: str = ACCENT,
                  width: int = 240):
         super().__init__(parent, bg=CARD)
         self.low, self.high = low, high
         self.step = max(1, step)
         self.unit = unit
-        self.colour = colour
+        self.color = color
         self.on_change = on_change
         self.value = self._snap(value)
         self.dragging = False
@@ -198,7 +198,7 @@ class Slider(tk.Frame):
         row.pack(fill="x", pady=(4, 0))
         tk.Label(row, text=label, bg=CARD, fg=TEXT,
                  font=("Segoe UI", 9)).pack(side="left")
-        self.value_label = tk.Label(row, text="", bg=CARD, fg=colour,
+        self.value_label = tk.Label(row, text="", bg=CARD, fg=color,
                                     font=("Segoe UI", 9, "bold"))
         self.value_label.pack(side="right")
 
@@ -242,9 +242,9 @@ class Slider(tk.Frame):
         self.canvas.create_line(pad, y, width - pad, y, fill="#2f2f36",
                                 width=5, capstyle="round")
         if fraction > 0:
-            self.canvas.create_line(pad, y, x, y, fill=self.colour,
+            self.canvas.create_line(pad, y, x, y, fill=self.color,
                                     width=5, capstyle="round")
-        knob = self.colour if (self.dragging or fraction > 0) else "#4a4a55"
+        knob = self.color if (self.dragging or fraction > 0) else "#4a4a55"
         self.canvas.create_oval(x - self.KNOB, y - self.KNOB, x + self.KNOB, y + self.KNOB,
                                 fill=knob, outline=BG, width=1)
 
@@ -283,10 +283,10 @@ class Chips(tk.Frame):
     """Mutually exclusive chips that carry their own value."""
 
     def __init__(self, parent, names: List[str], values: List[int], value: int,
-                 on_pick, colour: str = ACCENT, columns: int = 2):
+                 on_pick, color: str = ACCENT, columns: int = 2):
         super().__init__(parent, bg=CARD)
         self.names, self.values, self.on_pick = names, values, on_pick
-        self.colour = colour
+        self.color = color
         self.buttons: List[tk.Label] = []
         for index, name in enumerate(names):
             label = tk.Label(self, text=name, bg=CARD, fg=TEXT, padx=8, pady=5,
@@ -306,24 +306,24 @@ class Chips(tk.Frame):
     def select(self, value: int) -> None:
         for index, button in enumerate(self.buttons):
             on = self.values[index] == value
-            button.config(bg=self.colour if on else "#2a2a30",
+            button.config(bg=self.color if on else "#2a2a30",
                           fg="#101014" if on else TEXT)
 
 
 class Swatches(tk.Frame):
-    """Ramp stops, each a colour button that opens a picker.
+    """Ramp stops, each a color button that opens a picker.
 
     There are always six buttons because the app's editor has six stops, but a ramp that
     arrived with fewer (or more) is shown honestly: `set()` only touches the swatches the
     ramp actually has, and the legend draws the real table.
     """
 
-    def __init__(self, parent, colours: List[RGB], on_pick):
+    def __init__(self, parent, colors: List[RGB], on_pick):
         super().__init__(parent, bg=CARD)
         self.on_pick = on_pick
         self.buttons: List[tk.Label] = []
         self.hexes: List[str] = []
-        for index, rgb in enumerate(colours):
+        for index, rgb in enumerate(colors):
             label = tk.Label(self, text=str(index + 1), bg=_hex(rgb), fg="#101014",
                              width=3, pady=4, font=("Segoe UI", 8, "bold"),
                              cursor="hand2")
@@ -334,8 +334,8 @@ class Swatches(tk.Frame):
             self.hexes.append(engine.hex_of(rgb))
 
     @property
-    def colours(self) -> List[RGB]:
-        """The six swatch colours, whatever the live ramp happens to contain."""
+    def colors(self) -> List[RGB]:
+        """The six swatch colors, whatever the live ramp happens to contain."""
         return [engine.rgb_of_hex(value) for value in self.hexes]
 
     def _choose(self, index: int) -> None:
@@ -349,12 +349,12 @@ class Swatches(tk.Frame):
         self.hexes[index] = engine.hex_of(value)
         self.on_pick(index, value)
 
-    def set(self, colours: List[RGB]) -> None:
+    def set(self, colors: List[RGB]) -> None:
         """Show a ramp. Stops the ramp does not have keep their swatch, dimmed."""
         for index, button in enumerate(self.buttons):
-            if index < len(colours):
-                button.config(bg=_hex(colours[index]), fg="#101014")
-                self.hexes[index] = engine.hex_of(colours[index])
+            if index < len(colors):
+                button.config(bg=_hex(colors[index]), fg="#101014")
+                self.hexes[index] = engine.hex_of(colors[index])
             else:
                 button.config(bg=CARD, fg=DIM)
 
@@ -465,7 +465,7 @@ class LedSimulator(tk.Tk):
         self.state_label.pack(side="right")
 
         self.rpm_control = Slider(card, "Engine speed", 0, 8000, 0, " rpm", step=10,
-                                  on_change=self._on_rpm_drag, colour=ACCENT)
+                                  on_change=self._on_rpm_drag, color=ACCENT)
         self.rpm_control.pack(fill="x", pady=(2, 0))
 
         buttons = tk.Frame(card, bg=CARD)
@@ -513,18 +513,18 @@ class LedSimulator(tk.Tk):
         self.enable_button.pack(side="right")
 
         self.brightness = Slider(section.body, "Brightness", 0, 255, 255,
-                                 on_change=self._on_brightness, colour=ACCENT)
+                                 on_change=self._on_brightness, color=ACCENT)
         self.brightness.pack(fill="x")
         self.sequence = Chips(section.body, [SEQUENCE_NAMES[v] for v in
                                              (SEQ_CENTER_OUT, SEQ_LEFT_TO_RIGHT,
                                               SEQ_RIGHT_TO_LEFT, SEQ_CENTER_IN)],
                               [SEQ_CENTER_OUT, SEQ_LEFT_TO_RIGHT,
                                SEQ_RIGHT_TO_LEFT, SEQ_CENTER_IN],
-                              SEQ_CENTER_OUT, self._on_sequence, colour=ACCENT)
+                              SEQ_CENTER_OUT, self._on_sequence, color=ACCENT)
         self.sequence.pack(fill="x", pady=(6, 0))
 
         self.mode = Chips(section.body, ["Gradient", "Wash"], [0, 1], 0,
-                          self._on_mode, colour=PRIMARY)
+                          self._on_mode, color=PRIMARY)
         self.mode.pack(fill="x", pady=(4, 0))
 
         row = tk.Frame(section.body, bg=CARD)
@@ -536,17 +536,17 @@ class LedSimulator(tk.Tk):
         self.dim_button.pack(fill="x")
 
         # -- ramp
-        section = Section(parent, "Colour ramp")
+        section = Section(parent, "Color ramp")
         section.pack(pady=(10, 0))
         self.full_at = Slider(section.body, "Full at", 2000, 8000,
                              self.engine.cfg.full_rpm, " rpm", step=100,
-                             on_change=self._on_full_at, colour=PRIMARY)
+                             on_change=self._on_full_at, color=PRIMARY)
         self.full_at.pack(fill="x")
         self.swatches = Swatches(section.body,
                                  [rgb for _rpm, rgb in self.engine.cfg.ramp],
                                  self._on_stop_colour)
         self.swatches.pack(fill="x", pady=(8, 2))
-        tk.Label(section.body, text="Stop colours 1-6 \u00b7 click to change",
+        tk.Label(section.body, text="Stop colors 1-6 \u00b7 click to change",
                  bg=CARD, fg=DIM, font=("Segoe UI", 7)).pack(anchor="w")
         tk.Button(section.body, text="Reset ramp to firmware defaults", bg="#2a2a30",
                   fg=TEXT, bd=0, relief="flat", font=("Segoe UI", 8), pady=3,
@@ -566,11 +566,11 @@ class LedSimulator(tk.Tk):
         self.shift_button.pack(side="right")
         self.shift_rpm = Slider(section.body, "Start at", 2000, 8000,
                                 self.engine.cfg.shift_rpm, " rpm", step=100,
-                                on_change=self._on_shift_rpm, colour=BAD)
+                                on_change=self._on_shift_rpm, color=BAD)
         self.shift_rpm.pack(fill="x")
         self.shift_hz = Slider(section.body, "Flash rate", 2, 15,
                                self.engine.cfg.shift_hz, " Hz",
-                               on_change=self._on_shift_hz, colour=BAD)
+                               on_change=self._on_shift_hz, color=BAD)
         self.shift_hz.pack(fill="x")
 
         # -- bench
@@ -606,7 +606,7 @@ class LedSimulator(tk.Tk):
                        font=("Segoe UI", 8),
                        command=self._on_smooth).pack(anchor="w")
         self.leds = Slider(section.body, "LEDs", 5, 60, self.engine.cfg.led_count,
-                           step=1, on_change=self._on_led_count, colour=DIM)
+                           step=1, on_change=self._on_led_count, color=DIM)
         self.leds.pack(fill="x")
         if self.pi_address:
             tk.Button(section.body,
@@ -634,7 +634,7 @@ class LedSimulator(tk.Tk):
 
         With smoothing on, `_tick` will run the value through the firmware's filter; a
         large jump snaps either way, and a small one settles over a frame or two, which is
-        the behaviour the checkbox is there to demonstrate.
+        the behavior the checkbox is there to demonstrate.
         """
         self.feed_target = rpm
         self.engine.set_rpm(rpm)
@@ -734,7 +734,7 @@ class LedSimulator(tk.Tk):
     def _on_full_at(self, value: int) -> None:
         """Re-derive the stop rpms exactly as LedScreen.pushRamp() would.
 
-        From the six swatch colours, always - the app's editor has six stops and scaling
+        From the six swatch colors, always - the app's editor has six stops and scaling
         whatever happened to be loaded (a 3-stop ramp from a hand-written RAMP: line, say)
         would reshape it into something the app cannot produce.
         """
@@ -743,9 +743,9 @@ class LedSimulator(tk.Tk):
         self.legend.redraw()
 
     def _swatch_colours(self) -> List[RGB]:
-        return self.swatches.colours
+        return self.swatches.colors
 
-    def _on_stop_colour(self, index: int, colour: RGB) -> None:
+    def _on_stop_colour(self, index: int, color: RGB) -> None:
         """Edit one stop.
 
         Editing is what the app's six swatches do, so a ramp that arrived with fewer stops
@@ -754,7 +754,7 @@ class LedSimulator(tk.Tk):
         """
         stops = list(self.engine.cfg.ramp)
         if index < len(stops):
-            stops[index] = (stops[index][0], colour)
+            stops[index] = (stops[index][0], color)
             self.engine.cfg.ramp = tuple(stops)
         if len(stops) != len(engine.STOP_FRACTIONS):
             self.engine.cfg.ramp = engine.ramp_from_fractions(self.engine.cfg.full_rpm,
@@ -802,10 +802,10 @@ class LedSimulator(tk.Tk):
             cfg.theme_dim = dim != 0
         cfg.shift_rpm = int(settings.get("led_shift_rpm", cfg.shift_rpm) or 0)
         cfg.shift_hz = int(settings.get("led_shift_hz", cfg.shift_hz) or cfg.shift_hz)
-        colour = settings.get("led_shift_color")
-        if isinstance(colour, str) and len(colour) == 6:
+        color = settings.get("led_shift_color")
+        if isinstance(color, str) and len(color) == 6:
             try:
-                cfg.shift_color = engine.rgb_of_hex(colour)
+                cfg.shift_color = engine.rgb_of_hex(color)
             except ValueError:
                 pass
         ramp = settings.get("led_ramp")
@@ -886,20 +886,20 @@ class LedSimulator(tk.Tk):
         self.rpm_label.config(text=str(self.engine.rpm))
         info = self.engine.describe(now)
         if info["shifting"]:
-            state, colour = "SHIFT LIGHT", BAD
+            state, color = "SHIFT LIGHT", BAD
         elif not cfg.enabled:
-            state, colour = "strip off", DIM
+            state, color = "strip off", DIM
         elif self.engine.self_test_mode:
-            state, colour = "self test", PRIMARY
+            state, color = "self test", PRIMARY
         elif not self.engine.can_initialized:
-            state, colour = "CAN dead", BAD
+            state, color = "CAN dead", BAD
         elif self.engine.error_mode:
-            state, colour = "no engine frames", WARN
+            state, color = "no engine frames", WARN
         elif self.engine.rpm == 0:
-            state, colour = "idle", DIM
+            state, color = "idle", DIM
         else:
-            state, colour = "%s \u00b7 %s" % (info["sequence"], info["mode"]), ACCENT
-        self.state_label.config(text=state, fg=colour)
+            state, color = "%s \u00b7 %s" % (info["sequence"], info["mode"]), ACCENT
+        self.state_label.config(text=state, fg=color)
 
         self._paint_readout(frame, info)
 
@@ -908,7 +908,7 @@ class LedSimulator(tk.Tk):
         self.readout.config(text=(
             "fill     %5.2f of %d units\n"
             "rpm      %d / full %d  (%.0f%%)\n"
-            "ramp tip %s  colour at this rpm\n"
+            "ramp tip %s  color at this rpm\n"
             "root     %s  first lit pixel\n"
             "ramp     %d stops" % (
                 info["fill"], info["slots"], self.engine.rpm, cfg.full_rpm,

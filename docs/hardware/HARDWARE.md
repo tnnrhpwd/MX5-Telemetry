@@ -222,7 +222,7 @@ Pi (Central Hub)
 
 | Pin | Signal | Pi CAN Interface | Connects To | Pi4B Wire Color |
 |-----|--------|------------------|-------------|-----------------|
-| 3 | MS-CAN High (125k) | **can0** (spi0.1) | MCP2515 (MS-CAN Pi) CANH | Grey |
+| 3 | MS-CAN High (125k) | **can0** (spi0.1) | MCP2515 (MS-CAN Pi) CANH | Gray |
 | 5 | Ground | - | Breadboard GND rail → All devices | Black |
 | 6 | HS-CAN High (500k) | **can1** (spi0.0) | MCP2515 (HS-CAN Pi) + (HS-CAN Ard) CANH | Green |
 | 11 | MS-CAN Low (125k) | **can0** (spi0.1) | MCP2515 (MS-CAN Pi) CANL | White |

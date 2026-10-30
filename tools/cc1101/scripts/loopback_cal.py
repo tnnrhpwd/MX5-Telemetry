@@ -126,7 +126,7 @@ def read_pair(ser, cmd, timeout=14.0):
     return base, tx
 
 
-def analyse(cap_line):
+def analyze(cap_line):
     f = cap_line.split()
     n, us, hexs = int(f[1]), int(f[2]), f[3]
     samples = nibbles_to_bits(hexs, n)
@@ -195,8 +195,8 @@ def main():
         if not tx_cap:
             print("%6d  no CAP line" % spb)
             continue
-        base = analyse(base_cap) if base_cap else None
-        r = analyse(tx_cap)
+        base = analyze(base_cap) if base_cap else None
+        r = analyze(tx_cap)
         base_txt = ("%.1f%%" % (100 * base["rail_frac"])
                     if base and not base["railed"] else "-")
         if r["railed"]:

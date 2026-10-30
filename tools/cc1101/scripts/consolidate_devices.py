@@ -111,9 +111,9 @@ def main():
             sig["period_match"] = min(
                 ((before[n] or {}).get("sig") or {}).get("period_match", 0.0)
                 for n in good)
-        colour = max(good, key=lambda n: ((before[n] or {}).get("sig") or {})
+        color = max(good, key=lambda n: ((before[n] or {}).get("sig") or {})
                      .get("n_runs", 0))
-        out[keep] = {"color": (before[colour] or {}).get("color")
+        out[keep] = {"color": (before[color] or {}).get("color")
                      or L._pick_color(keep), "sig": sig}
         dropped = [n for n in names if n not in good]
         notes.append("merged %s <- %s" % (keep, ", ".join(sorted(names))))

@@ -25,7 +25,7 @@ echo   Up / Down        +/- 100 rpm
 echo   PageUp / PageDn  +/- 500 rpm
 echo   Home / End       0 and full rpm
 echo   Space            auto-sweep
-echo   S / M / E        sequence / colour mode / strip on-off
+echo   S / M / E        sequence / color mode / strip on-off
 echo   T / I            self test / identify
 echo   Esc              quit
 echo.

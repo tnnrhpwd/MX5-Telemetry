@@ -125,7 +125,7 @@ public class DiagnosticsScreen extends Screen {
         void set(boolean bad) {
             state.setText(bad ? "ON" : "OK");
             state.setTextColor(bad ? palette.bad : palette.good);
-            // Idle lamps use the shared tile colour, not a hand-picked near-duplicate of
+            // Idle lamps use the shared tile color, not a hand-picked near-duplicate of
             // the panel: the previous 0xFF232324 sat one shade off panel's 0xFF212124, so
             // nine perfectly good tiles were invisible and the grid read as loose text.
             setBackground(Ui.rounded(ctx, bad

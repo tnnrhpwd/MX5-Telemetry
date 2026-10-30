@@ -11,7 +11,7 @@ file with a one-device version of itself and the rest were simply gone.
 Two properties are pinned here, and the second is the one that is easy to get
 wrong while "fixing" the first:
 
-  1. A failed load must not authorise an automatic save, and must leave the
+  1. A failed load must not authorize an automatic save, and must leave the
      damaged file on disk exactly as it found it.
   2. A DELIBERATE save is still allowed to proceed (otherwise the feature is
      bricked), but only after the unreadable file has been copied aside, so the

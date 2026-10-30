@@ -238,7 +238,7 @@ const SETTING_IDS = {
 };
 
 const LED_NAMES = ['', 'Center out', 'Left to right', 'Right to left', 'Center in'];
-const CLUTCH_NAMES = ['Gear number, coloured', 'C for clutch', 'S for shifting', 'Dash for unknown'];
+const CLUTCH_NAMES = ['Gear number, colored', 'C for clutch', 'S for shifting', 'Dash for unknown'];
 
 const setters = {};
 

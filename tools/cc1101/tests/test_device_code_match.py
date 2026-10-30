@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression test: a device is identified by its MESSAGE, not by pulse timing.
 
-Timing identification was removed after it repeatedly failed to recognise the
+Timing identification was removed after it repeatedly failed to recognize the
 same fob twice. These numbers are all from ONE physical Nissan fob, enrolled six
 times:
 
@@ -97,7 +97,7 @@ def main():
               "mazda" in (why or ""), repr(why))
         check("a second, different message is accepted",
               L._enrol("nissan", "#4fd0c0", "99AABB") is None)
-        check("and both messages are recognised",
+        check("and both messages are recognized",
               L._match_code("1A2B3C")["name"] == "mazda"
               and L._match_code("99AABB")["name"] == "nissan")
 

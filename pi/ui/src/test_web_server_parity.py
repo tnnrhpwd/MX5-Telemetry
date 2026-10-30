@@ -11,7 +11,7 @@ surface as canonical JSON:
     python3 test_web_server_parity.py after.json      # on the new code
     # then diff before.json after.json
 
-A fresh app and a fresh server per case, so one case cannot colour another. Failures are
+A fresh app and a fresh server per case, so one case cannot color another. Failures are
 recorded rather than raised, so a case that raises still compares equal to itself.
 """
 

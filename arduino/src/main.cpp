@@ -72,7 +72,7 @@
 
 // Serial communication pins (for LED sequence commands from Pi/ESP32)
 #define SERIAL_RX_PIN       3       // Receive commands from Pi/ESP32
-#define SERIAL_TX_PIN       4       // Send acknowledgements (optional)
+#define SERIAL_TX_PIN       4       // Send acknowledgments (optional)
 
 // LED strip configuration  
 #ifndef LED_COUNT
@@ -93,8 +93,8 @@
 #define MAZDA_RPM_CAN_ID    0x201   // Engine RPM broadcast ID
 #define MAZDA_SPEED_CAN_ID  0x201   // Vehicle speed (same frame as RPM)
 
-// RPM limits. The colour zones themselves are no longer compile-time constants - they
-// live in `rampStops[]`, which the Pi can replace at runtime (see RUNTIME COLOUR RAMP).
+// RPM limits. The color zones themselves are no longer compile-time constants - they
+// live in `rampStops[]`, which the Pi can replace at runtime (see RUNTIME COLOR RAMP).
 // These two remain because they are limits, not preferences.
 #define RPM_MAX             6800    // default rpm at which the strip is completely full
 #define RPM_REDLINE         6800    // Trigger haptic pulse
@@ -155,9 +155,9 @@ inline void showIfChanged() {
     if (changed) strip.show();
 }
 
-// Runtime colour ramp. Declared up here because the serial command handler (below)
+// Runtime color ramp. Declared up here because the serial command handler (below)
 // rewrites it - the table used to be five `#define`s, which meant reflashing to change
-// a colour. The last stop doubles as the "full illumination" rpm.
+// a color. The last stop doubles as the "full illumination" rpm.
 struct RampStop {
     uint16_t rpm;
     uint8_t  r, g, b;
@@ -178,11 +178,11 @@ uint8_t  rampStopCount = RAMP_STOP_COUNT;
 uint16_t rpmFull = 6800;          // rpm at which the strip is completely full
 uint8_t  themeDim = 0;            // 0 = full brightness ramp, 1 = dark-mode (dimmed)
 
-// Behaviour the phone can change at runtime. These were compile-time constants, so
+// Behavior the phone can change at runtime. These were compile-time constants, so
 // changing any of them meant a reflash - and there was no way at all to switch the strip
 // off, which is the first thing anyone wants when the LEDs are distracting at night.
 bool     stripEnabled = true;     // false = strip dark; CAN decoding and settings untouched
-uint8_t  colorMode    = 0;        // 0 = position (flowing ramp), 1 = rpm (one wash of colour)
+uint8_t  colorMode    = 0;        // 0 = position (flowing ramp), 1 = rpm (one wash of color)
 uint16_t shiftRpm     = 6300;     // 0 disables the shift light
 uint8_t  shiftHz      = 8;        // flashes per second while shifting
 uint8_t  shiftR = 255, shiftG = 0, shiftB = 0;
@@ -498,7 +498,7 @@ void setLEDSequence(uint8_t seq) {
         saveSettingsToEEPROM();
         
         #if ENABLE_SERIAL_CMD
-        // Send acknowledgement
+        // Send acknowledgment
         cmdSerial.print(F("OK:SEQ:"));
         cmdSerial.println(ledSequence);
         #endif
@@ -801,12 +801,12 @@ inline void readCANMessages() {
 #define SET_LED(idx, r, g, b) strip.setPixelColor(idx, strip.Color(r, g, b))
 #define CLEAR_LED(idx) strip.setPixelColor(idx, 0)
 
-// RUNTIME COLOUR RAMP
+// RUNTIME COLOR RAMP
 // ============================================================================
-// The ramp used to be five `#define`s compiled into the colour maths, so changing a
-// zone meant reflashing. It is now a small table (rpm, colour) that the Pi can replace
+// The ramp used to be five `#define`s compiled into the color maths, so changing a
+// zone meant reflashing. It is now a small table (rpm, color) that the Pi can replace
 // at runtime, which is what lets the strip follow the phone's theme, or a hand-picked
-// set of colours, without a rebuild. The last stop is also the "full illumination" rpm.
+// set of colors, without a rebuild. The last stop is also the "full illumination" rpm.
 
 inline void rampColorAtRpm(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
     if (rpm <= rampStops[0].rpm) {
@@ -851,9 +851,9 @@ inline uint8_t barSlots() {
 
 // Draw the bar for `rpm`.
 //
-// Colour is sampled from each LED's *share of the current rpm*, not from a fixed
+// Color is sampled from each LED's *share of the current rpm*, not from a fixed
 // position on the strip. That is the difference between a static rainbow that grows and
-// a ramp that flows: the tip is always the colour of the present rpm, the root stays at
+// a ramp that flows: the tip is always the color of the present rpm, the root stays at
 // the bottom of the ramp, and every LED in between shifts continuously as the engine
 // revs. It also removes the old single-frame jump when the leading edge crossed a zone.
 inline void renderBar(uint16_t rpm) {
@@ -861,7 +861,7 @@ inline void renderBar(uint16_t rpm) {
 
     const uint8_t slots = barSlots();
     // Fill length in LED units: 1 at idle (one LED is always lit) up to `slots` at rpmFull.
-    // Kept fractional so the colour position moves continuously rather than in steps.
+    // Kept fractional so the color position moves continuously rather than in steps.
     float fill = 1.0f + ((float)rpm * (float)(slots - 1)) / (float)rpmFull;
     uint8_t full = (uint8_t)fill;
     float frac = fill - (float)full;
@@ -885,7 +885,7 @@ inline void renderBar(uint16_t rpm) {
 
         uint8_t r, g, b;
         // Position mode samples each LED's share of the current rpm, so the gradient flows
-        // along the bar. Rpm mode paints the whole bar the colour of the present rpm - the
+        // along the bar. Rpm mode paints the whole bar the color of the present rpm - the
         // legacy look, kept because some people prefer one wash instead of a gradient.
         rampColorAtRpm(colorMode ? rpm : (uint16_t)(p * (float)rpm), &r, &g, &b);
 
@@ -965,7 +965,7 @@ inline void updateLEDs() {
         return;
     }
 
-    // Checked before the error animation: a controller that never initialised is a
+    // Checked before the error animation: a controller that never initialized is a
     // different fault from a bus that went quiet, and they get different patterns.
     if (!canInitialized) {
         drawCanOffline();
@@ -991,7 +991,7 @@ inline void updateLEDs() {
         return;
     }
 
-    // Recomputing 20 LED colours is not free on a 16 MHz AVR, and this runs after
+    // Recomputing 20 LED colors is not free on a 16 MHz AVR, and this runs after
     // every CAN read - which happens at the frame rate, not at the LED rate. The
     // bar can only change when the RPM changes, so that is the gate. The shift light is
     // the exception: it flashes with time, not with rpm, so it must repaint regardless.
@@ -1001,7 +1001,7 @@ inline void updateLEDs() {
     }
     lastRenderedRPM = currentRPM;
 
-    // Shift light: the whole strip flashes the configured colour at the configured rate.
+    // Shift light: the whole strip flashes the configured color at the configured rate.
     if (shifting) {
         const uint16_t halfPeriod = 500 / (shiftHz ? shiftHz : 1);
         const bool on = ((millis() / halfPeriod) & 1) == 0;
@@ -1036,7 +1036,7 @@ inline void updateLEDs() {
     }
     
     // Dispatch to the shared renderer. The four sequences only differ in the order the
-    // LEDs fill, which barRank() encodes, so there is one code path for colour and fill.
+    // LEDs fill, which barRank() encodes, so there is one code path for color and fill.
     renderBar(currentRPM);
     
     // Haptic feedback at redline
@@ -1264,7 +1264,7 @@ void loop() {
         if (canInitialized) {
             readCANMessages();
         }
-        // Paint even when the controller never initialised: updateLEDs() then shows the
+        // Paint even when the controller never initialized: updateLEDs() then shows the
         // CAN-offline pattern. Skipping the paint here is what left the strip sitting on
         // the startup blues forever with no indication of a fault.
         updateLEDs();

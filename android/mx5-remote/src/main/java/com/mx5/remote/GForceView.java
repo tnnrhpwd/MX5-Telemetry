@@ -13,7 +13,7 @@ import android.view.View;
  * The round display's version tracks orientation too, because it has a gyro and
  * integrates it. Here the Pi only publishes g_lateral and g_longitudinal, so this is
  * the accelerometer scatter: position is the instantaneous g vector, and how hard the
- * car is being pushed is the colour.
+ * car is being pushed is the color.
  *
  * The trail is what makes it useful rather than just pretty. A single dot at 4 Hz tells
  * you almost nothing about a corner; the last two seconds of it show the shape of the
@@ -57,7 +57,7 @@ public class GForceView extends View {
         paint.setTextAlign(Paint.Align.CENTER);
     }
 
-    /** Surface colour for the pad behind the rings. Zero leaves the pad off. */
+    /** Surface color for the pad behind the rings. Zero leaves the pad off. */
     private int tileColor = 0;
 
     public void setColors(int text, int dim, int track, int accent) {
@@ -65,7 +65,7 @@ public class GForceView extends View {
     }
 
     /**
-     * @param tile a surface colour for the pad behind the rings. Without a pad the dial is
+     * @param tile a surface color for the pad behind the rings. Without a pad the dial is
      *             thin circles adrift in a large empty square, which reads as an unfinished
      *             panel rather than as an instrument.
      */

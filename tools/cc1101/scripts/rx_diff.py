@@ -6,7 +6,7 @@ that crosstalk is LARGER than anything the radio produced (keyed 88 vs spi-only
 its own SPI traffic. So `TXKEY` was measuring crosstalk.
 
 `RXDIFF <ms>` fixes that:
-  DIFF_OFF - TX initialised, carrier OFF, then a capture with NO SPI at all
+  DIFF_OFF - TX initialized, carrier OFF, then a capture with NO SPI at all
   DIFF_ON  - carrier ON via ONE strobe, then a capture with NO SPI at all
   DIFF_KEY - carrier keyed slowly (ms per state) while capturing
 

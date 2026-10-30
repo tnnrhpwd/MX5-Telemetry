@@ -6,8 +6,8 @@ screenshotted without a phone. The risk with any such replica is drift: hand-cop
 schemes and two modes into CSS guarantees that a later palette change lands in one place
 and not the other, and then the harness is quietly lying.
 
-So nothing is copied. The seeds, the per-mode surfaces, the fixed alert colours and the
-blend fractions are all read out of Palette.java and Ui.java, and the derived colours are
+So nothing is copied. The seeds, the per-mode surfaces, the fixed alert colors and the
+blend fractions are all read out of Palette.java and Ui.java, and the derived colors are
 computed by replicating Java's mix/lift/sink/alpha in JS at runtime. Change a seed in
 Palette.java, re-run this, and the harness follows.
 
@@ -59,19 +59,19 @@ def parse_schemes(src):
 
 
 def parse_modes(src):
-    """The dark and light surface colours, and the colours that do not vary by mode."""
+    """The dark and light surface colors, and the colors that do not vary by mode."""
     dark_block = re.search(r'if\s*\(dark\)\s*\{(.*?)\}\s*else\s*\{', src, re.S)
     light_block = re.search(r'\}\s*else\s*\{(.*?)\n\s*\}', src, re.S)
     if not dark_block or not light_block:
-        raise SystemExit("Could not split the dark and light colour blocks")
+        raise SystemExit("Could not split the dark and light color blocks")
 
-    def colours(text):
+    def colors(text):
         return {k: v for k, v in re.findall(r'(\w+)\s*=\s*(0x[0-9A-Fa-f]{8})\s*;', text)}
 
-    dark = colours(dark_block.group(1))
-    light = colours(light_block.group(1))
+    dark = colors(dark_block.group(1))
+    light = colors(light_block.group(1))
     if not dark or not light:
-        raise SystemExit("No colours found in one of the mode blocks")
+        raise SystemExit("No colors found in one of the mode blocks")
 
     fixed = {}
     for name in ('alert', 'good', 'bad', 'warn'):

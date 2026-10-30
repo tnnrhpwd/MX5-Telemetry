@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
  * split on the Pi side, and it is what makes the two profiles interchangeable rather than
  * two separate implementations of the same thing.
  *
- * The protocol is one JSON object per line, newline terminated. Requests are serialised
+ * The protocol is one JSON object per line, newline terminated. Requests are serialized
  * behind a lock because a Bluetooth link is a single byte stream and there is no room for
  * two requests in flight.
  */
@@ -204,7 +204,7 @@ abstract class BtTransport implements LinkTransport {
      * Send hello and check the answer.
      *
      * Pairing is not treated as the security boundary: it makes a device trusted for the
-     * profile rather than authorised for this application's commands, and the Pi may have
+     * profile rather than authorized for this application's commands, and the Pi may have
      * other paired devices. The token is the same one the HTTP API uses.
      */
     private void authenticate() throws IOException {

@@ -107,7 +107,7 @@ genuine fit.
 
 - Install: sideloading is explicitly **not supported**. Needs Play Console,
   Internal App Sharing, $25 one-time, no review.
-- UI must be rewritten in templates: no HTML, no custom fonts, no colour scheme
+- UI must be rewritten in templates: no HTML, no custom fonts, no color scheme
   picker, no sliders. The speed limit becomes `-` / `+` actions.
 - Fine-grained control is banned while driving, so the config screen would be
   parked-only regardless.
@@ -117,7 +117,7 @@ genuine fit.
 | Sideload with `adb` | likely yes | no |
 | Google account needed | no | $25 one-time |
 | UI cost | wrap the existing webapp | rewrite in templates |
-| Colours / scheme picker | keep | lost |
+| Colors / scheme picker | keep | lost |
 | Phone requirement | Android 15+ | any AA-capable |
 | Visible while driving | no | yes, for simple on/off |
 | Honesty | filed as a "game" | correct category |
@@ -143,7 +143,7 @@ no Gradle, no Android Studio.**
 
 - Install Android SDK command-line tools, then
   `sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"`,
-  and accept licences. ~150 MB.
+  and accept licenses. ~150 MB.
 - Use the Gradle **wrapper** so Gradle needs no separate install.
 - Verify with `adb version` and `adb devices`.
 - Alternative: install Android Studio (much larger, but brings the emulator and
@@ -208,7 +208,7 @@ one. So solve transport independently of the UI.
 - **Android 15+ is a hard floor** for AA parked apps. Confirm the phone's
   version before Phase 1; if it is below 15, mechanism A is dead on arrival.
 - **Enforcement lives in the Android Auto phone app**, which has changed
-  behaviour across releases. A documented "yes" can stop being true.
+  behavior across releases. A documented "yes" can stop being true.
 - **WebView in a car app** is outside the parked-app quality guidance. While
   parked it is very likely fine; treat it as something to verify in Phase 1
   rather than assume.

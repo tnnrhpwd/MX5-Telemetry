@@ -78,7 +78,7 @@ FW_COLOR_MODE = int(grab(r"\buint8_t\s+colorMode\s*=\s*(\d+)", FW, "colorMode").
 FW_SHIFT_RPM = int(grab(r"\buint16_t\s+shiftRpm\s*=\s*(\d+)", FW, "shiftRpm").group(1))
 FW_SHIFT_HZ = int(grab(r"\buint8_t\s+shiftHz\s*=\s*(\d+)", FW, "shiftHz").group(1))
 _shift_rgb = grab(r"\buint8_t\s+shiftR\s*=\s*(\d+),\s*shiftG\s*=\s*(\d+),\s*shiftB\s*=\s*(\d+)",
-                  FW, "the shift colour")
+                  FW, "the shift color")
 FW_SHIFT_RGB = tuple(int(v) for v in _shift_rgb.groups())
 FW_BRIGHTNESS = int(grab(r"\buint8_t\s+currentBrightness\s*=\s*(\d+)", FW,
                          "currentBrightness").group(1))
@@ -223,12 +223,12 @@ check("default ramp", engine.DEFAULT_RAMP, FW_RAMP, "main.cpp rampStops[]")
 check("full-at rpm", engine.LedConfig().full_rpm, FW_FULL_RPM, "main.cpp rpmFull")
 check("theme dim", engine.LedConfig().theme_dim, bool(FW_THEME_DIM), "main.cpp themeDim")
 check("strip enabled", engine.LedConfig().enabled, FW_ENABLED, "main.cpp stripEnabled")
-check("colour mode", engine.LedConfig().color_mode, FW_COLOR_MODE, "main.cpp colorMode")
+check("color mode", engine.LedConfig().color_mode, FW_COLOR_MODE, "main.cpp colorMode")
 check("sequence", engine.LedConfig().sequence, engine.SEQ_CENTER_OUT,
       "main.cpp ledSequence")
 check("shift rpm", engine.LedConfig().shift_rpm, FW_SHIFT_RPM, "main.cpp shiftRpm")
 check("shift rate", engine.LedConfig().shift_hz, FW_SHIFT_HZ, "main.cpp shiftHz")
-check("shift colour", engine.LedConfig().shift_color, FW_SHIFT_RGB,
+check("shift color", engine.LedConfig().shift_color, FW_SHIFT_RGB,
       "main.cpp shiftR/G/B")
 check("brightness", engine.LedConfig().brightness, FW_BRIGHTNESS,
       "main.cpp currentBrightness")
@@ -261,11 +261,11 @@ check("sim brightness default", SIM_BRIGHTNESS[2], FW_BRIGHTNESS,
 
 # The Pi's stored defaults must agree with the strip's, where they overlap.
 check("pi enabled", PI_DEFAULTS["led_enabled"], 1 if FW_ENABLED else 0, "main.cpp")
-check("pi colour mode", PI_DEFAULTS["led_color_mode"], FW_COLOR_MODE, "main.cpp")
+check("pi color mode", PI_DEFAULTS["led_color_mode"], FW_COLOR_MODE, "main.cpp")
 check("pi sequence", PI_DEFAULTS["led_sequence"], engine.SEQ_CENTER_OUT, "main.cpp")
 check("pi shift rpm", PI_DEFAULTS["led_shift_rpm"], FW_SHIFT_RPM, "main.cpp")
 check("pi shift rate", PI_DEFAULTS["led_shift_hz"], FW_SHIFT_HZ, "main.cpp")
-check("pi shift colour", PI_DEFAULTS["led_shift_color"],
+check("pi shift color", PI_DEFAULTS["led_shift_color"],
       engine.hex_of(FW_SHIFT_RGB), "main.cpp shiftR/G/B")
 
 # ...and the Pi must accept exactly what the strip accepts.
@@ -273,7 +273,7 @@ check("pi shift range", (int(LINK_SHIFT.group(1)), int(LINK_SHIFT.group(2))),
       (FW_SHIFT_MIN, FW_SHIFT_MAX), "main.cpp CFG:shift clamp")
 check("pi hz range", (int(LINK_HZ.group(1)), int(LINK_HZ.group(2))),
       (FW_HZ_MIN, FW_HZ_MAX), "main.cpp CFG:hz clamp")
-check("pi colour mode values", tuple(int(v) for v in LINK_COLOR_MODE.groups()), (0, 1),
+check("pi color mode values", tuple(int(v) for v in LINK_COLOR_MODE.groups()), (0, 1),
       "main.cpp colorMode")
 check("pi sequence range", (int(LINK_SEQUENCE.group(1)), int(LINK_SEQUENCE.group(2))),
       (1, 4), "main.cpp LEDSequence enum")
@@ -327,7 +327,7 @@ def main():
         ("7 stops", ",".join("%d:000000" % (i * 100) for i in range(7)), False),
         ("5-digit hex", "0:00000,6800:ff0000", False),
         ("7-digit hex", "0:0000000,6800:ff0000", False),
-        ("non-hex colour", "0:zzzzzz,6800:ff0000", False),
+        ("non-hex color", "0:zzzzzz,6800:ff0000", False),
         ("signed rpm", "-100:0000ff,6800:ff0000", False),
         ("empty rpm", ":0000ff,6800:ff0000", False),
         # Legal but odd: the Pi accepts any order, and so must the simulator, because that

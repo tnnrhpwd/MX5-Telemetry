@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Fixed structural colours plus the accent colours the Pi webapp uses for alert
-  states. The scheme-driven colours are NOT here: they are resolved at runtime in
+<!-- Fixed structural colors plus the accent colors the Pi webapp uses for alert
+  states. The scheme-driven colors are NOT here: they are resolved at runtime in
   Palette.java, because they change with the chosen scheme and with light/dark. -->
 <resources>
     <color name="strip">#FF2D2D2E</color>

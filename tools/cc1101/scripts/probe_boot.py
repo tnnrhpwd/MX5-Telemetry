@@ -1,4 +1,4 @@
-"""Open COM3, report the boot GDO_EDGES count and the idle RSSI/CAP behaviour."""
+"""Open COM3, report the boot GDO_EDGES count and the idle RSSI/CAP behavior."""
 import serial
 import time
 from collections import Counter

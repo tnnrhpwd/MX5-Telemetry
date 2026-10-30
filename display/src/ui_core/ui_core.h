@@ -38,7 +38,7 @@
 // ============================================================================
 // Colors
 //
-// Every colour is a runtime value so the display can follow the phone app's
+// Every color is a runtime value so the display can follow the phone app's
 // theme (scheme + dark/light). The macros below keep every existing call site
 // unchanged while reading from the active palette.
 //
@@ -90,7 +90,7 @@ void applyDefaultTheme();
 #define MX5_ACCENT        (g_theme.accent)
 
 // The LED strip's own ramp (pure RGB, matches arduino/src/main.cpp). The display
-// no longer paints with these: arcs and halos use the theme's semantic colours so
+// no longer paints with these: arcs and halos use the theme's semantic colors so
 // they stay legible in light mode. Kept as documentation of the hardware ramp -
 // the gesture and the ordering are intentionally the same.
 #define LED_BLUE      RGB565(0, 0, 255)       // 0 - idle
@@ -133,7 +133,7 @@ struct TelemetryData {
     bool clutchEngaged;       // True if clutch appears to be pressed
     int gearColor;            // Gear color from Pi: 0=green, 1=red, 2=blue, 3=yellow, 4=cyan
     // Reverse comes from the Pi as an explicit flag. It is never inferred from the
-    // speed sign: a small negative speed serialises as "-0", which compares false
+    // speed sign: a small negative speed serializes as "-0", which compares false
     // against zero on this side.
     bool isInReverse;
     // True when the Pi has a real instantaneous MPG reading. A false value is

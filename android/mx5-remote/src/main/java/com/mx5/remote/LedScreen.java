@@ -18,7 +18,7 @@ import java.util.Locale;
  * Everything the LED strip can be told to do, in one place.
  *
  * The strip used to be configured by editing constants in the Nano's sketch: pattern,
- * colours, redline and brightness were all compile-time, and the only control the app had
+ * colors, redline and brightness were all compile-time, and the only control the app had
  * was a four-way pattern chip. This screen replaces that with the settings the firmware
  * now accepts at runtime, plus the strip's own STATUS: line so a dead strip stops looking
  * like a working one at zero rpm.
@@ -37,9 +37,9 @@ public class LedScreen extends Screen {
     private static final int[] MODE_VALUES = {0, 1};
 
     /**
-     * The colours a ramp stop can take.
+     * The colors a ramp stop can take.
      *
-     * Deliberately a short fixed list rather than a hue wheel: the strip is 8-bit colour,
+     * Deliberately a short fixed list rather than a hue wheel: the strip is 8-bit color,
      * and a driver has no business picking a hue at 70 mph.
      */
     private static final String[] SWATCHES = {
@@ -68,7 +68,7 @@ public class LedScreen extends Screen {
 
     private TextView diagnostics, diagnostics2;
 
-    /** The six stop colours as rrggbb, and the rpm the strip is completely full at. */
+    /** The six stop colors as rrggbb, and the rpm the strip is completely full at. */
     private final String[] stopColours = DEFAULT_COLOURS.clone();
     private int fullRpm = DEFAULT_FULL_RPM;
     private String shiftHex = "ff0000";
@@ -130,7 +130,7 @@ public class LedScreen extends Screen {
         left.addView(colorMode, wrap(c));
 
         // -- ramp -------------------------------------------------------------
-        left.addView(sectionGap(c, p, "COLOUR RAMP", 1));
+        left.addView(sectionGap(c, p, "COLOR RAMP", 1));
 
         followTheme = new Ui.Pill(c, p, p.primary);
         followTheme.setOn(prefs(c).getBoolean(PREF_FOLLOW_THEME, true));
@@ -192,7 +192,7 @@ public class LedScreen extends Screen {
             shiftHex = v;
             push("led_shift_color", v);
         });
-        right.addView(stopRow(c, p, "Colour", shiftColour));
+        right.addView(stopRow(c, p, "Color", shiftColour));
 
         // -- diagnostics ------------------------------------------------------
         right.addView(sectionGap(c, p, "DIAGNOSTICS", 1));
@@ -244,25 +244,25 @@ public class LedScreen extends Screen {
         }
         Telemetry.Led led = t.led;
         String state;
-        int colour;
+        int color;
         if (led == null || !led.connected) {
             state = "Strip: not answering";
-            colour = palette == null ? 0xFFFF8C32 : palette.warn;
+            color = palette == null ? 0xFFFF8C32 : palette.warn;
         } else if (!led.can) {
             state = "Strip: CAN controller down";
-            colour = palette == null ? 0xFFEF4444 : palette.bad;
+            color = palette == null ? 0xFFEF4444 : palette.bad;
         } else if (led.error) {
             state = "Strip: no engine frames";
-            colour = palette == null ? 0xFFEF4444 : palette.bad;
+            color = palette == null ? 0xFFEF4444 : palette.bad;
         } else if (!led.enabled) {
             state = "Strip: off";
-            colour = palette == null ? 0xFF9BA1AB : palette.textDim;
+            color = palette == null ? 0xFF9BA1AB : palette.textDim;
         } else {
             state = "Strip: OK";
-            colour = palette == null ? 0xFF22C55E : palette.good;
+            color = palette == null ? 0xFF22C55E : palette.good;
         }
         diagnostics.setText(state);
-        diagnostics.setTextColor(colour);
+        diagnostics.setTextColor(color);
         diagnostics2.setText(led == null || !led.connected
                 ? "No status from the Nano"
                 : String.format(Locale.US, "%d fps \u00b7 last %s \u00b7 full %d rpm \u00b7 %d Hz",
@@ -300,7 +300,7 @@ public class LedScreen extends Screen {
         applyRamp(s.optString("led_ramp", ""));
     }
 
-    /** Parse "<rpm>:<rrggbb>,..." back into the six stop colours and the full-at rpm. */
+    /** Parse "<rpm>:<rrggbb>,..." back into the six stop colors and the full-at rpm. */
     private void applyRamp(String ramp) {
         if (ramp == null || ramp.isEmpty()) {
             return;
@@ -315,10 +315,10 @@ public class LedScreen extends Screen {
             if (colon <= 0) {
                 continue;
             }
-            String colour = parts[i].substring(colon + 1).trim().toLowerCase(Locale.US);
-            if (colour.length() == 6) {
-                stopColours[i] = colour;
-                stopSwatches[i].select(colour);
+            String color = parts[i].substring(colon + 1).trim().toLowerCase(Locale.US);
+            if (color.length() == 6) {
+                stopColours[i] = color;
+                stopSwatches[i].select(color);
             }
         }
         try {
@@ -333,7 +333,7 @@ public class LedScreen extends Screen {
     }
 
     /**
-     * A hand-picked colour means the user is no longer following the theme.
+     * A hand-picked color means the user is no longer following the theme.
      *
      * Without this the next theme change would silently overwrite what they just chose,
      * which reads as the setting not working.
@@ -463,23 +463,23 @@ public class LedScreen extends Screen {
         return b;
     }
 
-    /** A row of fixed colour choices; the picked one keeps a ring so it reads as selected. */
+    /** A row of fixed color choices; the picked one keeps a ring so it reads as selected. */
     static class Swatches extends LinearLayout {
 
         private final Palette palette;
-        private final String[] colours;
+        private final String[] colors;
         private final List<View> dots = new ArrayList<>();
         private String selected;
 
-        Swatches(Context c, Palette p, String[] colours, String selected,
+        Swatches(Context c, Palette p, String[] colors, String selected,
                  ScreenHostCallback onPick) {
             super(c);
             this.palette = p;
-            this.colours = colours;
+            this.colors = colors;
             setOrientation(HORIZONTAL);
             setGravity(Gravity.CENTER_VERTICAL);
 
-            for (String hex : colours) {
+            for (String hex : colors) {
                 final String value = hex;
                 View dot = new View(c);
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
@@ -497,13 +497,13 @@ public class LedScreen extends Screen {
             select(selected);
         }
 
-        /** Highlight this colour. An unknown colour selects nothing rather than lying. */
+        /** Highlight this color. An unknown color selects nothing rather than lying. */
         void select(String hex) {
             selected = hex == null ? null : hex.toLowerCase(Locale.US);
             for (int i = 0; i < dots.size(); i++) {
-                boolean on = colours[i].equalsIgnoreCase(selected);
+                boolean on = colors[i].equalsIgnoreCase(selected);
                 android.graphics.drawable.GradientDrawable bg =
-                        Ui.rounded(getContext(), colourOf(colours[i]), 5f);
+                        Ui.rounded(getContext(), colorOf(colors[i]), 5f);
                 if (on) {
                     bg.setStroke(Ui.dp(getContext(), 2), palette.text);
                 }
@@ -511,7 +511,7 @@ public class LedScreen extends Screen {
             }
         }
 
-        private static int colourOf(String hex) {
+        private static int colorOf(String hex) {
             try {
                 return 0xFF000000 | Integer.parseInt(hex, 16);
             } catch (NumberFormatException e) {

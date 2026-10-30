@@ -90,7 +90,7 @@ A real-time telemetry and visual feedback system for the 2008 Mazda Miata NC (MX
 - **📺 1.85" Round IPS LCD** - 360×360 pixel display
 - **🎨 Visual Gauges** - RPM, speed, temps with color-coded arc display
 - **📱 8 Synchronized Screens** - Overview, RPM, TPMS, Engine, G-Force, Diagnostics, System, Settings
-- **📡 BLE TPMS Receiver** - Receives tire pressure/temp from Bluetooth sensors → forwards to Pi
+- **📡 BLE TPMS Receiver** - Receives tire pressure/temp from Bluetooth sensors → forward to Pi
 - **🎛️ QMI8658 IMU** - G-force & tilt display (see [G-Force Display Behavior](display/README.md#g-force-display-behavior))
 - **🎮 SWC Navigation** - Receives steering wheel button events from Pi
 

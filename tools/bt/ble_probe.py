@@ -347,7 +347,7 @@ async def run(args):
             return 1
 
         # -- the read-only ops -------------------------------------------------
-        for op, summarise in (
+        for op, summarize in (
             ("ping", lambda d: "pong" if d else json.dumps(d)),
             ("status", lambda d: "screen=%s sleep=%s demo=%s settings=%d"
                                  % (d.get("screen"), d.get("sleep"), d.get("demo"),
@@ -372,7 +372,7 @@ async def run(args):
                 continue
 
             data = reply.get("data") or {}
-            record(PASS, "%s answered" % op, summarise(data))
+            record(PASS, "%s answered" % op, summarize(data))
 
     print("=" * 70)
     fails = results.count(FAIL)

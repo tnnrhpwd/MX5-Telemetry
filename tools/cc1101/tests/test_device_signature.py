@@ -48,7 +48,7 @@ def fob_samples(short=8, long_=20, reps=3, gap=600, frame_bits=6):
     and the original single-pattern frame (32 runs) was six times shorter than
     anything real. That mattered as soon as enrollment gained a minimum
     run-count - the fixture would have been refused for being a fragment, which
-    is correct behaviour applied to an unrepresentative input.
+    is correct behavior applied to an unrepresentative input.
     """
     base = [1, 0] * 8 + [1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1]
     bits = base * frame_bits
@@ -133,7 +133,7 @@ def main():
         L._devices.clear()
         L._devices["TestFob"] = {"color": "#fff", "sig": a, "code": "1A2B3C"}
         m = L._match_code("1A2B3C")
-        ok &= check("an enrolled message is recognised",
+        ok &= check("an enrolled message is recognized",
                     m is not None and m["name"] == "TestFob", "got %s" % m)
         m2 = L._match_code("4D5E6F")
         ok &= check("a different message does NOT match it", m2 is None,

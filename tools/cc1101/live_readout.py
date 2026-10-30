@@ -67,7 +67,7 @@ ser_handle = None
 raw_captures = 0
 last_decode = None        # latest decoded transmission: {"hex": ..., "bit_us": ...}
 fobburst_at = 0.0         # time.time() when the last Fob Burst was triggered
-tpmsburst_at = 0.0        # ... and the last TPMS Burst, for event labelling
+tpmsburst_at = 0.0        # ... and the last TPMS Burst, for event labeling
 CAPTURE_PATH = os.path.join(CAPTURES_DIR, "capture_live.txt")
 START_TIME = time.time()
 IDLE_RUN = 60             # GDO0 runs longer than this are idle gaps between repeats
@@ -164,7 +164,7 @@ FRAME_GAP = 500           # ~5 ms of silence = a real gap BETWEEN frames, not th
 # --- signal-event detection ----------------------------------------------
 # Detects bursts of RSSI well above the (slowly adapting) noise floor and
 # records them as "transmissions". No name is assigned here: RSSI is only
-# loudness, so these are labelled by time/peak/duration/frequency until we
+# loudness, so these are labeled by time/peak/duration/frequency until we
 # decode the bitstream.
 events = deque(maxlen=50)
 _floor = None
@@ -188,9 +188,9 @@ def _update_events(rssi, freq, t):
     global _floor, _in_event, _ev_start, _ev_peak, _ev_freq, _below_count, _ev_above
     global _ev_bursts, _ev_unit_us
     # Track the quiet baseline ONLY while idle. Adapting it during a
-    # transmission let it climb towards the signal's own level, so when the
+    # transmission let it climb toward the signal's own level, so when the
     # press ended the return to -110 looked like another large deviation and
-    # was not recognised as the end of the event - three separate presses were
+    # was not recognized as the end of the event - three separate presses were
     # reported as one long transmission.
     if not _in_event:
         if _floor is None:
@@ -270,7 +270,7 @@ def _update_events(rssi, freq, t):
                         label = "fob (TX test)"
                     # A TX-test burst blocks the Arduino while it transmits, so
                     # the RSSI deviation it causes is never sampled - the event
-                    # has to be labelled from which button was pressed. Most
+                    # has to be labeled from which button was pressed. Most
                     # recent wins, so pressing TPMS and then Fob cannot mislabel
                     # the second burst as the first.
                     cands = [(at, nm) for at, nm in ((fobburst_at, "fob"),
@@ -280,7 +280,7 @@ def _update_events(rssi, freq, t):
                         if 0 < (START_TIME + _ev_start) - bat < 3.0:
                             label = "%s (TX test)" % bnm
                     # Interval since the previous transmission on this frequency.
-                    # A tyre sensor repeats metronomically (typically ~60 s); a
+                    # A tire sensor repeats metronomically (typically ~60 s); a
                     # fob press is sporadic. Far more useful than raw strength
                     # for telling your own gear from a city full of other people's.
                     repeat_s = None
@@ -308,7 +308,7 @@ def _update_events(rssi, freq, t):
 
 
 def _kmeans2(vals):
-    """Split a list of numbers into two clusters; return the two centres."""
+    """Split a list of numbers into two clusters; return the two centers."""
     a, b = float(min(vals)), float(max(vals))
     for _ in range(50):
         g1 = [v for v in vals if abs(v - a) <= abs(v - b)]
@@ -327,7 +327,7 @@ def _kmeans2(vals):
 # built from timing and structure only, so it still works for a rolling-code
 # remote where the payload carries no identity at all. Pulse widths also survive
 # a marginal demodulator far better than payload bits do: the fob whose code
-# will not decode still has a perfectly recognisable short/long structure.
+# will not decode still has a perfectly recognizable short/long structure.
 #
 # The honest limit, and the reason this is not a payload comparison: it tells a
 # Mazda fob from a Nissan one, NOT one Mazda fob from another.
@@ -381,7 +381,7 @@ def _load_devices():
     Observed exactly that: devices.json went from two devices to {} at
     10:54:01, about a minute after a server restart, and the only reason it is
     recoverable at all is that the file is tracked in git. A read failure now
-    blocks saving rather than authorising a wipe.
+    blocks saving rather than authorizing a wipe.
     """
     global _devices, _devices_load_error
     try:
@@ -622,7 +622,7 @@ def _match_code(code):
 def _fresh_device():
     """The matched device only while it is still fresh, else None.
 
-    Named rather than inlined into the /data handler so the momentary behaviour
+    Named rather than inlined into the /data handler so the momentary behavior
     can be unit-tested without a running server; inlined, the only way to check
     it would be to watch the page and trust my eyes.
     """
@@ -669,7 +669,7 @@ def _refresh_match():
         return None
     m = _match_code(code)
     if m:
-        # Stamped NOW rather than at the capture: the chip is an acknowledgement
+        # Stamped NOW rather than at the capture: the chip is an acknowledgment
         # that the change took effect, and _fresh_device() holds it for
         # DEVICE_HOLD_S from this moment.
         m["t"] = round(time.time() - START_TIME, 2)

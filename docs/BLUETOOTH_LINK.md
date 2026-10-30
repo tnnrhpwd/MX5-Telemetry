@@ -85,7 +85,7 @@ claim and release actions.
 
 The first request must be `hello` with the access token. Pairing is deliberately **not**
 treated as the security boundary: pairing makes a device trusted for the profile, it does
-not authorise this application's commands, and the Pi may have other paired devices. The
+not authorize this application's commands, and the Pi may have other paired devices. The
 token is the same `MX5_WEB_TOKEN` the HTTP API uses, so there is one secret to distribute,
 not two. Five bad tokens in a row close the link.
 
@@ -286,7 +286,7 @@ screenshot.
 `battery`, `charging` and `clock` exist so a screenshot is reproducible. A real clock in a
 screenshot makes two runs differ for no reason, which is how a real regression gets missed.
 
-`extract_tokens.py` reads the twelve schemes, both mode palettes, the fixed alert colours,
+`extract_tokens.py` reads the twelve schemes, both mode palettes, the fixed alert colors,
 the four blend fractions, the type scale and the spacing ramp **out of `Palette.java` and
 `Ui.java`**, and `mimic.js` reimplements Java's `mix`/`lift`/`sink`/`alpha` to derive the
 rest. Nothing is hand-copied, so a palette change cannot leave the harness behind. Re-run it
@@ -550,7 +550,7 @@ Verified on a desk, with no Bluetooth hardware and no car:
   socket are untested.
 - That the link **refuses to start with no token**, and that `MX5_BT_ALLOW_NO_TOKEN=1`
   switches that refusal off. Pinned from both sides, and confirmed to fail against the
-  previous behaviour rather than passing vacuously.
+  previous behavior rather than passing vacuously.
 - That the web API is byte-for-byte unchanged after sharing its logic with this link:
   40 requests across every endpoint, comparing status, body and side effects.
 - That a machine with no Bluetooth at all reports both transports as unavailable and keeps

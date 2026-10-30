@@ -30,8 +30,8 @@ BLACK = (0, 0, 0)
 
 def test_a_ramp_stop_returns_its_own_colour_exactly():
     ramp = engine.DEFAULT_RAMP
-    for rpm, colour in ramp:
-        assert engine.ramp_color_at_rpm(rpm, ramp) == colour, rpm
+    for rpm, color in ramp:
+        assert engine.ramp_color_at_rpm(rpm, ramp) == color, rpm
 
 
 def test_going_negative_wraps_as_a_uint16_before_the_lookup():
@@ -98,7 +98,7 @@ def test_frame_at_3400_matches_the_hand_computed_bar():
 
     fill  = 1 + 3400*9/6800 = 5.5   -> full = 5, frac = 0.5, span = 4.5
     rank 0..4 are solid, rank 5 is the half-lit tip, rank 6..9 are off.
-    colour position = (uint16_t)(p * rpm) with p = rank / 4.5
+    color position = (uint16_t)(p * rpm) with p = rank / 4.5
       rank 0: p 0.000 -> 0     -> ramp[0]  (0,0,255)
       rank 1: p 0.222 -> 755   -> (0,119,255)
       rank 2: p 0.444 -> 1511  -> (4,220,245)
@@ -169,7 +169,7 @@ def test_dim_mode_scales_every_led_by_170_over_255():
 
 
 def test_wash_mode_paints_the_whole_bar_one_colour():
-    """One wash of colour, not a gradient - with no fractional tip to compare against."""
+    """One wash of color, not a gradient - with no fractional tip to compare against."""
     frame = engine.render_bar(1000, LedConfig(full_rpm=1800, color_mode=1))
     lit = [rgb for rgb in frame if rgb != BLACK]
     assert lit, frame
@@ -185,7 +185,7 @@ def test_the_fractional_tip_is_still_dimmed_in_wash_mode():
     """Wash changes the hue of the bar, not the fill: the tip keeps its partial level."""
     gradient = engine.render_bar(3400, LedConfig())
     wash = engine.render_bar(3400, LedConfig(color_mode=1))
-    assert wash[5] != wash[0], "the tip should be a dimmed version of the bar colour"
+    assert wash[5] != wash[0], "the tip should be a dimmed version of the bar color"
     assert wash[5][0] < wash[0][0]
     assert gradient != wash
 
@@ -343,15 +343,15 @@ def test_the_ramp_round_trips_through_the_wire_format():
 
 
 def test_the_app_fraction_table_reproduces_its_default_ramp_shape():
-    """"Full at 6800" with the app's six colours must land on 0/1400/2800/4500/5800/6800."""
-    colours = [rgb for _rpm, rgb in engine.DEFAULT_RAMP]
-    stops = engine.ramp_from_fractions(6800, colours)
+    """"Full at 6800" with the app's six colors must land on 0/1400/2800/4500/5800/6800."""
+    colors = [rgb for _rpm, rgb in engine.DEFAULT_RAMP]
+    stops = engine.ramp_from_fractions(6800, colors)
     assert [rpm for rpm, _ in stops] == [0, 1400, 2800, 4500, 5800, 6800]
 
 
 def test_the_app_fraction_table_scales_with_full_at():
-    colours = [rgb for _rpm, rgb in engine.DEFAULT_RAMP]
-    stops = engine.ramp_from_fractions(4000, colours)
+    colors = [rgb for _rpm, rgb in engine.DEFAULT_RAMP]
+    stops = engine.ramp_from_fractions(4000, colors)
     assert [rpm for rpm, _ in stops] == [0, 800, 1600, 2600, 3400, 4000]
 
 

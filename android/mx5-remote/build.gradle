@@ -23,7 +23,7 @@ android {
     //
     // Android Auto decides what may stay on screen from the app's category, and
     // android:appCategory is application-wide: a package declared as a "game" is
-    // greyed out the moment the car moves, and nothing inside that package can
+    // grayed out the moment the car moves, and nothing inside that package can
     // opt out of it. So the parked dashboard and the driving dashboard cannot be
     // the same package - they have to be separate APKs that share this source
     // set and differ only in applicationId and manifest:

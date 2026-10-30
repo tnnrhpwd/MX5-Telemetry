@@ -26,7 +26,7 @@ import android.view.View;
  *   - **The maths runs once per change, not per frame.** RPM ratio as a function of road
  *     speed is a straight line through the origin, so the per-gear slope is a constant
  *     and the whole bar is six multiplies. Those slopes are computed in a static
- *     initialiser, so even the first bind does no trigonometry.
+ *     initializer, so even the first bind does no trigonometry.
  *   - **Steady state costs nothing at all.** bind() runs four times a second; at a
  *     constant speed, or stopped, setValue() returns before it touches anything, and a
  *     speed that drifts without changing a single rounded RPM does not invalidate.
@@ -43,7 +43,7 @@ public class GearRpmView extends View {
             {0f, 3.760f, 2.269f, 1.645f, 1.187f, 1.000f, 0.843f};
     private static final float FINAL_DRIVE = 4.10f;
     /** 205/45R17. */
-    private static final float TYRE_DIAMETER_IN = 24.3f;
+    private static final float TIRE_DIAMETER_IN = 24.3f;
     private static final float INCHES_PER_MILE = 63360f;
     private static final float KM_PER_MILE = 1.609344f;
 
@@ -58,7 +58,7 @@ public class GearRpmView extends View {
     private static final float[] RPM_PER_KMH = new float[GEARS + 1];
 
     static {
-        float circumference = (float) Math.PI * TYRE_DIAMETER_IN;
+        float circumference = (float) Math.PI * TIRE_DIAMETER_IN;
         float base = (FINAL_DRIVE * INCHES_PER_MILE) / (circumference * 60f);
         for (int g = 1; g <= GEARS; g++) {
             RPM_PER_MPH[g] = RATIO[g] * base;
@@ -128,7 +128,7 @@ public class GearRpmView extends View {
         }
     }
 
-    /** Colours are resolved by the caller, so this view knows nothing about themes. */
+    /** Colors are resolved by the caller, so this view knows nothing about themes. */
     public void setColors(int text, int dim, int surface, int accent, int accentWash,
                           int good, int bad) {
         textColor = text;
@@ -287,7 +287,7 @@ public class GearRpmView extends View {
         return textColor;
     }
 
-    /** Vertically centred on the given line centre, using a reused FontMetrics. */
+    /** Vertically centered on the given line center, using a reused FontMetrics. */
     private void drawCentred(Canvas canvas, char[] text, int index, int count,
                              float cx, float cy, Paint paint) {
         if (count <= 0) {
