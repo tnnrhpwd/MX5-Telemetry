@@ -154,6 +154,13 @@ class SWCHandler:
         # Debounce handling
         if new_button != self.current_button:
             if now - self.debounce_time >= self.DEBOUNCE_MS:
+                # The button that was down until this frame. ON/OFF is deliberately not
+                # queued on the press (a hold toggles the navigation lock instead), so the
+                # release branch has to know what it is releasing. It used to read
+                # self.last_button, which only the unused get_button_press() ever set, so
+                # a short ON/OFF press was never queued at all and Select/Enter - "confirm
+                # edit" - did nothing from the wheel.
+                previous_button = self.current_button
                 self.current_button = new_button
                 self.debounce_time = now
                 
@@ -173,11 +180,11 @@ class SWCHandler:
                         self._pending_buttons.append(new_button)
                 else:
                     # Button released - check if ON/OFF should be queued
-                    if self.last_button == ButtonEvent.ON_OFF and not self._lock_toggle_pending:
+                    if previous_button == ButtonEvent.ON_OFF and not self._lock_toggle_pending:
                         # ON/OFF was released without triggering lock - queue it as normal press
                         if not self.nav_locked:
                             self._pending_buttons.append(ButtonEvent.ON_OFF)
-                    self.last_button = self.current_button
+                    self.last_button = previous_button
     
     def poll_buttons(self):
         """Poll for pending button events (call from main loop). Returns list of buttons.

@@ -42,17 +42,20 @@ h.process_can_message(SWC_CRUISE_CAN_ID, bytes([0x00]))
 h.poll_buttons()
 
 # Test ON_OFF (0x250, byte 0 = 0x01)
+# ON/OFF is reported on *release*, not on the press frame: a press might become a
+# 3-second hold that toggles the navigation lock instead of selecting.
 print("Testing ON_OFF (SELECT)...")
 time.sleep(0.1)
 h.process_can_message(SWC_CRUISE_CAN_ID, bytes([0x01]))
 pending = h.poll_buttons()
-print(f"  After ON_OFF CAN msg: pending={pending}")
-assert len(pending) == 1 and pending[0] == ButtonEvent.ON_OFF, "ON_OFF failed!"
+print(f"  After ON_OFF press: pending={pending}")
+assert pending == [], "ON_OFF must not fire on the press frame"
 
-# Release button
 time.sleep(0.1)
 h.process_can_message(SWC_CRUISE_CAN_ID, bytes([0x00]))
-h.poll_buttons()
+pending = h.poll_buttons()
+print(f"  After ON_OFF release: pending={pending}")
+assert len(pending) == 1 and pending[0] == ButtonEvent.ON_OFF, "ON_OFF failed!"
 
 # Test CANCEL (0x250, byte 0 = 0x02)
 print("Testing CANCEL (BACK)...")
