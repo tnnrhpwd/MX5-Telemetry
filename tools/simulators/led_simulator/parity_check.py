@@ -756,16 +756,23 @@ int main(void) {
 
 
 def _neopixel_cpp() -> Optional[str]:
-    """Path to the installed Adafruit_NeoPixel implementation, if there is one."""
-    root = os.path.join(REPO, ".pio", "libdeps")
-    if not os.path.isdir(root):
-        return None
-    for env in os.listdir(root):
-        for directory in (os.path.join(root, env, "Adafruit NeoPixel"),
-                          os.path.join(root, env, "Adafruit_NeoPixel")):
-            path = os.path.join(directory, "Adafruit_NeoPixel.cpp")
-            if os.path.exists(path):
-                return path
+    """Path to the installed Adafruit_NeoPixel implementation, if there is one.
+
+    PlatformIO keeps a project's libraries under that project's own `.pio/libdeps`, so
+    the arduino/ project's copy is the one that exists after a firmware build - looking
+    only at the repository root found nothing and quietly skipped the scale check.
+    """
+    roots = (os.path.join(REPO, ".pio", "libdeps"),
+             os.path.join(REPO, "arduino", ".pio", "libdeps"))
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for env in os.listdir(root):
+            for directory in (os.path.join(root, env, "Adafruit NeoPixel"),
+                              os.path.join(root, env, "Adafruit_NeoPixel")):
+                path = os.path.join(directory, "Adafruit_NeoPixel.cpp")
+                if os.path.exists(path):
+                    return path
     return None
 
 
