@@ -96,16 +96,18 @@ def test_center_in_starts_at_the_middle_and_grows_outward():
 def test_frame_at_3400_matches_the_hand_computed_bar():
     """Default config, 3400 rpm, center-out (10 slots), gradient mode.
 
-    fill  = 1 + 3400*9/6800 = 5.5   -> full = 5, frac = 0.5, span = 4.5
+    Integer path, as the firmware runs it:
+      fill_q = 256 + 3400*9*256/6800 = 1408   -> full = 5, frac_q = 128, span_q = 1152
+      p_q    = rank << 24 / 1152 (clamped to 65536)
+      sample = p_q * 3400 >> 16, level gain = 128
+
     rank 0..4 are solid, rank 5 is the half-lit tip, rank 6..9 are off.
-    color position = (uint16_t)(p * rpm) with p = rank / 4.5
-      rank 0: p 0.000 -> 0     -> ramp[0]  (0,0,255)
-      rank 1: p 0.222 -> 755   -> (0,119,255)
-      rank 2: p 0.444 -> 1511  -> (4,220,245)
-      rank 3: p 0.667 -> 2266  -> (31,217,178)
-      rank 4: p 0.889 -> 3022  -> (77,214,121)
-      rank 5: p 1.111 clamps to 1.0 -> 3400 -> (122,213,105) at level 0.5
-              -> (61,106,52)
+      rank 0: sample    0 -> ramp[0]  (0,0,255)
+      rank 1: sample  755 -> (0,119,255)
+      rank 2: sample 1511 -> (4,220,245)
+      rank 3: sample 2266 -> (31,217,178)
+      rank 4: sample 3022 -> (77,214,121)
+      rank 5: sample 3400 -> (122,213,105), scaled by 128/255 -> (61,107,53)
     """
     cfg = LedConfig()
     frame = engine.render_bar(3400, cfg)
@@ -116,7 +118,7 @@ def test_frame_at_3400_matches_the_hand_computed_bar():
     assert frame[3] == (31, 217, 178)
     assert frame[4] == (77, 214, 121)
     # The fractional tip is dimmed by `level`, not tinted.
-    assert frame[5] == (61, 106, 52)
+    assert frame[5] == (61, 107, 53)
     for index in range(6, 10):
         assert frame[index] == BLACK, index
     # Mirrored copies on the right half.
@@ -153,19 +155,22 @@ def test_above_full_rpm_is_clamped_rather_than_overflowing():
 
 
 def test_dim_mode_scales_every_led_by_170_over_255():
-    """Compare a frame with no fractional tip, so every lit LED is at level 1.0.
+    """Compare a frame with no fractional tip, so every lit LED is at full level.
 
     With a part-lit tip the bright and dim frames cannot be compared channel-by-channel:
-    each is truncated separately, and truncating 213*0.5*170/255 (= 71.0) is not the same
-    as truncating the already-truncated 106. `full_rpm=1800, rpm=1000` gives
-    fill = 1 + 1000*9/1800 = 6.0 exactly, so frac is 0.
+    the tip's gain is applied to the colour once, so the dim value is not the dim of the
+    already-dimmed value. `full_rpm=1800, rpm=1000` gives fill exactly 6.0, so no tip.
+
+    The firmware folds the dim into one per-LED gain and rounds to nearest, so the
+    expectation is `round(bright * 170 / 255)` - the intended ratio to the nearest step,
+    rather than the double truncation the float version used to do.
     """
     bright = engine.render_bar(1000, LedConfig(full_rpm=1800))
     dim = engine.render_bar(1000, LedConfig(full_rpm=1800, theme_dim=True))
     assert any(rgb != BLACK for rgb in bright)
     for bright_rgb, dim_rgb in zip(bright, dim):
         for index in range(3):
-            assert dim_rgb[index] == int(bright_rgb[index] * 170 / 255)
+            assert dim_rgb[index] == round(bright_rgb[index] * 170 / 255)
 
 
 def test_wash_mode_paints_the_whole_bar_one_colour():
@@ -278,6 +283,51 @@ def test_falling_rpm_keeps_a_light_settle():
 
 def test_the_first_reading_is_taken_as_is():
     assert engine.smooth_rpm(0.0, 812.0) == 812.0
+
+
+# -- sub-frame prediction -----------------------------------------------------
+
+def test_without_history_the_bar_holds_the_last_reading():
+    """Nothing to derive a slope from, so nothing to predict."""
+    assert engine.predict_rpm(1000, 3000, 0, 1000, 0, False) == 3000
+
+
+def test_a_climbing_engine_is_drawn_ahead_of_the_last_sample():
+    """3000 -> 3200 over 20 ms is 10 rpm/ms; 12 ms of lead is +120 rpm."""
+    assert engine.predict_rpm(1012, 3200, 3000, 1000, 980, True) == 3320
+
+
+def test_a_falling_engine_is_drawn_ahead_downwards():
+    assert engine.predict_rpm(1012, 3000, 3200, 1000, 980, True) == 2880
+
+
+def test_prediction_stops_at_the_horizon():
+    """Past 12 ms the sample is stale: hold it rather than extrapolate forever."""
+    assert engine.predict_rpm(1013, 3200, 3000, 1000, 980, True) == 3200
+
+
+def test_a_stalled_link_does_not_get_a_slope():
+    """A 150 ms gap between samples is not a rate, it is a dropout."""
+    assert engine.predict_rpm(1012, 3200, 3000, 1000, 850, True) == 3200
+
+
+def test_samples_too_close_together_are_ignored():
+    """At a 3 ms gap the rpm quantisation (4 rpm) would read as 1300 rpm/second."""
+    assert engine.predict_rpm(1012, 3200, 3000, 1000, 997, True) == 3200
+
+
+def test_an_impossible_slope_is_clamped():
+    """6000 rpm in 4 ms is 1500 rpm/ms; clamped to MAX_SLOPE, so 12 ms of it is 240."""
+    assert engine.predict_rpm(1012, 6000, 0, 1000, 996, True) == 6240
+
+
+def test_prediction_cannot_exceed_full_scale_or_go_negative():
+    assert engine.predict_rpm(1012, 6700, 6000, 1000, 980, True) == 6800
+    assert engine.predict_rpm(1012, 100, 900, 1000, 980, True) == 0
+
+
+def test_a_clock_that_went_backwards_holds():
+    assert engine.predict_rpm(900, 3200, 3000, 1000, 980, True) == 3200
 
 
 # -- precedence, which is the whole of updateLEDs -----------------------------

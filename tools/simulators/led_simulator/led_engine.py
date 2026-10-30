@@ -4,9 +4,13 @@ Why a port rather than a reimplementation
 -----------------------------------------
 The simulator's job is to tell you what the strip *will* do, so it has to be the same
 program, not a lookalike. Every function here mirrors a specific function in the firmware,
-and the arithmetic is kept in the same order with the same types - including float32
-rounding via `_f32()`, because `(uint8_t)` truncation after a float multiply lands on a
-different integer when the product sits near a whole number.
+and the arithmetic is kept in the same order with the same types. That is why the render
+path is integer: the firmware does its interpolation in fixed point because it runs 20
+times per repaint on an AVR with no FPU, and a float port would disagree with it by a
+rounding step that is invisible in a screenshot and wrong in the numbers.
+
+The rpm filter is the one place a `float` survives, and there `_f32()` keeps the 32-bit
+rounding of the C `float`.
 
 What is *not* ported: anything that only exists to save cycles on a 16 MHz AVR. The
 `currentRPM == lastRenderedRPM` repaint gate, `showIfChanged()` and the haphazard
@@ -76,6 +80,11 @@ RPM_SNAP_DELTA = 250
 RPM_ALPHA_RISING = 1.0
 RPM_ALPHA_FALLING = 0.75
 
+# Sub-frame prediction between CAN broadcasts, and the slope an engine could plausibly
+# produce. `EXTRAPOLATE_MS = 0` reproduces "hold the last reading".
+EXTRAPOLATE_MS = 12
+MAX_SLOPE = 20        # rpm per millisecond
+
 
 def _f32(value: float) -> float:
     """Round a Python float to float32, which is what a C `float` on the AVR is."""
@@ -83,7 +92,10 @@ def _f32(value: float) -> float:
 
 
 def _byte(value: float) -> int:
-    """C `(uint8_t)` cast: truncate toward zero, then wrap to 0-255."""
+    """C `(uint8_t)` cast: truncate toward zero, then wrap to 0-255.
+
+    Kept for the brightness path, which is still a float multiply in the NeoPixel library.
+    """
     return int(value) & 0xFF
 
 
@@ -96,7 +108,13 @@ def _u16(value: int) -> int:
 
 
 def ramp_color_at_rpm(rpm: int, ramp: Sequence[Tuple[int, RGB]]) -> RGB:
-    """Mirror of `rampColorAtRpm()`: piecewise-linear lookup over the stops."""
+    """Mirror of `rampColorAtRpm()`: piecewise-linear lookup over the stops.
+
+    Fixed point, matching the firmware: `t` is how far the rpm sits between two stops in
+    1/65536ths, and each channel is interpolated in the colour domain and rounded. The
+    firmware does this in integers because it runs once per LED per repaint on an AVR with
+    no FPU; doing it in float here would be the port quietly diverging.
+    """
     rpm = _u16(rpm)
     if not ramp:
         return (0, 0, 0)
@@ -109,14 +127,14 @@ def ramp_color_at_rpm(rpm: int, ramp: Sequence[Tuple[int, RGB]]) -> RGB:
         a_rpm, a_rgb = ramp[index - 1]
         z_rpm, z_rgb = ramp[index]
         span = z_rpm - a_rpm
-        # `float t = span ? (float)(rpm - a.rpm) / (float)span : 1.0f;`
-        t = _f32((rpm - a_rpm) / span) if span else 1.0
+        # uint16_t t = span ? ((((uint32_t)(rpm - a.rpm) * 65535) + (span >> 1)) / span) : 65535;
+        t = ((((rpm - a_rpm) * 65535) + (span >> 1)) // span) if span else 65535
         out = []
         for channel in range(3):
             start = a_rgb[channel]
-            delta = float(z_rgb[channel] - start)
-            # (uint8_t)((float)a.r + ((float)((int)z.r - (int)a.r) * t) + 0.5f)
-            out.append(_byte(_f32(_f32(start + _f32(delta * t)) + 0.5)))
+            delta = z_rgb[channel] - start
+            # (uint8_t)((a * 65536 + (z - a) * t + 32768) >> 16)
+            out.append((start * 65536 + delta * t + 32768) >> 16)
         return (out[0], out[1], out[2])
 
     return tuple(ramp[-1][1])  # type: ignore[return-value]
@@ -198,10 +216,60 @@ def bar_slots(sequence: int, led_count: int = DEFAULT_LED_COUNT) -> int:
     return led_count // 2
 
 
-def fill_units(rpm: int, slots: int, full_rpm: int) -> float:
-    """Fill length in LED units: 1 at idle, `slots` at full_rpm. Fractional on purpose."""
+def predict_rpm(now_ms: int, last: int, prev: int, last_ms: int, prev_ms: int,
+                have_history: bool, full_rpm: int = 6800) -> int:
+    """Mirror of `predictRPM()`: where to draw the bar now, not where the engine last was.
+
+    The strip carries the last sample's slope forward for at most `EXTRAPOLATE_MS` so the
+    bar sweeps between CAN broadcasts instead of stepping once per frame. Every guard in
+    the firmware is here too, because the interesting behaviour is all in the guards: no
+    history, a stale sample, a gap too short to trust, or a slope no engine could produce
+    all fall back to simply holding the last reading.
+    """
+    if EXTRAPOLATE_MS <= 0:
+        return last
+    if not have_history or now_ms < last_ms:
+        return last
+
+    gap = now_ms - last_ms
+    if gap > EXTRAPOLATE_MS:
+        return last
+
+    sample_gap = last_ms - prev_ms
+    if sample_gap < 4 or sample_gap > 100:
+        return last
+
+    # rpm per millisecond, in 1/16ths so the integer division keeps its resolution
+    slope16 = trunc_div((last - prev) * 16, sample_gap)
+    limit16 = MAX_SLOPE * 16
+    slope16 = max(-limit16, min(limit16, slope16))
+
+    predicted = last + trunc_div(slope16 * gap, 16)
+    return max(0, min(full_rpm, predicted))
+
+
+def trunc_div(a: int, b: int) -> int:
+    """C integer division: truncates toward zero, unlike Python's `//` on negatives."""
+    quotient = abs(a) // abs(b)
+    return quotient if (a < 0) == (b < 0) else -quotient
+
+
+def fill_units_q(rpm: int, slots: int, full_rpm: int) -> int:
+    """Fill length in 1/256ths of an LED: 256 at idle, `slots * 256` at full_rpm.
+
+    Mirrors the firmware's fixed-point `fill_q`, which is what the renderer uses. The
+    fractional part is the dimmed tip LED, so this is the bar's real resolution.
+    """
     rpm = min(rpm, full_rpm)
-    return _f32(1.0 + _f32(_f32(rpm * (slots - 1)) / full_rpm))
+    step = slots - 1 if slots > 1 else 0
+    if not full_rpm:
+        return 256
+    return 256 + (rpm * step * 256) // full_rpm
+
+
+def fill_units(rpm: int, slots: int, full_rpm: int) -> float:
+    """The same number as a float, for the readout."""
+    return fill_units_q(rpm, slots, full_rpm) / 256.0
 
 
 # -- rendering ----------------------------------------------------------------
@@ -233,38 +301,34 @@ def render_bar(rpm: int, cfg: LedConfig) -> List[RGB]:
         rpm = cfg.full_rpm
 
     slots = bar_slots(cfg.sequence, cfg.led_count)
-    # `float fill = 1.0f + ((float)rpm * (float)(slots - 1)) / (float)rpmFull;`
-    fill = fill_units(rpm, slots, cfg.full_rpm)
-    full = int(fill)
-    frac = _f32(fill - full)
-    span = _f32(fill - 1.0) if fill > 1.0 else 1.0
-    scale = DIM_SCALE if cfg.theme_dim else 255
+    fill_q = fill_units_q(rpm, slots, cfg.full_rpm)
+    full = fill_q >> 8
+    frac_q = fill_q & 0xFF
+    span_q = (fill_q - 256) if fill_q > 256 else 256
+    theme_scale = DIM_SCALE if cfg.theme_dim else 255
 
     frame: List[RGB] = [(0, 0, 0)] * cfg.led_count
     for index in range(cfg.led_count):
         rank = bar_rank(index, cfg.sequence, cfg.led_count)
         if rank < full:
-            level = 1.0
-        elif rank == full and frac > 0.05:
-            level = frac
+            level = 255
+        elif rank == full and frac_q >= 13:      # the 0.05-of-an-LED gate
+            level = frac_q
         else:
             continue
 
-        p = _f32(rank / span)
-        if p > 1.0:
-            p = 1.0
+        # (uint32_t)rank << 24 / span_q, clamped to 65536 so the tip samples rpm exactly
+        p_q = min(65536, (rank << 24) // span_q)
 
         # Position mode samples each LED's share of the current rpm, so the gradient
         # flows; wash mode paints the whole bar the color of the present rpm.
-        looked_up = rpm if cfg.color_mode else _u16(int(_f32(p * rpm)))
-        r, g, b = ramp_color_at_rpm(looked_up, cfg.ramp)
+        sample = rpm if cfg.color_mode else (p_q * rpm) >> 16
+        r, g, b = ramp_color_at_rpm(_u16(sample), cfg.ramp)
 
-        # (uint8_t)((uint16_t)r * level * scale / 255)
-        frame[index] = (
-            _byte(_f32(_f32(r * level) * scale) / 255),
-            _byte(_f32(_f32(g * level) * scale) / 255),
-            _byte(_f32(_f32(b * level) * scale) / 255),
-        )
+        gain = (level * theme_scale) // 255
+        frame[index] = (min(255, (r * gain + 127) // 255),
+                        min(255, (g * gain + 127) // 255),
+                        min(255, (b * gain + 127) // 255))
     return frame
 
 

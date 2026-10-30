@@ -100,8 +100,11 @@
 #define RPM_REDLINE         6800    // Trigger haptic pulse
 
 // Timing configuration (microseconds for precision)
-#define CAN_POLL_INTERVAL   10000   // Poll CAN every 10ms (100Hz)
-#define LED_UPDATE_INTERVAL 10000   // Update LEDs every 10ms (100Hz)
+#define CAN_POLL_INTERVAL   2000    // Fallback poll every 2ms if an interrupt is missed
+#define LED_UPDATE_INTERVAL 4000    // Repaint cadence between CAN frames (250Hz)
+// The repaint cadence is what makes the prediction visible: at the old 10 ms the bar took
+// one interpolated step between broadcasts, at 4 ms it sweeps. It costs only the render
+// when nothing changed, because showIfChanged() drops identical frames.
 #define BRIGHTNESS_INTERVAL 50000   // Read pot every 50ms (20Hz)
 #define TIMEOUT_MS          3000    // Error mode if no CAN data for 3 seconds
 
@@ -223,6 +226,27 @@ bool canInitialized = false;
 #define RPM_SNAP_DELTA     250     // RPM jump that bypasses the filter entirely
 #define RPM_ALPHA_RISING   1.00f   // Throttle-on: no filtering at all
 #define RPM_ALPHA_FALLING  0.75f   // Lift-off: light settle, still quick
+#define DIM_SCALE          170     // dark-mode brightness, 170/255 of full
+
+// How far ahead the bar may be drawn from the last two engine samples, in milliseconds.
+//
+// The ECU broadcasts 0x201 far slower than the strip can repaint, so holding the last
+// reading makes the bar a staircase of one step per broadcast. Carrying the slope forward
+// for a fraction of a broadcast period turns that into continuous motion, and since the
+// bar otherwise lags by about half a period on average, half a period of lead cancels it.
+// It is bounded twice: the horizon (this value) and the slope itself, so a shift or a
+// missed frame cannot send the bar somewhere the engine never was. 0 disables it and the
+// bar simply holds the last reading.
+#define RPM_EXTRAPOLATE_MS 12
+
+// Bars faster than this are not an engine: it caps how far the prediction may run.
+#define RPM_MAX_SLOPE      20      // rpm per millisecond (20,000 rpm per second)
+
+static uint16_t rpmLast = 0;          // most recent filtered sample
+static uint16_t rpmPrev = 0;          // the one before it, for the slope
+static unsigned long rpmLastMs = 0;
+static unsigned long rpmPrevMs = 0;
+static bool rpmHaveHistory = false;
 
 // LED sequence setting (persisted in EEPROM)
 uint8_t ledSequence = SEQ_CENTER_OUT;  // Default: center-out (mirrored)
@@ -794,11 +818,22 @@ inline void readCANMessages() {
                 }
                 
                 currentRPM = (uint16_t)(smoothedRPM + 0.5f);  // Round to nearest integer
+
+                // Keep one step of history so updateLEDs() can carry the slope forward
+                // between broadcasts. Timestamped here, where the sample actually lands.
+                rpmPrev = rpmLast;
+                rpmPrevMs = rpmLastMs;
+                rpmLast = currentRPM;
+                rpmLastMs = millis();
+                if (rpmPrevMs) {
+                    rpmHaveHistory = true;
+                }
             }
         }
     }
     
-    g_canDataReceived = 0;  // Clear interrupt flag
+    // Do not clear g_canDataReceived here: it is cleared before the drain in loop(), so a
+    // frame arriving mid-drain still leaves the flag set for the next pass.
 }
 
 // ============================================================================
@@ -826,10 +861,23 @@ inline void rampColorAtRpm(uint16_t rpm, uint8_t* r, uint8_t* g, uint8_t* b) {
         const RampStop& a = rampStops[i - 1];
         const RampStop& z = rampStops[i];
         uint16_t span = z.rpm - a.rpm;
-        float t = span ? (float)(rpm - a.rpm) / (float)span : 1.0f;
-        *r = (uint8_t)((float)a.r + ((float)((int)z.r - (int)a.r) * t) + 0.5f);
-        *g = (uint8_t)((float)a.g + ((float)((int)z.g - (int)a.g) * t) + 0.5f);
-        *b = (uint8_t)((float)a.b + ((float)((int)z.b - (int)a.b) * t) + 0.5f);
+        // Fixed point, not float: this runs once per LED per repaint on a 16 MHz AVR with
+        // no FPU, where every float multiply is a call into avr-libc's software routines.
+        // `t` is how far the rpm sits between the two stops, in 1/65536ths. Scaled by
+        // 65535 rather than shifted by 16: a full-span t would otherwise come out as
+        // 65536 and wrap to zero in the uint16, snapping the last stop back to the one
+        // before it.
+        uint16_t t = span
+                     ? (uint16_t)((((uint32_t)(rpm - a.rpm) * 65535UL) + (span >> 1)) / span)
+                     : 65535;
+        // Interpolate in the colour domain so the value is never negative and the +half
+        // is a plain round-to-nearest: (a + (z - a) * t), rounded.
+        *r = (uint8_t)(((int32_t)a.r * 65536L
+                        + (int32_t)((int16_t)z.r - (int16_t)a.r) * (int32_t)t + 32768L) >> 16);
+        *g = (uint8_t)(((int32_t)a.g * 65536L
+                        + (int32_t)((int16_t)z.g - (int16_t)a.g) * (int32_t)t + 32768L) >> 16);
+        *b = (uint8_t)(((int32_t)a.b * 65536L
+                        + (int32_t)((int16_t)z.b - (int16_t)a.b) * (int32_t)t + 32768L) >> 16);
         return;
     }
     *r = rampStops[rampStopCount - 1].r;
@@ -857,6 +905,41 @@ inline uint8_t barSlots() {
            ? (uint8_t)LED_COUNT : (uint8_t)(LED_COUNT / 2);
 }
 
+// Where the bar should be drawn *now*, which is not always where the engine last was.
+//
+// Pure function of the sample history so it can be compared against the port directly.
+// Returns `last` whenever predicting is unsafe: no history, a stalled or absurd sample gap,
+// a sample already older than the horizon, or a slope beyond what an engine can do.
+inline uint16_t predictRPM(unsigned long now_ms, uint16_t last, uint16_t prev,
+                           unsigned long last_ms, unsigned long prev_ms, bool have_history) {
+    #if RPM_EXTRAPOLATE_MS <= 0
+    (void)now_ms; (void)prev; (void)last_ms; (void)prev_ms; (void)have_history;
+    return last;
+    #else
+    if (!have_history || now_ms < last_ms) {
+        return last;
+    }
+    const unsigned long gap = now_ms - last_ms;
+    if (gap > (unsigned long)RPM_EXTRAPOLATE_MS) {
+        return last;                       // stale: hold, do not run away
+    }
+    const unsigned long sample_gap = last_ms - prev_ms;
+    if (sample_gap < 4UL || sample_gap > 100UL) {
+        return last;                       // too close to trust, or the link stalled
+    }
+    // rpm per millisecond, in 1/16ths so the integer division does not round it to zero.
+    int32_t slope16 = ((int32_t)last - (int32_t)prev) * 16L / (int32_t)sample_gap;
+    const int32_t limit16 = RPM_MAX_SLOPE * 16L;
+    if (slope16 > limit16) slope16 = limit16;
+    if (slope16 < -limit16) slope16 = -limit16;
+
+    int32_t predicted = (int32_t)last + (slope16 * (int32_t)gap) / 16L;
+    if (predicted < 0) predicted = 0;
+    if (predicted > (int32_t)rpmFull) predicted = (int32_t)rpmFull;
+    return (uint16_t)predicted;
+    #endif
+}
+
 // Draw the bar for `rpm`.
 //
 // Color is sampled from each LED's *share of the current rpm*, not from a fixed
@@ -868,40 +951,51 @@ inline void renderBar(uint16_t rpm) {
     if (rpm > rpmFull) rpm = rpmFull;
 
     const uint8_t slots = barSlots();
-    // Fill length in LED units: 1 at idle (one LED is always lit) up to `slots` at rpmFull.
-    // Kept fractional so the color position moves continuously rather than in steps.
-    float fill = 1.0f + ((float)rpm * (float)(slots - 1)) / (float)rpmFull;
-    uint8_t full = (uint8_t)fill;
-    float frac = fill - (float)full;
-    float span = (fill > 1.0f) ? (fill - 1.0f) : 1.0f;
+    // Fill length in 1/256ths of an LED: 256 (one LED) at idle up to `slots` at rpmFull.
+    // Fixed point for the same reason as rampColorAtRpm() - this is the hot loop.
+    const uint16_t step = (slots > 1) ? (uint16_t)(slots - 1) : 0;
+    uint16_t fill_q = 256;
+    if (rpmFull) {
+        fill_q = (uint16_t)(256UL + ((uint32_t)rpm * step * 256UL) / rpmFull);
+    }
+    const uint8_t full = (uint8_t)(fill_q >> 8);
+    const uint8_t frac_q = (uint8_t)(fill_q & 0xFF);
+    // Distance from the root of the bar to its tip, in 1/256ths of an LED.
+    const uint16_t span_q = (fill_q > 256) ? (uint16_t)(fill_q - 256) : 256;
+    // Dark mode is 170/255 of full brightness, folded into the per-LED gain below so the
+    // loop divides once per LED instead of once per channel.
+    const uint8_t theme_scale = themeDim ? DIM_SCALE : 255;
 
     for (uint8_t i = 0; i < LED_COUNT; i++) {
         uint8_t rank = barRank(i);
-        float level;
+        uint8_t level;                      // 0-255, where 255 is a fully lit LED
 
         if (rank < full) {
-            level = 1.0f;
-        } else if (rank == full && frac > 0.05f) {
-            level = frac;
+            level = 255;
+        } else if (rank == full && frac_q >= 13) {   // the 0.05-of-an-LED gate
+            level = frac_q;
         } else {
             CLEAR_LED(i);
             continue;
         }
 
-        float p = (float)rank / span;
-        if (p > 1.0f) p = 1.0f;
+        // This LED's position along the lit bar, 0-65535 (65536 at the very tip, so the
+        // leading LED samples the present rpm exactly). A rank can exceed the span when the
+        // tip is fractional, so it is clamped: past the tip there is no colour to find.
+        uint32_t p_q = ((uint32_t)rank << 24) / span_q;
+        if (p_q > 65536UL) p_q = 65536UL;
 
         uint8_t r, g, b;
         // Position mode samples each LED's share of the current rpm, so the gradient flows
         // along the bar. Rpm mode paints the whole bar the color of the present rpm - the
         // legacy look, kept because some people prefer one wash instead of a gradient.
-        rampColorAtRpm(colorMode ? rpm : (uint16_t)(p * (float)rpm), &r, &g, &b);
+        rampColorAtRpm(colorMode ? rpm : (uint16_t)((p_q * rpm) >> 16), &r, &g, &b);
 
-        uint8_t scale = themeDim ? 170 : 255;   // dark mode is dimmer by design
+        const uint8_t gain = (uint8_t)(((uint16_t)level * theme_scale) / 255);
         SET_LED(i,
-                (uint8_t)((uint16_t)r * level * scale / 255),
-                (uint8_t)((uint16_t)g * level * scale / 255),
-                (uint8_t)((uint16_t)b * level * scale / 255));
+                (uint8_t)(((uint16_t)r * gain + 127) / 255),
+                (uint8_t)(((uint16_t)g * gain + 127) / 255),
+                (uint8_t)(((uint16_t)b * gain + 127) / 255));
     }
     showIfChanged();
 }
@@ -1001,13 +1095,18 @@ inline void updateLEDs() {
 
     // Recomputing 20 LED colors is not free on a 16 MHz AVR, and this runs after
     // every CAN read - which happens at the frame rate, not at the LED rate. The
-    // bar can only change when the RPM changes, so that is the gate. The shift light is
-    // the exception: it flashes with time, not with rpm, so it must repaint regardless.
+    // bar can only change when the drawn RPM changes, so that is the gate - and the
+    // drawn RPM is the predicted one, so the gate has to watch that rather than the
+    // sample. The shift light is the exception: it flashes with time, not with rpm, so it
+    // must repaint regardless.
     const bool shifting = shiftRpm != 0 && currentRPM >= shiftRpm;
-    if (currentRPM == lastRenderedRPM && !stripForceShow && !shifting) {
+    const uint16_t paintRPM = shifting
+        ? currentRPM
+        : predictRPM(millis(), currentRPM, rpmPrev, rpmLastMs, rpmPrevMs, rpmHaveHistory);
+    if (paintRPM == lastRenderedRPM && !stripForceShow && !shifting) {
         return;
     }
-    lastRenderedRPM = currentRPM;
+    lastRenderedRPM = paintRPM;
 
     // Shift light: the whole strip flashes the configured color at the configured rate.
     if (shifting) {
@@ -1045,7 +1144,7 @@ inline void updateLEDs() {
     
     // Dispatch to the shared renderer. The four sequences only differ in the order the
     // LEDs fill, which barRank() encodes, so there is one code path for color and fill.
-    renderBar(currentRPM);
+    renderBar(paintRPM);
     
     // Haptic feedback at redline
     #if ENABLE_HAPTIC
@@ -1267,8 +1366,13 @@ void loop() {
     // ========================================================================
     // Check if interrupt flagged new data OR poll interval elapsed
     if (g_canDataReceived || (now - lastCANPoll >= CAN_POLL_INTERVAL)) {
+        // Cleared *before* reading, not after: a frame that lands while readCANMessages()
+        // is draining would otherwise have its interrupt swallowed by the clear at the end,
+        // and then sit in the controller until the next fallback poll. Clearing first means
+        // the flag is either set by a frame we have not read yet, or clear because we did.
+        g_canDataReceived = 0;
         lastCANPoll = now;
-        
+
         if (canInitialized) {
             readCANMessages();
         }

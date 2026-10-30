@@ -168,7 +168,48 @@ Done and verified on the car:
 | `LED STRIP` settings screen in the app | ✅ `LedScreen.java` — strip / ramp / shift-light / diagnostics groups, phone-only (`piScreen() == -1`), reached from a one-line summary on Settings |
 | Slider latency discipline | ✅ sliders push **on release** (`SliderRow.onRelease`), and the Pi skips identical `CFG:`/`RAMP:` writes — 9600 baud cannot absorb a per-tick drag |
 | Bench simulator | ✅ `tools/simulators/led_simulator/led_simulator_v3.py` — an rpm slider over `led_engine.py`, a port of the firmware. `parity_check.py` proves the port: the firmware's own functions are extracted from `main.cpp`, compiled, and 1524 cases across three strip widths match pixel for pixel |
-| Verification | ✅ `parity_check.py` (2724 frames, rpm filter, brightness; sensitivity proved at every width), `test_settings_parity.py` (63/63 settings), `test_led_engine.py` (43/43), `test_link_protocol.py` (58/58); both APK flavors and both firmwares build |
+| Verification | ✅ `parity_check.py` (2724 frames, rpm filter, brightness; sensitivity proved at every width), `test_settings_parity.py` (63/63 settings), `test_led_engine.py` (43/43), `test_link_protocol.py` (58/58), `wire_check.py` (48 app payloads through the firmware's own parsers); both APK flavors and both firmwares build |
+
+### 4.2 Refresh path: where the delay actually is
+
+The chain is ECU → CAN bus → MCP2515 → SPI → `loop()` → `renderBar()` → `strip.show()`. Each
+stage was measured or counted rather than guessed:
+
+| Stage | Cost | Notes |
+|---|---|---|
+| Bus, 8 data bytes at 500 kbps | ~0.22–0.26 ms | the frame itself |
+| `0x201` period | **dominates everything below** | the strip cannot be fresher than the ECU's broadcast period; everything else is jitter on top |
+| MCP2515 → INT0 → `g_canDataReceived` | µs | hardware interrupt, sets a flag only |
+| `loop()` picks up the flag | one iteration | was up to ~8 ms before the fix below |
+| `renderBar()` per repaint | **was ~54 soft-float call sites inside a 20-iteration loop**, now **0** | see below |
+| `strip.show()` | ~0.6 ms (20 × 24 bits × 1.25 µs), interrupts disabled | unavoidable on AVR; already gated by `showIfChanged()` |
+
+Two things were worth fixing, both now done:
+
+1. **The render was float-bound.** `renderBar()`/`rampColorAtRpm()` interpolated in `float`,
+   and on a 16 MHz AVR every `float` multiply is a call into avr-libc's software routines.
+   Disassembly of `updateLEDs` showed **54 soft-float call sites** (`__mulsf3` ×11,
+   `__floatunsisf` ×12, `__fixunssfsi` ×8, `__addsf3` ×7, `__divsf3` ×6, `__floatsisf` ×5,
+   `__gesf2` ×3, `__subsf3` ×2), most of them inside the per-LED loop, i.e. ~20× each per
+   repaint. That work sits *between* two CAN reads, so it is not just CPU: it is added age on
+   the next frame. The render is now integer throughout — one 32-bit divide and three
+   multiplies per LED — and `updateLEDs` contains **no soft-float calls at all** (code size
+   2016 → 1744 bytes). Colours move by at most one step, from truncation to rounding.
+2. **The interrupt could be lost.** `loop()` cleared `g_canDataReceived` *after* draining the
+   controller, so a frame that landed mid-drain had its flag cleared out from under it and
+   waited for the 10 ms fallback poll. The flag is now cleared *before* the drain, and the
+   fallback poll is down to 2 ms. Worst case goes from ~10 ms of extra staleness to ~2 ms.
+
+Still on the table, deliberately not done yet (they change what the driver sees, so they want
+the car, not a bench):
+
+- **Sub-frame interpolation.** At a 50 Hz broadcast the bar is inherently a 20 ms staircase.
+  Extrapolating along the last two samples would smooth it, but a tachometer that *leads* the
+  engine is worse than one that lags, so it needs judgement in the seat.
+- **Falling-RPM filter lag.** `RPM_ALPHA_FALLING` 0.75 costs about one sample of lag on a
+  closed throttle. `RPM_SNAP_DELTA` 250 already bypasses it for gear changes.
+- **Resolution.** A 20-LED centre-out strip has 10 ranks, so each rank is 680 rpm at a 6800
+  `full`. The fractional tip is what softens that; more LEDs is the only real fix.
 
 
 ---

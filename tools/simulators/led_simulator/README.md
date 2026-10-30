@@ -143,6 +143,8 @@ pixel of every frame to match exactly**:
 - **1524 cases, 2724 frames**, at **LED counts 5, 20 and 21**. Odd widths matter: at 21 the
   center pixel has no partner, and the firmware's mirrored geometry leaves it dark at full
   rpm — a quirk the port has to reproduce, not fix.
+- The **784-case prediction grid** — every guard in `predictRPM()` brushed up against, so a
+  bar that would have run away from the engine is caught rather than shipped.
 - Every fill pattern, both color modes, dim on and off, five "full at" scales, and **eight
   ramps** including out-of-order and duplicated stops. A descending table makes the later
   stops unreachable (the lookup returns at the first stop at or above the request), and the
@@ -160,9 +162,9 @@ Because the C++ side is extracted rather than copied, editing the firmware witho
 the port makes it fail.
 
 `--mutate-check` proves the comparison has teeth: it perturbs the port (`DIM_SCALE` by one,
-then `_byte` by one) and fails if the frames *don't* diverge. A check that passes because
-both sides are inert is worse than no check. Verified: a one-unit change to either is
-caught, and nudging `RPM_ALPHA_FALLING` from 0.75 to 0.90 produces
+then one step on the interpolated colour) and fails if the frames *don't* diverge. A check
+that passes because both sides are inert is worse than no check. Verified: a one-unit change
+to either is caught, and nudging `RPM_ALPHA_FALLING` from 0.75 to 0.90 produces
 `rpm 2500: C++ 2525, python 2510`.
 
 Missing a compiler? It reports `SKIPPED` and exits 0, so it can sit in a test run on a
@@ -264,6 +266,7 @@ overclaiming:
 
 | Not simulated | Why |
 |---|---|
+| **Sub-frame prediction** | The firmware draws the bar up to 12 ms ahead of the last sample, from the slope of the previous two, so it sweeps between CAN broadcasts instead of stepping. The simulator renders a frame for a given rpm rather than for a moment in time, so there is nothing to predict. `parity_check.py` compares the prediction itself, over 784 cases including every guard. |
 | The startup animation | A boot sequence, not a state you can select. It has its own issue ([ISSUE-07](../../../docs/KNOWN_ISSUES.md)). |
 | The 3 s error debounce (`ERROR_DEBOUNCE_MS`) | "No engine frames" switches the scanner on immediately, because that is what you want on a bench. The firmware waits 3 s first. |
 | `DEMO:<rpm>` and its 60 s self-clear | The rpm slider is the override; there is no second one to expire. |

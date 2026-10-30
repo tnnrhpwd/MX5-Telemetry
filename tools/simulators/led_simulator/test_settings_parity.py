@@ -86,8 +86,8 @@ FW_BRIGHTNESS = int(grab(r"\buint8_t\s+currentBrightness\s*=\s*(\d+)", FW,
                          "currentBrightness").group(1))
 FW_SEQUENCE_IS_CENTER_OUT = bool(re.search(r"\buint8_t\s+ledSequence\s*=\s*SEQ_CENTER_OUT",
                                            FW))
-FW_DIM_SCALE = int(grab(r"themeDim \? (\d+) : (\d+)", FW, "the dim scale").group(1))
-FW_FULL_SCALE = int(grab(r"themeDim \? (\d+) : (\d+)", FW, "the dim scale").group(2))
+FW_DIM_SCALE = int(grab(r"#define\s+DIM_SCALE\s+(\d+)", FW, "DIM_SCALE").group(1))
+FW_FULL_SCALE = int(grab(r"themeDim \? DIM_SCALE : (\d+)", FW, "the full scale").group(1))
 
 # The CFG: parser's clamps - what the strip will actually accept.
 _cfg_start = FW.index('else if (strncmp(cmdBuffer, "CFG:", 4) == 0)')
@@ -234,8 +234,8 @@ check("shift color", engine.LedConfig().shift_color, FW_SHIFT_RGB,
       "main.cpp shiftR/G/B")
 check("brightness", engine.LedConfig().brightness, FW_BRIGHTNESS,
       "main.cpp currentBrightness")
-check("dim scale", engine.DIM_SCALE, FW_DIM_SCALE, "main.cpp themeDim ? 170 : 255")
-check("full scale", 255, FW_FULL_SCALE, "main.cpp themeDim ? 170 : 255")
+check("dim scale", engine.DIM_SCALE, FW_DIM_SCALE, "main.cpp DIM_SCALE")
+check("full scale", 255, FW_FULL_SCALE, "main.cpp themeDim ? DIM_SCALE : 255")
 check("self-test length", engine.SELF_TEST_MS, FW_SELF_TEST_MS, "main.cpp SELF_TEST_MS")
 check("identify length", engine.IDENTIFY_MS, FW_IDENTIFY_MS, "main.cpp IDENTIFY_MS")
 check("rpm snap", engine.RPM_SNAP_DELTA, FW_SNAP_DELTA, "main.cpp RPM_SNAP_DELTA")
