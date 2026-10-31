@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothProfile;
+import android.bluetooth.BluetoothStatusCodes;
 import android.content.Context;
 import android.os.Build;
 import android.os.Handler;
@@ -344,7 +345,10 @@ final class BleTransport extends BtTransport {
         byte[] enable = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
         boolean accepted;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            accepted = gatt.writeDescriptor(cccd, enable) == BluetoothGatt.GATT_SUCCESS;
+            // The two-argument writeDescriptor() reports BluetoothStatusCodes, not
+            // BluetoothGatt.GATT_SUCCESS. The two agree on 0, so the old comparison worked
+            // by coincidence and lint was right to flag it.
+            accepted = gatt.writeDescriptor(cccd, enable) == BluetoothStatusCodes.SUCCESS;
         } else {
             cccd.setValue(enable);
             accepted = gatt.writeDescriptor(cccd);

@@ -13,7 +13,12 @@
 
     <application android:appCategory="game"
                  android:label="@string/app_name">
-        <activity android:name=".MainActivity">
+        <!-- exported is repeated from src/main because this element is what adds the
+             launcher filter, and lint reads this file on its own: without it every
+             lint run reported the required attribute as missing. The value has to match
+             the base declaration - a launcher activity is startable by the system. -->
+        <activity android:name=".MainActivity"
+                  android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

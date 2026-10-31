@@ -1658,9 +1658,7 @@ phone unlocked to exercise the phone side of the BLE link (the screen was locked
 activity paused before its second transport walk reached BLE), and `parity_check.py` /
 `wire_check.py` need MSVC, which this machine does not have — they still report SKIPPED.
 
-### Review pass — three defects the device pass could not see (2026-10-30)
-
-Driving the endpoints proves the wiring; it does not prove the paths no one exercised. A
+### Review pass — three defects the device pass could not see (2026-10-30)Driving the endpoints proves the wiring; it does not prove the paths no one exercised. A
 read of the same commits against what the clients actually send found three real defects,
 all now fixed with tests that fail on the old code:
 
@@ -1680,6 +1678,22 @@ caught a firmware/port divergence and neither could run anywhere here:
 
 Still open, found but not changed (each needs a decision rather than a patch):
 
+- **`gradlew lint` had never passed.** Two errors blocked it, so the only static check on
+  the Java code could not be used: `BleTransport` compared the API 33 `writeDescriptor()`
+  result against `GATT_SUCCESS` instead of `BluetoothStatusCodes.SUCCESS` (they agree on 0,
+  so it worked by coincidence), and both flavor manifests add the launcher filter without
+  repeating `android:exported` from `src/main`, which lint read as the attribute being
+  missing. Both fixed; both flavors now report **0 errors** (70/71 warnings).
+- **The app never reads `average_mpg_source`.** The Pi sends it so a field diagnosis can
+  tell a measured average from the 26.0 EPA placeholder, and after a reset the Overview
+  screen shows "26.0 MPG" as if it had been measured. Showing it as `26.0 est.` is the
+  obvious fix; it is a design change to the dash, so it is not made here.
+- **Two different bits claim to be the high-beam indicator.** `parse_headlights()` reads
+  byte 1 bit 0 into `high_beams_on` (used by the round display and the app), while the
+  block below it sets the "legacy" `high_beam_on` from byte 0 bit 2 — and the Pi's own
+  HDMI screen draws *that* one. So the dashboards can disagree. Needs one capture with the
+  lights off and on to see which bit moves, then the HDMI screen should read
+  `high_beams_on` and the legacy field should go.
 - **The Android transport walk spends its whole 6 s budget on SPP before BLE.** On this
   install SPP always fails after its own 5 s connect timeout, so the first walk after
   launch logs "giving up this attempt" without ever trying BLE, which is the transport
@@ -1693,6 +1707,17 @@ Still open, found but not changed (each needs a decision rather than a patch):
   log (journald) and browser history. `app.js` already persists it to localStorage, so the
   query form only needs to work once; clearing it from the address bar would keep it out of
   both places.
+- **`Clear stored MPG and range totals` exists only on the web page.** The app is now the
+  primary in-car surface and has no equivalent; whether a destructive reset belongs on a
+  dash at all is worth deciding before adding one.
+- `androidx.car.app:app` is 1.4.0 and 1.7.0 is published. That library is what makes the
+  drive flavor possible, and ISSUE-09 is about the host not listing it, so a bump is a
+  candidate — but it cannot be judged without the head unit.
+
+Verified invariant, not a change: the twelve theme scheme ids and their accent/secondary
+seeds are byte-identical across `Palette.java`, `link_service.THEME_SCHEMES`, the ESP32
+seed table and the simulator, and the display's 18-field `TEL:` contract still matches the
+ESP32 parser index for index.
 
 **Next deploy delta** (nothing else needs reflashing):
 
