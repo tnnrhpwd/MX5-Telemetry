@@ -30,9 +30,17 @@ there is only a single thing running.
    pair is from inside the app, which lists only devices the phone is ALREADY bonded to.
    That deadlock is why any one-shot fix is worse than useless - it races bluetoothd and
    loses on some boots.
+
+3. HOLD THE ADAPTER NAME
+   The alias is reset to the hostname at the same moment, so the Pi reappears as
+   "raspberrypi" - or, to a scanner that never asks for the scan response, with no name at
+   all - and the owner cannot find the thing they are trying to pair with. bless sets the
+   alias when the BLE transport starts, which only helps until the next bluetoothd
+   restart or adapter power cycle; the display service does not re-run for either.
 """
 
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -44,6 +52,10 @@ from dbus.mainloop.glib import DBusGMainLoop
 AGENT_PATH = "/mx5/pi_link_agent"
 ADAPTER_PATH = "/org/bluez/hci0"
 WANT_CLASS = 0x120103
+
+# The name the phone lists. bt_link.py advertises the same default for the BLE name and
+# reads the same MX5_BT_NAME override, so one variable names both transports.
+WANT_NAME = (os.environ.get("MX5_BT_NAME") or "MX5 Pi Link").strip()
 
 DISPLAY_UNIT = "mx5-display.service"
 ADV_STALE_TICKS = 9  # 9 x 10s = 90s with no advertiser before acting
@@ -184,6 +196,52 @@ def hold_class(bus):
             _once("hciconfig", "warning",
                   "cannot set the adapter class: %s. Install bluez-tools (`sudo apt "
                   "install bluez-tools`) so Android lists the Pi when pairing.", e)
+    return True
+
+
+def hold_name(bus):
+    """Re-assert the adapter name, which is what the phone lists it as.
+
+    The class is not the only property bluetoothd drops when it re-initialises the
+    adapter: the alias falls back to the machine's hostname, so the Pi comes back as
+    "raspberrypi" and the owner cannot find it in the phone's Bluetooth list. bless sets
+    the alias when the BLE transport starts, but the display service never re-runs on a
+    bluetoothd restart, so nothing put it back. This is the same poll-and-repair shape as
+    hold_class, for the same reason.
+    """
+    try:
+        props = dbus.Interface(
+            bus.get_object("org.bluez", ADAPTER_PATH),
+            "org.freedesktop.DBus.Properties",
+        )
+        current = str(props.Get("org.bluez.Adapter1", "Alias"))
+    except dbus.exceptions.DBusException:
+        # Adapter or daemon not up yet; the next tick will try again.
+        return True
+
+    if current == WANT_NAME:
+        return True
+
+    log.info("alias was %r, setting %r", current, WANT_NAME)
+    try:
+        props.Set("org.bluez.Adapter1", "Alias", dbus.String(WANT_NAME))
+        return True
+    except dbus.exceptions.DBusException as e:
+        _once("alias-dbus", "warning",
+              "cannot set the adapter alias over D-Bus (%s); trying bluetoothctl", e)
+
+    # bluetoothctl needs no D-Bus policy of its own and exists wherever BlueZ does, so it
+    # is the fallback rather than the first choice (it forks and takes a second).
+    try:
+        subprocess.call(
+            ["bluetoothctl", "system-alias", WANT_NAME],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as e:
+        _once("alias-tool", "warning",
+              "cannot set the adapter name: %s. The phone will list the Pi by its "
+              "hostname.", e)
     return True
 
 
@@ -466,6 +524,7 @@ def main():
 
     register_agent(bus)
     hold_class(bus)
+    hold_name(bus)
 
     def on_name_owner_changed(name, old_owner, new_owner):
         # bluetoothd restarting drops our registration with it, so re-register rather
@@ -474,6 +533,7 @@ def main():
             log.info("org.bluez reappeared, re-registering")
             register_agent(bus)
             hold_class(bus)
+            hold_name(bus)
 
     bus.add_signal_receiver(
         on_name_owner_changed,
@@ -500,6 +560,11 @@ def main():
             hold_class(bus)
         except Exception:
             log.exception("adapter class check failed; the rest of the tick continues")
+
+        try:
+            hold_name(bus)
+        except Exception:
+            log.exception("adapter name check failed; the rest of the tick continues")
 
         try:
             env = display_env()

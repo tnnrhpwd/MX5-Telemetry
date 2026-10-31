@@ -103,6 +103,7 @@ $RepoRoot    = Split-Path -Parent $PSScriptRoot
 $StateFile   = Join-Path $RepoRoot '.push-state.json'
 $PiRepoDir   = '~/MX5-Telemetry'
 $PiService   = 'mx5-display.service'
+$PiAgentService = 'mx5-bt-agent.service'
 $ArduinoDir  = Join-Path $RepoRoot 'arduino'
 $DisplayDir  = Join-Path $RepoRoot 'display'
 
@@ -835,6 +836,15 @@ function Invoke-PiDeploy {
         Write-Fail "Failed to restart $PiService."
         Set-Status 'Pi' 'FAILED (restart)'
         return $false
+    }
+
+    # The Bluetooth agent runs pi/mx5-bt-agent.py from this same checkout, so a change to
+    # it only takes effect on a restart. Restarting it unconditionally is cheap (it
+    # re-registers with BlueZ and re-asserts the adapter class and name) and it is what
+    # stops "the fix is on disk but the old process is still running".
+    $agentCmd = "sudo systemctl restart $PiAgentService"
+    if ((Invoke-Ssh -Command $agentCmd) -ne 0) {
+        Write-Warn "$PiAgentService did not restart; the Bluetooth agent may be stale."
     }
 
     Start-Sleep -Seconds 4

@@ -39,6 +39,7 @@ def _load_agent():
 
     dbus = types.ModuleType('dbus')
     dbus.exceptions = types.SimpleNamespace(DBusException=_DBusException)
+    dbus.String = str          # real dbus-python marshals str as 's'; this is its name
     dbus.service = types.ModuleType('dbus.service')
     dbus.service.Object = type('Object', (), {'__init__': lambda self, *a, **k: None})
     dbus.service.method = lambda *a, **k: (lambda fn: fn)
@@ -238,21 +239,31 @@ def test_a_restored_record_clears_the_backoff():
 # -- the adapter class --------------------------------------------------------
 
 class _Bus:
-    """Enough of a system bus to get hold_class as far as its property read."""
+    """Enough of a system bus to get hold_class/hold_name to their property reads."""
 
-    def __init__(self, current_class):
+    def __init__(self, current_class, current_alias=None):
         self.current_class = current_class
+        self.current_alias = current_alias
+        self.sets = []
 
     def get_object(self, *args):
         return object()
 
     def props(self):
-        return types.SimpleNamespace(Get=lambda _iface, _prop: self.current_class)
+        def get(_iface, prop):
+            return self.current_alias if prop == 'Alias' else self.current_class
+
+        def set_(_iface, prop, value):
+            self.sets.append((prop, value))
+            if prop == 'Alias':
+                self.current_alias = value
+
+        return types.SimpleNamespace(Get=get, Set=set_)
 
 
-def _class_agent(current_class, **kwargs):
+def _class_agent(current_class, alias=None, **kwargs):
     agent = _agent(**kwargs)
-    bus = _Bus(current_class)
+    bus = _Bus(current_class, alias)
     agent.dbus.Interface = lambda *_a, **_k: bus.props()
     return agent, bus
 
@@ -283,6 +294,54 @@ def test_the_class_is_left_alone_when_it_is_already_right():
     agent, bus = _class_agent(wanted)
     agent.hold_class(bus)
     assert agent._calls == []
+
+
+# -- the adapter name ---------------------------------------------------------
+
+def _refusing_bus(agent, bus):
+    """Make the bus refuse the alias write, as PolicyKit does for a non-root writer."""
+    def refuse(_iface, _prop, _value):
+        raise agent.dbus.exceptions.DBusException('PolicyKit says no')
+
+    bus.props = lambda: types.SimpleNamespace(
+        Get=lambda _i, prop: bus.current_alias if prop == 'Alias' else bus.current_class,
+        Set=refuse)
+    agent.dbus.Interface = lambda *_a, **_k: bus.props()
+
+
+def test_the_name_is_set_when_it_has_reverted_to_the_hostname():
+    """bluetoothd resets the alias to the hostname, and the phone then lists the Pi as
+    "raspberrypi" - or with no name at all when the scan misses the response."""
+    agent, bus = _class_agent(0x120103, alias='raspberrypi')
+    agent.hold_name(bus)
+    assert bus.sets == [('Alias', agent.WANT_NAME)]
+
+
+def test_the_name_is_left_alone_when_it_is_already_right():
+    wanted = _agent().WANT_NAME
+    agent, bus = _class_agent(0x120103, alias=wanted)
+    agent.hold_name(bus)
+    assert bus.sets == []
+    assert agent._calls == []
+
+
+def test_a_failed_dbus_set_falls_back_to_bluetoothctl():
+    agent, bus = _class_agent(0x120103, alias='raspberrypi')
+    _refusing_bus(agent, bus)
+
+    assert agent.hold_name(bus) is True, 'the tick would have died here'
+    assert agent._calls[-1] == ['bluetoothctl', 'system-alias', agent.WANT_NAME]
+
+
+def test_a_missing_bluetoothctl_does_not_kill_the_watchdogs():
+    agent, bus = _class_agent(0x120103, alias='raspberrypi')
+    _refusing_bus(agent, bus)
+
+    def missing(*_a, **_k):
+        raise OSError('No such file or directory: bluetoothctl')
+
+    agent.subprocess.call = missing
+    assert agent.hold_name(bus) is True, 'the tick would have died here'
 
 
 # -- runner -------------------------------------------------------------------
