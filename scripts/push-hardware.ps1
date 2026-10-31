@@ -847,6 +847,15 @@ function Invoke-PiDeploy {
         Write-Warn "$PiAgentService did not restart; the Bluetooth agent may be stale."
     }
 
+    # mx5-can.service runs /usr/local/bin/mx5-can-setup.sh, not the copy in the repo, so a
+    # change to pi/mx5-can-setup.sh reaches the boot path only if it is installed. It sat
+    # there a year out of date once, keeping can1 listen-only, which quietly disabled the
+    # OBD-II requests that instant MPG depends on.
+    $canCmd = "sudo install -m 755 $PiRepoDir/pi/mx5-can-setup.sh /usr/local/bin/mx5-can-setup.sh && sudo systemctl restart mx5-can.service"
+    if ((Invoke-Ssh -Command $canCmd) -ne 0) {
+        Write-Warn 'Could not reinstall the CAN setup script; can1/can0 flags may be stale.'
+    }
+
     Start-Sleep -Seconds 4
     $state = Invoke-Ssh -Command "systemctl is-active $PiService"
     if ($state -ne 0) {
