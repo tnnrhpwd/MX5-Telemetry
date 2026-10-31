@@ -1658,6 +1658,42 @@ phone unlocked to exercise the phone side of the BLE link (the screen was locked
 activity paused before its second transport walk reached BLE), and `parity_check.py` /
 `wire_check.py` need MSVC, which this machine does not have — they still report SKIPPED.
 
+### Review pass — three defects the device pass could not see (2026-10-30)
+
+Driving the endpoints proves the wiring; it does not prove the paths no one exercised. A
+read of the same commits against what the clients actually send found three real defects,
+all now fixed with tests that fail on the old code:
+
+| Defect | Why the device pass missed it | Fix |
+|--------|-------------------------------|-----|
+| `use_mph` and `demo_mode` were compared against `'1'` / `True`, so the app's JSON `1` read as false: "Speed in mph" could only ever switch *off*, and demo mode could never switch on | the web page posts the string `'1'`, and every test used that form | both go through `_truthy()`; tests send the integers and JSON booleans |
+| A `POST /api/mpg/reset` lasted only until the next restart — the reset reached `mpg_data.json` but the old totals stayed in `mpg_data.json.bak`, which `_load_data()` prefers for holding the higher total | the pass verified the file it had just written, not the boot after it | the reset reaches the backup too; a test resets and then starts a fresh calculator |
+| Select/Enter from the steering wheel was never delivered — it is queued on release, and the release branch compared against a field only the unused `get_button_press()` ever set | the wheel cannot be pressed from a desk | the release branch uses the button that was actually down; `test_swc_handler.py` covers the mapping, debounce and both lock paths |
+
+Two harness gaps closed at the same time, because they were the checks that would have
+caught a firmware/port divergence and neither could run anywhere here:
+
+| Check | Before | Now |
+|-------|--------|-----|
+| `parity_check.py` | SKIPPED (MSVC only) | runs on g++: **1608 cases / 2892 frames, every pixel identical**, LED counts 5/20/21, prediction and brightness scale included |
+| `wire_check.py` | SKIPPED (MSVC only) | runs on g++: **24 schemes, 48 payloads, 48 replies — the strip parses exactly what the phone sends** |
+
+Still open, found but not changed (each needs a decision rather than a patch):
+
+- **The Android transport walk spends its whole 6 s budget on SPP before BLE.** On this
+  install SPP always fails after its own 5 s connect timeout, so the first walk after
+  launch logs "giving up this attempt" without ever trying BLE, which is the transport
+  that works. Later attempts skip SPP via its cooldown. Either charge the budget per
+  transport, or order BLE ahead of SPP when the SDP record is known to be missing.
+- **BLE replies are broadcast to every subscribed central** (BlueZ notifies all
+  subscribers of a characteristic), so a nearby device that subscribes to TX sees the
+  telemetry the phone asked for. The token still protects *requests*. Worth deciding
+  whether an encrypted-link requirement on the characteristic is wanted.
+- **The web token can arrive in the URL** (`/?token=…`), which puts it in Flask's access
+  log (journald) and browser history. `app.js` already persists it to localStorage, so the
+  query form only needs to work once; clearing it from the address bar would keep it out of
+  both places.
+
 **Next deploy delta** (nothing else needs reflashing):
 
 | Step | Target | Action |
