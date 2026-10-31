@@ -124,7 +124,7 @@ class BleServer:
 
     # -- lifecycle -----------------------------------------------------------
 
-    def start(self, timeout=35):
+    def start(self, timeout=75):
         """Start the peripheral and wait until it is really advertising.
 
         Waiting matters. Registering the advertisement is asynchronous, so a start() that
@@ -133,6 +133,12 @@ class BleServer:
         yet released, BlueZ refused the registration and the app printed a confident
         "Bluetooth link started" for a link that was already dead. Raising here instead
         lets bt_link.py record the reason and the banner tell the truth.
+
+        The default is longer than BlueZ's 25 s D-Bus activation timeout on purpose: when
+        bluetoothd has just died and systemd is bringing it back, every registration
+        attempt inside that window fails, and a shorter wait gives up on a link that is
+        about to work. main.py runs this on its own thread, so the wait costs the display
+        nothing.
         """
         if not BLESS_AVAILABLE:
             raise RuntimeError(
@@ -224,8 +230,16 @@ class BleServer:
         # connect to the leftover GATT objects and subscribe, so it looked alive while
         # nothing answered. Retry instead of giving up on the first refusal; it clears
         # within a few seconds once the old client has gone.
+        #
+        # The window has to outlast BlueZ's 25 s D-Bus activation timeout, not just a
+        # stuck advertisement: when bluetoothd has crashed, every attempt inside that
+        # window fails with "Failed to activate service 'org.bluez': timed out", and the
+        # old 14 s budget lost that race every single time. The transport then stayed dead
+        # until mx5-bt-agent.py noticed 90 s later and restarted this whole service.
+        ATTEMPTS = 12
+        RETRY_SEC = 5
         last_error = None
-        for attempt in range(1, 8):
+        for attempt in range(1, ATTEMPTS + 1):
             try:
                 await self._server.start()
                 last_error = None
@@ -233,9 +247,10 @@ class BleServer:
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    "BLE advertisement registration attempt %d failed: %s", attempt, e)
-                if attempt < 7:
-                    await asyncio.sleep(2)
+                    "BLE advertisement registration attempt %d/%d failed: %s",
+                    attempt, ATTEMPTS, e)
+                if attempt < ATTEMPTS:
+                    await asyncio.sleep(RETRY_SEC)
 
         if last_error is not None:
             raise last_error
