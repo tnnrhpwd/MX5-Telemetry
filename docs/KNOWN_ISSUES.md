@@ -1729,6 +1729,21 @@ ESP32 parser index for index.
 
 ---
 
+## Pi machine health (checked on the car, 2026-10-30)
+
+Two problems that are not in this repository but will keep costing an evening each:
+
+| Finding | Evidence | What it needs |
+|---------|----------|---------------|
+| **The Pi is browning out.** | `vcgencmd get_throttled` returns `0x50005`: under-voltage *now* (bit 0), currently throttled (bit 2), and both have occurred before (bits 16, 18). The Pi also rebooted by itself mid-session. | A supply and cable that hold 5.1 V under the load of the display, the ESP32 flashing and the LED strip. A browning Pi explains flaky Bluetooth and mystery reboots, so fix this before chasing anything else. |
+| **`nordvpnd` is crash-looping.** | `nordvpnd.service` panics every ~7 s (`index out of range [0] with length 0`) and is restarted by systemd, so the Pi idles at load ~2.4. Not part of this project. | `sudo systemctl disable --now nordvpnd` unless the VPN is deliberate. It cannot be providing anything while it panics on every start. |
+
+Also worth knowing: `mx5-can.service` runs `/usr/local/bin/mx5-can-setup.sh`, **not** the copy in
+the repository. That installed copy was a year out of date and still had `can1` listen-only,
+so after every reboot the Pi could not transmit the OBD-II request, `maf` stayed 0 and instant
+MPG could never appear - with the repo's script looking correct. `push-hardware.ps1` now
+installs it and re-runs the unit; if you ever deploy by hand, do both.
+
 ## Decisions taken
 
 1. **ISSUE-09:** a reading-glanceable Car App Library driving UI (not "parked only").
