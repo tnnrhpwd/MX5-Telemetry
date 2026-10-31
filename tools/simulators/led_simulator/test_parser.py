@@ -20,7 +20,8 @@ else:
     sys.exit(1)
 
 # Test 2: Check if LEDStates.h exists
-project_root = os.path.dirname(os.path.dirname(__file__))
+HERE = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
 ledstates_path = os.path.join(project_root, 'lib', 'Config', 'LEDStates.h')
 print(f"\n2. Checking Arduino config: {ledstates_path}")
 if os.path.exists(ledstates_path):
@@ -49,7 +50,9 @@ except Exception as e:
 
 # Test 5: Verify key constants exist
 print("\n5. Verifying critical constants...")
-required = ['STATE_1_RPM_MIN', 'STATE_2_RPM_MIN', 'STATE_3_RPM_MIN', 'STATE_1_MIN_SPEED_KMH']
+# STATE_1_MIN_SPEED_KMH was dropped by the LED revamp along with the other compile-time
+# colour rules, so requiring it here only ever failed.
+required = ['STATE_1_RPM_MIN', 'STATE_2_RPM_MIN', 'STATE_3_RPM_MIN']
 missing = [k for k in required if k not in config]
 if missing:
     print(f"   ✗ Missing constants: {missing}")
@@ -65,6 +68,5 @@ print("\nKey values:")
 print(f"  State 1 RPM: {config['STATE_1_RPM_MIN']}-{config['STATE_1_RPM_MAX']}")
 print(f"  State 2 RPM: {config['STATE_2_RPM_MIN']}-{config['STATE_2_RPM_MAX']}")
 print(f"  State 3 RPM: {config['STATE_3_RPM_MIN']}-{config['STATE_3_RPM_MAX']}")
-print(f"  Min Speed for State 1: {config['STATE_1_MIN_SPEED_KMH']} km/h")
 print("\nSimulator should work correctly!")
 print("="*70)
