@@ -309,6 +309,41 @@ so a later change does not reintroduce it by accident.
 | A peer that stopped sending newlines grew the Pi's buffer without limit | The size cap only applied to *complete* lines, so a desynced stream could exhaust the Pi's memory | The cap covers the unfinished line too, is reported once, and discards to the next newline so the following request is answered rather than spliced onto the garbage |
 | Both apps polling at once starved each other's replies | BlueZ notifies every subscribed central, so each app sees the other's replies as foreign lines; the allowance was eight, which a 4 Hz neighbour fills in two seconds | The wait is bounded by the deadline instead, with a much larger sanity cap |
 | `stop()` then `start()` left the SPP server permanently deaf | `stop()` closed the listener but kept the reference, and `start()` only binds when there is none, so the second accept loop died on its first call | The listener is forgotten when the server owns it, so a restart binds a fresh one |
+| **The Pi's Bluetooth was started exactly once, at boot** | The worst possible moment: `systemd` starts this service and `bluetoothd`/the dongle/the adapter's power-on within the same few seconds. A first attempt that lost that race set `spp` and `ble` to `None` and **nothing ever tried again** — the Pi answered on the tether and silently had no Bluetooth for the rest of the drive | `BtLink` supervises both transports for the life of the process: a failed start is retried at 5 s, 10 s, 20 s, 40 s, then every 60 s, and a transport whose loop died later is restarted |
+| A transport that had died still looked started | `start()` recorded a thread handle, and both servers' `start()` return early when one is set, so a dead loop made every later `start()` a no-op | Both servers expose `is_alive()` (thread alive **and** not stopped); the supervisor treats a dead transport as down, calls `stop()` — which clears the handle — and only then reopens |
+| Recovery from a lost link meant restarting everything | `mx5-bt-agent`'s only lever was `systemctl restart mx5-display`, which drops CAN, the panel and every session, to fix a radio problem | The supervisor repairs the link in-process; the agent's restart is now a last resort after 180 s, not the first response |
+| `mx5-display.service` had no ordering against `bluetooth.service` | The service could be told to start before the stack it depends on existed, making the race above the *normal* case at boot, not an unlucky one | `After=bluetooth.service` + `Wants=bluetooth.service` — wanted, not required, so a Pi with a dead radio still boots and still shows the display |
+
+### How supervision behaves
+
+Started once is not the same as up, and on a car the two differ every time the ignition
+cycles. `BtLink` therefore keeps a supervisor thread (one tick every 2 s) that asks each
+enabled transport two questions — *is it started?* and *is it still alive?* — and repairs
+the answer:
+
+- **A start that failed** is retried with exponential backoff: 5 s, 10 s, 20 s, 40 s, then
+  every 60 s. The first failure is logged once at `WARNING` with the reason, later ones at
+  `INFO`, so a Pi with no radio does not fill the journal. The link coming up late is
+  invisible to the phone: it polls, so it simply starts answering.
+- **A transport whose loop died** (a `bluetoothd` restart takes the GATT application and
+  the accept loop's socket with it) is treated as not up. It is `stop()`ped first, which
+  clears the server's own thread handle, and then reopened — without that, `start()` would
+  return early and the "restart" would be a no-op. This is how the advertisement comes back
+  after `bluetoothd` crashes, which previously required the agent to restart the service.
+- **A healthy transport is left completely alone.** The supervisor never touches a live
+  session, never re-advertises over a working one, and never restarts the app. Sessions,
+  reconnection and the fallback chain are still the phone's business; this is only the Pi's
+  end coming back.
+- **`stop()` ends it.** The event is set, the supervisor is joined, and a transport that
+  finishes starting *after* `stop()` is closed rather than adopted — otherwise the BLE
+  start, which can block for up to 75 s waiting for its advertisement, could leave a live
+  peripheral behind a shut-down link.
+- **No token still means no radio.** The supervisor is not a way around the refusal: with
+  no token configured it does not run at all.
+
+What it does not fix, by design: a phone that will not re-pair, a wrong token (that is a
+refusal, and refusals pause the transport rather than restarting it), or an adapter that is
+`rfkill`-blocked. Those are reported on the System screen and in the journal.
 
 ### How the failover behaves
 
@@ -630,7 +665,7 @@ presence of a car.
 | Symptom | Cause |
 | --- | --- |
 | The phone lists the Pi as `raspberrypi`, or as an unnamed BLE device | `bluetoothd` reset the adapter alias to the hostname, which it does whenever it re-initialises the adapter (a restart, or a crash). `mx5-bt-agent` polls the alias every 10 s and puts `MX5_BT_NAME` back, so this should repair itself within one tick; if it does not, `bluetoothctl show` will still read `Alias: raspberrypi` and the agent's log will say why it could not write it. Note the BLE *name* rides in the scan response, so a scan that does not wait for it shows the same device with no name even when the alias is right. |
-| Bluetooth disappears for a minute or two, then comes back | `bluetoothd` crashed - check `journalctl -u bluetooth` for `code=killed, status=11/SEGV`. Everything it was holding goes with it: the GATT application, the advertisement, the SDP record, and the adapter alias and class. Recovery is layered: `bt_ble_server` retries the registration for 60 s (longer than BlueZ's 25 s D-Bus activation timeout), `mx5-bt-agent` re-asserts the class and name every 10 s, and after 90 s with no advertisement the agent restarts the display service. |
+| Bluetooth disappears for a minute or two, then comes back | `bluetoothd` crashed - check `journalctl -u bluetooth` for `code=killed, status=11/SEGV`. Everything it was holding goes with it: the GATT application, the advertisement, the SDP record, and the adapter alias and class. Recovery is layered: `bt_link.py` notices the dead transport within 2 s and re-registers on its own, `bt_ble_server` retries the registration for 60 s (longer than BlueZ's 25 s D-Bus activation timeout), `mx5-bt-agent` re-asserts the class and name every 10 s, and only after 180 s with no advertisement does the agent restart the display service. |
 | The Pi passes every check, but the phone still shows OFFLINE | Check the app's build before the link. `BleTransport.java` is recent, so a build from before it has no BLE transport, and SPP cannot work on this Pi, leaving the app no route to the Pi however healthy the Pi looks. An HCI capture settles it: a real client sends an ATT **MTU request** and a **CCCD write** (handle `0x2902`), and a phone that sends neither is not running this transport. |
 | `sdptool not found` in the log | `bluez-tools` not installed. SPP cannot publish its SDP record; use BLE. |
 | `sdptool browse local` shows no Serial Port record | The record was never published, so Android will not connect over SPP. Use BLE. |
@@ -693,6 +728,14 @@ Verified on a desk, with no Bluetooth hardware and no car:
 - That the link **refuses to start with no token**, and that `MX5_BT_ALLOW_NO_TOKEN=1`
   switches that refusal off. Pinned from both sides, and confirmed to fail against the
   previous behavior rather than passing vacuously.
+- The link **supervises itself** (8 checks in `test_bt_link.py`, with fake transports so no
+  radio is involved): a start that fails is retried until the radio appears and reports
+  failure once, the backoff grows 1 s → 2 s → 4 s and then caps, a transport whose loop has
+  died is closed and reopened rather than left looking healthy, a healthy one is never
+  restarted, no token means no radio even from the supervisor, `stop()` ends the supervisor
+  and stops further attempts, `start()` after `stop()` attempts immediately rather than
+  waiting out the old backoff, and a transport that finishes starting after `stop()` is
+  closed instead of adopted.
 - That the web API is byte-for-byte unchanged after sharing its logic with this link:
   40 requests across every endpoint, comparing status, body and side effects.
 - That a machine with no Bluetooth at all reports both transports as unavailable and keeps

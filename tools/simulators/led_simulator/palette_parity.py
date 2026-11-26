@@ -273,6 +273,10 @@ def check_ramp_is_the_engine() -> List[str]:
       - every scheme and mode produces the *same* ramp, because the colours encode rpm;
       - that ramp is the firmware's own `rampStops[]` default, so the bar looks the same
         before and after the phone pushes one;
+      - every stop and every colour *between* stops is fully saturated, because the bar is
+        interpolated in RGB: a stop with a lifted channel drags both of its segments toward
+        grey. The previous green (0x32d782, 77%) and yellow (0xffd23c, 76%) passed the old
+        "is it white?" check and still measured 50% saturation at 3300 rpm on the strip;
       - the top of the bar is red and no stop is white;
       - the shift flash is red.
     """
@@ -287,6 +291,25 @@ def check_ramp_is_the_engine() -> List[str]:
     if editor != want_hex:
         problems.append("LedScreen.DEFAULT_COLOURS is %s, firmware ramp is %s"
                         % (editor, want_hex))
+
+    # Every stop, and every colour the renderer can produce between two stops. Saturation
+    # here is the same quantity the eye judges: min channel over max channel. Full
+    # saturation means one channel is zero, which also makes the interpolation preserve it.
+    for rpm, rgb in fw:
+        high, low = max(rgb), min(rgb)
+        if low > 0 and high > 0:
+            problems.append("stop %d rpm %s is only %d%% saturated (min channel %d)"
+                            % (rpm, rgb, round(100 * (high - low) / high), low))
+    for (rpm_a, a), (rpm_b, b) in zip(fw, fw[1:]):
+        for step in range(1, 8):
+            t = step / 8.0
+            mid = tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+            if min(mid) > 0:
+                problems.append("between %d and %d rpm, %d/%d of the way: %s is only "
+                                "%d%% saturated (min channel %d)"
+                                % (rpm_a, rpm_b, step, 8, mid,
+                                   round(100 * (max(mid) - min(mid)) / max(max(mid), 1)),
+                                   min(mid)))
 
     for ident, _name, _a, _b in app_palette.SCHEMES:
         for dark in (True, False):

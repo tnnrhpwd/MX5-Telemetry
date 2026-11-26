@@ -43,7 +43,7 @@ public class LedScreen extends Screen {
      * and a driver has no business picking a hue at 70 mph.
      */
     private static final String[] SWATCHES = {
-            "0000ff", "00c1c1", "00dcff", "32d782", "ffd23c", "ff8000", "ff0000", "ffffff"
+            "0000ff", "00c1c1", "00dcff", "00d700", "ffd500", "ff8000", "ff0000", "ffffff"
     };
 
     /** Where each of the six stops sits along the rev range, as a fraction of "full at". */
@@ -57,7 +57,7 @@ public class LedScreen extends Screen {
      * screen showed colours the strip would never produce.
      */
     private static final String[] DEFAULT_COLOURS =
-            {"0000ff", "00dcff", "32d782", "ffd23c", "ff8000", "ff0000"};
+            {"0000ff", "00dcff", "00d700", "ffd500", "ff8000", "ff0000"};
 
     private static final int DEFAULT_FULL_RPM = 6800;
 

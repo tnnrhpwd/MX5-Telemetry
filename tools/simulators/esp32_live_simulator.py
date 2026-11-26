@@ -128,13 +128,13 @@ class TelemetrySimulator:
     def isReverse(self) -> bool:
         """Mirror of `uiIsReverse()` in ui_core.cpp.
 
-        Reverse is the sign of the speed: the PCM transmits (speed + 100 km/h), so
-        reverse decodes negative. The explicit flag and `gear == -1` are honoured first,
-        and `gear != 0` keeps a car rolling backwards in neutral on `N`.
+        Reverse is the sign of the speed: the field is (speed + 100 km/h), so forward can
+        never fall below the zero point and a re-offset negative is proof the car is
+        rolling backwards. Nothing overrides it.
         """
         if getattr(self, "isInReverse", False) or self.gear == -1:
             return True
-        return self.speed < 0 and self.gear != 0
+        return self.speed < 0
 
 # Mock LCD drawing functions that work with pygame
 class LCDSimulator:

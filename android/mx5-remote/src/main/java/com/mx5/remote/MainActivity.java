@@ -53,7 +53,7 @@ public class MainActivity extends Activity implements Screen.Host {
     private static final String PREFS = "mx5";
     /** Lifecycle only. Link failures log under MX5Link, Bluetooth under MX5Ble. */
     private static final String TAG = "MX5Life";
-    private static final String DEFAULT_ADDRESS = "192.168.42.100:5000";    private static final int POLL_MS = 250;
+    private static final int POLL_MS = 250;
     /** Whichever transport was carrying the link when the app last had one. */
     static final String KEY_LAST_TRANSPORT = "last_transport";
     private static final int STATUS_EVERY = 8;
@@ -198,7 +198,7 @@ public class MainActivity extends Activity implements Screen.Host {
         currentIndex = prefs.getInt("screen", 0);
 
         pi = PiLink.acquire();
-        pi.configure(prefs.getString("address", DEFAULT_ADDRESS), prefs.getString("token", ""));
+        pi.configure(prefs.getString("address", PiClient.DEFAULT_ADDRESS), prefs.getString("token", ""));
         // Only the instance that created the shared client builds the Bluetooth chain. A
         // second instance rebuilding it would drop the transport that is already carrying
         // the link, and leave its GATT connection open but unreachable.
@@ -1174,7 +1174,7 @@ public class MainActivity extends Activity implements Screen.Host {
 
     @Override
     public String piAddress() {
-        return prefs.getString("address", DEFAULT_ADDRESS);
+        return prefs.getString("address", PiClient.DEFAULT_ADDRESS);
     }
 
     @Override

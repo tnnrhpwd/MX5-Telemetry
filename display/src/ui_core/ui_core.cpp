@@ -1275,18 +1275,17 @@ static int predictedRpm(int gear, float speedKmh) {
 
 // Reverse is the sign of the speed - one rule, applied on the display too.
 //
-// The PCM transmits `(speed + 100 km/h)` and the Pi emits that difference, so
-// reverse arrives as a *negative* km/h. A negative speed while the range is not
-// reporting neutral is reverse gear; rolling backwards in neutral must keep
-// showing `N`, which is what the `gear != 0` veto is for.
+// The PCM transmits `(speed + 100 km/h)`, so the field is an offset and the Pi sends the
+// difference: forward can never land below zero, so a negative km/h is proof the car is
+// rolling backwards. Nothing else is allowed to override it — in particular not the neutral
+// bit, which comes from a frame whose range semantics we have never confirmed.
 //
-// The explicit `isInReverse` flag and `gear == -1` are still honoured first, so
-// the screen is right whichever of the three reaches it: if the flag field were
-// ever missing or misaligned, a negative speed on its own is still enough to
-// show `R` instead of a confident `1`.
+// The explicit `isInReverse` flag and `gear == -1` are honoured first so the screen is
+// right whichever reaches it; a negative speed on its own is still enough to show `R`
+// instead of a confident `1`.
 static bool uiIsReverse() {
     if (telemetry.isInReverse || telemetry.gear == -1) return true;
-    return telemetry.speed < -0.5f && telemetry.gear != 0;
+    return telemetry.speed < -0.5f;
 }
 
 // Draws all six gears in numeric order — 1 2 / 3 4 / 5 6 — with the RPM each gear

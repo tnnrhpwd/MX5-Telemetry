@@ -7,6 +7,11 @@
 > **Newer round (2026-11-26).** Six issues reported from the car since this file was last
 > updated are tracked in [IN_CAR_FINDINGS_2026-11-26.md](IN_CAR_FINDINGS_2026-11-26.md). Where
 > they overlap (ISSUE-01/07/09/12/14) the newer document supersedes the *status* recorded here.
+>
+> **CAN decoding is documented, not inferred:** [CAN_MANUAL.md](CAN_MANUAL.md) records the IDs,
+> byte maps and scales with sources. In particular the `0x201` speed field is `(speed + 100 km/h)`
+> in 0.01 km/h units — it is offset, so it is never negative on the wire, and reverse is the
+> negative produced by removing the offset. Do not re-open that question.
 
 > ⚠️ **Verification status.** The car was driven on the first round of fixes on
 > 2026-10-30 and **five of them were still wrong**: the LEDs never left blue (12), instant

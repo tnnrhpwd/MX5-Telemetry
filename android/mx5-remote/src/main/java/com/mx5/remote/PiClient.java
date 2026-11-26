@@ -24,6 +24,16 @@ import java.util.List;
  */
 public final class PiClient {
 
+    /**
+     * The Pi's address on its own USB tether — what the link uses when the phone has not
+     * been told otherwise.
+     *
+     * Here rather than in each caller because it was duplicated in MainActivity and again
+     * in Mx5CarScreen, which is how two screens end up pointing at different Pis after
+     * one of them is edited.
+     */
+    public static final String DEFAULT_ADDRESS = "192.168.42.100:5000";
+
     /** How long to stop trying after every transport has failed, before escalation. */
     private static final long FAIL_BACKOFF_MIN_MS = 2000;
 

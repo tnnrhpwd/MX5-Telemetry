@@ -58,7 +58,14 @@ WANT_CLASS = 0x120103
 WANT_NAME = (os.environ.get("MX5_BT_NAME") or "MX5 Pi Link").strip()
 
 DISPLAY_UNIT = "mx5-display.service"
-ADV_STALE_TICKS = 9  # 9 x 10s = 90s with no advertiser before acting
+# 18 x 10s = 180s with no advertiser before acting.
+#
+# This is the last resort, and it costs every other subsystem: restarting the display
+# service drops CAN, the panel and every live session. bt_link.py now supervises the BLE
+# transport itself and re-registers after a bluetoothd restart, and one of its attempts can
+# legitimately spend up to 75s waiting for the advertisement - so 90s could fire while the
+# app was already repairing. 180s leaves two full attempts' worth of room after that.
+ADV_STALE_TICKS = 18
 ADV_MAX_RESTARTS = 3
 
 # How often to look for the SPP service record, in ticks. `sdptool browse local` costs a
@@ -442,9 +449,11 @@ def watch_advertising(bus, env):
     just reports the Pi as offline. This is exactly what happened after the pairing work
     restarted bluetoothd several times.
 
-    Deliberately conservative: 90s of continuous zero before acting, so a normal start
-    (BLE takes up to ~25s to register) cannot trip it, and it gives up after a few
-    attempts rather than restarting forever if BLE is switched off in the Pi's config.
+    Deliberately conservative: three minutes of continuous zero before acting. A normal
+    start can spend up to ~75s registering the advertisement, and bt_link.py retries a
+    failed registration on its own, so a shorter window would fire on a link that was
+    already repairing itself. It also gives up after a few attempts rather than restarting
+    forever if BLE is switched off in the Pi's config.
 
     It only applies when the app was actually asked to run BLE. Restarting the display
     service tears down the CAN link, the display and every Bluetooth session, so doing it

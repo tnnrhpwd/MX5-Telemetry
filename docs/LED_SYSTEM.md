@@ -238,7 +238,7 @@ table is the quick reference. Every line is `\n`-terminated and every command re
 | **Set Sequence** | `SEQ:n` | Select LED pattern (1-4) | `SEQ:2` |
 | **Query Sequence** | `SEQ?` | Get current pattern | `SEQ?` |
 | **Ping** | `PING` | Connection test and identity check | `PING` |
-| **Color ramp** | `RAMP:<rpm>:<rrggbb>,…` | 2–6 stops; the last stop is also the rpm at which the strip is full | `RAMP:0:0000ff,2800:32d782,6800:ff0000` |
+| **Color ramp** | `RAMP:<rpm>:<rrggbb>,…` | 2–6 stops; the last stop is also the rpm at which the strip is full | `RAMP:0:0000ff,2800:00d700,6800:ff0000` |
 | **Configuration** | `CFG:<k>=<v>,…` | `bright` 0-255, `theme` 0/1, `full` rpm, `pot` 0/1, `en` 0/1, `mode` 0/1, `shift` rpm (0 = off), `hz` 2-15, `scol` rrggbb | `CFG:en=1,mode=0,shift=6300,hz=8,scol=ff0000` |
 | **Query config** | `CFG?` | Prints the live configuration as one `CFG:` line | `CFG?` |
 | **Persist** | `CFG:save` | Writes the config block to EEPROM (explicit, so a slider drag cannot wear it) | `CFG:save` |
@@ -296,10 +296,18 @@ The defaults below are what the firmware boots with, and they are also what the 
 |-----|----------------|-----|
 | 0 | `#0000ff` | idle |
 | 1400 | `#00dcff` | pulling away |
-| 2800 | `#32d782` | economical cruise |
-| 4500 | `#ffd23c` | waking up |
+| 2800 | `#00d700` | economical cruise |
+| 4500 | `#ffd500` | waking up |
 | 5800 | `#ff8000` | spirited |
 | 6800 | `#ff0000` | redline |
+
+Every stop has one channel at zero. That is what keeps the bar saturated: the colour is
+interpolated between stops in RGB, so a stop with a lifted channel drags both of its
+segments toward grey. The previous green (`#32d782`, 77% saturated) and yellow (`#ffd23c`,
+76%) made the bar measure 50% saturation at 3300 rpm, which is what the owner saw as
+"washed out". With zero channels on both ends of every segment the whole bar measures 100%,
+in both modes and under dark-mode dimming — verified against the compiled firmware, and
+`palette_parity.py` fails if a future edit reintroduces a lifted stop.
 
 ### CAN Configuration
 

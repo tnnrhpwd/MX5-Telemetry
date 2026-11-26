@@ -100,7 +100,14 @@ class CANParser:
 
     # The PCM broadcasts vehicle speed in 0x201 bytes 4-5 as a 16-bit field in
     # 0.01 km/h units biased by +100 km/h, so 0x2710 is 0.00 km/h and reverse
-    # lies below it. Two things used to destroy that sign on the way in:
+    # lies below it.
+    #
+    # This is documented, not guessed: see docs/CAN_MANUAL.md, which cites the
+    # RaceChrono MX-5 NC decode and a published DBC (`(0.01, -100)`). The value on
+    # the wire is never negative - it is an offset - so the sign only exists after
+    # the subtraction below, and a negative is proof the car is rolling backwards.
+    #
+    # Two things used to destroy that sign on the way in:
     #
     #   * read as unsigned, a plain two's-complement negative (0x8000 and up)
     #     turns into +228..+555 km/h. That is how a reverse reading arrived as a
@@ -513,11 +520,10 @@ class GearEstimator:
                 recommended_gear: Suggested gear for current speed (1-6)
                 gear_color: Color indicator ('red', 'blue', 'green', 'yellow', 'cyan')
         """
-        # A negative speed is reverse gear, unless the range switch is reporting
-        # neutral: a car rolling backwards in N is not in reverse gear. The order
-        # matters - a negative speed with no neutral report must never fall through
-        # to the ratio match below, because that is what answered "1st".
-        if speed_mph < 0 and not is_in_neutral:
+        # A negative speed is reverse gear. Full stop.
+        # `estimate_gear()` checks the same thing first, so a reverse reading can never
+        # fall through to the ratio match and come back as "1st".
+        if speed_mph < 0:
             return (-1, False, 1.0, -1, 'green')
 
         # If CAN reports neutral, return neutral
@@ -1071,17 +1077,17 @@ class CANHandler:
         now = time.time()
         # Reverse is the sign of the speed, and nothing else.
         #
-        # The PCM transmits (speed + 100 km/h), so reverse arrives below the
-        # 100 km/h zero point and decodes *negative*. A negative speed while the
-        # range switch is not reporting neutral is reverse gear; neutral is the
-        # veto, not the trigger, because a car rolling backwards in N is not in
-        # reverse gear and must keep showing `N`.
+        # The PCM transmits (speed + 100 km/h), so the field is an offset, not a signed
+        # value: forward can never fall below the 100 km/h zero point, which means a
+        # reading *below* it can only mean the car is moving backwards. Removing the
+        # offset and finding a negative is therefore proof, not an inference.
         #
-        # `_reverse_from_range` still wins when a discrete 0x231 code has been
-        # observed, because that does not depend on the PCM encoding a sign.
-        in_reverse = self._reverse_from_range or (
-            self.telemetry.speed_kmh < 0 and not self.telemetry.is_in_neutral
-        )
+        # Neutral is deliberately NOT allowed to veto it. The neutral bit comes from
+        # 0x231, whose range semantics on this car have never been pinned down, and
+        # letting an unproven secondary signal override the primary one is part of why
+        # this stayed broken for a year. `_reverse_from_range` still wins when a
+        # discrete reverse code has been observed, since that needs no sign at all.
+        in_reverse = self._reverse_from_range or self.telemetry.speed_kmh < 0
 
         # One line per state change. A single shift into R now answers the question
         # the capture tools were written for - whether this car actually broadcasts

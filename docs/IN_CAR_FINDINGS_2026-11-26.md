@@ -23,12 +23,12 @@ claim; "needs the car" is the one thing code cannot settle.
 
 | ID | What changed | How it was verified | Still needs the car |
 |----|--------------|---------------------|---------------------|
-| [19](#issue-19--reverse-still-reads-as-gear-1) | Reverse is the sign of the speed, in one place on the Pi, with neutral as the veto; the display now also derives `R` from a negative speed, so a missing/misaligned flag can no longer leave a confident `1`. New `REV:` line in the journal on every state change. | `test_can_speed.py` 19/19, including a new neutral-veto test; the simulator renders `--reverse-sign` (speed −3, flag false, gear 1) **pixel-identical** to `--reverse` on Overview and RPM | whether this car's `0x201` really goes below the 100 km/h zero point while reversing — one shift answers it via `REV:` |
+| [19](#issue-19--reverse-still-reads-as-gear-1) | Reverse is the sign of the speed, in one place on the Pi, with nothing allowed to override it (not the neutral bit); the display now also derives `R` from a negative speed, so a missing/misaligned flag can no longer leave a confident `1`. New `REV:` line in the journal on every state change. | `test_can_speed.py` 19/19, including a test that a negative speed beats a stuck neutral bit; a synthetic frame at `0x251C` (`−5 km/h`) runs the whole chain to `TEL:…,-5,-1,…,1`; the simulator renders `--reverse-sign` (speed −3, flag false, gear 1) **pixel-identical** to `--reverse` on Overview and RPM | whether the Pi and panel in the car are running this code — the `REV:` line prints the decoded speed, so one shift into R says so |
 | [20](#issue-20--gear-ladder-predicts-rpm-about-5-low) | Ladder table derived from `GEAR_RATIO`/`FINAL_DRIVE`/`TIRE_DIAMETER_IN` (24.3") instead of a hand-typed table that implied a 25.5" wheel | re-rendered ladder: 100 km/h now predicts 2971 rpm in 6th and 4183 in 4th, matching the derivation | the residual from the loaded rolling radius; `RPM_CALIBRATION` is the single number to set |
 | [21](#issue-21--startup-animation-flickers-all-through) | Boot animation composes each frame in a PSRAM frame buffer and flushes it in 8 bands, instead of ~500–700 panel writes per frame | firmware builds for `esp32s3_display`; the rect mapping (including clipping) is verified by an executable check | whether the flicker is gone, judged on the panel |
 | [22](#issue-22--dashboard-is-not-viewable-while-driving) | In-motion screen now blanks readings older than 3 s or reported not-live, instead of holding the last value for ever | code review; `can_connected` is the Pi's liveness flag | the tile itself still needs a Play internal track, or the HDMI route |
 | [23](#issue-23--led-strip-still-feels-laggy) | Nano serial 9600 → 115200 at both ends; `STATUS` now reports `PER=` (measured `0x201` period) and `LAG=` (worst loop iteration), both surfaced in `/api/telemetry`; predictor ceiling 40 → 60 ms | Nano firmware builds (53.5 % flash); the Pi's STATUS parser ignores unknown keys and the whole Pi suite passes | read `PER`/`LAG` on a drive — that picks the remaining fix |
-| [24](#issue-24--led-colours-are-washed-out-and-red-reads-pink) | The strip's ramp is the engine's ramp again — identical in all 12 schemes and both modes; the theme reaches it only as the dark-mode dim factor; shift light is red | `javac` + harness: 24/24 scheme/mode pairs checked for chroma floor, red redline, no white, red shift light; the `Color` bit-op refactor is asserted against Android's semantics | a photo at ~6800 rpm |
+| [24](#issue-24--led-colours-are-washed-out-and-red-reads-pink) | The strip's ramp is the engine's ramp again — identical in all 12 schemes and both modes; the theme reaches it only as the dark-mode dim factor; shift light is red | `javac` + harness: 24/24 scheme/mode pairs checked for chroma floor, red redline, no white, red shift light; the `Color` bit-op refactor is asserted against Android's semantics. **Second pass:** two engine stops were still 23�24 % white and the bar measured 50 % saturation at 3300 rpm; re-measured at 100 % everywhere after the fix � see [the second pass](#second-pass-2026-11-26-after-the-fix-above-shipped) | a photo at ~6800 rpm |
 
 **Still open by nature:** the reverse signal question (19) and the Android Auto distribution
 step (22). Neither is a code defect that can be closed from this repo without the car or a
@@ -48,6 +48,7 @@ same rule. Seven were hiding, and each one could have restored the old symptom:
 | A wrong 5-speed ratio table (`3.136 … 0.814`) plus a made-up `/25` divisor for demo speed | `main.py:_update_demo` | derives speed from `GearEstimator.MPH_PER_1000_RPM` |
 | A calibration knob that existed on **one of three** surfaces, i.e. a new way for the ladder and the gear to disagree | `ui_core.cpp: RPM_CALIBRATION` | removed; `TIRE_DIAMETER_IN` is the only knob, and the comment names the other two files that must change with it |
 | An unused `LCD_FramebufferActive()` in the new driver API | `Display_ST77916` | removed |
+| The Pi's default address written twice, in `MainActivity` and again in `Mx5CarScreen` | — | one `PiClient.DEFAULT_ADDRESS` |
 
 Also reconciled: the stale "the phone pushes a theme-derived ramp" claims in
 [LED_REVAMP_PLAN.md](LED_REVAMP_PLAN.md), `tools/simulators/led_simulator/README.md` and two
@@ -57,6 +58,42 @@ Two things were checked and deliberately **not** changed: `Telemetry.connected` 
 be `Led.connected` (live, not a dead field — the in-motion staleness check correctly uses
 `canConnected`), and the `test_parser.py` / `test_sound.py` failures are environmental
 (Windows console encoding, no audio device), not code.
+
+### Drive-mode review (the in-motion Android Auto surface)
+
+Read end to end: manifest, service, session, screen, the `/api/telemetry` payload it consumes,
+and the transport layer behind it.
+
+**Correct as found.** The drive manifest is the only one with no `android:appCategory`, and the
+only one declaring `CarAppService` + `category.IOT` + the `template` descriptor; the service is
+exported with the right action and label; `PaneTemplate` carries six text-only rows and one
+`APP_ICON` header action, so nothing interactive is asked of the host in motion;
+`Mx5CarScreen` does all I/O on a worker thread, posts only `invalidate()` to the main looper,
+guards against overlapping fetches, releases the shared client on teardown, and re-reads
+`use_mph` per template so the phone's toggle applies without restarting the session.
+`PiClient.isConfigured()` reads as "configured" but means "at least one transport is
+addressable" — with `DEFAULT_ADDRESS` always set, the fetch is attempted rather than skipped, so
+there is no spinner-forever path.
+
+**Fixed in this pass:**
+
+- the staleness timestamp used `System.currentTimeMillis()`; a phone that syncs its clock after
+  boot can jump it backwards, which would make a minute-old reading look fresh. Now
+  `SystemClock.elapsedRealtime()`, which is monotonic;
+- the Pi's default address was duplicated between `MainActivity` and `Mx5CarScreen` — one
+  `PiClient.DEFAULT_ADDRESS` now.
+
+**Two limitations, documented rather than papered over:**
+
+- `can_connected` means "either bus has traffic", not "the engine frame is arriving". If HS-CAN
+  dies while the body bus keeps talking, the drive screen shows `0` and `N` instead of `--`.
+  Fixing that properly needs an `engine_live` field on the Pi's payload — a Pi/API change, not
+  an app one;
+- `MX5 Drive` is a **separate package**, so its `mx5` SharedPreferences start empty even when
+  the parked app is configured. Over the USB tether that is harmless (HTTP is unauthenticated);
+  over Bluetooth the Pi requires a token *if it has one*, so a fresh install links on the cable
+  and is rejected over Bluetooth until the token is entered in *that* app once. The comment in
+  `Mx5CarScreen` now says so, because this looks exactly like "the drive app doesn't work".
 
 ---
 
@@ -152,11 +189,57 @@ because 2 mph in 1st is closest to its 3500 rpm target. So `1` is not a bad rati
 the deliberate "we can't tell, suggest the lowest gear" branch. It will look identical in
 reverse and in 1st, by construction.
 
-### What is actually missing
+### Where the sign comes from
 
-One capture. `0x201` does not appear to carry a sign on this car (that is what ISSUE-14
-concluded), so reverse must come from somewhere else, and the repo already has the tool and two
-pre-wired sources:
+The field is **not signed on the wire** — it is `speed + 100 km/h` in 0.01 km/h units, so
+`0x2710` is 0.00 km/h and the sign only exists *after* the offset is removed. Forward can never
+fall below that zero point, which is what makes a re-offset value below zero **proof** that the
+car is rolling backwards rather than an inference to be corroborated.
+
+`parse_speed()` does exactly that, and it is the only decoder in the repo — there is no second
+path that could be reading the offset value raw. The encoding is documented by two independent
+sources (RaceChrono's MX-5 NC decode and a published DBC); see
+[CAN_MANUAL.md](CAN_MANUAL.md#the-rule-that-keeps-getting-re-derived-speed-is-offset-not-signed).
+A synthetic frame at `0x251C` (95.00 km/h of offset = −5.00 km/h) runs the whole chain correctly:
+
+```
+raw 0x251C -> decode -5 -> gear -1 -> TEL:…,-5,-1,…,1
+```
+
+So the code was never missing the sign. What it *was* doing is letting other things override
+it. Two did, and both are now gone:
+
+1. the **neutral bit** from `0x231` — whose range semantics on this car have never been
+   confirmed — was allowed to veto a negative speed;
+2. each display re-derived reverse from its own flag instead of from the sign, and the
+   in-motion screen even tested neutral *first*.
+
+Reverse is now `speed < 0`, full stop, in exactly one place per platform.
+
+### Why it lands on exactly 1
+
+This is the part that explains the *specific* number, and it is worth recording because it will
+happen again the moment anyone "fixes" the estimator:
+
+```python
+# can_handler.py — estimate_gear()
+if speed_mph < 3:                       # walking pace, i.e. every reverse manoeuvre
+    return (recommended_gear, ...)      # recommended_gear == 1 for anything under ~2 mph
+```
+
+With a **non-negative** speed of 2–3 mph, `estimate_gear()` never even reaches the ratio
+comparison: it returns the *recommended* gear for that speed, and `suggest_gear_for_speed()`
+picks 1st because 2 mph in 1st is closest to its 3500 rpm target. So `1` is not a bad ratio
+match — it is the deliberate "we can't tell, suggest the lowest gear" branch. It is only ever
+reached with a non-negative speed, which is precisely why the sign must be checked first.
+
+### What is left
+
+Only one question remains, and it is not about the encoding: **is the car running this code?**
+The `REV:` journal line prints the decoded speed, the raw field, the neutral bit, the range code
+and the gear on every state change, so a single shift into R says whether the Pi produced a
+negative number. If it did, the panel shows `R`; if it did not, the raw field will be sitting at
+or above `0x2710`, and then — and only then — these fallbacks matter:
 
 | Candidate source | Where | State |
 |---|---|---|
@@ -164,19 +247,9 @@ pre-wired sources:
 | Backup-lamp bit on `0x290` / `0x4A0` | [`parse_headlights()`](../pi/ui/src/can_handler.py#L361) decodes only bit 0 of byte 0 and bit 0 of byte 1 — 14 bits unused | Not decoded |
 | Physical reverse switch → spare Pi GPIO | — | Not wired |
 
-`tools/can/reverse_probe.py` was written for exactly this and its analysis half is unit-tested
-(`tools/can/test_reverse_probe.py`, 7/7). It cannot tell you the answer without two captures.
-
-### Proposed approach
-
-1. Take the two captures (park, then reverse with the brake on and the lever in R — the car does
-   not need to move). `diff` names the frame, byte and bit that changes.
-2. If it is `0x231`, put the observed code in `REVERSE_RANGE_CODES`. Nothing else changes — the
-   hold timer, the flag, the wire field and both render paths already work.
-3. If it is a lighting bit, add it to `parse_headlights()` (or a new `parse_reverse()`) and set
-   `is_in_reverse` from it, keeping the negative-speed path as a backstop.
-4. If neither moves, stop guessing at CAN and either tap the reverse switch wire or make the UI
-   honest: with no reverse source, show `N` plus a `REV?` hint rather than a confident `1`.
+`tools/can/reverse_probe.py` diffs two captures and names the frame, byte and bit that changes
+(`tools/can/test_reverse_probe.py`, 7/7). If a range code is ever observed, putting it in
+`REVERSE_RANGE_CODES` makes reverse independent of the sign entirely — no other change needed.
 
 ### Done when
 
@@ -579,6 +652,68 @@ No car needed for most of it:
 Red is red in every theme and mode; the bar is monotone in hue from bottom to top; no washed-out
 middle; `renderBar()` applies gamma; and a scheme can no longer produce a low-chroma stop.
 
+### Second pass, 2026-11-26 (after the fix above shipped)
+
+The theme-derived ramp is gone and red is exactly `#ff0000`, but a measured re-check found the fix
+**incomplete**: two of the six *engine* stops were themselves 23–24 % toward white.
+
+Measured against the compiled firmware — `parity_check.py`'s harness extracts `rampColorAtRpm()`
+and `renderBar()` from `arduino/src/main.cpp`, so these are the bytes the Nano writes:
+
+| Stop | Colour | HSV saturation | White-ness (min/max) |
+|---|---|---|---|
+| 0 | `#0000ff` | 100 % | 0.00 |
+| 1400 | `#00dcff` | 100 % | 0.00 |
+| 2800 | `#32d782` | **77 %** | **0.23** |
+| 4500 | `#ffd23c` | **76 %** | **0.24** |
+| 5800 | `#ff8000` | 100 % | 0.00 |
+| 6800 | `#ff0000` | 100 % | 0.00 |
+
+and worse *between* the stops, because the bar interpolates in RGB:
+
+| Where | Colour | Saturation |
+|---|---|---|
+| 3300 rpm, any mode, any dim | `#6cd66e` | **50 %** |
+
+That is the number behind "way too white washed": half way to grey, in the middle of the bar, in
+every mode. It survived the first fix for two reasons — the ramp *stops* looked defensible in a
+swatch, and the regression test only asserted "not white" (`high - low < 20`), which a 77 % stop
+passes comfortably.
+
+**The fix is a property, not a palette.** Every stop now has one channel at zero, and adjacent
+stops share that zero channel, so the RGB interpolation keeps it at zero along the whole segment:
+
+```
+#0000ff → #00dcff → #00d700 → #ffd500 → #ff8000 → #ff0000
+ (R=0)     (R=0)     (R=B=0)   (B=0)     (B=0)     (G=B=0)
+```
+
+Measured after the change, over 1108 configurations (both colour modes × both dim states ×
+0–6900 rpm in 25 rpm steps) and every lit LED with value ≥ 25 %: **worst saturation 100 %,
+white-ness 0.00**, redline `#ff0000`, dark-mode redline `#aa0000`. Dark mode stays safe because
+`renderBar()` applies `DIM_SCALE` as a *multiplicative* gain on all three channels, which cannot
+change a ratio.
+
+What changed, and what now stops it coming back:
+
+- the six hexes, in all five copies (firmware `rampStops[]`, `Palette.ENGINE_RAMP`,
+  `LedScreen.DEFAULT_COLOURS` + swatches, `led_engine.DEFAULT_RAMP`, `app_palette.ENGINE_RAMP`);
+- a dead `PALETTE` constant in [`led_simulator_v3.py`](../tools/simulators/led_simulator/led_simulator_v3.py)
+  that still held the pre-fix `0a84ff … ef4444` colours, removed;
+- [`palette_parity.py`](../tools/simulators/led_simulator/palette_parity.py) now requires every
+  stop **and** seven interpolated points per segment to have a zero channel. Reverting the two
+  stops to the old values makes it fail with `(127, 213, 104) is only 51% saturated` — proven,
+  not assumed.
+
+### A second drift the same audit found
+
+`led_engine.py` — the port `parity_check.py` compares against the firmware — still had
+`EXTRAPOLATE_MS = 40` while the firmware had been raised to 60 for ISSUE-23. The comparison that
+would have caught it (`check_prediction`) had been *failing to compile* since the `PER=`/`LAG=`
+instrumentation was added, because the harness did not stub `micros()` or the three period
+globals. Both are fixed: the harness stubs them, and `parity_check.py` now reports 1608 cases,
+2892 frames, every pixel identical, plus 784 prediction cases.
+
 ---
 
 ## Cross-cutting notes
@@ -599,6 +734,48 @@ These showed up in more than one issue and are worth fixing once:
 - **9600 baud serial is the default on the shipped Nano build** and blocks the LED loop for
   ~50 ms/s ([ISSUE-23](#issue-23--led-strip-still-feels-laggy)). One-line change, no reason to
   keep it.
+
+---
+
+## ISSUE-25 — The Bluetooth link does not survive a reboot or a radio reset
+
+Not one of the six in-car findings; it was reported separately while those were being fixed,
+and it shares their shape: **a single wrong assumption, no recovery path.**
+
+### Root cause
+
+`BtLink.start()` ran exactly once, from `PiDisplayApp.__init__` — the moment the Pi is least
+likely to have a working radio. `systemd` starts this service and `bluetoothd`, the USB
+dongle, or the adapter's own power-on all within the same few seconds, and the unit had no
+`After=bluetooth.service` to stop it losing that race on purpose. When the first attempt
+failed, `spp` and `ble` were set to `None` and **nothing ever tried again**: the Pi kept
+answering on the USB tether and silently had no Bluetooth until the next reboot.
+
+The only recovery was `mx5-bt-agent` noticing that no BLE advertisement existed 90 s later and
+running `systemctl restart mx5-display`, which also drops CAN, the panel and every live
+session. Fixing a radio problem by restarting the whole car.
+
+There was a second, quieter version of the same fault: both servers' `start()` return early
+when a thread handle is set, so a transport whose loop had died (a `bluetoothd` restart takes
+the accept loop's socket with it) could never be reopened — `start()` was a no-op on it, and
+nothing could tell a live loop from a dead one.
+
+### Fixed
+
+| Change | Where |
+|---|---|
+| Both transports are supervised for the life of the process: retry at 5 → 10 → 20 → 40 → 60 s, and restart a transport whose loop died | [`bt_link.py`](../pi/ui/src/bt_link.py) |
+| `is_alive()` on both servers, so "started once" and "is up" are no longer the same question | [`bt_spp_server.py`](../pi/ui/src/bt_spp_server.py), [`bt_ble_server.py`](../pi/ui/src/bt_ble_server.py) |
+| `After=`/`Wants=bluetooth.service`, so the first attempt usually succeeds | [`mx5-display.service`](../pi/mx5-display.service) |
+| The agent's whole-service restart is a last resort at 180 s, not the first response at 90 s | [`mx5-bt-agent.py`](../pi/mx5-bt-agent.py) |
+| The supervisor is stopped on shutdown, and a transport that finishes starting afterwards is closed rather than adopted | [`bt_link.py`](../pi/ui/src/bt_link.py), [`main.py`](../pi/ui/src/main.py) |
+
+Verified with 8 checks in [`test_bt_link.py`](../pi/ui/src/test_bt_link.py) over fake
+transports (no radio needed), plus the existing 70 + 10 Bluetooth checks. Not verified on the
+car: that the link now returns after a real ignition cycle. The journal says so within one
+tick — `SPP stopped; restarting it` / `BLE link up` — which is the line to look for.
+
+Details, including what supervision deliberately does *not* do: [BLUETOOTH_LINK.md](BLUETOOTH_LINK.md#how-supervision-behaves).
 
 ---
 

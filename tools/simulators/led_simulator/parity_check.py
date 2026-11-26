@@ -643,6 +643,12 @@ RPM_HARNESS = r"""
 unsigned long millis_value = 0;
 static unsigned long millis() { return millis_value; }
 
+// `micros()`: the firmware times the 0x201 period for the STATUS `PER=` field. A fixed
+// 10 ms per frame reproduces the 100 Hz bus the period measurement is meant to report, and
+// keeps the harness's own output a pure function of the readings it is fed.
+unsigned long micros_value = 0;
+static unsigned long micros() { return micros_value; }
+
 static uint8_t  frame_data[8];
 static uint8_t  frame_len = 8;
 static int      frames_left = 0;          // frames the stub will hand out
@@ -676,6 +682,10 @@ uint16_t rpmPrev = 0;
 unsigned long rpmLastMs = 0;
 unsigned long rpmPrevMs = 0;
 bool rpmHaveHistory = false;
+// The period instrumentation behind the STATUS `PER=` field.
+unsigned long enginePeriodSum = 0;
+uint16_t enginePeriodCount = 0;
+unsigned long prevEngineMicros = 0;
 """
 
 

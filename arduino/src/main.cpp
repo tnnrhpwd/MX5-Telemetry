@@ -169,11 +169,18 @@ struct RampStop {
 
 #define RAMP_STOP_COUNT 6
 
+// Every stop sits on a face of the RGB cube (min channel 0), which is what "saturated"
+// means for an 8-bit LED. That is not decoration: the bar's colour is interpolated between
+// these stops in RGB, so a stop with a raised min channel is a stop the whole segment
+// either side of it drifts through - which is how the previous green (50,215,130) and
+// yellow (255,210,60) produced a bar that measured 50% saturation at 3300 rpm and read as
+// washed out. With a zero channel on both ends of every segment, the interpolated colour
+// keeps that channel at zero and the whole bar stays at 100%.
 RampStop rampStops[RAMP_STOP_COUNT] = {
     {    0,   0,   0, 255 },   // idle - blue
     { 1400,   0, 220, 255 },   // pulling away - cyan
-    { 2800,  50, 215, 130 },   // economical cruise - green
-    { 4500, 255, 210,  60 },   // waking up - yellow
+    { 2800,   0, 215,   0 },   // economical cruise - green
+    { 4500, 255, 213,   0 },   // waking up - yellow
     { 5800, 255, 128,   0 },   // spirited - orange
     { 6800, 255,   0,   0 },   // redline - red
 };

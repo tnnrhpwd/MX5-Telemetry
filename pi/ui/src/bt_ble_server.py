@@ -111,6 +111,19 @@ class BleServer:
 
     # -- diagnostics ---------------------------------------------------------
 
+    def is_alive(self):
+        """Whether the peripheral thread is still running.
+
+        `start()` returning is not the same thing: the same `_run` that reports a startup
+        failure also reports a transport that died hours later, and in both cases the
+        server object survives looking healthy. BtLink's supervisor asks this before
+        deciding a transport is up.
+        """
+        if self._stop.is_set():
+            return False
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
     def describe(self):
         return {
             'transport': 'ble',
@@ -120,6 +133,8 @@ class BleServer:
             'bless_error': None if BLESS_AVAILABLE else str(BLESS_IMPORT_ERROR),
             'writes': self._writes,
             'notifications': self._notifications,
+            # What the phone can actually connect to, as opposed to what was started once.
+            'listening': self.is_alive(),
         }
 
     # -- lifecycle -----------------------------------------------------------

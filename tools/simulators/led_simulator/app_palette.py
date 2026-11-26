@@ -57,11 +57,13 @@ ALERT = 0xFF8C32      # "Alert stays orange in every scheme."
 RAMP_RPMS: Tuple[int, ...] = (0, 1400, 2800, 4500, 5800, 6800)
 
 # `Palette.ENGINE_RAMP`, verbatim: the engine's colours, identical in every scheme.
+# One channel is zero in every stop, so the firmware's RGB interpolation between stops
+# cannot lift it and the bar stays at 100% saturation all the way up the rev range.
 ENGINE_RAMP: Tuple[int, ...] = (
     0xFF0000FF,   #    0  idle - blue
     0xFF00DCFF,   # 1400  pulling away - cyan
-    0xFF32D782,   # 2800  economical cruise - green
-    0xFFFFD23C,   # 4500  waking up - yellow
+    0xFF00D700,   # 2800  economical cruise - green
+    0xFFFFD500,   # 4500  waking up - yellow
     0xFFFF8000,   # 5800  spirited - orange
     0xFFFF0000,   # 6800  redline - red
 )

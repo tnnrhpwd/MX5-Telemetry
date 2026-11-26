@@ -168,6 +168,17 @@ class SppServer:
 
     # -- diagnostics ---------------------------------------------------------
 
+    def is_alive(self):
+        """Whether the accept loop is still running.
+
+        `start()` having returned is not the same thing: a loop that failed on its first
+        accept, or one whose thread raised, leaves the server object intact and looking
+        healthy. BtLink's supervisor asks this instead, because "was started once" is not
+        "is up".
+        """
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
     def describe(self):
         """What this server needs and what it found, for a startup log line."""
         with self._peers_lock:
@@ -186,6 +197,8 @@ class SppServer:
             'refused': self._refused,
             'reaped': self._reaped,
             'idle_timeout': self.idle_timeout,
+            # `start()` returning is not "listening"; the accept thread is.
+            'listening': self.is_alive(),
         }
 
     # -- SDP -----------------------------------------------------------------

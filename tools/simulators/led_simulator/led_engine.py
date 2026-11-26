@@ -57,12 +57,13 @@ SELF_TEST_MS = 4000
 IDENTIFY_MS = 3000
 
 # The ramp the firmware boots with (`rampStops[]`). The last stop is also the rpm at
-# which the strip is completely full.
+# which the strip is completely full. One channel is zero in every stop so the bar stays
+# at 100% saturation between stops as well as on them.
 DEFAULT_RAMP: Tuple[Tuple[int, RGB], ...] = (
     (0, (0, 0, 255)),        # idle - blue
     (1400, (0, 220, 255)),   # pulling away - cyan
-    (2800, (50, 215, 130)),  # economical cruise - green
-    (4500, (255, 210, 60)),  # waking up - yellow
+    (2800, (0, 215, 0)),     # economical cruise - green
+    (4500, (255, 213, 0)),   # waking up - yellow
     (5800, (255, 128, 0)),   # spirited - orange
     (6800, (255, 0, 0)),     # redline - red
 )
@@ -82,7 +83,7 @@ RPM_ALPHA_FALLING = 0.75
 
 # Sub-frame prediction between CAN broadcasts, and the slope an engine could plausibly
 # produce. `EXTRAPOLATE_MS = 0` reproduces "hold the last reading".
-EXTRAPOLATE_MS = 40       # ceiling on the horizon; one measured sample period is the norm
+EXTRAPOLATE_MS = 60       # ceiling on the horizon; one measured sample period is the norm
 MAX_SLOPE = 20            # rpm per millisecond
 MIN_SAMPLE_GAP = 4        # shorter than this is quantisation, not a rate
 MAX_SAMPLE_GAP = 100      # longer than this and the link stalled

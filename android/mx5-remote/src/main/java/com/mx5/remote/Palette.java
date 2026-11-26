@@ -135,12 +135,20 @@ public final class Palette {
      *
      * Matching the firmware default exactly also means the strip looks the same
      * whether or not the phone has ever pushed a ramp to it.
+     *
+     * Every stop is fully saturated - one channel is zero - because `renderBar()`
+     * interpolates between stops in RGB. A stop with a lifted channel drags the whole
+     * segment around it toward grey: the previous green (0x32d782, 77%) and yellow
+     * (0xffd23c, 76%) made the bar measure 50% saturation at 3300 rpm. With a zero
+     * channel on both ends of every segment the interpolation keeps it at zero, so the
+     * bar is 100% saturated everywhere. `palette_parity.py` fails if that stops being
+     * true.
      */
     private static final int[] ENGINE_RAMP = {
             0xFF0000FF,   //    0  idle - blue
             0xFF00DCFF,   // 1400  pulling away - cyan
-            0xFF32D782,   // 2800  economical cruise - green
-            0xFFFFD23C,   // 4500  waking up - yellow
+            0xFF00D700,   // 2800  economical cruise - green
+            0xFFFFD500,   // 4500  waking up - yellow
             0xFFFF8000,   // 5800  spirited - orange
             0xFFFF0000,   // 6800  redline - red
     };

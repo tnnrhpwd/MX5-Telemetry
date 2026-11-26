@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 
 import androidx.annotation.NonNull;
 import androidx.car.app.CarContext;
@@ -40,7 +41,6 @@ import androidx.lifecycle.LifecycleEventObserver;
 public class Mx5CarScreen extends Screen {
 
     private static final String PREFS = "mx5";
-    private static final String DEFAULT_ADDRESS = "192.168.42.100:5000";
     private static final long POLL_MS = 1000;
 
     private final PiClient pi;
@@ -51,12 +51,16 @@ public class Mx5CarScreen extends Screen {
     private volatile Telemetry latest;
 
     /**
-     * When {@link #latest} was last confirmed live, in {@link System#currentTimeMillis()}.
+     * When {@link #latest} was last confirmed live, on {@link SystemClock#elapsedRealtime()}.
      *
      * A frozen number on a moving car is worse than no number. A dropped tether used to
      * leave the last reading on screen for as long as the session ran, which looks
      * exactly like a live one - the same failure the Pi's `can_connected` and the panel's
      * link-lost screen exist to prevent. Zero until the first fresh reading.
+     *
+     * Monotonic, not wall clock: a phone that syncs its time after boot can jump the
+     * clock any direction, and a backwards jump would make an hour-old reading look
+     * seconds old.
      */
     private volatile long lastFreshMs;
 
@@ -89,7 +93,7 @@ public class Mx5CarScreen extends Screen {
         // Only configure the shared client when nobody has yet. configure() rebuilds the
         // transport chain, and the parked dashboard may be mid-request on the same client.
         if (!pi.isConfigured()) {
-            pi.configure(prefs.getString("address", DEFAULT_ADDRESS),
+            pi.configure(prefs.getString("address", PiClient.DEFAULT_ADDRESS),
                     prefs.getString("token", ""));
         }
 
@@ -106,6 +110,12 @@ public class Mx5CarScreen extends Screen {
         // devices permission" until it is granted, and a car Screen cannot ask for it. The
         // phone activity in this package does ask, so opening MX5 Drive once on the phone
         // is what enables Bluetooth here.
+        //
+        // The same visit is what sets the token: this is a separate package, so `mx5`
+        // SharedPreferences start empty even if the parked app has been configured. Over
+        // the USB tether that does not matter (HTTP is unauthenticated); over Bluetooth the
+        // Pi requires the token only when it has one configured, so a fresh install will
+        // connect on the cable and be rejected on Bluetooth until it is entered here.
         if (!pi.bluetoothConfigured()) {
             pi.setBluetooth(context, BtDevices.source(context, prefs),
                     prefs.getString("token", ""));
@@ -149,7 +159,7 @@ public class Mx5CarScreen extends Screen {
             if (fetched != null && !destroyed) {
                 latest = fetched;
                 if (fetched.canConnected) {
-                    lastFreshMs = System.currentTimeMillis();
+                    lastFreshMs = SystemClock.elapsedRealtime();
                 }
                 handler.post(Mx5CarScreen.this::invalidate);
             }
@@ -164,7 +174,7 @@ public class Mx5CarScreen extends Screen {
         // rows of "--" say "no data" honestly; a stale 42 mph says "you are doing 42".
         final boolean stale = newest == null
                 || !newest.canConnected
-                || System.currentTimeMillis() - lastFreshMs > STALE_MS;
+                || SystemClock.elapsedRealtime() - lastFreshMs > STALE_MS;
         final Telemetry t = stale ? null : newest;
 
         // Re-read every time rather than caching at session start: the units toggle

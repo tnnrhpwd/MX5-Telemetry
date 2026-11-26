@@ -299,21 +299,21 @@ public final class Telemetry {
      * One rule, in one place, shared by every screen - the same rule the Pi applies
      * before it sends the flag and the ESP32 applies before it draws:
      * <b>reverse is the sign of the speed</b>. The PCM transmits
-     * {@code (speed + 100 km/h)}, so reverse arrives below that zero point and
-     * decodes negative; a negative speed while the range is not reporting neutral is
-     * reverse gear.
+     * {@code (speed + 100 km/h)}, so the field is an offset rather than a signed value:
+     * forward can never fall below that zero point, so a re-offset reading below zero is
+     * proof the car is rolling backwards.
      *
-     * The explicit flag and {@code gear == -1} are still honoured first, so a screen
-     * is right whichever of the three reaches it. The {@code gear != 0} veto keeps a
-     * car rolling backwards in neutral on {@code N}, where it belongs.
+     * The explicit flag and {@code gear == -1} are honoured first, so a screen is right
+     * whichever of the three reaches it. Nothing else may override it - not the neutral
+     * bit, which comes from a frame whose range semantics have never been confirmed.
      *
-     * This used to be re-implemented per screen, and one of those copies tested
-     * neutral before reverse - which is how the in-motion screen could show "N"
-     * while the car was backing up.
+     * This used to be re-implemented per screen, and one of those copies tested neutral
+     * before reverse - which is how the in-motion screen could show "N" while the car was
+     * backing up.
      */
     public boolean isReverse() {
         if (inReverse || gear == -1) return true;
-        return speedKmh < 0 && gear != 0;
+        return speedKmh < 0;
     }
 
     /**

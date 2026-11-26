@@ -63,8 +63,6 @@ LED_OFF = "#151518"
 LED_RIM = "#26262b"
 
 TICK_MS = 33          # the Nano repaints at 100 Hz; 30 fps is plenty for a person
-PALETTE = ["0a84ff", "00c1c1", "32d782", "ffd23c", "ff8000", "ef4444",
-           "b44bff", "ffffff", "0000ff", "808080"]
 
 
 def _hex(rgb: RGB) -> str:

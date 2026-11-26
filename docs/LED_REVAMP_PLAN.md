@@ -279,7 +279,7 @@ The Nano's UART (`D3`/`D4`, 9600 8N1, line-terminated) currently accepts three c
 
 | Command | Example | Notes |
 |---|---|---|
-| `RAMP:<rpm>:<rrggbb>,…` | `RAMP:0:0000FF,1400:00DCFF,2800:32D782` | 2–6 stops, applied atomically. **The last stop is the full-illumination rpm**, so "fully lit at X rpm" is one number. Replies `OK:RAMP` / `ERR:RAMP` |
+| `RAMP:<rpm>:<rrggbb>,…` | `RAMP:0:0000FF,1400:00DCFF,2800:00D700` | 2–6 stops, applied atomically. **The last stop is the full-illumination rpm**, so "fully lit at X rpm" is one number. Replies `OK:RAMP` / `ERR:RAMP` |
 | `CFG:<k>=<v>,…` | `CFG:bright=180,theme=1,full=4000` | `bright` 0-255 (also disables the pot), `theme` 0/1 (dark mode = 70 % ramp), `full` 2000-8000, `pot` 0/1, `en` 0/1 (strip off = dark), `mode` 0/1 (gradient / single wash), `shift` 0 or 2000-8000 (0 = no shift light), `hz` 2-15, `scol` rrggbb. Replies `OK:CFG` |
 | `CFG:save` | — | Writes the ramp/dim/brightness/full block to EEPROM (magic byte + CRC). Replies `OK:SAVE`. Deliberately explicit so a slider drag cannot wear the EEPROM |
 | `CFG?` | — | Replies with the live configuration as one `CFG:seq=…,full=…,dim=…,bright=…,stops=…,ramp=…` line |
@@ -352,8 +352,8 @@ Pi side work:
 |---|---|---|
 | 800 | `#00B0FF` | idle |
 | 1400 | `#00DCFF` | pulling away |
-| 2800 | `#32D782` | economical cruise |
-| 4500 | `#FFD23C` | waking up |
+| 2800 | `#00D700` | economical cruise |
+| 4500 | `#FFD500` | waking up |
 | 5800 | `#FF8000` | spirited |
 | 6800 | `#FF0000` | redline (`RPM_MAX`) |
 

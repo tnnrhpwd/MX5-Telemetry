@@ -979,7 +979,10 @@ class PiDisplayApp:
         """Start the transports and report what is actually listening."""
         try:
             if not self.bt_link.start():
-                print(f"  ✗ Bluetooth link did not start: {self.bt_link.errors}")
+                # Not fatal and not final: BtLink supervises itself and retries with
+                # backoff, so this is the boot-time state and not the drive-time one.
+                print(f"  - Bluetooth link not up yet ({self.bt_link.errors}); "
+                      f"retrying in the background")
                 return
 
             # Report what is actually listening, not just what was configured. The two
@@ -1450,6 +1453,8 @@ class PiDisplayApp:
                 self.clock.tick(60)  # 60 FPS for smooth G-force ball movement
         
         # Cleanup
+        if self.bt_link:
+            self.bt_link.stop()
         if self.mpg_calculator:
             self.mpg_calculator.stop()
         if self.can_handler:

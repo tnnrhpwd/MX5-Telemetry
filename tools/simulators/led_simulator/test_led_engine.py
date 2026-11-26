@@ -49,14 +49,14 @@ def test_beyond_the_last_stop_returns_the_last_colour():
 
 
 def test_interpolation_matches_the_hand_computed_midpoint():
-    """ramp[1] 1400 (0,220,255) -> ramp[2] 2800 (50,215,130); rpm 1511.
+    """ramp[1] 1400 (0,220,255) -> ramp[2] 2800 (0,215,0); rpm 1511.
 
     t = (1511-1400)/1400 = 0.079285714...
-    r = 0 + 50*t          = 3.964  -> +0.5 -> 4.464 -> (uint8_t) 4
+    r = 0 + 0*t           = 0                       -> 0
     g = 220 + (-5)*t      = 219.60 -> +0.5 -> 220.10 -> (uint8_t) 220
-    b = 255 + (-125)*t    = 245.09 -> +0.5 -> 245.59 -> (uint8_t) 245
+    b = 255 + (-255)*t    = 234.78 -> +0.5 -> 235.28 -> (uint8_t) 235
     """
-    assert engine.ramp_color_at_rpm(1511, engine.DEFAULT_RAMP) == (4, 220, 245)
+    assert engine.ramp_color_at_rpm(1511, engine.DEFAULT_RAMP) == (0, 220, 235)
 
 
 def test_a_descending_channel_truncates_toward_zero_not_down():
@@ -104,21 +104,21 @@ def test_frame_at_3400_matches_the_hand_computed_bar():
     rank 0..4 are solid, rank 5 is the half-lit tip, rank 6..9 are off.
       rank 0: sample    0 -> ramp[0]  (0,0,255)
       rank 1: sample  755 -> (0,119,255)
-      rank 2: sample 1511 -> (4,220,245)
-      rank 3: sample 2266 -> (31,217,178)
-      rank 4: sample 3022 -> (77,214,121)
-      rank 5: sample 3400 -> (122,213,105), scaled by 128/255 -> (61,107,53)
+      rank 2: sample 1511 -> (0,220,235)
+      rank 3: sample 2266 -> (0,217,97)
+      rank 4: sample 3022 -> (33,215,0)
+      rank 5: sample 3400 -> (90,214,0), scaled by 128/255 -> (45,107,0)
     """
     cfg = LedConfig()
     frame = engine.render_bar(3400, cfg)
 
     assert frame[0] == (0, 0, 255)
     assert frame[1] == (0, 119, 255)
-    assert frame[2] == (4, 220, 245)
-    assert frame[3] == (31, 217, 178)
-    assert frame[4] == (77, 214, 121)
+    assert frame[2] == (0, 220, 235)
+    assert frame[3] == (0, 217, 97)
+    assert frame[4] == (33, 215, 0)
     # The fractional tip is dimmed by `level`, not tinted.
-    assert frame[5] == (61, 107, 53)
+    assert frame[5] == (45, 107, 0)
     for index in range(6, 10):
         assert frame[index] == BLACK, index
     # Mirrored copies on the right half.
@@ -127,9 +127,9 @@ def test_frame_at_3400_matches_the_hand_computed_bar():
 
 
 def test_the_tip_is_dim_half_way_between_two_leds():
-    """frac 0.5 > 0.05, so the leading LED is at 50% - and 50% of 122 is 61."""
+    """frac 0.5 > 0.05, so the leading LED is at 50% - and 50% of 90 is 45."""
     frame = engine.render_bar(3400, LedConfig())
-    assert frame[5][0] == 61
+    assert frame[5][0] == 45
 
 
 def test_a_tiny_fraction_leaves_the_tip_dark_because_the_gate_is_0_05():
@@ -320,8 +320,24 @@ def test_a_slower_broadcast_stretches_the_horizon():
 
 
 def test_the_horizon_is_capped_even_when_the_broadcast_is_slower():
-    """A 60 ms period would allow 60 ms of lead; the ceiling is 40, so 41 ms holds."""
-    assert engine.predict_rpm(1041, 3200, 3000, 1000, 940, True) == 3200
+    """A sample gap longer than the ceiling still only earns `EXTRAPOLATE_MS` of lead.
+
+    Derived from the constant rather than hardcoding it, so raising the ceiling (40 -> 60
+    for ISSUE-23) does not need this test rewritten - only a *removed* cap breaks it. The
+    gap is 20 ms longer than the ceiling and still inside `MAX_SAMPLE_GAP`, so an
+    implementation that used the whole gap as its horizon would keep predicting past it.
+    """
+    gap = engine.EXTRAPOLATE_MS + 20
+    assert gap <= engine.MAX_SAMPLE_GAP
+    last_ms, prev_ms = 1000, 1000 - gap
+
+    inside = engine.predict_rpm(1000 + engine.EXTRAPOLATE_MS - 1,
+                                3200, 3000, last_ms, prev_ms, True)
+    assert inside > 3200, "the bar must lead while inside the horizon"
+
+    past = engine.predict_rpm(1000 + engine.EXTRAPOLATE_MS + 1,
+                              3200, 3000, last_ms, prev_ms, True)
+    assert past == 3200, "the horizon must stop at EXTRAPOLATE_MS, not at the sample gap"
 
 
 def test_a_stalled_link_does_not_get_a_slope():

@@ -119,16 +119,17 @@ def test_reverse_direction_reaches_the_gear_estimator():
     assert confidence == 1.0
 
 
-def test_reverse_needs_a_negative_speed_and_no_neutral_report():
-    """Reverse is the sign of the speed, vetoed by the range's neutral report.
+def test_a_negative_speed_is_reverse_even_if_neutral_is_reported():
+    """The sign is proof, and the neutral bit may not override it.
 
-    A car rolling backwards in N is not in reverse gear, so neutral must win.
-    With no neutral report a negative speed is reverse and must never fall
-    through to the ratio match - that is what used to answer "1st".
+    The 0x201 speed field is `(speed + 100 km/h)`, so forward can never fall below the
+    zero point - a negative after the offset means the car is rolling backwards, whatever
+    the range frame says. Letting an unproven neutral bit veto that is how "R" became
+    "N"/"1" for a year.
     """
     est = GearEstimator()
     assert est.estimate_gear(-2.0, 900, False)[0] == -1
-    assert est.estimate_gear(-2.0, 900, True)[0] == 0
+    assert est.estimate_gear(-2.0, 900, True)[0] == -1
 
 
 # -- wire format ------------------------------------------------------------
@@ -224,10 +225,11 @@ def test_the_range_frame_alone_does_not_clear_reverse():
     assert t.is_in_reverse is True, "but 0x231 must not be allowed to clear reverse itself"
     assert t.gear == -1
 
-    # The next engine frame re-derives it, and with the range reporting N it is N.
+    # Nor may it clear it indirectly on the next engine frame: the sign of the speed is
+    # proof that the car is rolling backwards, and neutral cannot outvote it.
     h._update_gear_estimation()
-    assert t.is_in_reverse is False
-    assert t.gear == 0
+    assert t.is_in_reverse is True
+    assert t.gear == -1
 
 
 # -- transmission range / the discrete reverse path -------------------------

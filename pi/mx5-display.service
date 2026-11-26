@@ -1,7 +1,11 @@
 [Unit]
 Description=MX5 Telemetry Display
-After=graphical.target
-Wants=graphical.target
+# bluetooth.service is Wanted, not Required: a Pi with no working radio still boots and the
+# display still works. The ordering is what matters - the adapter, and especially a USB
+# dongle, can take seconds to appear, and losing that race used to leave the link down for
+# the whole drive. BtLink now retries, so this is only the cheap half of the fix.
+After=graphical.target bluetooth.service
+Wants=graphical.target bluetooth.service
 
 [Service]
 Type=simple
