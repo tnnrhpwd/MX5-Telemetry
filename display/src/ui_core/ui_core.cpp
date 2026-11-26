@@ -1220,20 +1220,73 @@ void drawLargeGear(int centerX, int centerY, const char* str, uint16_t color, ui
 // Overview screen
 // ============================================================================
 
-// Road speed per 1000 rpm in each gear, in km/h. Derived from the NC 6-speed
-// ratios, 4.10 final drive and 24.3" tire - the same numbers the Android
-// GearRpmView uses, converted from mph so the ladder needs no unit handling.
-static const float KMH_PER_1000_RPM[7] = {
-    0.0f, 7.92f, 13.13f, 18.11f, 25.09f, 29.79f, 35.32f
+// Road speed per 1000 rpm in each gear, derived from the driveline rather than
+// typed in by hand.
+//
+// This used to be a hand-computed table whose six entries all implied a 25.5"
+// wheel - 4.9% more circumference than the 24.3" tire the Pi's GearEstimator and
+// Android's GearRpmView use - so every predicted RPM on the ladder read ~4.7% low
+// (3000 rpm in 4th printed 2860). Deriving it from the same named constants the
+// other two surfaces use is what keeps them from drifting apart again.
+//
+// rpm = ratio * final_drive * inches_per_mile * speed / (pi * diameter * 60)
+//
+// TIRE_DIAMETER_IN is the one number to touch if a steady-speed check against the
+// tachometer ever disagrees - and it has to be changed in all three places that carry
+// this maths (`GearEstimator.TIRE_DIAMETER_INCHES` on the Pi and
+// `GearRpmView.TIRE_DIAMETER_IN` on Android), or the ladder and the reported gear will
+// start disagreeing with each other again.
+#define GEAR_COUNT              6
+#define FINAL_DRIVE             4.10f
+#define TIRE_DIAMETER_IN        24.3f      // 205/45R17, unloaded
+#define INCHES_PER_MILE         63360.0f
+#define KM_PER_MILE             1.609344f
+
+static const float GEAR_RATIO[GEAR_COUNT + 1] = {
+    0.0f, 3.760f, 2.269f, 1.645f, 1.187f, 1.000f, 0.843f
 };
+
+// km/h per 1000 rpm for `gear`, computed once from the constants above.
+static float kmhPer1000Rpm(int gear) {
+    static float table[GEAR_COUNT + 1] = {0};
+    static bool built = false;
+    if (!built) {
+        const float circumference = PI * TIRE_DIAMETER_IN;
+        for (int g = 1; g <= GEAR_COUNT; g++) {
+            const float milesPerMinutePerRpm =
+                (circumference * 60.0f) / (GEAR_RATIO[g] * FINAL_DRIVE * INCHES_PER_MILE);
+            table[g] = milesPerMinutePerRpm * 1000.0f * KM_PER_MILE;
+        }
+        built = true;
+    }
+    return table[gear];
+}
 
 // The band a driver wants to be in. Gears predicted inside it are "most likely".
 #define GEAR_BAND_LOW   2400
 #define GEAR_BAND_HIGH  4500
 
 static int predictedRpm(int gear, float speedKmh) {
-    if (gear < 1 || gear > 6 || speedKmh <= 0.5f) return 0;
-    return (int)(speedKmh / KMH_PER_1000_RPM[gear] * 1000.0f + 0.5f);
+    if (gear < 1 || gear > GEAR_COUNT || speedKmh <= 0.5f) return 0;
+    const float per1000 = kmhPer1000Rpm(gear);
+    if (per1000 <= 0.0f) return 0;
+    return (int)(speedKmh / per1000 * 1000.0f + 0.5f);
+}
+
+// Reverse is the sign of the speed - one rule, applied on the display too.
+//
+// The PCM transmits `(speed + 100 km/h)` and the Pi emits that difference, so
+// reverse arrives as a *negative* km/h. A negative speed while the range is not
+// reporting neutral is reverse gear; rolling backwards in neutral must keep
+// showing `N`, which is what the `gear != 0` veto is for.
+//
+// The explicit `isInReverse` flag and `gear == -1` are still honoured first, so
+// the screen is right whichever of the three reaches it: if the flag field were
+// ever missing or misaligned, a negative speed on its own is still enough to
+// show `R` instead of a confident `1`.
+static bool uiIsReverse() {
+    if (telemetry.isInReverse || telemetry.gear == -1) return true;
+    return telemetry.speed < -0.5f && telemetry.gear != 0;
 }
 
 // Draws all six gears in numeric order — 1 2 / 3 4 / 5 6 — with the RPM each gear
@@ -1263,11 +1316,12 @@ static void drawGearLadder(bool forceFullRepaint) {
     const int blockH = rowH * 3 + rowGap * 2;
     const int x = CENTER_X - rowW / 2;
 
-    // Magnitude: the ladder predicts forward gear RPMs, and the reverse case is
-    // handled by the placeholder below rather than by a negative speed.
+    // Magnitude: the ladder predicts forward gear RPMs. Reverse never reaches this
+    // branch - `uiIsReverse()` puts the placeholder up first - so the magnitude is
+    // only ever the road speed of a forward-moving car.
     float speed = fabsf(telemetry.speed);
 
-    const bool placeholder = (speed < 1.0f || telemetry.isInReverse);
+    const bool placeholder = (speed < 1.0f || uiIsReverse());
 
     // What is on screen right now, so a repaint can be limited to what actually changed.
     // Erasing the whole block on every speed change is what made the ladder visibly
@@ -1300,7 +1354,7 @@ static void drawGearLadder(bool forceFullRepaint) {
     }
 
     if (placeholder) {
-        const int8_t kind = telemetry.isInReverse ? 1 : (!telemetry.hasReceivedTelemetry ? 2 : 0);
+        const int8_t kind = uiIsReverse() ? 1 : (!telemetry.hasReceivedTelemetry ? 2 : 0);
         if (kind != lastPlaceholderKind) {
             lastPlaceholderKind = kind;
             LCD_FillRoundRect(x, startY, rowW, rowH, 8, COLOR_BG_CARD);
@@ -1318,7 +1372,7 @@ static void drawGearLadder(bool forceFullRepaint) {
         const int y = startY + row * (rowH + rowGap);
 
         int rpm = predictedRpm(gear, speed);
-        bool isCurrent = (telemetry.gear == gear) && !telemetry.isInReverse;
+        bool isCurrent = (telemetry.gear == gear) && !uiIsReverse();
         uint16_t bg = isCurrent ? COLOR_BG_ELEVATED : COLOR_BG_CARD;
 
         uint16_t rpmColor;
@@ -1383,8 +1437,9 @@ void drawOverviewScreen() {
     bool rpmChanged = !prevTelemetry.initialized || (int)telemetry.rpm != (int)prevTelemetry.rpm;
     bool speedChanged = !prevTelemetry.initialized || (int)telemetry.speed != (int)prevTelemetry.speed;
     bool gearChanged = !prevTelemetry.initialized || telemetry.gear != prevTelemetry.gear;
-    // Reverse comes from the explicit Pi flag, not from the sign of the speed.
-    bool reverseChanged = !prevTelemetry.initialized || telemetry.isInReverse != prevTelemetry.reverse;
+    // Reverse is derived the same way the renderer derives it, so a speed that
+    // crosses zero repaints the gear even when the flag has not changed.
+    bool reverseChanged = !prevTelemetry.initialized || uiIsReverse() != prevTelemetry.reverse;
     bool coolantChanged = !prevTelemetry.initialized || (int)telemetry.coolantTemp != (int)prevTelemetry.coolantTemp;
     bool fuelChanged = !prevTelemetry.initialized || (int)telemetry.fuelLevel != (int)prevTelemetry.fuelLevel;
     bool ambientChanged = !prevTelemetry.initialized || (int)telemetry.ambientTemp != (int)prevTelemetry.ambientTemp;
@@ -1543,7 +1598,7 @@ void drawOverviewScreen() {
             // No link means no gear. Showing a remembered `R` after the Pi stops
             // talking is the same lie as showing a remembered speed.
             snprintf(gearStr, sizeof(gearStr), "--");
-        } else if (telemetry.isInReverse || telemetry.gear == -1) {
+        } else if (uiIsReverse()) {
             snprintf(gearStr, sizeof(gearStr), "R");
         } else if (!telemetry.engineRunning) {
             if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
@@ -1736,7 +1791,7 @@ void drawOverviewScreen() {
     prevTelemetry.instantMPG = telemetry.instantMPG;
     prevTelemetry.rangeMiles = telemetry.rangeMiles;
     prevTelemetry.engineRunning = telemetry.engineRunning;
-    prevTelemetry.reverse = telemetry.isInReverse;
+    prevTelemetry.reverse = uiIsReverse();
     prevTelemetry.instantMPGValid = telemetry.instantMPGValid;
     prevTelemetry.connected = telemetry.connected;
     prevTelemetry.oilWarning = telemetry.oilWarning;
@@ -1777,7 +1832,7 @@ void drawRPMScreen() {
     bool rpmChanged   = !prevTelemetry.initialized || (int)telemetry.rpm != (int)prevTelemetry.rpm;
     bool speedChanged = !prevTelemetry.initialized || (int)telemetry.speed != (int)prevTelemetry.speed;
     bool gearChanged  = !prevTelemetry.initialized || telemetry.gear != prevTelemetry.gear;
-    bool reverseChanged = !prevTelemetry.initialized || telemetry.isInReverse != prevTelemetry.reverse;
+    bool reverseChanged = !prevTelemetry.initialized || uiIsReverse() != prevTelemetry.reverse;
     bool thrChanged   = !prevTelemetry.initialized || (int)telemetry.throttle != (int)prevTelemetry.throttle;
     bool brkChanged   = !prevTelemetry.initialized || (int)telemetry.brake != (int)prevTelemetry.brake;
 
@@ -1814,7 +1869,7 @@ void drawRPMScreen() {
     // ---- gear ----
     char gearStr[4];
     if (!telemetry.hasReceivedTelemetry) snprintf(gearStr, sizeof(gearStr), "--");
-    else if (telemetry.isInReverse || telemetry.gear == -1) snprintf(gearStr, sizeof(gearStr), "R");
+    else if (uiIsReverse()) snprintf(gearStr, sizeof(gearStr), "R");
     else if (telemetry.gear == 0) snprintf(gearStr, sizeof(gearStr), "N");
     else snprintf(gearStr, sizeof(gearStr), "%d", telemetry.gear);
 
@@ -1877,7 +1932,7 @@ void drawRPMScreen() {
     prevTelemetry.gearColor = telemetry.gearColor;
     prevTelemetry.throttle = telemetry.throttle;
     prevTelemetry.brake = telemetry.brake;
-    prevTelemetry.reverse = telemetry.isInReverse;
+    prevTelemetry.reverse = uiIsReverse();
     prevTelemetry.initialized = true;
 }
 

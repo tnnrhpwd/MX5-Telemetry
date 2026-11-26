@@ -75,21 +75,21 @@ Three sources, picked with the chips above the swatches:
 | Source | What it is |
 |---|---|
 | **ROYGBIV** | The firmware's compiled-in table — blue → cyan → green → yellow → orange → red, full at 8000. What the strip uses until something sends `RAMP:`. |
-| **App scheme** | The ramp the phone would push for one of its twelve themes (`aurora`, `crimson`, `emerald`, `sakura`, `midnight`, `sunset`, `ocean`, `cyberpunk`, `monokai`, `usa`, `forest`, `neutral`), in that theme's dark or light palette. |
+| **App scheme** | What the phone pushes for one of its twelve themes (`aurora`, `crimson`, … `neutral`). Since 2026-11-26 that is the **engine ramp** in every scheme and mode — the colours encode rpm, so a theme cannot own them; the theme only sets the dark-mode dim flag. |
 | **Custom** | Anything you build by hand. Editing a stop color or dragging **Full at** switches you here, because the table no longer matches either of the other two. |
 
-An App-scheme ramp is the theme's own two hues blended from the soft, mode-corrected accent
-up to the vivid seed, so all twelve themes produce visibly different bars. That is
-deliberate: the strip is part of the app, not a separate instrument, and the *fault* colors
-(`bad` red, `alert` orange, `warn` amber) are kept out of it because they have to mean the
-same thing in every scheme.
+> **Changed 2026-11-26.** An App-scheme ramp used to be the theme's own two hues blended from
+> the mode-corrected accent up to the vivid seed, so all twelve themes produced different
+> bars. That is what produced a washed-out bar in dark mode, schemes with no red anywhere, and
+> a pink "redline" (crimson's second seed *is* `#F472B6`). It is now identical to the firmware
+> table, so switching scheme changes the dimming and nothing else. See ISSUE-24 in
+> `docs/IN_CAR_FINDINGS_2026-11-26.md`.
 
-The **shift light** follows the theme too. It is the one alarm that fires while everything
-is working, so it flashes the scheme's first hue lifted toward white — brighter than the bar
-it interrupts, and a different hue from the bar's far end. Picking an App scheme sets it, and
-the **Color** row under the shift sliders shows it; clicking that swatch and choosing
-something else switches you to Custom, exactly as the phone's LED screen drops "Follow theme"
-when you pick a shift color by hand.
+The **shift light** is red, like the top of the bar, in every scheme. It is an alarm, not
+decor, and lifting a scheme's hue toward white is how it used to end up pink. The **Color**
+row under the shift sliders shows it; clicking that swatch and choosing something else
+switches you to Custom, exactly as the phone's LED screen does when you pick a shift color
+by hand.
 
 The **fault** patterns stay fixed: the CAN-offline pair is orange and the error scanner red
 in every scheme. They mean the electronics are broken rather than that the engine is at the

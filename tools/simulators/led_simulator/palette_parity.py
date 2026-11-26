@@ -12,6 +12,10 @@ match exactly. The derivation is called rather than transcribed, so the harness 
 drift from the app; the stop rpms and `MainActivity`'s use of `ramp()` are parsed out of
 the app sources as well.
 
+Matching is not enough on its own, so it then checks what the ramp has to *mean*: the same
+six colours in every scheme and mode, equal to the firmware's own `rampStops[]` default
+(parsed from `arduino/src/main.cpp`), red at the top, no white stop, and a red shift flash.
+
     python palette_parity.py
     python palette_parity.py --keep     # keep the generated Java
 
@@ -35,6 +39,9 @@ PALETTE_JAVA = os.path.join(REPO, "android", "mx5-remote", "src", "main", "java"
                             "com", "mx5", "remote", "Palette.java")
 MAIN_JAVA = os.path.join(REPO, "android", "mx5-remote", "src", "main", "java",
                          "com", "mx5", "remote", "MainActivity.java")
+
+LED_SCREEN_JAVA = os.path.join(REPO, "android", "mx5-remote", "src", "main", "java",
+                               "com", "mx5", "remote", "LedScreen.java")
 
 sys.path.insert(0, HERE)
 
@@ -208,7 +215,7 @@ def main() -> int:
             problems.append("stop rpms: app uses %s, port uses %s"
                             % (roles_stops, list(app_palette.RAMP_RPMS)))
 
-        problems.extend(check_theme_follows())
+        problems.extend(check_ramp_is_the_engine())
 
         print("schemes: %d   modes: 2   ramps compared: %d"
               % (len(app_palette.SCHEMES), len(lines)))
@@ -225,69 +232,79 @@ def main() -> int:
             shutil.rmtree(work, ignore_errors=True)
 
 
-# The colors that must not follow the theme: they say "something is wrong" and have to read
-# the same in every scheme. `alert` is the exception Palette.java documents by name.
-ALARM_COLORS = {"warn": app_palette.WARN, "bad": app_palette.BAD}
+FIRMWARE = os.path.join(REPO, "arduino", "src", "main.cpp")
 
 
-def check_theme_follows() -> List[str]:
-    """The ramp must actually be the theme's, which matching `Palette.java` does not prove.
+def firmware_ramp() -> List[Tuple[int, Tuple[int, int, int]]]:
+    """The Nano's default `rampStops[]`, parsed out of the firmware source."""
+    text = read(FIRMWARE)
+    match = re.search(r"RampStop rampStops\[RAMP_STOP_COUNT\]\s*=\s*\{(.*?)\n\};", text, re.S)
+    if not match:
+        raise SystemExit("could not find rampStops[] in arduino/src/main.cpp")
+    stops = [(int(rpm), (int(r), int(g), int(b)))
+             for rpm, r, g, b in re.findall(
+                 r"\{\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\}", match.group(1))]
+    if len(stops) != len(app_palette.RAMP_RPMS):
+        raise SystemExit("firmware ramp has %d stops, the app has %d"
+                         % (len(stops), len(app_palette.RAMP_RPMS)))
+    return stops
 
-    A faithful port of a ramp built from `good`, `warn`, `bad` and `alert` would pass every
-    check above and still look identical in all twelve schemes - that is exactly what it
-    used to do, with four of the six stops the same in every theme. So this asserts the two
-    properties that make "the ramp follows the theme" true:
 
-      - every scheme produces a different ramp, at every stop;
-      - no stop is one of the fixed alarm colors.
+def parse_led_screen_defaults() -> List[str]:
+    """The LED editor's starting colours, straight out of `LedScreen.DEFAULT_COLOURS`.
+
+    A fourth copy of the same six colours lives there, and nothing else compares it to
+    anything - so it could drift to a different blue and red without a single test
+    noticing, which is exactly what it had already done (`0a84ff`, `ef4444`).
     """
-    problems = []
-    ramps = {(ident, dark): app_palette.ramp_for(app_palette.palette(ident, dark))
-             for ident, _n, _a, _b in app_palette.SCHEMES for dark in (True, False)}
+    match = re.search(r"DEFAULT_COLOURS\s*=\s*\{([^}]*)\}", read(LED_SCREEN_JAVA))
+    if not match:
+        raise SystemExit("could not find LedScreen.DEFAULT_COLOURS")
+    return [value.strip().strip('"').lower()
+            for value in match.group(1).split(",") if value.strip()]
 
-    # Within a mode: the dark and light ramps of one scheme share their final stop by
-    # design (it is the scheme's own seed), so comparing across modes would report that.
-    for dark in (True, False):
-        mode = "dark" if dark else "light"
-        for index in range(len(app_palette.RAMP_RPMS)):
-            rgb = {}
-            for ident, _n, _a, _b in app_palette.SCHEMES:
-                stops = ramps[(ident, dark)]
-                rgb.setdefault(stops[index][1], []).append(ident)
-            for color, owners in rgb.items():
-                if len(owners) > 1:
-                    problems.append("stop %d is %02x%02x%02x in %d %s schemes (%s) - the "
-                                    "ramp is not following the theme"
-                                    % ((index,) + tuple(color) + (len(owners), mode,
-                                                                  ", ".join(sorted(owners)))))
-                    break
 
-    for (ident, dark), stops in ramps.items():
-        for index, _rpm in enumerate(app_palette.RAMP_RPMS):
-            color = stops[index][1]
-            packed = (color[0] << 16) | (color[1] << 8) | color[2]
-            for name, alarm in ALARM_COLORS.items():
-                if packed == alarm:
-                    problems.append("%s/%s stop %d is the fixed %s alarm color - alarm colors "
-                                    "must not appear in the theme ramp"
-                                    % (ident, "dark" if dark else "light", index, name))
+def check_ramp_is_the_engine() -> List[str]:
+    """The ramp must be the engine's, and identical everywhere.
 
-    # The shift flash follows the theme too, so it must not be an alarm color either, and
-    # every scheme must actually differ.
-    shift = {(ident, dark): app_palette.shift_text(ident, dark)
-             for ident, _n, _a, _b in app_palette.SCHEMES for dark in (True, False)}
-    for (ident, dark), value in shift.items():
-        packed = int(value, 16)
-        for name, alarm in ALARM_COLORS.items():
-            if packed == alarm:
-                problems.append("%s/%s shift color is the fixed %s alarm color - the flash "
-                                "follows the theme"
-                                % (ident, "dark" if dark else "light", name))
-        if value == "ff0000":
-            problems.append("%s/%s shift color is the fixed red default - the flash is not "
-                            "following the theme" % (ident, "dark" if dark else "light"))
+    Matching `Palette.java` only proves the port is faithful. These are the properties the
+    strip actually needs, and the ones the owner asked for after the 2026-11-26 drive:
+
+      - every scheme and mode produces the *same* ramp, because the colours encode rpm;
+      - that ramp is the firmware's own `rampStops[]` default, so the bar looks the same
+        before and after the phone pushes one;
+      - the top of the bar is red and no stop is white;
+      - the shift flash is red.
+    """
+    problems: List[str] = []
+    fw = firmware_ramp()
+    if [rpm for rpm, _rgb in fw] != list(app_palette.RAMP_RPMS):
+        problems.append("stop rpms: app %s, firmware %s"
+                        % (list(app_palette.RAMP_RPMS), [rpm for rpm, _rgb in fw]))
+    want = [rgb for _rpm, rgb in fw]
+    want_hex = ["%02x%02x%02x" % rgb for rgb in want]
+    editor = parse_led_screen_defaults()
+    if editor != want_hex:
+        problems.append("LedScreen.DEFAULT_COLOURS is %s, firmware ramp is %s"
+                        % (editor, want_hex))
+
+    for ident, _name, _a, _b in app_palette.SCHEMES:
+        for dark in (True, False):
+            where = "%s/%s" % (ident, "dark" if dark else "light")
+            got = [rgb for _rpm, rgb in app_palette.ramp_for(app_palette.palette(ident, dark))]
+            if got != want:
+                problems.append("%s: app ramp %s, firmware %s" % (where, got, want))
+            top = got[-1]
+            if not (top[0] >= 200 and top[1] < 60 and top[2] < 60):
+                problems.append("%s: redline stop is %s, not red" % (where, top))
+            for rgb in got:
+                high, low = max(rgb), min(rgb)
+                if high > 180 and high - low < 20:
+                    problems.append("%s: stop %s is white" % (where, rgb))
+            shift = app_palette.shift_text(ident, dark).upper()
+            if shift != "FF0000":
+                problems.append("%s: shift color is %s, not red" % (where, shift))
     return problems
-
 
 if __name__ == "__main__":
     sys.exit(main())

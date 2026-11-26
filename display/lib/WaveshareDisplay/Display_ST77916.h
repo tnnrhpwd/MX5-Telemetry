@@ -29,6 +29,14 @@ extern uint8_t LCD_Backlight;
 bool QSPI_Init(void);
 bool LCD_Init(void);
 
+// Software frame buffer. While enabled, every drawing call is composed in PSRAM
+// instead of being written straight to the panel, and LCD_Flush() pushes the
+// finished frame in bands. Use it for anything that repaints the whole panel
+// repeatedly: direct draws are visible while they are being assembled.
+bool LCD_FramebufferEnable(void);
+void LCD_FramebufferDisable(void);
+void LCD_Flush(void);
+
 // Display control
 void LCD_Clear(uint16_t color);
 void LCD_SetBacklight(uint8_t brightness);

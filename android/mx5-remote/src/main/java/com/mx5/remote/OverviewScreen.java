@@ -99,20 +99,10 @@ public class OverviewScreen extends Screen {
         speed.setUnit(mph ? "mph" : "km/h");
         rpm.setLevel(String.valueOf(t.rpm), t.rpm >= 6500 ? Ui.Stat.FAULT : Ui.Stat.OK);
 
-        String gearText;
-        if (t.inReverse) {
-            // Reverse is checked before neutral: the neutral switch lags the gear
-            // lever by a frame or two, and showing "N" while the car rolls back was
-            // one half of the R/N flicker. The ESP32 tests the flag first too.
-            gearText = "R";
-        } else if (t.inNeutral) {
-            gearText = "N";
-        } else if (t.gear <= 0) {
-            gearText = "\u2013";
-        } else {
-            gearText = String.valueOf(t.gear);
-        }
-        gear.set(gearText, gearColor(t));
+        // One reverse rule for every screen - see Telemetry.isReverse(). It used to be
+        // re-implemented here, and the copy that put neutral first is why the in-motion
+        // screen could say "N" while the car backed up.
+        gear.set(t.gearText(), gearColor(t));
         gear.setUnit(t.gearEstimated ? "est" : "");
 
         coolant.setLevel(String.valueOf(t.coolantTempF),
@@ -128,7 +118,7 @@ public class OverviewScreen extends Screen {
         // Throttle and brake are gone from this screen: the Pi derives throttle from one
         // guessed byte of an undocumented frame and brake is a switch, so both showed a
         // number that was not a percentage of anything.
-        ladder.setValue((float) t.speedFor(mph ? 1 : 0), mph, t.gear, t.inReverse);
+        ladder.setValue((float) t.speedFor(mph ? 1 : 0), mph, t.gear, t.isReverse());
     }
 
     static int gearColor(Telemetry t) {

@@ -623,8 +623,8 @@ class LedSimulator(tk.Tk):
         row.pack(fill="x", pady=(6, 0))
         tk.Label(row, text="Color", bg=CARD, fg=TEXT,
                  font=("Segoe UI", 9)).pack(side="left")
-        # The flash the driver actually sees, and the one alarm that follows the theme:
-        # showing it here is how you check a scheme's choice without waiting for 6300 rpm.
+        # The flash the driver actually sees. Red in every scheme - it is an alarm - and
+        # showing it here is how you check it without waiting for 6300 rpm.
         self.shift_swatch = tk.Label(row, text="", bd=0, padx=10, pady=3,
                                      font=("Segoe UI", 8, "bold"), cursor="hand2")
         self.shift_swatch.pack(side="right")

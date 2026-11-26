@@ -61,7 +61,8 @@
 // ESP32 internal temperature sensor for ambient temp fallback
 temperature_sensor_handle_t temp_sensor = NULL;
 
-// Gear prediction tables live in ui_core.cpp (KMH_PER_1000_RPM), because that is
+// Gear prediction tables live in ui_core.cpp (`GEAR_RATIO` / `FINAL_DRIVE` /
+// `TIRE_DIAMETER_IN`, from which the km/h-per-1000-rpm table is derived), because that is
 // where the Overview gear ladder draws them and `telemetry.speed` is km/h.
 
 // IMU instance
@@ -243,14 +244,26 @@ static inline bool serialHasRoom(int bytes) {
 // buffers) delays the sequence instead of silently stretching it. Nothing here
 // can outlive UI_BOOT_ANIM_MS plus one frame.
 static void playStartupAnimation() {
+    // Compose every frame in memory, then push it once.
+    //
+    // Drawing straight to the panel means each particle, ring and emblem row is its
+    // own QSPI transaction - ~500-700 per frame - so the panel shows a half-built
+    // picture for most of the animation. That is the flicker. Composing into the
+    // frame buffer and flushing it in 32 KB bands makes a frame land in 8
+    // transactions, and falls back to direct drawing if PSRAM is unavailable.
+    const bool framed = LCD_FramebufferEnable();
+    Serial.printf("Boot framebuffer: %s\n", framed ? "on" : "OFF (PSRAM unavailable)");
+
     const unsigned long t0 = millis();
     for (;;) {
         unsigned long t = millis() - t0;
         if (t > UI_BOOT_ANIM_MS) t = UI_BOOT_ANIM_MS;
         ui_startupFrame(t);
+        LCD_Flush();          // a no-op when the frame buffer could not be allocated
         if (t >= UI_BOOT_ANIM_MS) break;
         delay(1);
     }
+    LCD_FramebufferDisable();
 }
 
 void setup() {

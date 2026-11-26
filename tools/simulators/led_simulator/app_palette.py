@@ -1,14 +1,19 @@
-"""The phone app's color schemes, so the simulator can show the ramp they produce.
+"""The phone app's color schemes, so the simulator can show what the phone would push.
 
-The app owns the LED strip's colors: `MainActivity.pushThemeToPi()` derives a six-stop
-ramp from the active `Palette` and pushes it. To preview that in the simulator, the
-derivation has to be the app's, not a lookalike - so this is a port of
+The app owns the LED strip's settings: `MainActivity.pushThemeToPi()` sends a six-stop
+ramp plus the shift colour. To preview that in the simulator, the payload has to be the
+app's, not a lookalike - so this is a port of
 `android/mx5-remote/src/main/java/com/mx5/remote/Palette.java`, and
 `palette_parity.py` compiles the real `Palette.java` and diffs the two.
 
-What is ported is only what the ramp needs: the twelve schemes, the dark/light derivation
-of `accent` and `primary`, and `Palette.ramp()`. The surface colors (page, panel, tile...)
-exist in the Java but not here, because the ramp does not use them.
+What is ported is the twelve schemes, the dark/light derivation of `accent` and
+`primary`, `Palette.ramp()` and `Palette.shiftColor()`. The surface colors (page, panel,
+tile...) exist in the Java but not here, because nothing the strip receives uses them.
+
+The ramp and the shift colour are **the engine's**, not the scheme's: they encode rpm, so
+they are identical in every scheme and mode, and the scheme only reaches the strip as the
+dark-mode dim flag. See `Palette.java` and ISSUE-24 in
+`docs/IN_CAR_FINDINGS_2026-11-26.md`.
 """
 
 from __future__ import annotations
@@ -50,6 +55,19 @@ ALERT = 0xFF8C32      # "Alert stays orange in every scheme."
 
 # `Palette.RAMP_RPMS`: where each of the six stops sits on the rev range.
 RAMP_RPMS: Tuple[int, ...] = (0, 1400, 2800, 4500, 5800, 6800)
+
+# `Palette.ENGINE_RAMP`, verbatim: the engine's colours, identical in every scheme.
+ENGINE_RAMP: Tuple[int, ...] = (
+    0xFF0000FF,   #    0  idle - blue
+    0xFF00DCFF,   # 1400  pulling away - cyan
+    0xFF32D782,   # 2800  economical cruise - green
+    0xFFFFD23C,   # 4500  waking up - yellow
+    0xFFFF8000,   # 5800  spirited - orange
+    0xFFFF0000,   # 6800  redline - red
+)
+
+# `Palette.shiftColor()`: red, like the top of the bar.
+ENGINE_SHIFT = 0xFFFF0000
 
 
 def index_of(scheme_id: str) -> int:
@@ -126,7 +144,6 @@ class Palette:
     dark: bool
     accent: int
     primary: int
-    seed_b: int
     good: int = GOOD
     warn: int = WARN
     bad: int = BAD
@@ -142,26 +159,22 @@ def palette(scheme_id: str = "aurora", dark: bool = True) -> Palette:
     amount = LIFT_AMOUNT
     accent = lift(seed_a, amount) if dark else sink(seed_a, amount)
     primary = lift(seed_b, amount) if dark else sink(seed_b, amount)
-    return Palette(scheme=ident, dark=dark, accent=accent, primary=primary,
-                   seed_b=seed_b)
+    return Palette(scheme=ident, dark=dark, accent=accent, primary=primary)
 
 
 def ramp_colors(pal: Palette) -> List[int]:
-    """`Palette.ramp()`: all six stop colors, derived from the scheme's own hues.
+    """`Palette.ramp()`: the six stop colors.
 
-    The bar belongs to the theme: it runs from the mode-corrected accent up through the
-    primary to the vivid seed, so every one of the twelve schemes produces a different
-    ramp. None of the fixed alarm colors (warn, bad, alert) appear - those stay the same in
-    every scheme, because they report a fault. See `shift_color()` for the one alarm that
-    does follow the theme.
+    The engine's colors, not the scheme's: blue at idle through to red at the redline, the
+    same in all twelve schemes and both modes. They mean rpm, so a theme cannot own them -
+    deriving them from the palette is what produced a washed-out bar, schemes with no red
+    anywhere, and a pink "redline".
+
+    `pal` is accepted because every caller keys off a scheme; the answer no longer depends
+    on it.
     """
-    a, b, vivid = pal.accent, pal.primary, pal.seed_b
-    return [a,
-            mix(a, b, 0.40),
-            mix(a, b, 0.75),
-            b,
-            mix(b, vivid, 0.55),
-            vivid]
+    del pal
+    return list(ENGINE_RAMP)
 
 
 def ramp_for(pal: Palette) -> Tuple[Tuple[int, RGB], ...]:
@@ -183,16 +196,17 @@ def ramp_text(scheme_id: str = "aurora", dark: bool = True) -> str:
 
 
 def shift_color(pal: Palette) -> int:
-    """`Palette.shiftColor()`: the color the shift light flashes, for this scheme.
+    """`Palette.shiftColor()`: the color the shift light flashes.
 
-    The shift flash is the one alarm that fires while everything is working, so it follows
-    the theme as well: the scheme's first hue, lifted toward white so the pulse is brighter
-    than the bar it interrupts, while the far end of that bar is the scheme's second hue.
-    The fault patterns (CAN offline, the error scanner) stay orange and red in every scheme,
-    because they mean the electronics are broken rather than that the engine is at the shift
-    point.
+    Red, in every scheme. The shift light is an alarm, not decoration, and a scheme-lifted
+    hue is how it used to end up pink. The fault patterns (CAN offline, the error scanner)
+    stay orange and red too, for the same reason.
+
+    `pal` is accepted because every caller keys off a scheme; the answer no longer depends
+    on it.
     """
-    return lift(pal.accent, 0.30)
+    del pal
+    return ENGINE_SHIFT
 
 
 def shift_text(scheme_id: str = "aurora", dark: bool = True) -> str:

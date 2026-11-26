@@ -557,7 +557,7 @@ static int runThemeCapture() {
     return 0;
 }
 
-static int runHeadless(bool reverse, bool stale, int demoSpeed) {
+static int runHeadless(bool reverse, bool reverseSign, bool stale, int demoSpeed) {
     initDemoTelemetry();
     if (demoSpeed > 0) {
         // Mostly for checking the gear ladder at motorway speed, where the
@@ -573,6 +573,17 @@ static int runHeadless(bool reverse, bool stale, int demoSpeed) {
         telemetry.speed = -3;
         telemetry.gear = -1;
         telemetry.isInReverse = true;
+        telemetry.rpm = 900;
+        telemetry.throttle = 0;
+    }
+    if (reverseSign) {
+        // The car's failure case: the negative speed reaches the display but the
+        // explicit reverse flag does not, and the Pi's gear field says 1. Reverse
+        // is the sign of the speed, so the screen must still say `R`. The output
+        // must be pixel-identical to `--reverse`.
+        telemetry.speed = -3;
+        telemetry.gear = 1;
+        telemetry.isInReverse = false;
         telemetry.rpm = 900;
         telemetry.throttle = 0;
     }
@@ -593,7 +604,8 @@ static int runHeadless(bool reverse, bool stale, int demoSpeed) {
         bootStartTime = millis() - 60000UL;
         lastPiDataMs = millis() - 6400UL;
     }
-    const char* prefix = reverse ? "rev_" : (stale ? "stale_" : "shot_");
+    const char* prefix = reverse ? "rev_" : (reverseSign ? "revsign_"
+                               : (stale ? "stale_" : "shot_"));
     char name[64];
     for (int s = 0; s < SCREEN_COUNT; s++) {
         goToScreen((ScreenMode)s);
@@ -613,6 +625,7 @@ int main(int argc, char** argv) {
 
     bool headless = false;
     bool reverse = false;
+    bool reverseSign = false;
     bool stale = false;
     bool startup = false;
     bool themes = false;
@@ -620,6 +633,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--screenshot") == 0) headless = true;
         if (strcmp(argv[i], "--reverse") == 0) reverse = true;
+        if (strcmp(argv[i], "--reverse-sign") == 0) reverseSign = true;
         if (strcmp(argv[i], "--stale") == 0) stale = true;
         if (strcmp(argv[i], "--startup") == 0) startup = true;
         if (strcmp(argv[i], "--themes") == 0) themes = true;
@@ -627,7 +641,7 @@ int main(int argc, char** argv) {
     }
     if (themes) return runThemeCapture();
     if (startup) return runStartupCapture();
-    if (headless) return runHeadless(reverse, stale, demoSpeed);
+    if (headless) return runHeadless(reverse, reverseSign, stale, demoSpeed);
 
     initDemoTelemetry();
 

@@ -293,6 +293,40 @@ public final class Telemetry {
         return Math.sqrt(gLateral * gLateral + gLongitudinal * gLongitudinal);
     }
 
+    /**
+     * Whether the car is in reverse gear.
+     *
+     * One rule, in one place, shared by every screen - the same rule the Pi applies
+     * before it sends the flag and the ESP32 applies before it draws:
+     * <b>reverse is the sign of the speed</b>. The PCM transmits
+     * {@code (speed + 100 km/h)}, so reverse arrives below that zero point and
+     * decodes negative; a negative speed while the range is not reporting neutral is
+     * reverse gear.
+     *
+     * The explicit flag and {@code gear == -1} are still honoured first, so a screen
+     * is right whichever of the three reaches it. The {@code gear != 0} veto keeps a
+     * car rolling backwards in neutral on {@code N}, where it belongs.
+     *
+     * This used to be re-implemented per screen, and one of those copies tested
+     * neutral before reverse - which is how the in-motion screen could show "N"
+     * while the car was backing up.
+     */
+    public boolean isReverse() {
+        if (inReverse || gear == -1) return true;
+        return speedKmh < 0 && gear != 0;
+    }
+
+    /**
+     * The gear as the driver sees it: {@code R}, {@code N}, a number, or {@code --}.
+     *
+     * @return the text every gear readout should draw
+     */
+    public String gearText() {
+        if (isReverse()) return "R";
+        if (inNeutral || gear == 0) return "N";
+        return gear < 0 ? "--" : String.valueOf(gear);
+    }
+
     /** Highest pressure reading, or 0 when TPMS has nothing yet. */
     public double maxTirePressure() {
         double max = 0;

@@ -43,14 +43,21 @@ public class LedScreen extends Screen {
      * and a driver has no business picking a hue at 70 mph.
      */
     private static final String[] SWATCHES = {
-            "0a84ff", "00c1c1", "32d782", "ffd23c", "ff8000", "ef4444", "b44bff", "ffffff"
+            "0000ff", "00c1c1", "00dcff", "32d782", "ffd23c", "ff8000", "ff0000", "ffffff"
     };
 
     /** Where each of the six stops sits along the rev range, as a fraction of "full at". */
     private static final float[] STOP_FRACTIONS = {0f, 0.21f, 0.41f, 0.66f, 0.85f, 1f};
 
+    /**
+     * What the editor starts from, and what the strip boots with.
+     *
+     * These are `Palette.ENGINE_RAMP`'s colours: blue at idle to red at the redline. They
+     * used to be a different blue (`0a84ff`) and a different red (`ef4444`), so the
+     * screen showed colours the strip would never produce.
+     */
     private static final String[] DEFAULT_COLOURS =
-            {"0a84ff", "00c1c1", "32d782", "ffd23c", "ff8000", "ef4444"};
+            {"0000ff", "00dcff", "32d782", "ffd23c", "ff8000", "ff0000"};
 
     private static final int DEFAULT_FULL_RPM = 6800;
 
@@ -500,9 +507,10 @@ public class LedScreen extends Screen {
                 dots.add(dot);
             }
 
-            // The strip follows the theme by default, and a theme colour is not one of the
-            // eight presets. Highlighting nothing would read as "no colour chosen" when the
-            // strip is in fact using the scheme's, so a ninth dot appears for it.
+            // A colour that is not one of the eight presets still has to be visible, or the
+            // row reads as "nothing chosen" while the strip is using something else. That
+            // can only come from a ramp stored before the colours became fixed, so this
+            // ninth dot is a compatibility path rather than the normal case.
             extra = new View(c);
             extra.setClickable(true);
             extra.setFocusable(true);

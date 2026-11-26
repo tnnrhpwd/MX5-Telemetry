@@ -1,7 +1,5 @@
 package com.mx5.remote;
 
-import android.graphics.Color;
-
 /**
  * The webapp's twelve color schemes, ported, plus the resolved colors the UI
  * actually paints with.
@@ -16,8 +14,8 @@ import android.graphics.Color;
  * Alert stays orange in every scheme. That mirrors the standard's rule that the
  * alert hue must not follow the decor. That rule covers the things that report a
  * fault - the alert, bad and warn roles, and the strip's CAN-offline and error
- * patterns. It does not cover the shift light, which fires during normal driving
- * and follows the scheme like the rest of the strip; see {@link #shiftColor()}.
+ * patterns - and it covers the strip's rpm ramp and shift light too: those report
+ * the engine, so they use the same colors in every scheme; see {@link #ramp()}.
  */
 public final class Palette {
 
@@ -77,12 +75,9 @@ public final class Palette {
     public final int tile;
     /** A neutral tone-change edge. Not a border to decorate with. */
     public final int hairline;
-    /** The scheme's second seed, before the mode lifts or sinks it. */
-    public final int seedB;
 
     private Palette(boolean dark, Scheme scheme, int accent, int primary) {
         this.dark = dark;
-        this.seedB = scheme.b;
         if (dark) {
             page = 0xFF141416;
             panel = 0xFF212124;
@@ -131,43 +126,53 @@ public final class Palette {
     public static final int[] RAMP_RPMS = {0, 1400, 2800, 4500, 5800, 6800};
 
     /**
-     * The six colors the strip climbs through, derived from this scheme alone.
+     * The engine's own ramp, byte-for-byte the firmware's default table.
      *
-     * The bar is part of the app, not a separate instrument bolted onto it: every stop is
-     * this scheme's own two hues, blended from the mode-corrected accent up to the vivid
-     * seed, so changing the theme changes the whole bar. No stop is a fixed semantic
-     * color - that would leave most themes looking identical, which is what following the
-     * theme is supposed to avoid.
+     * The strip's colors mean rpm, so they cannot be derived from a scheme. Deriving
+     * them made 5000 rpm green on one theme and orange on another, left most schemes
+     * with no red anywhere on the bar, and - blended 18% toward white for dark mode -
+     * produced the washed-out bar and the pink "redline" the owner reported.
      *
-     * All six are the theme's; see {@link #shiftColor()} for the one alarm that follows it
-     * too, and why the fault patterns do not.
+     * Matching the firmware default exactly also means the strip looks the same
+     * whether or not the phone has ever pushed a ramp to it.
+     */
+    private static final int[] ENGINE_RAMP = {
+            0xFF0000FF,   //    0  idle - blue
+            0xFF00DCFF,   // 1400  pulling away - cyan
+            0xFF32D782,   // 2800  economical cruise - green
+            0xFFFFD23C,   // 4500  waking up - yellow
+            0xFFFF8000,   // 5800  spirited - orange
+            0xFFFF0000,   // 6800  redline - red
+    };
+
+    /**
+     * The six colors the strip climbs through.
+     *
+     * These are the engine's colors, identical in every scheme and mode: blue at idle,
+     * cyan, green through the economical band, yellow, orange, and red at the redline.
+     * The theme still reaches the strip through brightness - `led_theme_dim` dims the
+     * bar in dark mode, and dimming scales all three channels equally, so it darkens a
+     * color without desaturating it.
+     *
+     * See {@link #shiftColor()} for the one alarm, and why the fault patterns are fixed.
      */
     public int[] ramp() {
-        return new int[]{
-                accent,
-                mix(accent, primary, 0.40f),
-                mix(accent, primary, 0.75f),
-                primary,
-                mix(primary, seedB, 0.55f),
-                seedB
-        };
+        return ENGINE_RAMP.clone();
     }
 
     /**
-     * The color the shift light flashes, for this scheme.
+     * The color the shift light flashes.
      *
-     * The shift flash is the one alarm that fires while everything is working, so it
-     * follows the theme as well - otherwise the strip would always flash a fixed red,
-     * whichever scheme is active. It flashes the scheme's first hue, lifted toward white so
-     * the pulse is brighter than the bar it interrupts, while the far end of that bar is
-     * the scheme's second hue.
+     * Red, like the top of the bar: a shift light is an alarm, not decor, so it must not
+     * change meaning with the theme (and a scheme-lifted hue is how a shift flash ended
+     * up pink). The firmware flashes the whole strip, so a full bar still blinks visibly.
      *
-     * The *fault* patterns stay fixed: the CAN-offline pair is orange and the error
+     * The *fault* patterns stay fixed too: the CAN-offline pair is orange and the error
      * scanner red in every scheme. They mean the electronics are broken rather than that
-     * the engine is at the shift point, so they must not depend on the decor.
+     * the engine is at the shift point.
      */
     public int shiftColor() {
-        return lift(accent, 0.30f);
+        return 0xFFFF0000;
     }
 
     public static Palette of(int schemeIndex, boolean dark) {
@@ -176,26 +181,34 @@ public final class Palette {
 
     /** Blend toward white. */
     public static int lift(int c, float t) {
-        return mix(c, Color.WHITE, t);
+        return mix(c, 0xFFFFFFFF, t);
     }
 
     /** Blend toward black. */
     public static int sink(int c, float t) {
-        return mix(c, Color.BLACK, t);
+        return mix(c, 0xFF000000, t);
     }
 
+    /**
+     * Blend two ARGB colors.
+     *
+     * Plain bit arithmetic rather than {@code android.graphics.Color}: this class holds
+     * no state and touches no Android API, so the LED ramp can be compiled and asserted
+     * with a plain {@code javac} outside a device build. The maths is identical to
+     * {@code Color.argb / red / green / blue}.
+     */
     public static int mix(int a, int b, float t) {
         float u = 1f - t;
-        return Color.argb(
-                Math.round(Color.alpha(a) * u + Color.alpha(b) * t),
-                Math.round(Color.red(a) * u + Color.red(b) * t),
-                Math.round(Color.green(a) * u + Color.green(b) * t),
-                Math.round(Color.blue(a) * u + Color.blue(b) * t));
+        int alpha = Math.round(((a >>> 24) & 0xFF) * u + ((b >>> 24) & 0xFF) * t);
+        int r = Math.round(((a >> 16) & 0xFF) * u + ((b >> 16) & 0xFF) * t);
+        int g = Math.round(((a >> 8) & 0xFF) * u + ((b >> 8) & 0xFF) * t);
+        int bl = Math.round((a & 0xFF) * u + (b & 0xFF) * t);
+        return ((alpha & 0xFF) << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (bl & 0xFF);
     }
 
     /** A translucent version of a color, for washes and glows. */
     public static int alpha(int c, float a) {
-        return Color.argb(Math.round(255 * a), Color.red(c), Color.green(c), Color.blue(c));
+        return ((Math.round(255 * a) & 0xFF) << 24) | (c & 0x00FFFFFF);
     }
 
     /** The accent as a wash, for an active chip or a selected rail row. */

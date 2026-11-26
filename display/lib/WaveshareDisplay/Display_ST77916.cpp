@@ -30,6 +30,92 @@ static uint8_t backlight_level = 100;
 static uint16_t* static_fill_buffer = NULL;
 static bool static_buffer_initialized = false;
 
+// ============================================================================
+// Optional software frame buffer
+// ============================================================================
+// The panel has no frame buffer the host can rely on: every primitive writes its
+// own region over QSPI, so a frame assembled from hundreds of small writes is
+// visible while it is being assembled. On the boot animation - 120 particles x 4
+// trail dots, three shockwave rings, a 200-row emblem - that is ~500-700 separate
+// transactions per frame, and the result is a picture that flickers for the whole
+// animation.
+//
+// When enabled, every primitive is redirected into this buffer instead, and
+// LCD_Flush() pushes the finished frame in 32 KB bands (8 transactions). Nothing
+// else about the drawing code changes: the interception is at the single point
+// where the driver talks to the panel, so every caller - each primitive, each
+// string glyph, each blit - is covered by construction.
+//
+// The buffer lives in PSRAM (360x360x2 = 253 KB) and is flushed through a
+// DMA-capable staging band, the same way LCD_DrawImage already works.
+#define FB_FLUSH_BAND_BYTES 32768
+static uint16_t* fb_pixels = NULL;
+static uint16_t* fb_stage = NULL;
+static bool fb_active = false;
+
+// Every primitive in this file funnels into this one call. In buffer mode the
+// same bytes the panel would have received are copied into the frame instead.
+static inline void panel_blit(int x0, int y0, int x1, int y1, const void* data) {
+    if (fb_active && fb_pixels) {
+        const int src_stride = x1 - x0;         // row width of the incoming bitmap
+        int dx0 = x0, dy0 = y0, dx1 = x1, dy1 = y1;
+        if (dx0 < 0) dx0 = 0;
+        if (dy0 < 0) dy0 = 0;
+        if (dx1 > LCD_WIDTH) dx1 = LCD_WIDTH;
+        if (dy1 > LCD_HEIGHT) dy1 = LCD_HEIGHT;
+        if (dx1 <= dx0 || dy1 <= dy0) return;
+
+        const uint16_t* src = (const uint16_t*)data;
+        const int width = dx1 - dx0;
+        for (int y = dy0; y < dy1; y++) {
+            const uint16_t* srow = src + (size_t)(y - y0) * src_stride + (dx0 - x0);
+            memcpy(fb_pixels + (size_t)y * LCD_WIDTH + dx0, srow,
+                   (size_t)width * sizeof(uint16_t));
+        }
+        return;
+    }
+    esp_lcd_panel_draw_bitmap(panel_handle, x0, y0, x1, y1, data);
+}
+
+bool LCD_FramebufferEnable(void) {
+    if (fb_active) return true;
+    if (fb_pixels == NULL) {
+        fb_pixels = (uint16_t*)heap_caps_malloc((size_t)LCD_WIDTH * LCD_HEIGHT * sizeof(uint16_t),
+                                                MALLOC_CAP_SPIRAM);
+        if (fb_pixels != NULL) {
+            // A caller that paints only part of the screen would otherwise flush heap
+            // garbage into the untouched area. The boot film repaints the backdrop on
+            // its first frame, so this is only a safety net for other callers.
+            memset(fb_pixels, 0, (size_t)LCD_WIDTH * LCD_HEIGHT * sizeof(uint16_t));
+        }
+    }
+    if (fb_pixels == NULL) return false;
+    if (fb_stage == NULL) {
+        fb_stage = (uint16_t*)heap_caps_malloc(FB_FLUSH_BAND_BYTES, MALLOC_CAP_DMA);
+    }
+    if (fb_stage == NULL) return false;
+
+    fb_active = true;
+    return true;
+}
+
+void LCD_FramebufferDisable(void) {
+    fb_active = false;
+}
+
+void LCD_Flush(void) {
+    if (!fb_active || fb_pixels == NULL || fb_stage == NULL) return;
+
+    const int rowsPerBand = FB_FLUSH_BAND_BYTES / (LCD_WIDTH * (int)sizeof(uint16_t));
+    for (int y = 0; y < LCD_HEIGHT; y += rowsPerBand) {
+        int rows = rowsPerBand;
+        if (y + rows > LCD_HEIGHT) rows = LCD_HEIGHT - y;
+        memcpy(fb_stage, fb_pixels + (size_t)y * LCD_WIDTH,
+               (size_t)rows * LCD_WIDTH * sizeof(uint16_t));
+        esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_WIDTH, y + rows, fb_stage);
+    }
+}
+
 // Vendor-specific initialization for newer hardware revision
 // MADCTL value 0xC0 = Mirror X (bit 6) + Mirror Y (bit 7) = 180 degree rotation
 static const st77916_lcd_init_cmd_t vendor_specific_init_new[] = {
@@ -476,7 +562,7 @@ void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color
                     static_fill_buffer[i] = swapped;
                 }
                 for (uint16_t row = 0; row < h; row++) {
-                    esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + w, y + row + 1, static_fill_buffer);
+                    panel_blit(x, y + row, x + w, y + row + 1, static_fill_buffer);
                 }
                 return;
             }
@@ -491,7 +577,7 @@ void LCD_FillRect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color
         buf[i] = swapped;
     }
     
-    esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + w, y + h, buf);
+    panel_blit(x, y, x + w, y + h, buf);
     
     // Only free if dynamically allocated
     if (!use_static) {
@@ -509,7 +595,7 @@ void LCD_DrawPixel(uint16_t x, uint16_t y, uint16_t color) {
     
     // Byte swap for BIG endian
     uint16_t swapped = lcd_swap16(color);
-    esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + 1, y + 1, &swapped);
+    panel_blit(x, y, x + 1, y + 1, &swapped);
 }
 
 void LCD_DrawBuffer(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t* pixels) {
@@ -537,7 +623,7 @@ void LCD_DrawBuffer(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16
             for (uint16_t col = 0; col < draw_w; col++) {
                 rowbuf[col] = lcd_swap16(pixels[row * w + col]);
             }
-            esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + 1, rowbuf);
+            panel_blit(x, y + row, x + draw_w, y + row + 1, rowbuf);
         }
         return;
     }
@@ -555,7 +641,7 @@ void LCD_DrawBuffer(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16
                 dst[col] = lcd_swap16(src[col]);
             }
         }
-        esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + chunk, stage);
+        panel_blit(x, y + row, x + draw_w, y + row + chunk, stage);
     }
 }
 
@@ -1002,7 +1088,7 @@ void LCD_DrawChar(uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, u
             dst[col] = lcd_swap16(px);
         }
     }
-    esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + cw, y + ch, glyph_buf);
+    panel_blit(x, y, x + cw, y + ch, glyph_buf);
 }
 
 void LCD_DrawString(uint16_t x, uint16_t y, const char* str, uint16_t color, uint16_t bg, uint8_t size) {
@@ -1133,7 +1219,7 @@ void LCD_DrawImage(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_
         for (uint16_t r = 0; r < batch_rows; r++) {
             memcpy_P(&row_buf[r * draw_w], &data[(row + r) * w], draw_w * 2);
         }
-        esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + batch_rows, row_buf);
+        panel_blit(x, y + row, x + draw_w, y + row + batch_rows, row_buf);
     }
     
     if (!borrowed) {
@@ -1171,7 +1257,7 @@ void LCD_DrawImageWithAlpha(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                 row_buf[col] = bg_color;
             }
         }
-        esp_lcd_panel_draw_bitmap(panel_handle, x, y + row, x + draw_w, y + row + 1, row_buf);
+        panel_blit(x, y + row, x + draw_w, y + row + 1, row_buf);
     }
     
     heap_caps_free(row_buf);
@@ -1213,7 +1299,7 @@ void LCD_DrawImageScaled(uint16_t src_w, uint16_t src_h, const uint16_t* data,
         }
         
         // Draw this row using the panel API
-        esp_lcd_panel_draw_bitmap(panel_handle, dst_x, dst_y + y, dst_x + draw_w, dst_y + y + 1, row_buf);
+        panel_blit(dst_x, dst_y + y, dst_x + draw_w, dst_y + y + 1, row_buf);
     }
     
     heap_caps_free(row_buf);

@@ -32,6 +32,7 @@ OBD-II → HS-CAN & MS-CAN → Pi (Hub) → ESP32 Display + Arduino LEDs + Pione
 | 3️⃣ | [**DEPLOYMENT_GUIDE.md**](DEPLOYMENT_GUIDE.md) | ⭐ Build, flash firmware & deploy in vehicle |
 | 4️⃣ | [**LED_SYSTEM.md**](LED_SYSTEM.md) | Complete LED system documentation |
 | 5️⃣ | [**KNOWN_ISSUES.md**](KNOWN_ISSUES.md) | ⚠️ Open issues found during in-car testing |
+| 6️⃣ | [**IN_CAR_FINDINGS_2026-11-26.md**](IN_CAR_FINDINGS_2026-11-26.md) | ⚠️ Newest round of in-car findings (reverse, predicted RPM, boot flicker, driving visibility, LED lag, LED colours) |
 
 ---
 
@@ -71,6 +72,7 @@ Older documentation and completed features can be found in [archive/](archive/).
 
 For issues or questions:
 - Check [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for open problems found in the car
+- Check [IN_CAR_FINDINGS_2026-11-26.md](IN_CAR_FINDINGS_2026-11-26.md) for the newest round of in-car findings
 - Check [ARCHITECTURE.md](ARCHITECTURE.md) for system architecture
 - Review [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for troubleshooting
 - Check [hardware/HARDWARE.md](hardware/HARDWARE.md) for wiring and parts

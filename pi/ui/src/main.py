@@ -59,7 +59,7 @@ except ImportError:
 
 # Try to import CAN handler (optional on non-Pi systems)
 try:
-    from can_handler import CANHandler, CAN_AVAILABLE
+    from can_handler import CANHandler, CAN_AVAILABLE, GearEstimator
 except ImportError:
     CAN_AVAILABLE = False
     CANHandler = None
@@ -185,7 +185,7 @@ class TelemetryData:
     recommended_gear: int = 1     # Suggested gear for current speed (1-6)
     gear_color: str = 'green'     # Color indicator: red/blue/green/yellow/cyan
     is_in_neutral: bool = False   # True if CAN neutral signal detected
-    is_in_reverse: bool = False   # True if speed is negative (reverse detected)
+    is_in_reverse: bool = False   # negative speed with the range not reporting neutral
     speed_raw: int = 0            # Raw 0x201 speed field, for diagnosing reverse (see ISSUE-14)
     transmission_range: int = -1  # Raw 0x231 range code; 0 = neutral, -1 = not seen yet
     throttle_percent: int = 0
@@ -739,7 +739,10 @@ class PiDisplayApp:
                 import serial
                 conn = serial.Serial()
                 conn.port = port
-                conn.baudrate = 9600  # Match the Arduino's command baud rate
+                # Must match Serial.begin() in arduino/src/main.cpp. 115200, not 9600:
+                # the strip's once-a-second STATUS line is ~130 bytes, and at 9600 its
+                # UART ring filled and blocked the LED loop for ~50 ms every second.
+                conn.baudrate = 115200
                 conn.timeout = 0.2    # Short: this runs on the main thread at startup
                 conn.write_timeout = 0.2
                 # Keep DTR deasserted across the open. On this Nano DTR is wired to the
@@ -836,6 +839,12 @@ class PiDisplayApp:
                     'color_mode': int(fields.get('MODE', 0)),
                     'shift_rpm': int(fields.get('SHIFT', 0)),
                     'shift_hz': int(fields.get('HZ', 0)),
+                    # Latency evidence: the measured 0x201 period and the worst loop
+                    # iteration in the last second. Together they say whether the strip
+                    # is limited by the ECU, by a blocking write, or by its own
+                    # resolution - the three candidates in ISSUE-23.
+                    'period_us': int(fields.get('PER', 0)),
+                    'max_loop_us': int(fields.get('LAG', 0)),
                     'demo_rpm': int(fields['DEMO']) if 'DEMO' in fields else None,
                     'updated': time.time(),
                 }
@@ -1103,8 +1112,9 @@ class PiDisplayApp:
             cfg.append(f"hz={self.settings.led_shift_hz}")
             cfg.append(f"scol={self.settings.led_shift_color}")
             line = "CFG:" + ",".join(cfg)
-            # 9600 baud carries about 960 bytes a second, and a drag produces far more
-            # updates than that. Re-sending an identical line is pure queueing delay.
+            # The dedupe below still earns its keep - a slider drag produces far more
+            # updates than any link should carry - even though 115200 baud now has
+            # ~11,520 bytes a second to spend instead of 960.
             ramp_line = f"RAMP:{self.settings.led_ramp}" if self.settings.led_ramp else None
             if (line == getattr(self, '_led_config_last', None)
                     and ramp_line == getattr(self, '_led_config_ramp_last', None)):
@@ -2020,14 +2030,17 @@ class PiDisplayApp:
         else:
             self.telemetry.gear = 5
         
-        # Speed approximation (more realistic: gear ratios)
-        gear_ratios = [0, 3.136, 1.888, 1.330, 1.000, 0.814, 0.0]  # MX5 NC gear ratios
-        if 1 <= self.telemetry.gear <= 5:
-            # Speed = (RPM * tire_circumference) / (gear_ratio * diff_ratio * 60)
-            # Simplified: ~rpm/gear_ratio * factor for km/h
-            self.telemetry.speed_kmh = int(self.telemetry.rpm / (gear_ratios[self.telemetry.gear] * 25))
-        else:
-            self.telemetry.speed_kmh = 0
+        # Speed implied by the gear and rpm, from the same driveline the estimator
+        # uses. This used to be its own table - a wrong 5-speed one (3.136, 1.888, ...)
+        # with a made-up "/ 25" divisor - so demo mode showed a speed that contradicted
+        # the gear beside it.
+        est = getattr(self, '_demo_gear_estimator', None)
+        if est is None:
+            est = self._demo_gear_estimator = GearEstimator()
+        mph_per_1k = est.MPH_PER_1000_RPM.get(self.telemetry.gear, 0)
+        # mph = (rpm / 1000) * mph-per-1000-rpm, so 4000 rpm in 1st is ~19 mph.
+        self.telemetry.speed_kmh = (int((self.telemetry.rpm / 1000.0) * mph_per_1k / 0.621371)
+                                    if mph_per_1k > 0 else 0)
         
         # G-force simulation (from IMU)
         self.telemetry.g_lateral = math.sin(t) * 0.8

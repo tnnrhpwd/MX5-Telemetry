@@ -241,7 +241,11 @@ bool canInitialized = false;
 // stutter followed by a jump. RPM_EXTRAPOLATE_MS is only the ceiling, and RPM_MAX_SLOPE is
 // the second bound, so a shift or a stalled link cannot send the bar somewhere the engine
 // never was. 0 disables prediction and the bar simply holds the last reading.
-#define RPM_EXTRAPOLATE_MS 40      // ceiling on the horizon, in ms
+//
+// 60, not 40: the ceiling has to be at or above the real broadcast period, and the 50 Hz
+// figure the old value was chosen against came from a bench model. 60 ms covers down to
+// 16 Hz; the measured `PER=` field in the STATUS line says whether this car needs more.
+#define RPM_EXTRAPOLATE_MS 60      // ceiling on the horizon, in ms
 
 // Bars faster than this are not an engine: it caps how far the prediction may run.
 #define RPM_MAX_SLOPE      20      // rpm per millisecond (20,000 rpm per second)
@@ -291,12 +295,24 @@ unsigned long demoExpiresAt = 0;
 unsigned long lastCanIdSeen = 0;
 uint16_t frameCount = 0;         // wraps every ~65k frames; only the 1 Hz delta is used
 
+// Latency evidence, reported in the STATUS line once a second.
+//
+// These exist because the strip "feels laggy" is not a measurement. `PER` is the
+// measured 0x201 inter-arrival period - the floor under every other latency in the
+// chain - and `LAG` is the worst loop iteration in the last second, which is where
+// a blocking Serial write or a slow render would show up. Together they separate
+// "the ECU is slow", "the loop is blocked" and "it is just 10 coarse ranks".
+unsigned long enginePeriodSum = 0;   // microseconds, summed over the last second
+uint16_t enginePeriodCount = 0;
+unsigned long maxLoopMicros = 0;     // worst loop iteration since the last STATUS
+
 // Timing
 unsigned long lastCANPoll = 0;
 unsigned long lastLEDUpdate = 0;
 unsigned long lastBrightnessRead = 0;
 unsigned long lastCANData = 0;
 unsigned long lastEngineFrame = 0;   // last 0x201, which is what the timeout watches
+unsigned long prevEngineMicros = 0;  // previous 0x201 arrival, for the reported period
 
 // Animation state for error mode
 uint8_t errorScanPosition = 0;
@@ -855,6 +871,20 @@ inline void readCANMessages() {
                 // 0x201 arriving at ignition-on with rpm 0, so an engine-off car still
                 // reads as healthy.
                 lastEngineFrame = millis();
+
+                // Measured broadcast period. This is the floor under the whole chain -
+                // the strip cannot be fresher than the ECU's frame rate - so it is
+                // reported rather than assumed. A gap over 250 ms is a stall, not a
+                // period, and would poison the average.
+                const unsigned long engineNow = micros();
+                if (prevEngineMicros != 0) {
+                    const unsigned long period = engineNow - prevEngineMicros;
+                    if (period > 0 && period < 250000UL && enginePeriodCount < 0xFFFF) {
+                        enginePeriodSum += period;
+                        enginePeriodCount++;
+                    }
+                }
+                prevEngineMicros = engineNow;
             }
         }
     }
@@ -1328,8 +1358,15 @@ void setup() {
     Serial.begin(115200);
     Serial.println(F("MX5-Single v1.1"));
     #elif ENABLE_SERIAL_CMD
-    // Initialize USB Serial for commands from Pi at 9600 baud
-    Serial.begin(9600);
+    // Commands from the Pi, and the once-a-second `STATUS:` line back to it.
+    //
+    // 115200, not 9600. The STATUS line is ~130 bytes; at 9600 baud that is ~135 ms
+    // of wire time, and the AVR's 64-byte TX ring means `print()` inside loop()
+    // blocks for roughly 50 ms of every second - a visible hitch in the LED
+    // output, once a second, that nothing in the latency model accounted for.
+    // The bootloader already uploads at this rate on this board, so the link is
+    // proven at 115200. The Pi opens the same port at the same rate.
+    Serial.begin(115200);
     #endif
     
     // Clear any watchdog reset flag left by CFG:reset, and make sure the watchdog is off:
@@ -1398,6 +1435,7 @@ void setup() {
 
 void loop() {
     unsigned long now = micros();
+    const unsigned long loopStartUs = now;
     unsigned long nowMs = millis();
     
     // ========================================================================
@@ -1475,10 +1513,11 @@ void loop() {
     // ========================================================================
     // SERIAL STATUS - once a second, always in the shipped build
     // ========================================================================
-    // TX-only, ~40 bytes/s (about 4% of 9600 baud) and buffered by the UART, so it costs
-    // nothing in LED latency. It is the only way to tell a working strip from a silent
-    // one without a scope: CAN=0 means the MCP2515 never came up, CAN=1 with RPM=0 means
-    // the controller is fine but no engine frame is arriving.
+    // TX-only, ~130 bytes/s (about 1% of 115200 baud) and buffered by the UART, so it
+    // costs nothing in LED latency. It is the only way to tell a working strip from a
+    // silent one without a scope: CAN=0 means the MCP2515 never came up, CAN=1 with
+    // RPM=0 means the controller is fine but no engine frame is arriving. PER/LAG are
+    // the latency evidence described next to their counters.
     #if ENABLE_SERIAL_CMD
     static unsigned long lastStatusReport = 0;
     static uint16_t lastFrameCount = 0;
@@ -1511,6 +1550,13 @@ void loop() {
         cmdSerial.print(shiftRpm);
         cmdSerial.print(F(",HZ="));
         cmdSerial.print(shiftHz);
+        cmdSerial.print(F(",PER="));
+        cmdSerial.print(enginePeriodCount ? (enginePeriodSum / enginePeriodCount) : 0);
+        enginePeriodSum = 0;
+        enginePeriodCount = 0;
+        cmdSerial.print(F(",LAG="));
+        cmdSerial.print(maxLoopMicros);
+        maxLoopMicros = 0;
         if (demoForced) {
             cmdSerial.print(F(",DEMO="));
             cmdSerial.print(demoRPM);
@@ -1534,4 +1580,10 @@ void loop() {
         Serial.println(errorMode ? 'Y' : 'N');
     }
     #endif
+
+    // Worst iteration of the last second. A blocking Serial write or a slow render
+    // shows up here and nowhere else, which is what separates "the loop stalls" from
+    // "the ECU is slow" and from "ten coarse ranks just look laggy".
+    const unsigned long loopUs = micros() - loopStartUs;
+    if (loopUs > maxLoopMicros) maxLoopMicros = loopUs;
 }

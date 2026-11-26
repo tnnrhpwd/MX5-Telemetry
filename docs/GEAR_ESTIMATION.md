@@ -23,10 +23,16 @@ The system uses the known gear ratios for the MX5 NC 6-speed manual transmission
 ### Estimation Algorithm
 
 1. **Receive Data**: System continuously receives RPM and speed data from CAN bus
-2. **Calculate Ratio**: Computes actual speed/RPM ratio
-3. **Match Gear**: Compares actual ratio against expected ratios for each gear
-4. **Select Best Match**: Chooses the gear with the closest matching ratio
-5. **Calculate Confidence**: Measures how well the ratio matches the expected value
+2. **Reverse**: A negative speed (the PCM transmits `speed + 100 km/h`, so reverse decodes
+   below the 100 km/h zero point) means reverse gear. Neutral vetoes it: rolling backwards in
+   N is not reverse gear. No ratio matching is needed, so reverse can never be reported as 1st.
+3. **Calculate Ratio**: Computes actual speed/RPM ratio
+4. **Match Gear**: Compares actual ratio against expected ratios for each gear
+5. **Select Best Match**: Chooses the gear with the closest matching ratio
+6. **Calculate Confidence**: Measures how well the ratio matches the expected value
+
+A configured `0x231` range code (`CANParser.REVERSE_RANGE_CODES`) also means reverse and does
+not depend on the PCM encoding a sign.
 
 ### Clutch Detection
 

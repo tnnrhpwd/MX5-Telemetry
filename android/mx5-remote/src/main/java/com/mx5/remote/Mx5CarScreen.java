@@ -50,6 +50,19 @@ public class Mx5CarScreen extends Screen {
     /** Last successful reading, or null before the first one arrives. */
     private volatile Telemetry latest;
 
+    /**
+     * When {@link #latest} was last confirmed live, in {@link System#currentTimeMillis()}.
+     *
+     * A frozen number on a moving car is worse than no number. A dropped tether used to
+     * leave the last reading on screen for as long as the session ran, which looks
+     * exactly like a live one - the same failure the Pi's `can_connected` and the panel's
+     * link-lost screen exist to prevent. Zero until the first fresh reading.
+     */
+    private volatile long lastFreshMs;
+
+    /** A reading older than this is treated as absent. */
+    private static final long STALE_MS = 3000;
+
     /** True while a fetch is in flight, so a slow link cannot pile up requests.
      *  Volatile: written by the worker thread and read by the main-thread poll, and a
      *  stale `true` here would stop polling for the rest of the session. */
@@ -135,6 +148,9 @@ public class Mx5CarScreen extends Screen {
             }
             if (fetched != null && !destroyed) {
                 latest = fetched;
+                if (fetched.canConnected) {
+                    lastFreshMs = System.currentTimeMillis();
+                }
                 handler.post(Mx5CarScreen.this::invalidate);
             }
         }, "car-poll").start();
@@ -143,7 +159,14 @@ public class Mx5CarScreen extends Screen {
     @NonNull
     @Override
     public Template onGetTemplate() {
-        Telemetry t = latest;
+        final Telemetry newest = latest;
+        // Only show a reading while it is both recent and reported live by the Pi. Six
+        // rows of "--" say "no data" honestly; a stale 42 mph says "you are doing 42".
+        final boolean stale = newest == null
+                || !newest.canConnected
+                || System.currentTimeMillis() - lastFreshMs > STALE_MS;
+        final Telemetry t = stale ? null : newest;
+
         // Re-read every time rather than caching at session start: the units toggle
         // lives on the phone, and a stale copy here would show mph until the car
         // session is restarted. SharedPreferences reads are served from memory.
@@ -154,14 +177,14 @@ public class Mx5CarScreen extends Screen {
                 .addRow(row(value(t == null ? null : t.speedForDisplay(mph) + " " + unit),
                            "Speed"))
                 .addRow(row(value(t == null ? null : String.valueOf(t.rpm)), "RPM"))
-                .addRow(row(value(t == null ? null : gearText(t)), "Gear"))
+                .addRow(row(value(t == null ? null : t.gearText()), "Gear"))
                 .addRow(row(value(t == null ? null : t.coolantTempF + " \u00b0F"), "Coolant"))
                 .addRow(row(value(t == null ? null : Math.round(t.fuelLevelPercent) + "%"), "Fuel"))
                 .addRow(row(value(t == null ? null : t.rangeMiles + " mi"), "Range"))
-                // Until the first reading arrives the host shows its own progress indicator
-                // rather than six rows of "--", which is indistinguishable from a link that
-                // will never work.
-                .setLoading(t == null)
+                // The host's progress indicator is only right before the *first* reading.
+                // After that, a lost link shows "--": six rows of dashes is a statement,
+                // a spinner for ever is not.
+                .setLoading(newest == null)
                 .build();
 
         return new PaneTemplate.Builder(pane)
@@ -180,15 +203,5 @@ public class Mx5CarScreen extends Screen {
                 .setTitle(value)
                 .addText(label)
                 .build();
-    }
-
-    private static String gearText(Telemetry t) {
-        if (t.inNeutral) {
-            return "N";
-        }
-        if (t.inReverse) {
-            return "R";
-        }
-        return t.gear <= 0 ? "--" : String.valueOf(t.gear);
     }
 }

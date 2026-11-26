@@ -513,11 +513,11 @@ class GearEstimator:
                 recommended_gear: Suggested gear for current speed (1-6)
                 gear_color: Color indicator ('red', 'blue', 'green', 'yellow', 'cyan')
         """
-        # Reverse is checked before neutral. The neutral switch is a separate
-        # sensor and stays asserted for a frame or two while the car is already
-        # rolling backward; letting it win is what produced "N" instead of "R"
-        # on the way out of a parking space.
-        if speed_mph < 0:
+        # A negative speed is reverse gear, unless the range switch is reporting
+        # neutral: a car rolling backwards in N is not in reverse gear. The order
+        # matters - a negative speed with no neutral report must never fall through
+        # to the ratio match below, because that is what answered "1st".
+        if speed_mph < 0 and not is_in_neutral:
             return (-1, False, 1.0, -1, 'green')
 
         # If CAN reports neutral, return neutral
@@ -646,6 +646,7 @@ class CANHandler:
         self._reverse_from_range = False  # set when 0x231 carries a configured reverse code
         
         self._last_thr_log = 0.0
+        self._last_reverse_logged = None   # last reverse state written to the journal
 
         # Fuel level smoothing state - a wall-clock rolling average, so the window
         # length does not drift when the fuel frame rate changes or stalls.
@@ -1068,7 +1069,31 @@ class CANHandler:
         # flickers between R and 1. We hold reverse state for 500ms after speed
         # returns to 0 to prevent this.
         now = time.time()
-        in_reverse = self.telemetry.speed_kmh < 0 or self._reverse_from_range
+        # Reverse is the sign of the speed, and nothing else.
+        #
+        # The PCM transmits (speed + 100 km/h), so reverse arrives below the
+        # 100 km/h zero point and decodes *negative*. A negative speed while the
+        # range switch is not reporting neutral is reverse gear; neutral is the
+        # veto, not the trigger, because a car rolling backwards in N is not in
+        # reverse gear and must keep showing `N`.
+        #
+        # `_reverse_from_range` still wins when a discrete 0x231 code has been
+        # observed, because that does not depend on the PCM encoding a sign.
+        in_reverse = self._reverse_from_range or (
+            self.telemetry.speed_kmh < 0 and not self.telemetry.is_in_neutral
+        )
+
+        # One line per state change. A single shift into R now answers the question
+        # the capture tools were written for - whether this car actually broadcasts
+        # a negative speed - without a logging run or a bench session.
+        if in_reverse != self._last_reverse_logged:
+            self._last_reverse_logged = in_reverse
+            print(f"REV: reversing={int(in_reverse)} speed={self.telemetry.speed_kmh} "
+                  f"raw={getattr(self.telemetry, 'speed_raw', 0)} "
+                  f"neutral={int(self.telemetry.is_in_neutral)} "
+                  f"range={getattr(self.telemetry, 'transmission_range', None)} "
+                  f"rpm={getattr(self.telemetry, 'rpm', 0)} "
+                  f"gear={self.telemetry.gear}")
         if in_reverse:
             # Actively in reverse - extend hold timer
             self._reverse_hold_until = now + self._REVERSE_HOLD_SECONDS

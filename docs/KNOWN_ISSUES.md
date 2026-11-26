@@ -4,6 +4,10 @@
 **Vehicle:** Mazda MX-5 NC (2006-2015)
 **Source:** Issues identified during real in-car testing
 
+> **Newer round (2026-11-26).** Six issues reported from the car since this file was last
+> updated are tracked in [IN_CAR_FINDINGS_2026-11-26.md](IN_CAR_FINDINGS_2026-11-26.md). Where
+> they overlap (ISSUE-01/07/09/12/14) the newer document supersedes the *status* recorded here.
+
 > ⚠️ **Verification status.** The car was driven on the first round of fixes on
 > 2026-10-30 and **five of them were still wrong**: the LEDs never left blue (12), instant
 > MPG never showed a number (10), the drive app was unreachable (9), the gear ladder was in

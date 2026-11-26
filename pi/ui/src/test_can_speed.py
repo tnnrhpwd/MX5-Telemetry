@@ -119,11 +119,16 @@ def test_reverse_direction_reaches_the_gear_estimator():
     assert confidence == 1.0
 
 
-def test_reverse_wins_over_a_stuck_neutral_bit():
-    """The neutral switch lags; it must not turn a reversing car into 'N'."""
+def test_reverse_needs_a_negative_speed_and_no_neutral_report():
+    """Reverse is the sign of the speed, vetoed by the range's neutral report.
+
+    A car rolling backwards in N is not in reverse gear, so neutral must win.
+    With no neutral report a negative speed is reverse and must never fall
+    through to the ratio match - that is what used to answer "1st".
+    """
     est = GearEstimator()
-    gear = est.estimate_gear(-2.0, 900, True)[0]
-    assert gear == -1
+    assert est.estimate_gear(-2.0, 900, False)[0] == -1
+    assert est.estimate_gear(-2.0, 900, True)[0] == 0
 
 
 # -- wire format ------------------------------------------------------------
@@ -194,14 +199,19 @@ def test_fresh_speed_is_left_alone():
     assert t.is_in_reverse is True
 
 
-def test_the_range_frame_does_not_clear_reverse():
+def test_the_range_frame_alone_does_not_clear_reverse():
     """0x231 arrives independently of 0x201 and used to clear the reverse flag.
 
     Two writers at different rates is what made the phone flicker between R and N
     while the ESP kept showing R: the phone reads the flag, the ESP also reads
-    `gear == -1`.
+    `gear == -1`. Only the engine frame's estimator may change the answer.
+
+    What 0x231 *does* own is the neutral bit, and neutral is the veto on reverse
+    (see `test_reverse_needs_a_negative_speed_and_no_neutral_report`), so the next
+    engine frame is allowed to answer N. That is the owner's rule, not a second
+    writer arriving at its own rate.
     """
-    t = FakeTelemetry(speed_kmh=-3, gear=-1, is_in_reverse=True)
+    t = FakeTelemetry(speed_kmh=-3, gear=-1, is_in_reverse=True, is_in_neutral=False)
     h = make_handler()
     h.telemetry = t
     h._update_gear_estimation()
@@ -211,8 +221,13 @@ def test_the_range_frame_does_not_clear_reverse():
     h._process_hs_message(FakeMsg(0x231, bytes([0x00, 0x04, 0x00, 0x00, 0, 0, 0, 0])))
 
     assert t.is_in_neutral is True, "the neutral bit is still taken from 0x231"
-    assert t.is_in_reverse is True, "but 0x231 must not be allowed to clear reverse"
+    assert t.is_in_reverse is True, "but 0x231 must not be allowed to clear reverse itself"
     assert t.gear == -1
+
+    # The next engine frame re-derives it, and with the range reporting N it is N.
+    h._update_gear_estimation()
+    assert t.is_in_reverse is False
+    assert t.gear == 0
 
 
 # -- transmission range / the discrete reverse path -------------------------

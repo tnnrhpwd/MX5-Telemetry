@@ -71,6 +71,18 @@ design answer each one gets. They extend G2/G3 rather than replace them.
 | R4 | **Smooth color motion, not instant jumps.** "Change colors more smoothly rather than going from red to blue instantly … over a range of rpm." | New mapping (see 2.2): each lit LED's color is sampled from *its own share of the current rpm* rather than from a fixed position, so colors **flow** along the strip and every LED's color changes continuously as rpm changes. Plus a short temporal blend (~80 ms) so a step never snaps. |
 | R5 | **Very high refresh, no protocol change.** "The LED rpm is still very delayed compared to even the ESP's displayed rpm … without changing the baud rate." | The strip is already fed at CAN frame rate (~320 fps); the *apparent* delay is granularity plus the `show()` cadence, not the bus. Fix: sample on **every** CAN frame, keep `show()` gated only on an actual pixel change, cut per-frame work (precomputed ramp LUT), drop the 10 ms poll gate, and reduce the falling-RPM filter. Baud rate is untouched — it only carries settings, not rpm. |
 
+> **Superseded in part (2026-11-26).** R1's theme-derived ramp was removed: the strip's colours
+> encode rpm, so they are the engine's ramp in every scheme and mode, and the theme reaches the
+> strip only as the dark-mode dim factor. Deriving them from a scheme produced a washed-out bar,
+> no red anywhere on most schemes, and a pink "redline" — see
+> [IN_CAR_FINDINGS_2026-11-26.md](IN_CAR_FINDINGS_2026-11-26.md#issue-24--led-colours-are-washed-out-and-red-reads-pink)
+> ISSUE-24.
+>
+> R5's "without changing the baud rate" still holds for rpm — rpm never travels that link. The
+> link was raised from 9600 to 115200 anyway because the once-a-second `STATUS:` line (~130
+> bytes) filled the AVR's transmit ring and blocked the LED loop for about 50 ms of every
+> second; that is an LED-latency defect the "rpm is not on this link" reasoning did not cover.
+
 ### 2.2 Color mapping — why the current one feels wrong
 
 Today each LED owns a **fixed** color: LED *i* is painted with `ramp(i / (n-1))` and
@@ -155,7 +167,7 @@ Done and verified on the car:
 | Snappier tracking: `RPM_SNAP_DELTA` 400→250, falling alpha 0.60→0.75 | ✅ in firmware |
 | Pi→Nano link: identity-checked (`PING`/`PONG`), retries through a reset, never grabs the ESP32's port | ✅ in `main.py` |
 | Pi→Nano config forwarding: `led_ramp`, `led_theme_dim`, `led_brightness` settings → `RAMP:`/`CFG:` | ✅ in `main.py` + `link_service.py`, verified through the API |
-| Phone pushes a theme-derived ramp (`Palette.ramp()`: accent → primary → the scheme's vivid seed) and shift-light color (`Palette.shiftColor()`), plus the dark/light dim flag | ✅ in `MainActivity.pushThemeToPi()`; fires once the app has a link |
+| Phone pushes the ramp and shift-light color (`Palette.ramp()` / `Palette.shiftColor()`) plus the dark/light dim flag | ✅ in `MainActivity.pushThemeToPi()`; fires once the app has a link. **Since 2026-11-26 the ramp is the engine's, not the scheme's** — see the superseded note in §2.1 |
 | A 128-byte serial command buffer (the old 32 truncated a full `RAMP:` line and silently produced a 2-stop ramp capped at 1400 rpm) | ✅ fixed |
 | `CFG:save` / `CFG?` / `CFG:reset` — ramp, dim, brightness and full-illumination rpm survive a power cycle (EEPROM block behind a magic byte + CRC) | ✅ in firmware, **verified across a watchdog reboot**: `full=4200,dim=1,bright=200` + a 3-stop ramp came back identical |
 | The Pi reads the strip's `STATUS:` line and exposes it as `led` in `/api/telemetry` | ✅ live: `{"connected":true,"can":true,"fps":300,"last_id":"0x201","full_rpm":6800,"dim":false,"error":false,"rpm":0}` |

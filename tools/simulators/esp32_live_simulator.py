@@ -125,6 +125,17 @@ class TelemetrySimulator:
     def toggle_engine(self):
         self.engineRunning = not self.engineRunning
 
+    def isReverse(self) -> bool:
+        """Mirror of `uiIsReverse()` in ui_core.cpp.
+
+        Reverse is the sign of the speed: the PCM transmits (speed + 100 km/h), so
+        reverse decodes negative. The explicit flag and `gear == -1` are honoured first,
+        and `gear != 0` keeps a car rolling backwards in neutral on `N`.
+        """
+        if getattr(self, "isInReverse", False) or self.gear == -1:
+            return True
+        return self.speed < 0 and self.gear != 0
+
 # Mock LCD drawing functions that work with pygame
 class LCDSimulator:
     def __init__(self, surface):
@@ -416,8 +427,19 @@ class ESP32LiveSimulator:
         for r in range(gear_radius, gear_radius - 4, -1):
             self.lcd.DrawCircle(gear_x, gear_y, r, gear_glow)
         
-        # Gear text (larger and centered)
-        if self.telemetry.clutchEngaged:
+        # Gear text (larger and centered).
+        #
+        # Mirrors the chain in ui_core's Overview draw: no link -> "--", then reverse
+        # (which is the sign of the speed, see Telemetry.isReverse below), then the
+        # engine-off case, then the clutch display modes. It used to test clutch before
+        # reverse, so the preview could show "C" while the firmware showed "R".
+        if not self.telemetry.hasReceivedTelemetry:
+            gear_str = "--"
+        elif self.telemetry.isReverse():
+            gear_str = "R"
+        elif not self.telemetry.engineRunning:
+            gear_str = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
+        elif self.telemetry.clutchEngaged:
             if self.telemetry.clutchDisplayMode == 1:
                 gear_str = "C"
             elif self.telemetry.clutchDisplayMode == 2:
@@ -425,14 +447,11 @@ class ESP32LiveSimulator:
             elif self.telemetry.clutchDisplayMode == 3:
                 gear_str = "-"
             else:
-                gear_str = str(self.telemetry.gear) if self.telemetry.gear > 0 else "N"
+                gear_str = "N" if self.telemetry.gear == 0 else str(self.telemetry.gear)
+        elif self.telemetry.gear == 0:
+            gear_str = "N"
         else:
-            if self.telemetry.gear == 0:
-                gear_str = "N"
-            elif self.telemetry.gear == -1:
-                gear_str = "R"
-            else:
-                gear_str = str(self.telemetry.gear)
+            gear_str = str(self.telemetry.gear)
         
         self.lcd.DrawString(gear_x - 13, gear_y - 16, gear_str, gear_glow, COLOR_BG_CARD, 4)
         

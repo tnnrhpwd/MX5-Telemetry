@@ -255,10 +255,12 @@ table is the quick reference. Every line is `\n`-terminated and every command re
 | **Sequence** | `SEQ:n` | Current sequence | `SEQ:1` |
 | **Pong** | `PONG` | Alive response | `PONG` |
 | **Config** | `CFG:seq=…,full=…,dim=…,bright=…,stops=…,ramp=…,en=…,mode=…,shift=…,hz=…,scol=…` | Live configuration | see `CFG?` |
-| **Status** | `STATUS:CAN=1,RPM=812,SEQ=1,ERR=0,FPS=320,LAST=0x201,FULL=6800,DIM=0,EN=1,MODE=0,SHIFT=6300,HZ=8` | Once a second; the only way to tell a dead strip from a real 0 rpm | |
+| **Status** | `STATUS:CAN=1,RPM=812,SEQ=1,ERR=0,FPS=320,LAST=0x201,FULL=6800,DIM=0,EN=1,MODE=0,SHIFT=6300,HZ=8,PER=20000,LAG=3100` | Once a second; the only way to tell a dead strip from a real 0 rpm. `PER` is the measured 0x201 period in µs and `LAG` the worst loop iteration in the last second — together they separate "the ECU is slow", "the loop is blocked" and "10 ranks just look coarse" | |
 
-**Baud Rate:** 9600 bps (low speed for reliability over long wires). This carries settings
-only — rpm is decoded by the Nano from CAN, so it never goes over this link.
+**Baud Rate:** 115200 bps. It was 9600, which could not carry the ~130-byte `STATUS:` line
+without filling the AVR's transmit ring and blocking the LED loop for about 50 ms of every
+second. This carries settings and diagnostics only — rpm is decoded by the Nano from CAN, so
+it never goes over this link.
 
 ---
 
@@ -275,8 +277,12 @@ only — rpm is decoded by the Nano from CAN, so it never goes over this link.
 ### RPM Thresholds (Color Scale)
 
 The zone boundaries are **not** compile-time constants any more: they live in the runtime
-ramp table (`rampStops[]`), which the Pi replaces with `RAMP:` — that is what lets the
-strip follow the phone's theme, or six hand-picked colors, without a reflash.
+ramp table (`rampStops[]`), which the Pi replaces with `RAMP:`. The ramp itself is the
+engine's, not the theme's — blue/cyan at idle, green through the economical band, yellow,
+orange, and red at the redline, in every scheme and mode. The theme reaches the strip only
+through brightness (`CFG:theme=1` dims it in dark mode); deriving the colors from a scheme
+made the ramp washed out in dark mode, left most schemes with no red on the bar, and is what
+turned the redline LED pink.
 
 ```cpp
 #define RPM_MAX             6800    // default rpm at which the strip is completely full
@@ -359,7 +365,7 @@ firmware's arithmetic, so a failure means the simulator has drifted from the str
 
 ### Serial Commands Not Working
 - **Cause:** Wrong baud rate or disconnected serial
-- **Fix:** Verify 9600 baud, check TX/RX wiring
+- **Fix:** Verify 115200 baud, check TX/RX wiring
 - **Test:** Send `PING\n`, should respond `PONG\n`
 
 ### Wrong Colors Displayed
